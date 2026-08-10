@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useReducer, useState } from 'react';
 import { Button } from './ui/button.js';
 import { useCostApi } from '../hooks/use-cost-api.js';
 
@@ -116,6 +116,7 @@ export function RetryButton({ onRetry, signedIn = false }: Readonly<{
     }
   };
 
+  const idleLabel = signedIn ? "I've signed in — Retry" : 'Retry';
   return (
     <Button
       variant="secondary"
@@ -125,7 +126,7 @@ export function RetryButton({ onRetry, signedIn = false }: Readonly<{
       title="Re-run the check that failed"
     >
       {retrying && <Spinner tone="on-surface" />}
-      {retrying ? 'Retrying…' : signedIn ? "I've signed in — Retry" : 'Retry'}
+      {retrying ? 'Retrying…' : idleLabel}
     </Button>
   );
 }
@@ -151,7 +152,7 @@ function CliLoginButton({ variant, lockKey, start, onRetry }: Readonly<{
   const [launch, setLaunch] = useState<LaunchState>({ status: 'idle' });
   // The lock lives outside React, so nothing else would re-render this
   // component when it expires. Bumped by the timer below and on a new launch.
-  const [, tick] = useState(0);
+  const [, tick] = useReducer((n: number) => n + 1, 0);
 
   const launchedTs = launchedAt.get(lockKey);
   const busy = launch.status === 'spawning' || lockRemainingMs(lockKey) > 0;
@@ -160,7 +161,7 @@ function CliLoginButton({ variant, lockKey, start, onRetry }: Readonly<{
     if (launchedTs === undefined) return;
     const remaining = launchedTs + LOCK_MS - Date.now();
     if (remaining <= 0) return;
-    const timer = setTimeout(() => { tick(n => n + 1); }, remaining);
+    const timer = setTimeout(() => { tick(); }, remaining);
     return () => { clearTimeout(timer); };
   }, [launchedTs]);
 
@@ -173,7 +174,7 @@ function CliLoginButton({ variant, lockKey, start, onRetry }: Readonly<{
         // and the retry allowed to say "I've signed in".
         launchedAt.set(lockKey, Date.now());
         setLaunch({ status: 'idle' });
-        tick(n => n + 1);
+        tick();
       },
       (err: unknown) => {
         // The login never started, so nothing is locked and nothing was signed
@@ -195,8 +196,7 @@ function CliLoginButton({ variant, lockKey, start, onRetry }: Readonly<{
           {variant.cliName} is not installed.{' '}
           <a href={variant.installUrl} target="_blank" rel="noopener noreferrer" className="text-accent underline underline-offset-2 hover:text-accent-hover">
             {variant.installLabel}
-          </a>
-          , then retry.
+          </a>, then retry.
         </span>
         <RetryButton onRetry={onRetry} />
       </div>

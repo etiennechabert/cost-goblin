@@ -100,7 +100,7 @@ function buttonTitle(opts: Readonly<{ showError: boolean; error: string | null; 
  *  message is built as `… Run: aws sso login --profile <profile>`, so the
  *  profile is the trailing token; null for any non-credential error. */
 function ssoLoginProfile(error: string | null): string | null {
-  if (error === null || !error.includes('aws sso login')) return null;
+  if (!error?.includes('aws sso login')) return null;
   return /--profile\s+(\S+)/.exec(error)?.[1] ?? null;
 }
 
@@ -165,11 +165,10 @@ export function SyncStatusButton({
 
   const title = buttonTitle({ showError, error, showActive, showMissing, missingPeriods, currentMonthUpdating });
   const periodPlural = missingPeriods === 1 ? '' : 's';
+  const syncedFooter = currentMonthUpdating ? 'Current month updating' : 'All periods synced';
   const footerLabel = missingPeriods > 0
     ? `${String(missingPeriods)} period${periodPlural} not synced`
-    : currentMonthUpdating
-      ? 'Current month updating'
-      : 'All periods synced';
+    : syncedFooter;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>

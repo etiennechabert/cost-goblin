@@ -74,7 +74,8 @@ export function BurndownWidget({ spec, dateRange, previousDateRange, globalFilte
     subtitle = 'Pacing';
   } else if (budget !== undefined && budget > 0) {
     const gap = projected - budget;
-    subtitle = `Projected ${formatDollars(projected)} · ${gap >= 0 ? `${formatDollars(gap)} over` : `${formatDollars(-gap)} under`}`;
+    const gapLabel = gap >= 0 ? `${formatDollars(gap)} over` : `${formatDollars(-gap)} under`;
+    subtitle = `Projected ${formatDollars(projected)} · ${gapLabel}`;
   } else {
     subtitle = `Projected ${formatDollars(projected)}`;
   }

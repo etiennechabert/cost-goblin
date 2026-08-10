@@ -1,6 +1,7 @@
 import {
   buildSource,
   computePeriodsInRange,
+  isSafeColumnIdentifier,
   logger,
 } from '@costgoblin/core';
 import type { DateRange } from '@costgoblin/core';
@@ -26,7 +27,18 @@ const VALID_COLUMNS: ReadonlySet<string> = new Set([
 ]);
 
 function isValidColumn(col: string): boolean {
-  return VALID_COLUMNS.has(col) || col.startsWith('tag_');
+  // The tag_ branch admits caller-supplied names into bare SQL positions
+  // (SELECT/GROUP BY/ORDER BY), so it must stay identifier-shaped — a bare
+  // prefix check would wave through `tag_x = read_csv(...)`.
+  return VALID_COLUMNS.has(col) || (col.startsWith('tag_') && isSafeColumnIdentifier(col));
+}
+
+function sortDirectionSql(direction: 'asc' | 'desc'): string {
+  return direction === 'asc' ? 'ASC' : 'DESC';
+}
+
+function groupedSortColumn(column: string): string {
+  return column === 'cost' ? 'SUM(cost)' : column;
 }
 
 export async function exploreData(
@@ -86,7 +98,7 @@ export async function exploreData(
       col === 'usage_date' ? `usage_date::VARCHAR AS usage_date` : col,
     );
     const sortExpr = params.sort !== undefined && isValidColumn(params.sort.column)
-      ? `${params.sort.column === 'cost' ? 'SUM(cost)' : params.sort.column} ${params.sort.direction === 'asc' ? 'ASC' : 'DESC'}`
+      ? `${groupedSortColumn(params.sort.column)} ${sortDirectionSql(params.sort.direction)}`
       : 'SUM(cost) DESC';
 
     const aggCols = [
@@ -132,7 +144,7 @@ export async function exploreData(
   }
 
   const sortExpr = params.sort !== undefined && isValidColumn(params.sort.column)
-    ? `${params.sort.column} ${params.sort.direction === 'asc' ? 'ASC' : 'DESC'}`
+    ? `${params.sort.column} ${sortDirectionSql(params.sort.direction)}`
     : 'ABS(cost) DESC';
 
   const rawCols = [

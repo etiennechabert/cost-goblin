@@ -6,6 +6,7 @@ import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { DataTable } from '../components/data-table.js';
 import type { TableColumn } from '../lib/table-types.js';
+import { TRIAGE_LABEL, TRIAGE_TONE, triageChipClass, type TriageTone } from '../lib/triage.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { formatDollars } from '../components/format.js';
 import { BaselineMicroBar } from '../components/baseline-micro-bar.js';
@@ -25,44 +26,23 @@ const STATUS_FILTERS: readonly { id: TriageFilter; label: string }[] = [
   { id: 'ignored', label: 'Ignored' },
 ];
 
-const TRIAGE_LABEL: Readonly<Record<BaselineTriageStatus, string>> = {
-  'new': 'New', 'tracking': 'Tracking', 'acting': 'Acting',
-  'resolved': 'Resolved', 'dismissed': 'Dismissed', 'ignored': 'Ignored',
-};
-
-type ChipTone = 'accent' | 'warning' | 'positive' | 'neutral';
-
-/** Single source of truth for the status palette — the chip, dot, and active
- *  styles all derive from a status's tone, so the colors can't drift apart. */
-const STATUS_TONE: Readonly<Record<BaselineTriageStatus, ChipTone>> = {
-  'new': 'neutral', tracking: 'accent', acting: 'warning', resolved: 'positive', dismissed: 'neutral', ignored: 'neutral',
-};
-const TONE_CHIP: Readonly<Record<ChipTone, string>> = {
-  accent: 'text-accent bg-accent/10 border-accent/30',
-  warning: 'text-warning bg-warning/10 border-warning/30',
-  positive: 'text-positive bg-positive/10 border-positive/30',
-  neutral: 'text-text-secondary bg-bg-tertiary/30 border-border',
-};
-const TONE_DOT: Readonly<Record<ChipTone, string>> = {
+const TONE_DOT: Readonly<Record<TriageTone, string>> = {
   accent: 'bg-accent', warning: 'bg-warning', positive: 'bg-positive', neutral: 'bg-text-muted',
 };
 // Stronger tint for the active filter chip, so even neutral statuses read
 // clearly as selected (the muted base alone was almost indistinguishable).
-const TONE_ACTIVE: Readonly<Record<ChipTone, string>> = {
+const TONE_ACTIVE: Readonly<Record<TriageTone, string>> = {
   accent: 'text-accent bg-accent/15 border-accent/60',
   warning: 'text-warning bg-warning/15 border-warning/60',
   positive: 'text-positive bg-positive/15 border-positive/60',
   neutral: 'text-text-primary bg-bg-tertiary border-text-muted/60',
 };
 
-function triageChip(status: BaselineTriageStatus): string {
-  return TONE_CHIP[STATUS_TONE[status]];
-}
 function filterDot(id: TriageFilter): string | undefined {
-  return id === 'open' || id === 'all' ? undefined : TONE_DOT[STATUS_TONE[id]];
+  return id === 'open' || id === 'all' ? undefined : TONE_DOT[TRIAGE_TONE[id]];
 }
 function activeFilterClass(id: TriageFilter): string {
-  return id === 'open' || id === 'all' ? TONE_ACTIVE.accent : TONE_ACTIVE[STATUS_TONE[id]];
+  return id === 'open' || id === 'all' ? TONE_ACTIVE.accent : TONE_ACTIVE[TRIAGE_TONE[id]];
 }
 
 function Kpi({ label, value, accent }: Readonly<{ label: string; value: string; accent?: string | undefined }>) {
@@ -72,6 +52,50 @@ function Kpi({ label, value, accent }: Readonly<{ label: string; value: string; 
       <p className={`text-lg font-semibold tabular-nums ${accent ?? 'text-text-primary'}`}>{value}</p>
     </div>
   );
+}
+
+function runningLabel(status: Extract<BaselineRecomputeStatus, { state: 'running' }>): string {
+  return status.phase === 'discovering' ? 'Discovering baselines…' : `Computing ${String(status.done)} / ${String(status.total)}`;
+}
+
+function buildColumns(onOpen: (id: string) => void): readonly TableColumn<BaselineRecord>[] {
+  return [
+    {
+      id: 'scope', header: 'Scope', sortable: false,
+      accessorFn: (r) => r.scopeLabel,
+      cell: (_v, r) => (
+        <button type="button" onClick={() => { onOpen(r.spec.id); }} className="text-left">
+          <span className="text-text-primary text-xs font-medium hover:text-accent">{r.spec.name ?? r.scopeLabel}</span>
+          {r.spec.source === 'manual' && <span className="ml-1 text-[9px] text-text-muted">(manual)</span>}
+        </button>
+      ),
+    },
+    {
+      id: 'owner', header: 'Owner', sortable: false,
+      accessorFn: (r) => (r.ownerPath ?? []).map(String).join(' / '),
+      cell: (_v, r) => <span className="text-text-muted text-[11px]">{(r.ownerPath ?? []).map(String).join(' / ') || '—'}</span>,
+    },
+    {
+      id: 'status', header: 'Status',
+      accessorFn: (r) => r.triageStatus,
+      cell: (_v, r) => <span className={`inline-block rounded-full border px-2 py-0.5 text-[10px] font-medium ${triageChipClass(r.triageStatus)}`}>{TRIAGE_LABEL[r.triageStatus]}</span>,
+    },
+    {
+      id: 'band', header: 'Average / band', sortable: false,
+      accessorFn: (r) => r.currentDaily,
+      cell: (_v, r) => <BaselineMicroBar lower={r.effectiveLower} upper={r.effectiveUpper} current={r.currentDaily} status={r.status} />,
+    },
+    {
+      id: 'potential', header: 'Potential/mo', align: 'right', mono: true,
+      accessorFn: (r) => r.savings.potentialMonthly,
+      cell: (_v, r) => <span className={r.savings.potentialMonthly > 0 ? 'text-warning' : 'text-text-muted'}>{formatDollars(r.savings.potentialMonthly)}</span>,
+    },
+    {
+      id: 'realized', header: 'Realized/mo', align: 'right', mono: true,
+      accessorFn: (r) => r.savings.realizedMonthly,
+      cell: (_v, r) => <span className={r.savings.realizedMonthly > 0 ? 'text-positive' : 'text-text-muted'}>{formatDollars(r.savings.realizedMonthly)}</span>,
+    },
+  ];
 }
 
 export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: BaselineRecomputeStatus | undefined }>) {
@@ -99,9 +123,7 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
   }
 
   const running = baselineStatus?.state === 'running';
-  const progressLabel = baselineStatus?.state === 'running'
-    ? (baselineStatus.phase === 'discovering' ? 'Discovering baselines…' : `Computing ${String(baselineStatus.done)} / ${String(baselineStatus.total)}`)
-    : '';
+  const progressLabel = baselineStatus?.state === 'running' ? runningLabel(baselineStatus) : '';
   const progressPct = baselineStatus?.state === 'running' && baselineStatus.phase === 'computing' && baselineStatus.total > 0
     ? Math.round((baselineStatus.done / baselineStatus.total) * 100)
     : null;
@@ -126,43 +148,7 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
   const orderedIds = rows.map((r) => r.spec.id);
   const selIdx = selectedId !== null ? orderedIds.indexOf(selectedId) : -1;
 
-  const columns = useMemo<readonly TableColumn<BaselineRecord>[]>(() => [
-    {
-      id: 'scope', header: 'Scope', sortable: false,
-      accessorFn: (r) => r.scopeLabel,
-      cell: (_v, r) => (
-        <button type="button" onClick={() => { setSelectedId(r.spec.id); }} className="text-left">
-          <span className="text-text-primary text-xs font-medium hover:text-accent">{r.spec.name ?? r.scopeLabel}</span>
-          {r.spec.source === 'manual' && <span className="ml-1 text-[9px] text-text-muted">(manual)</span>}
-        </button>
-      ),
-    },
-    {
-      id: 'owner', header: 'Owner', sortable: false,
-      accessorFn: (r) => (r.ownerPath ?? []).map(String).join(' / '),
-      cell: (_v, r) => <span className="text-text-muted text-[11px]">{(r.ownerPath ?? []).map(String).join(' / ') || '—'}</span>,
-    },
-    {
-      id: 'status', header: 'Status',
-      accessorFn: (r) => r.triageStatus,
-      cell: (_v, r) => <span className={`inline-block rounded-full border px-2 py-0.5 text-[10px] font-medium ${triageChip(r.triageStatus)}`}>{TRIAGE_LABEL[r.triageStatus]}</span>,
-    },
-    {
-      id: 'band', header: 'Average / band', sortable: false,
-      accessorFn: (r) => r.currentDaily,
-      cell: (_v, r) => <BaselineMicroBar lower={r.effectiveLower} upper={r.effectiveUpper} current={r.currentDaily} status={r.status} />,
-    },
-    {
-      id: 'potential', header: 'Potential/mo', align: 'right', mono: true,
-      accessorFn: (r) => r.savings.potentialMonthly,
-      cell: (_v, r) => <span className={r.savings.potentialMonthly > 0 ? 'text-warning' : 'text-text-muted'}>{formatDollars(r.savings.potentialMonthly)}</span>,
-    },
-    {
-      id: 'realized', header: 'Realized/mo', align: 'right', mono: true,
-      accessorFn: (r) => r.savings.realizedMonthly,
-      cell: (_v, r) => <span className={r.savings.realizedMonthly > 0 ? 'text-positive' : 'text-text-muted'}>{formatDollars(r.savings.realizedMonthly)}</span>,
-    },
-  ], []);
+  const columns = useMemo<readonly TableColumn<BaselineRecord>[]>(() => buildColumns(setSelectedId), []);
 
   return (
     <div className="flex flex-col gap-6 p-6">
@@ -281,7 +267,9 @@ function NewBaselineDialog({ onClose, onCreated }: Readonly<{ onClose: () => voi
   const [value, setValue] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  const effectiveDim = dimId.length > 0 ? dimId : (builtIns[0] !== undefined ? String(builtIns[0].name) : '');
+  const firstBuiltIn = builtIns[0];
+  const fallbackDim = firstBuiltIn !== undefined ? String(firstBuiltIn.name) : '';
+  const effectiveDim = dimId.length > 0 ? dimId : fallbackDim;
 
   async function create(): Promise<void> {
     if (effectiveDim.length === 0 || value.length === 0) { setError('Pick a dimension and a value.'); return; }
@@ -297,13 +285,13 @@ function NewBaselineDialog({ onClose, onCreated }: Readonly<{ onClose: () => voi
         <p className="text-xs text-text-muted mt-1">Scope a baseline to a stable built-in dimension value (tags are intentionally excluded).</p>
         <div className="mt-4 flex flex-col gap-3">
           <label className="flex flex-col gap-1 text-xs text-text-secondary">
-            Dimension
+            <span>Dimension</span>
             <select value={effectiveDim} onChange={(e) => { setDimId(e.target.value); }} className="rounded-md border border-border bg-bg-primary px-2 py-1 text-sm text-text-primary">
               {builtIns.map((d) => <option key={String(d.name)} value={String(d.name)}>{d.label}</option>)}
             </select>
           </label>
           <label className="flex flex-col gap-1 text-xs text-text-secondary">
-            Value
+            <span>Value</span>
             <input value={value} onChange={(e) => { setValue(e.target.value); }} placeholder="e.g. Amazon Relational Database Service" className="rounded-md border border-border bg-bg-primary px-2 py-1 text-sm text-text-primary placeholder:text-text-muted" />
           </label>
           {error !== null && <p className="text-xs text-negative">{error}</p>}
@@ -375,8 +363,9 @@ function RecomputeDialog({ onClose, onStarted }: Readonly<{ onClose: () => void;
 
   const pending = (s: typeof cfgQuery.status): boolean => s !== 'success' && s !== 'error';
   const loading = pending(cfgQuery.status) || pending(dimsQuery.status);
-  const loadError = cfgQuery.status === 'error' ? cfgQuery.error.message
-    : dimsQuery.status === 'error' ? dimsQuery.error.message : null;
+  const dimsError = dimsQuery.status === 'error' ? dimsQuery.error.message : null;
+  const loadError = cfgQuery.status === 'error' ? cfgQuery.error.message : dimsError;
+  const idleRunLabel = startFresh ? 'Wipe & recompute' : 'Recompute';
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
@@ -420,7 +409,7 @@ function RecomputeDialog({ onClose, onStarted }: Readonly<{ onClose: () => void;
         <div className="mt-4 flex justify-end gap-2">
           <DialogClose><button type="button" className="rounded-md border border-border px-3 py-1 text-xs text-text-secondary">Cancel</button></DialogClose>
           <button type="button" disabled={busy || loading} onClick={() => { void run(); }} className="rounded-md bg-accent/15 px-3 py-1 text-xs font-medium text-accent hover:bg-accent/25 disabled:opacity-50">
-            {busy ? 'Starting…' : startFresh ? 'Wipe & recompute' : 'Recompute'}
+            {busy ? 'Starting…' : idleRunLabel}
           </button>
         </div>
       </DialogContent>

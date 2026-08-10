@@ -175,7 +175,7 @@ Two npm-native guards live in `.npmrc` (no extra tooling). **They require npm >=
 
 `.github/dependabot.yml` carries a matching 7-day `cooldown`. That gates the PRs Dependabot opens; `min-release-age` gates resolution done here. Neither delays **security** updates — Dependabot security PRs ignore cooldown by design, so `audit-ci` always gets its patch immediately.
 
-> ⚠️ **Scope:** `.npmrc` covers the **root workspace only**. npm reads it from the nearest `package.json` directory, so `workers/signup` and `scripts/gcp-focus-exporter` get *neither* guard — the exporter's Dockerfile runs a bare `npm install --omit=dev` with no lockfile. Both are covered by Dependabot but not by these settings.
+> ⚠️ **Scope:** `.npmrc` covers the **root workspace only**. npm reads it from the nearest `package.json` directory, so `workers/signup` and `scripts/gcp-focus-exporter` get *neither* guard. Both have committed lockfiles installed via `npm ci` (the exporter's Dockerfile adds `--ignore-scripts`; its dep tree carries no install scripts), and both are covered by Dependabot — but nothing in either directory enforces `strict-allow-scripts` or `min-release-age`, so their lockfiles' `resolved`+`integrity` pins (checked by the `lockfile integrity` CI job) are the supply-chain guard there.
 
 **When `npm ci` fails with `ESTRICTALLOWSCRIPTS`:** a dependency introduced a new install script. Do NOT reach for `--dangerously-allow-all-scripts`. Read the script, and if it's legitimate:
 

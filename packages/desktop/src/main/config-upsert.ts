@@ -111,6 +111,12 @@ export function upsertWizardProvider(
     sync['costOptimization'] = { bucket: wizard.costOptBucket, retentionDays };
   }
 
+  // A string field carried over from the entry being replaced (empty when the
+  // old entry has none): the wizard payload has no field for these, so building
+  // the entry from the payload alone would silently delete a hand-written one.
+  const carriedString = (key: string): Record<string, unknown> =>
+    isStringRecord(target) && typeof target[key] === 'string' ? { [key]: target[key] } : {};
+
   const entry: Record<string, unknown> = type === 'gcp'
     ? {
         name: wizard.providerName,
@@ -122,18 +128,11 @@ export function upsertWizardProvider(
         // sends a keyFile, so without this a re-run silently deleted a
         // hand-written one and the sync fell back to ADC — 403ing on a bucket
         // granted only to the service account.
-        ...(wizard.keyFile !== undefined && wizard.keyFile.length > 0
-          ? { keyFile: wizard.keyFile }
-          : isStringRecord(target) && typeof target['keyFile'] === 'string'
-            ? { keyFile: target['keyFile'] }
-            : {}),
-        // Carried from the entry being replaced. `WizardProviderConfig` has no
-        // field for it, so building the entry from the payload alone silently
-        // deleted it — after which the download half ran as the signed-in user
-        // and 403'd on a bucket granted only to the service account.
-        ...(isStringRecord(target) && typeof target['impersonateServiceAccount'] === 'string'
-          ? { impersonateServiceAccount: target['impersonateServiceAccount'] }
-          : {}),
+        ...(wizard.keyFile !== undefined && wizard.keyFile.length > 0 ? { keyFile: wizard.keyFile } : carriedString('keyFile')),
+        // Carried unconditionally: without this the download half ran as the
+        // signed-in user and 403'd on a bucket granted only to the service
+        // account.
+        ...carriedString('impersonateServiceAccount'),
         sync,
       }
     : {

@@ -19,7 +19,7 @@ import type {
   QueryContextOptions,
   TagValue,
 } from '@costgoblin/core';
-import type { McpContext, RawRow } from '../context.js';
+import type { McpContext } from '../context.js';
 import { formatResult, type DataCoverage, type ResponseFormat, type StructuredResult } from '../formatters/result.js';
 
 export function toNum(v: unknown): number {
@@ -165,10 +165,10 @@ function computeMissingMonthsBetween(available: readonly string[]): string[] {
   if (available.length === 0) return [];
   const set = new Set(available);
   const first = available[0];
-  const last = available[available.length - 1];
+  const last = available.at(-1);
   if (first === undefined || last === undefined) return [];
-  const [fy, fm] = first.split('-').map(n => Number(n));
-  const [ly, lm] = last.split('-').map(n => Number(n));
+  const [fy, fm] = first.split('-').map(Number);
+  const [ly, lm] = last.split('-').map(Number);
   if (fy === undefined || fm === undefined || ly === undefined || lm === undefined) return [];
   const missing: string[] = [];
   let y = fy;
@@ -192,7 +192,7 @@ export async function computeDataCoverage(
   // first provider alone reported "no synced data" while a later provider's
   // rows came back in the query — actively misleading the MCP client.
   const providers = await getQueryProviders(ctx, 'daily');
-  const available = [...new Set(providers.flatMap(p => p.availablePeriods ?? []))].sort();
+  const available = [...new Set(providers.flatMap(p => p.availablePeriods ?? []))].sort((a, b) => a.localeCompare(b));
   if (available.length === 0) {
     return {
       availableMonths: [],
@@ -205,7 +205,7 @@ export async function computeDataCoverage(
     };
   }
   const earliestMonth = available[0];
-  const latestMonth = available[available.length - 1];
+  const latestMonth = available.at(-1);
   let latestDay: string | null = null;
   if (latestMonth !== undefined) {
     // The overall latest day lives in the overall latest month — but more than
@@ -264,4 +264,4 @@ export function lookupDimension(dimensionId: string, dimensions: DimensionsConfi
   return { label: dimensionId, found: false };
 }
 
-export type { RawRow };
+export type { RawRow } from '../context.js';

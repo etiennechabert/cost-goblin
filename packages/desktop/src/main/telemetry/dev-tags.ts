@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { delimiter } from 'node:path';
 
 /**
  * Dev-only Sentry tags so locally-run builds can be told apart by git branch
@@ -21,9 +22,26 @@ export function buildDevTags(branch: string | null, commit: string | null): Reco
   return tags;
 }
 
+/** Fixed directories `git` is resolved from — the inherited PATH is never
+ *  consulted, so a writable PATH entry cannot substitute the binary. Covers the
+ *  platform-standard install locations on dev machines; a miss is fail-safe
+ *  (no tags). */
+const GIT_LOOKUP_PATH = process.platform === 'win32'
+  ? ['C:\\Program Files\\Git\\cmd', 'C:\\Program Files (x86)\\Git\\cmd', 'C:\\Windows\\System32'].join(delimiter)
+  : ['/usr/bin', '/bin', '/usr/local/bin', '/opt/homebrew/bin'].join(delimiter);
+
+function gitEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (key.toUpperCase() !== 'PATH') env[key] = value;
+  }
+  env['PATH'] = GIT_LOOKUP_PATH;
+  return env;
+}
+
 function gitOut(args: readonly string[], cwd: string): string | null {
   try {
-    return execFileSync('git', [...args], { cwd, timeout: 2000, encoding: 'utf-8' });
+    return execFileSync('git', [...args], { cwd, timeout: 2000, encoding: 'utf-8', env: gitEnv() });
   } catch {
     return null;
   }

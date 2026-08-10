@@ -47,6 +47,7 @@ function Switch({
   ariaLabel,
   onToggle,
 }: Readonly<{ on: boolean; disabled?: boolean; ariaLabel: string; onToggle: () => void }>): React.JSX.Element {
+  const trackClass = on ? 'bg-accent' : 'bg-bg-tertiary';
   return (
     <button
       type="button"
@@ -57,7 +58,7 @@ function Switch({
       onClick={onToggle}
       className={[
         'relative h-5 w-9 shrink-0 rounded-full transition-colors',
-        disabled === true ? 'cursor-not-allowed bg-bg-tertiary opacity-50' : on ? 'bg-accent' : 'bg-bg-tertiary',
+        disabled === true ? 'cursor-not-allowed bg-bg-tertiary opacity-50' : trackClass,
       ].join(' ')}
     >
       <span

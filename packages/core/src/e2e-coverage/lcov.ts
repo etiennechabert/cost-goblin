@@ -1,9 +1,7 @@
 import type { CoverageReport, FileCoverage } from './types.js';
 
 function fileRecord(filePath: string, coverage: FileCoverage): string {
-  const lines: string[] = [];
-  lines.push('TN:');
-  lines.push(`SF:${filePath}`);
+  const lines: string[] = ['TN:', `SF:${filePath}`];
 
   let functionsHit = 0;
   const functionData: string[] = [];
@@ -12,17 +10,14 @@ function fileRecord(filePath: string, coverage: FileCoverage): string {
     functionData.push(`FNDA:${String(fn.count)},${fn.name}`);
     if (fn.count > 0) functionsHit++;
   }
-  lines.push(`FNF:${String(coverage.functions.size)}`);
-  lines.push(`FNH:${String(functionsHit)}`);
-  lines.push(...functionData);
+  lines.push(`FNF:${String(coverage.functions.size)}`, `FNH:${String(functionsHit)}`, ...functionData);
 
   let linesHit = 0;
   for (const [line, count] of [...coverage.lines.entries()].sort((a, b) => a[0] - b[0])) {
     lines.push(`DA:${String(line)},${String(count)}`);
     if (count > 0) linesHit++;
   }
-  lines.push(`LF:${String(coverage.lines.size)}`);
-  lines.push(`LH:${String(linesHit)}`);
+  lines.push(`LF:${String(coverage.lines.size)}`, `LH:${String(linesHit)}`);
 
   // Deduplicate by taking the max count per line+block+branch: a branch shows
   // up once per V8 entry that loaded the file.
@@ -40,10 +35,7 @@ function fileRecord(filePath: string, coverage: FileCoverage): string {
     );
     if (branch.count > 0) branchesHit++;
   }
-  lines.push(`BRF:${String(branches.size)}`);
-  lines.push(`BRH:${String(branchesHit)}`);
-
-  lines.push('end_of_record');
+  lines.push(`BRF:${String(branches.size)}`, `BRH:${String(branchesHit)}`, 'end_of_record');
   return lines.join('\n');
 }
 

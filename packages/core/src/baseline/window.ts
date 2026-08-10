@@ -13,6 +13,15 @@ function formatDate(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
+/** Chronological order for daily points. Codepoint comparison is deliberate:
+ *  ISO `YYYY-MM-DD` dates sort chronologically byte-wise, and this ordering
+ *  feeds baseline math in core and the history clamp in desktop — every
+ *  consumer must agree on it, so there is exactly one copy. */
+export function compareByDate(a: BaselineDailyPoint, b: BaselineDailyPoint): number {
+  if (a.date < b.date) return -1;
+  return a.date > b.date ? 1 : 0;
+}
+
 /** Expand a sparse daily history into a dense window of `days` points ending at
  *  `endDate` (inclusive), filling missing days with $0. Days outside the window
  *  are dropped. Used to render the fixed 365-day cost-history chart without a
@@ -46,9 +55,9 @@ export function expandToWindow(
  *  the observed span (so a young periodic scope still amortizes its spike). */
 export function runRateSeries(history: readonly BaselineDailyPoint[], windowDays: number): readonly BaselineDailyPoint[] {
   if (history.length === 0) return [];
-  const sorted = [...history].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  const sorted = [...history].sort(compareByDate);
   const first = sorted[0];
-  const last = sorted[sorted.length - 1];
+  const last = sorted.at(-1);
   if (first === undefined || last === undefined) return [];
   const byDate = new Map<string, number>();
   for (const p of sorted) byDate.set(p.date, p.cost);

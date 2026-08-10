@@ -60,7 +60,7 @@ export async function findPreFocusProviders(
     } catch {
       return false; // not a provider tree (no raw/)
     }
-    const newestPeriodDir = rawEntries.filter(e => RAW_PERIOD_DIR_RE.test(e)).sort().at(-1);
+    const newestPeriodDir = rawEntries.filter(e => RAW_PERIOD_DIR_RE.test(e)).sort((a, b) => a.localeCompare(b)).at(-1);
     if (newestPeriodDir === undefined) return false; // no FOCUS-billing data on disk
 
     try {

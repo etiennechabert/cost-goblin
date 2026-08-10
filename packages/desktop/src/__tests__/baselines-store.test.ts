@@ -106,7 +106,7 @@ function expectDailyHistoryMatches(
   expected: readonly Record<string, unknown>[],
 ): void {
   const points = history ?? [];
-  expect(points.length).toBe(expected.length);
+  expect(points).toHaveLength(expected.length);
   points.forEach((p, i) => {
     expect(String(p.date)).toBe(str(expected[i]?.['d']));
     expect(p.cost).toBeCloseTo(num(expected[i]?.['c']), 6);
@@ -306,7 +306,7 @@ describe('BaselineStore', () => {
       expect(detail.windowDays).toBe(30);
       expect(detail.record.stats?.dataPoints).toBe(expectedDaily.length);
       expect(detail.record.bestAchieved).not.toBeNull();
-      expect(detail.snapshots.length).toBe(1);
+      expect(detail.snapshots).toHaveLength(1);
       const snap = detail.snapshots[0];
       expect(String(snap?.date)).toBe(TODAY);
       expect(snap?.status).toBe(detail.record.status);
@@ -341,7 +341,7 @@ describe('BaselineStore', () => {
       const unsub = store.onStatusChanged((s) => { seen.push(s); });
       await Promise.all([store.recompute(deps), store.recompute(deps)]);
       unsub();
-      expect(seen.filter((s) => s.state === 'running' && s.phase === 'discovering').length).toBe(1);
+      expect(seen.filter((s) => s.state === 'running' && s.phase === 'discovering')).toHaveLength(1);
     });
 
     it('re-discovery upserts by scope (stable ids) and never overrides user-set triage with auto-ignore', async () => {
@@ -581,7 +581,7 @@ describe('BaselineStore', () => {
     it('recompute appends todays snapshot and enforces the MAX_SNAPSHOTS (365) cap', async () => {
       await store.recompute(deps, { only: SEED_ID });
       const snaps = await store.getSnapshots(deps, SEED_ID);
-      expect(snaps.length).toBe(365);
+      expect(snaps).toHaveLength(365);
       expect(String(snaps[snaps.length - 1]?.date)).toBe(TODAY);
       // 400 seeded + 1 new, capped at 365 → the oldest 36 fell off.
       expect(String(snaps[0]?.date)).toBe(seedDate(36));
@@ -593,14 +593,14 @@ describe('BaselineStore', () => {
     it('a same-day recompute replaces todays snapshot; a new day appends', async () => {
       await store.recompute(deps, { only: SEED_ID });
       let snaps = await store.getSnapshots(deps, SEED_ID);
-      expect(snaps.length).toBe(365);
-      expect(snaps.filter((s) => String(s.date) === TODAY).length).toBe(1);
+      expect(snaps).toHaveLength(365);
+      expect(snaps.filter((s) => String(s.date) === TODAY)).toHaveLength(1);
       expect(String(snaps[0]?.date)).toBe(seedDate(36));
 
       vi.setSystemTime(new Date('2026-03-05T12:00:00.000Z'));
       await store.recompute(deps, { only: SEED_ID });
       snaps = await store.getSnapshots(deps, SEED_ID);
-      expect(snaps.length).toBe(365);
+      expect(snaps).toHaveLength(365);
       expect(String(snaps[snaps.length - 1]?.date)).toBe('2026-03-05');
       expect(String(snaps[snaps.length - 2]?.date)).toBe(TODAY);
       expect(String(snaps[0]?.date)).toBe(seedDate(37));

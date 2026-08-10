@@ -396,10 +396,8 @@ export function generateFocusRows(
     rows.push(unusedCommitmentRow(date, cfg, rand, COMMITMENT_ID));
     for (let i = 0; i < counts.marketplacePerDay; i++) rows.push(marketplaceRow(date, cfg, rand));
   }
-  for (const month of [...new Set(dates.map(monthOf))]) {
-    rows.push(purchaseRow(month, cfg, COMMITMENT_ID, 120));
-    rows.push(taxRow(month, cfg, 250));
-    rows.push(creditRow(month, cfg, 75));
+  for (const month of new Set(dates.map(monthOf))) {
+    rows.push(purchaseRow(month, cfg, COMMITMENT_ID, 120), taxRow(month, cfg, 250), creditRow(month, cfg, 75));
   }
   return rows;
 }

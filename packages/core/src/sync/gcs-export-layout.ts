@@ -61,7 +61,11 @@ export function isBillingPeriodFolder(folderName: string): boolean {
  *  refuses to load on the next launch. Compared on normalized prefixes so a
  *  trailing slash, or a parent path, is caught as well as an exact match. */
 export function gcsTiersOverlap(a: string, b: string): boolean {
-  const norm = (v: string): string => `${v.replace(/^gs:\/\//, '').replace(/\/+$/, '')}/`;
+  const norm = (v: string): string => {
+    let s = v.startsWith('gs://') ? v.slice('gs://'.length) : v;
+    while (s.endsWith('/')) s = stripTrailingSlash(s);
+    return `${s}/`;
+  };
   const [x, y] = [norm(a), norm(b)];
   return x === y || x.startsWith(y) || y.startsWith(x);
 }

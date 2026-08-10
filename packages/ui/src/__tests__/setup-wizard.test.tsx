@@ -590,7 +590,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
 
     await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
     await userClickText(user, 'Complete Setup');
-    await waitFor(() => { expect(api.writtenConfigs.length).toBe(1); });
+    await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
 
     const written = api.writtenConfigs[0];
     expect(written?.dailyBucket).toBe('gs://acme-focus-export/focus/daily/');
@@ -634,7 +634,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await userClickText(user, 'Skip');
     await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
     await userClickText(user, 'Complete Setup');
-    await waitFor(() => { expect(api.writtenConfigs.length).toBe(1); });
+    await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
     expect(api.writtenConfigs[0]?.providerName).toBe('gcp-main');
   });
 
@@ -732,7 +732,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await userClickText(user, 'Skip');
     await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
     await userClickText(user, 'Complete Setup');
-    await waitFor(() => { expect(api.writtenConfigs.length).toBe(1); });
+    await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
 
     const written = api.writtenConfigs[0];
     expect(written?.type).toBe('gcp');
@@ -933,7 +933,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await userClickText(user, 'default');
     await walkToConfirm(user);
     await userClickText(user, 'Complete Setup');
-    await waitFor(() => { expect(api.writtenConfigs.length).toBe(1); });
+    await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
     expect(api.writtenConfigs[0]?.providerName).toBe('aws-main');
   });
 

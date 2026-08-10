@@ -19,6 +19,7 @@ describe('gcsTiersOverlap', () => {
 
   it('normalizes the scheme and trailing slashes before comparing', () => {
     expect(gcsTiersOverlap('b/focus/daily', 'gs://b/focus/daily///')).toBe(true);
+    expect(gcsTiersOverlap(`gs://b/focus/daily${'/'.repeat(500)}`, 'b/focus/daily')).toBe(true);
   });
 
   it('does not treat a shared name prefix as containment', () => {

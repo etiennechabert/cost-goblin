@@ -123,7 +123,7 @@ export function mergeBuiltInExclusionRules(loaded: CostScopeConfig): CostScopeCo
     const seed = seedById.get(r.id);
     if (seed === undefined) return r;
     const legacyShapes = LEGACY_SEED_CONDITIONS[r.id];
-    if (legacyShapes === undefined || !legacyShapes.includes(JSON.stringify(r.conditions))) return r;
+    if (!legacyShapes?.includes(JSON.stringify(r.conditions))) return r;
     return { ...r, conditions: seed.conditions };
   });
   const refreshedAny = survivingRules.some((r, i) => r !== surviving[i]);

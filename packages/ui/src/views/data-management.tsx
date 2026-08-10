@@ -281,6 +281,10 @@ export function DataManagement() {
     );
   }
 
+  const syncIdleTitle = syncableTotal === 0
+    ? 'Re-check S3 and download any new or updated data'
+    : `Sync ${String(syncableTotal)} period(s) that are missing or out of date`;
+
   return (
     <div className="flex flex-col gap-5 p-6">
       {/* Header */}
@@ -294,7 +298,7 @@ export function DataManagement() {
             type="button"
             onClick={() => { handleSyncAll().catch(() => undefined); }}
             disabled={anySyncing}
-            title={anySyncing ? 'Sync in progress…' : syncableTotal === 0 ? 'Re-check S3 and download any new or updated data' : `Sync ${String(syncableTotal)} period(s) that are missing or out of date`}
+            title={anySyncing ? 'Sync in progress…' : syncIdleTitle}
             className="rounded-md border border-border bg-bg-tertiary/50 px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-tertiary hover:text-text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {syncableTotal === 0 ? 'Sync' : `Sync (${String(syncableTotal)})`}

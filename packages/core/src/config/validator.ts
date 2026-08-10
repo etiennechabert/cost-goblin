@@ -54,9 +54,11 @@ function isValidNormalizationRule(value: string): value is NormalizationRule {
 }
 
 function hasControlChar(value: string): boolean {
-  for (let i = 0; i < value.length; i++) {
-    const code = value.charCodeAt(i);
-    if (code < 0x20 || code === 0x7f) return true;
+  // Control chars are single BMP units, so comparing each code point's string
+  // form directly is exact — and avoids the `| undefined` arm codePointAt(i)
+  // would force for an index the loop already guarantees is in range.
+  for (const ch of value) {
+    if (ch < '\u0020' || ch === '\u007f') return true;
   }
   return false;
 }
@@ -427,7 +429,7 @@ function validateTagDimension(tag: unknown, i: number) {
   // persist it (tag discovery stored the raw key verbatim). FOCUS `Tags` map
   // keys have no prefix, so a prefixed tagName would silently match nothing —
   // migrate it at load time, mirroring the legacy cost-metric migration.
-  if (tagName !== undefined && tagName.startsWith('user_')) {
+  if (tagName?.startsWith('user_')) {
     const stripped = tagName.slice('user_'.length);
     if (stripped.length > 0) {
       logger.warn(`${ctx}.tagName "${tagName}" carries the CUR-era user_ prefix; migrating to "${stripped}"`);
@@ -438,7 +440,7 @@ function validateTagDimension(tag: unknown, i: number) {
   // tagName is interpolated into DuckDB SQL by the alias-suggestions handler.
   // Reject it at load time so a shared/imported config cannot smuggle a
   // string-literal breakout even if a call site forgets to escape.
-  if (tagName !== undefined && tagName.includes("'")) {
+  if (tagName?.includes("'")) {
     throw new ConfigValidationError(
       `${ctx}.tagName "${tagName}" contains a single quote, which is not a valid tag key. ` +
       `This prevents SQL injection via shared or imported configs.`,

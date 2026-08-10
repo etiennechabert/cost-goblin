@@ -24,7 +24,8 @@ function summarizeErrors(errorCounts: ReadonlyMap<string, number>): string {
   const top = sorted[0]?.[0] ?? 'Unknown error';
   const trimmed = top.length > 400 ? `${top.slice(0, 400)}…` : top;
   const others = sorted.length - 1;
-  return others > 0 ? `${trimmed} (+${String(others)} other error${others === 1 ? '' : 's'})` : trimmed;
+  const plural = others === 1 ? '' : 's';
+  return others > 0 ? `${trimmed} (+${String(others)} other error${plural})` : trimmed;
 }
 
 /** Builds the `COPY (...) TO '<outPath>' (FORMAT PARQUET)` DDL for one period.

@@ -38,6 +38,13 @@ const BLOCKED_FUNCTIONS = [
   'sqlite_scan', 'sqlite_query',
 ];
 
+// Precompiled once — the patterns are static and every run_sql call walks the
+// full list for a legitimate query.
+const BLOCKED_FUNCTION_PATTERNS = BLOCKED_FUNCTIONS.map(fn => ({
+  fn,
+  re: new RegExp(String.raw`\b${fn}\s*\(`, 'i'),
+}));
+
 /** Replace string literals (with '' escapes) and comments with inert
  *  placeholders in a single pass, so the structural checks below can't be
  *  fooled by a keyword hidden inside a string, nor by a `--`/`/*` that is
@@ -104,8 +111,8 @@ export function validateRunSqlQuery(sql: string): string | null {
     return 'Reading from a file path is not allowed — query the provided `costs` table.';
   }
 
-  for (const fn of BLOCKED_FUNCTIONS) {
-    if (new RegExp(`\\b${fn}\\s*\\(`, 'i').test(scrubbed)) {
+  for (const { fn, re } of BLOCKED_FUNCTION_PATTERNS) {
+    if (re.test(scrubbed)) {
       return `The function ${fn}() is not allowed in run_sql — query the provided \`costs\` table instead.`;
     }
   }

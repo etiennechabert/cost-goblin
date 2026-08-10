@@ -6,6 +6,8 @@ const MAX_LINES = 1000;
 
 type LevelFilter = 'all' | 'warn' | 'error';
 
+const FILTER_LABELS: Readonly<Record<LevelFilter, string>> = { all: 'All', warn: 'Warnings', error: 'Errors' };
+
 function levelClass(level: SyncLogLevel): string {
   switch (level) {
     case 'error': return 'text-negative';
@@ -130,7 +132,7 @@ export function SyncLogPanel({ active = false }: { active?: boolean }) {
                   onClick={() => { setFilter(f); }}
                   className={`rounded px-2 py-0.5 transition-colors ${filter === f ? 'bg-bg-tertiary text-text-primary' : 'text-text-muted hover:text-text-secondary'}`}
                 >
-                  {f === 'all' ? 'All' : f === 'warn' ? 'Warnings' : 'Errors'}
+                  {FILTER_LABELS[f]}
                 </button>
               ))}
             </div>

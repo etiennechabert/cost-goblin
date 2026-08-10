@@ -57,12 +57,15 @@ export function redactNumeric(value: number): string | number {
 
 // Object keys whose VALUE must be dropped wholesale regardless of content —
 // secrets, credentials, and direct identifiers we never want to transmit.
-const SENSITIVE_KEY_RE =
-  /password|passwd|secret|token|api[-_]?key|access[-_]?key|authorization|\bauth\b|cookie|session|credential|private[-_]?key|\bdsn\b|account[-_]?id|email|\barn\b/i;
+const SENSITIVE_KEY_RES: readonly RegExp[] = [
+  /password|passwd|secret|token|cookie|session|credential|email/i,
+  /api[-_]?key|access[-_]?key|private[-_]?key|account[-_]?id/i,
+  /authorization|\bauth\b|\bdsn\b|\barn\b/i,
+];
 
 /** True when a key looks like it holds a secret or direct identifier. */
 export function isSensitiveKey(key: string): boolean {
-  return SENSITIVE_KEY_RE.test(key);
+  return SENSITIVE_KEY_RES.some((re) => re.test(key));
 }
 
 const MAX_DEPTH = 6;

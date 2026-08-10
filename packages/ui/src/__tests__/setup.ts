@@ -166,7 +166,7 @@ export function setAutoIntersect(value: boolean): void {
 
 /** Deliver an intersection entry to every currently observed element. */
 export function fireIntersections(isIntersecting: boolean): void {
-  for (const observer of [...intersectionObservers]) {
+  for (const observer of intersectionObservers) {
     observer.fireAll(isIntersecting);
   }
 }

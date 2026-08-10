@@ -1,5 +1,6 @@
 import type { BaselineCurrent, BaselineDailyPoint } from '../types/baseline.js';
 import { asDateString, asDollars } from '../types/branded.js';
+import { compareByDate } from './window.js';
 
 const DAY_MS = 86_400_000;
 
@@ -17,9 +18,9 @@ function midnightUtcMs(date: string): number {
  *  pre-sort. */
 export function computeCurrent(series: readonly BaselineDailyPoint[], windowDays: number): BaselineCurrent | null {
   if (series.length === 0) return null;
-  const sorted = [...series].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  const sorted = [...series].sort(compareByDate);
   const first = sorted[0];
-  const last = sorted[sorted.length - 1];
+  const last = sorted.at(-1);
   if (first === undefined || last === undefined) return null;
   const endMs = midnightUtcMs(last.date);
   const earliestMs = midnightUtcMs(first.date);

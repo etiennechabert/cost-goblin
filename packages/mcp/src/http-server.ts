@@ -45,7 +45,7 @@ function tokenMatches(provided: string | undefined, expected: string): boolean {
 function extractToken(req: IncomingMessage, rawUrl: string): string | undefined {
   const auth = req.headers['authorization'];
   if (typeof auth === 'string') {
-    const match = /^Bearer\s+(.+)$/i.exec(auth.trim());
+    const match = /^Bearer\s+(\S.*)$/i.exec(auth.trim());
     if (match?.[1] !== undefined) return match[1].trim();
   }
   const qIndex = rawUrl.indexOf('?');

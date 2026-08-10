@@ -9,8 +9,7 @@
  *  against a MAP, so a loader that flattened everything to VARCHAR would
  *  make the samples pass tests that real data fails. */
 
-import { readFile } from 'node:fs/promises';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 

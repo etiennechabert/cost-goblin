@@ -16,7 +16,7 @@ describe('runRateSeries', () => {
   it('is flat for a steady daily cost (warm-up dropped)', () => {
     const hist = sparse(Array.from({ length: 60 }, (_, i) => [i, 100] as const));
     const rr = runRateSeries(hist, 30).map((p) => p.cost);
-    expect(rr.length).toBe(31); // 60 days − 29 warm-up
+    expect(rr).toHaveLength(31); // 60 days − 29 warm-up
     for (const c of rr) expect(c).toBeCloseTo(100, 6);
   });
 
@@ -32,7 +32,7 @@ describe('runRateSeries', () => {
   it('returns a single amortized point when the span is shorter than the window', () => {
     // 10-day span with one $400 spike → $40/day average, NOT a $400 band edge.
     const rr = runRateSeries(sparse([[0, 400], [9, 0]]), 30);
-    expect(rr.length).toBe(1);
+    expect(rr).toHaveLength(1);
     expect(rr[0]?.cost).toBeCloseTo(40, 6);
   });
 

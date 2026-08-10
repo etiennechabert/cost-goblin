@@ -2,26 +2,13 @@ import { useEffect, useMemo, useState, type MouseEvent } from 'react';
 import type { BaselineDetail, BaselineDailyPoint, BaselineSnapshot, BaselineTriageStatus, BaselineUpdatePatch, ManualBand } from '@costgoblin/core/browser';
 import { asDateString, asDollars, BASELINE_TRIAGE_STATUSES, runRateSeries } from '@costgoblin/core/browser';
 
-const TRIAGE_LABEL: Readonly<Record<BaselineTriageStatus, string>> = {
-  'new': 'New', 'tracking': 'Tracking', 'acting': 'Acting',
-  'resolved': 'Resolved', 'dismissed': 'Dismissed', 'ignored': 'Ignored',
-};
-
 /** "Closed" outcomes — picking one auto-advances to the next case so you can
  *  sweep a review list quickly. */
 const DISMISS_STATUSES = new Set<BaselineTriageStatus>(['resolved', 'dismissed', 'ignored']);
 
-function triageChipClass(status: BaselineTriageStatus): string {
-  switch (status) {
-    case 'tracking': return 'text-accent bg-accent/10 border-accent/30';
-    case 'acting': return 'text-warning bg-warning/10 border-warning/30';
-    case 'resolved': return 'text-positive bg-positive/10 border-positive/30';
-    case 'new': return 'text-text-secondary bg-bg-tertiary/30 border-border';
-    default: return 'text-text-muted bg-bg-tertiary/30 border-border';
-  }
-}
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
+import { TRIAGE_LABEL, triageChipClass } from '../lib/triage.js';
 import { Dialog, DialogContent, DialogTitle } from './ui/dialog.js';
 import { Slider } from './ui/slider.js';
 import { CoinRainLoader } from './coin-rain-loader.js';
@@ -57,9 +44,9 @@ function densifyDaily(history: readonly BaselineDailyPoint[]): readonly Baseline
   if (history.length === 0) return history;
   const byDate = new Map<string, number>();
   for (const p of history) byDate.set(String(p.date), p.cost);
-  const dates = [...byDate.keys()].sort();
+  const dates = [...byDate.keys()].sort((a, b) => a.localeCompare(b));
   const startStr = dates[0];
-  const endStr = dates[dates.length - 1];
+  const endStr = dates.at(-1);
   if (startStr === undefined || endStr === undefined) return history;
   const out: BaselineDailyPoint[] = [];
   const cur = new Date(`${startStr}T00:00:00Z`);
@@ -158,7 +145,9 @@ function HistoryChart({ history, ma, lower, upper, maxCost }: Readonly<{
 }
 
 function StatCard({ label, perDay, accent }: Readonly<{ label: string; perDay: number; accent?: 'amber' | 'green' | undefined }>) {
-  const color = accent === 'amber' && perDay > 0 ? 'text-warning' : accent === 'green' && perDay > 0 ? 'text-positive' : 'text-text-primary';
+  let color = 'text-text-primary';
+  if (accent === 'amber' && perDay > 0) color = 'text-warning';
+  else if (accent === 'green' && perDay > 0) color = 'text-positive';
   return (
     <div className="rounded-lg border border-border bg-bg-tertiary/30 px-3 py-2">
       <p className="text-[10px] uppercase tracking-wider text-text-muted">{label}</p>
@@ -181,7 +170,7 @@ function SwipeButton({ arrow, label, hint, tone, onClick, disabled }: Readonly<{
 
 function snapTrend(snaps: readonly BaselineSnapshot[]): { label: string; cls: string } | null {
   const first = snaps[0];
-  const last = snaps[snaps.length - 1];
+  const last = snaps.at(-1);
   if (first === undefined || last === undefined) return null;
   const d = last.current - first.current;
   if (Math.abs(d) < 0.01) return { label: 'trend: flat', cls: 'text-text-muted' };
@@ -495,7 +484,12 @@ function Body({ detail, onChanged, onNext, onPrev, position, triageMode }: Reado
           max={mode === 'percentile' ? 100 : Math.ceil(maxCost)}
           step={mode === 'percentile' ? 1 : Math.max(0.01, maxCost / 200)}
           value={[lower, upper]}
-          onValueChange={(v) => { const [lo, hi] = v; if (lo !== undefined) setLower(lo); if (hi !== undefined) setUpper(hi); setBandDirty(true); }}
+          onValueChange={(v) => {
+            const [lo, hi] = v;
+            if (lo !== undefined) { setLower(lo); }
+            if (hi !== undefined) { setUpper(hi); }
+            setBandDirty(true);
+          }}
         />
         <div className="flex items-center justify-between text-xs tabular-nums text-text-muted">
           <span>lower {mode === 'percentile' ? `P${String(Math.round(lower))} (${formatDollars(effLower)})` : formatDollars(lower)}</span>
@@ -520,13 +514,16 @@ function Body({ detail, onChanged, onNext, onPrev, position, triageMode }: Reado
           Triage status <span className="font-normal text-text-muted">— press 1–6 to set{onNext !== undefined ? '; ← / → to move between baselines' : ''}</span>
         </p>
         <div className="flex flex-wrap gap-1.5">
-          {BASELINE_TRIAGE_STATUSES.map((s, i) => (
-            <button key={s} type="button" disabled={saving} onClick={() => { void assignStatus(s); }}
-              className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs transition-colors disabled:opacity-50 ${triage === s ? `${triageChipClass(s)} ring-1 ring-inset ring-current` : 'border-border text-text-secondary hover:text-text-primary'}`}>
-              <kbd className="rounded bg-bg-tertiary px-1 text-[9px] font-medium text-text-muted">{String(i + 1)}</kbd>
-              {TRIAGE_LABEL[s]}
-            </button>
-          ))}
+          {BASELINE_TRIAGE_STATUSES.map((s, i) => {
+            const activeClass = `${triageChipClass(s)} ring-1 ring-inset ring-current`;
+            return (
+              <button key={s} type="button" disabled={saving} onClick={() => { void assignStatus(s); }}
+                className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs transition-colors disabled:opacity-50 ${triage === s ? activeClass : 'border-border text-text-secondary hover:text-text-primary'}`}>
+                <kbd className="rounded bg-bg-tertiary px-1 text-[9px] font-medium text-text-muted">{String(i + 1)}</kbd>
+                {TRIAGE_LABEL[s]}
+              </button>
+            );
+          })}
         </div>
       </div>
       )}

@@ -243,14 +243,14 @@ describe('MCP server E2E', () => {
     expect(names).toContain('run_sql');
     expect(names).toContain('list_baselines');
     expect(names).toContain('get_baseline_drift');
-    expect(tools.length).toBe(12);
+    expect(tools).toHaveLength(12);
   });
 
   it('supports multiple concurrent sessions', async () => {
     const client2 = await createMcpClient(port, TEST_TOKEN);
     expect(client2.sessionId).not.toBe(client.sessionId);
     const tools = await client2.listTools();
-    expect(tools.length).toBe(12);
+    expect(tools).toHaveLength(12);
     await client2.close();
   });
 
@@ -444,6 +444,21 @@ describe('MCP server E2E', () => {
     });
     expect(text).toContain('Amazon Elastic Compute Cloud');
     expect(text).toContain('eu-central-1');
+  });
+
+  it('explore_data rejects a tag_-prefixed sort column that is not a bare identifier', async () => {
+    // The tag_ pass-through must stay identifier-shaped: a bare prefix check
+    // would interpolate this straight into ORDER BY and execute read_csv.
+    const { text, isError } = await client.callTool('explore_data', {
+      dateRange: { start: '2026-01-01', end: '2026-01-07' },
+      sort: { column: "tag_x = read_csv('no-such-file.csv')", direction: 'asc' },
+      groupByColumns: ["tag_y, read_csv('no-such-file.csv')"],
+      limit: 5,
+    });
+    // Both hostile columns are dropped: the group-by list empties (raw mode)
+    // and the sort falls back to the default, so the query still succeeds.
+    expect(isError).toBe(false);
+    expect(text).toContain('Raw Data');
   });
 
   // ---------- run_sql ----------

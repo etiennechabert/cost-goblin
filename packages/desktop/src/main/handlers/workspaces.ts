@@ -65,55 +65,11 @@ export function registerWorkspacesHandlers(app: AppContext): void {
         lastUsedAt: appState.lastUsed?.[name] ?? null,
       });
     }
-    workspaces.sort((a, b) => (a.active === b.active ? a.name.localeCompare(b.name) : a.active ? -1 : 1));
-    return { mode: 'workspace', active: env.name, workspaces };
-  }
-
-  function relaunch(postSetup: boolean): void {
-    // Under e2e a relaunched instance would detach from Playwright and outlive
-    // the test session — just quit; the test asserts the persisted app-state.
-    if (process.env['COSTGOBLIN_E2E'] !== '1') {
-      const args = process.argv.slice(1).filter((a) => a !== POST_SETUP_FLAG);
-      if (postSetup) args.push(POST_SETUP_FLAG);
-      electronApp.relaunch({ args });
-    }
-    electronApp.quit();
-  }
-
-  /** Queue the ACTIVE workspace's directory rename for the next launch and
-   *  restart into the new name. The physical rename cannot happen in-process:
-   *  the running app holds open handles inside the directory (DuckDB's
-   *  temp_directory, mmapped Parquet readers), which makes `fs.rename` fail
-   *  with EPERM on Windows. `resolveWorkspaceEnv` applies the queued rename on
-   *  the next boot, before anything is opened. */
-  async function deferRenameAndRelaunch(
-    appStatePath: string,
-    from: WorkspaceName,
-    to: WorkspaceName,
-    postSetup: boolean,
-  ): Promise<void> {
-    await updatePrefsFile(appStatePath, (current) => {
-      const moved = moveLastUsedKey(current, from, to);
-      const lastUsedRaw = moved['lastUsed'];
-      const lastUsed: Record<string, unknown> = isStringRecord(lastUsedRaw) ? { ...lastUsedRaw } : {};
-      lastUsed[to] = new Date().toISOString();
-      return { ...moved, lastWorkspace: to, lastUsed, pendingRename: { from, to } };
+    workspaces.sort((a, b) => {
+      if (a.active === b.active) return a.name.localeCompare(b.name);
+      return a.active ? -1 : 1;
     });
-    relaunch(postSetup);
-  }
-
-  /** Persist `name` as last-used (stamping lastUsed) then restart into it. */
-  async function relaunchInto(appStatePath: string, name: WorkspaceName, postSetup: boolean): Promise<void> {
-    await updatePrefsFile(appStatePath, (current) => ({
-      ...current,
-      schemaVersion: 1,
-      lastWorkspace: name,
-      lastUsed: {
-        ...(isStringRecord(current['lastUsed']) ? current['lastUsed'] : {}),
-        [name]: new Date().toISOString(),
-      },
-    }));
-    relaunch(postSetup);
+    return { mode: 'workspace', active: env.name, workspaces };
   }
 
   function requireWorkspaceMode(): Extract<WorkspaceEnv, { mode: 'workspace' }> {
@@ -221,6 +177,53 @@ export function registerWorkspacesHandlers(app: AppContext): void {
     logger.info(`Workspace name claim queued at setup completion: ${env.name} -> ${name}`);
     await deferRenameAndRelaunch(env.appStatePath, env.name, name, true);
   });
+}
+
+function relaunch(postSetup: boolean): void {
+  // Under e2e a relaunched instance would detach from Playwright and outlive
+  // the test session — just quit; the test asserts the persisted app-state.
+  if (process.env['COSTGOBLIN_E2E'] !== '1') {
+    const args = process.argv.slice(1).filter((a) => a !== POST_SETUP_FLAG);
+    if (postSetup) args.push(POST_SETUP_FLAG);
+    electronApp.relaunch({ args });
+  }
+  electronApp.quit();
+}
+
+/** Queue the ACTIVE workspace's directory rename for the next launch and
+ *  restart into the new name. The physical rename cannot happen in-process:
+ *  the running app holds open handles inside the directory (DuckDB's
+ *  temp_directory, mmapped Parquet readers), which makes `fs.rename` fail
+ *  with EPERM on Windows. `resolveWorkspaceEnv` applies the queued rename on
+ *  the next boot, before anything is opened. */
+async function deferRenameAndRelaunch(
+  appStatePath: string,
+  from: WorkspaceName,
+  to: WorkspaceName,
+  postSetup: boolean,
+): Promise<void> {
+  await updatePrefsFile(appStatePath, (current) => {
+    const moved = moveLastUsedKey(current, from, to);
+    const lastUsedRaw = moved['lastUsed'];
+    const lastUsed: Record<string, unknown> = isStringRecord(lastUsedRaw) ? { ...lastUsedRaw } : {};
+    lastUsed[to] = new Date().toISOString();
+    return { ...moved, lastWorkspace: to, lastUsed, pendingRename: { from, to } };
+  });
+  relaunch(postSetup);
+}
+
+/** Persist `name` as last-used (stamping lastUsed) then restart into it. */
+async function relaunchInto(appStatePath: string, name: WorkspaceName, postSetup: boolean): Promise<void> {
+  await updatePrefsFile(appStatePath, (current) => ({
+    ...current,
+    schemaVersion: 1,
+    lastWorkspace: name,
+    lastUsed: {
+      ...(isStringRecord(current['lastUsed']) ? current['lastUsed'] : {}),
+      [name]: new Date().toISOString(),
+    },
+  }));
+  relaunch(postSetup);
 }
 
 /** Move (or with `to: null`, drop) a workspace's lastUsed entry, and retarget
