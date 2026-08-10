@@ -3,8 +3,8 @@ import {
   GCS_READ_ONLY_SCOPE,
   classifyGcsFolder,
   findGcloudCli,
-  gcloudCliFound,
-  gcloudSearchPaths,
+  gcloudChildPath,
+  gcloudSpawnShape,
   logger,
   parseS3Path,
   isStringRecord,
@@ -216,34 +216,30 @@ export function registerSetupHandlers(app: AppContext): void {
 
   ipcMain.handle('setup:list-gcp-projects', async (): Promise<{ projects: readonly GcpProject[]; error?: string | undefined }> => {
     const { spawn } = await import('node:child_process');
-    const { delimiter } = await import('node:path');
     const { StringDecoder } = await import('node:string_decoder');
 
-    // Windows ships gcloud as `gcloud.cmd`, which Node refuses to spawn
-    // without a shell (CVE-2024-27980) — and cmd.exe starts fine whether or
-    // not gcloud exists, so ENOENT can never fire there. Probe the disk first
-    // or the "not installed" branch is unreachable on Windows.
-    const useShell = process.platform === 'win32';
-    if (useShell && !gcloudCliFound()) {
+    // `findGcloudCli` returning null is the "not installed" signal on every
+    // platform — it cannot come from spawn: on Windows gcloud is a `.cmd`
+    // that needs a shell (CVE-2024-27980, encapsulated in gcloudSpawnShape),
+    // and cmd.exe starts fine whether or not gcloud exists, so ENOENT can
+    // never fire there.
+    const bin = findGcloudCli();
+    if (bin === null) {
       return { projects: [], error: 'GCLOUD_CLI_NOT_FOUND' };
     }
-    const bin = findGcloudCli();
-    const currentPath = process.env['PATH'] ?? '';
-    const fullPath = [...new Set([...currentPath.split(delimiter), ...gcloudSearchPaths()])].join(delimiter);
-    const args = ['projects', 'list', '--format=json'];
+    // Trusted SDK dirs first — see gcloudChildPath: the launcher's helper
+    // lookups must not be served by a writable early inherited-PATH entry.
+    const fullPath = gcloudChildPath(process.env['PATH'] ?? '');
+    const shape = gcloudSpawnShape(bin, ['projects', 'list', '--format=json']);
 
     return new Promise<{ projects: readonly GcpProject[]; error?: string | undefined }>((resolve) => {
-      const proc = spawn(
-        useShell ? `"${bin}"` : bin,
-        useShell ? args.map(a => `"${a}"`) : args,
-        {
-          // stdin ignored: a gcloud that wants interactive re-auth must fail
-          // on the timeout below rather than block waiting for input.
-          stdio: ['ignore', 'pipe', 'pipe'],
-          shell: useShell,
-          env: { ...process.env, PATH: fullPath },
-        },
-      );
+      const proc = spawn(shape.command, shape.args, {
+        // stdin ignored: a gcloud that wants interactive re-auth must fail
+        // on the timeout below rather than block waiting for input.
+        stdio: ['ignore', 'pipe', 'pipe'],
+        shell: shape.shell,
+        env: { ...process.env, PATH: fullPath },
+      });
 
       // StringDecoder, not chunk.toString(): a pipe boundary can fall mid
       // multi-byte character, and two halves each decode to U+FFFD. JSON still
