@@ -10,7 +10,16 @@ import type { ManifestFileEntry } from './manifest.js';
 import { providerMetaDir, providerRawDir } from './provider-paths.js';
 import type { ProgressCallback } from './s3-client.js';
 import { extractPeriodPrefix, getRawDirPrefix, groupByPeriod, saveEtags } from './sync-utils.js';
-import { findGcloudCli } from './trusted-binaries.js';
+import { findGcloudCli, gcloudChildPath, gcloudSpawnShape } from './trusted-binaries.js';
+
+/** One const for the pre-spawn guard and the ENOENT race below, so the two
+ *  user-facing copies cannot drift. The 'Google Cloud CLI not found' head is
+ *  pinned by tests; the tail must avoid the gcloud credential classifiers'
+ *  markers ('gcloud auth login' etc.) or a missing CLI would be reported as
+ *  an expired session. */
+const GCLOUD_CLI_MISSING = process.platform === 'darwin'
+  ? 'Google Cloud CLI not found — install it with: brew install --cask google-cloud-sdk'
+  : 'Google Cloud CLI not found — install it: https://cloud.google.com/sdk/docs/install';
 
 /** The GCP sync mirrors the AWS one seam for seam: the vendor SDK lists the
  *  bucket (change detection), and the vendor CLI moves the bytes. `gcloud
@@ -122,42 +131,52 @@ function runGcloudStorageRsync(options: GcloudRsyncOptions): Promise<void> {
 
     // Absolute trusted install only — never a bare-name PATH lookup, which
     // would let a writable early PATH entry substitute the binary that holds
-    // the GCP session. Same message as the ENOENT branch below so the failure
-    // reads identically wherever it surfaces.
+    // the GCP session.
     const gcloudPath = findGcloudCli();
     if (gcloudPath === null) {
-      reject(new Error('Google Cloud CLI not found — install it with: brew install --cask google-cloud-sdk'));
+      reject(new Error(GCLOUD_CLI_MISSING));
       return;
     }
 
-    // The Windows Cloud SDK ships `gcloud.cmd`, and since Node 18.20.2 /
-    // 20.12.2 (CVE-2024-27980) spawning a `.cmd` without a shell fails with
-    // EINVAL — which is not in the emit-as-'error' list, so it would throw out
-    // of this executor and every GCP sync would die before a byte moved.
-    // Arguments are quoted because the staging destination is a user path that
-    // routinely contains spaces; `isSafePeriodPrefix` has already rejected the
-    // shell metacharacters that quoting alone would not contain.
-    const useShell = process.platform === 'win32';
-    const proc = spawn(
-      useShell ? `"${gcloudPath}"` : gcloudPath,
-      useShell ? args.map(arg => `"${arg}"`) : args,
-      { stdio: ['ignore', 'pipe', 'pipe'], env, shell: useShell },
-    );
+    // Trusted SDK directories first, then the inherited entries: the gcloud
+    // launcher resolves its own helpers (python3) from the child PATH, and
+    // an inherited-first PATH would hand that lookup to a writable early
+    // entry — the substitution class the resolver above closes for the
+    // binary itself.
+    env['PATH'] = gcloudChildPath(process.env['PATH'] ?? '');
+
+    // Checked BEFORE spawning: an early return after spawn would leave a
+    // process whose 'error' event has no listener yet, and an unlistened
+    // ChildProcess 'error' is an uncaught exception in the worker.
+    if (options.signal?.aborted) {
+      reject(new Error('Download cancelled'));
+      return;
+    }
+
+    // `gcloudSpawnShape` owns the CVE-2024-27980 recipe: gcloud.cmd cannot
+    // spawn without a shell on Windows, and under cmd.exe every token is
+    // quoted — safe because the staging destination has passed
+    // `isSafePeriodPrefix` and the impersonation target is validated at
+    // config load, so no arg carries the metacharacters quoting can't contain.
+    const shape = gcloudSpawnShape(gcloudPath, args);
+    const proc = spawn(shape.command, shape.args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env,
+      shell: shape.shell,
+    });
 
     const onAbort = (): void => { proc.kill(); };
-    if (options.signal !== undefined) {
-      if (options.signal.aborted) {
-        proc.kill();
-        reject(new Error('Download cancelled'));
-        return;
-      }
-      options.signal.addEventListener('abort', onAbort, { once: true });
-    }
     // `{ once: true }` fires once; it does NOT detach on normal completion.
     // One AbortSignal covers a whole sync, so a 24-month backfill left 24 dead
     // listeners on it — each pinning a finished ChildProcess and its two piped
     // streams — and Node warns about a leak from the 11th period on.
     const detachAbort = (): void => { options.signal?.removeEventListener('abort', onAbort); };
+    if (options.signal !== undefined) {
+      options.signal.addEventListener('abort', onAbort, { once: true });
+      // Aborted between the head check and the attach: a past abort never
+      // re-fires the listener, so kill directly ('close' rejects below).
+      if (options.signal.aborted) proc.kill();
+    }
 
     /** The tail of stderr with the progress feed stripped — see
      *  `isProgressNoise`. Bounded so a run that fails after a long transfer
@@ -202,7 +221,7 @@ function runGcloudStorageRsync(options: GcloudRsyncOptions): Promise<void> {
     proc.on('error', (err: Error) => {
       detachAbort();
       if (err.message.includes('ENOENT')) {
-        reject(new Error('Google Cloud CLI not found — install it with: brew install --cask google-cloud-sdk'));
+        reject(new Error(GCLOUD_CLI_MISSING));
       } else {
         reject(err);
       }

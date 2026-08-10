@@ -18,10 +18,17 @@ vi.mock('../logger/logger.js');
 
 // The suite must not depend on whether the machine running it has gcloud
 // installed; individual cases flip this to null to exercise the miss path.
+// The two helpers are stubbed to POSIX pass-through shapes so the argv the
+// cases inspect stays exactly what the sync layer built.
 const { mockFindGcloudCli } = vi.hoisted(() => ({
   mockFindGcloudCli: vi.fn((): string | null => '/mock/trusted/gcloud'),
 }));
-vi.mock('../sync/trusted-binaries.js', () => ({ findGcloudCli: mockFindGcloudCli }));
+vi.mock('../sync/trusted-binaries.js', () => ({
+  findGcloudCli: mockFindGcloudCli,
+  gcloudChildPath: (inherited: string): string => inherited,
+  gcloudSpawnShape: (bin: string, args: readonly string[]): { command: string; args: string[]; shell: boolean } =>
+    ({ command: bin, args: [...args], shell: false }),
+}));
 
 const providerName = asProviderName('gcp-main');
 

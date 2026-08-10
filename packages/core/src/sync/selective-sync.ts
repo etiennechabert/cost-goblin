@@ -19,6 +19,15 @@ import { findAwsCli } from './trusted-binaries.js';
 
 export type { ExpectedDataType } from './sync-utils.js';
 
+/** One const for the pre-spawn guard and the ENOENT race below, so the two
+ *  user-facing copies cannot drift. The 'AWS CLI not found' head is pinned by
+ *  tests; the tail must never contain the word 'credential' — the credential
+ *  classifier's catch-all /credential/i would reclassify the message as an
+ *  expired session. */
+const AWS_CLI_MISSING = process.platform === 'darwin'
+  ? 'AWS CLI not found — install it with: brew install awscli'
+  : 'AWS CLI not found — install it: https://aws.amazon.com/cli/';
+
 export interface SelectiveSyncOptions {
   readonly bucketPath: string;
   readonly profile: string;
@@ -48,25 +57,36 @@ function runAwsS3Sync(options: {
   return new Promise((resolve, reject) => {
     // Absolute trusted install only — never a bare-name PATH lookup, which
     // would let a writable early PATH entry substitute the binary that holds
-    // the AWS session. Same message as the ENOENT branch below so the failure
-    // reads identically wherever it surfaces.
+    // the AWS session.
     const awsBin = findAwsCli();
     if (awsBin === null) {
-      reject(new Error('AWS CLI not found — install it with: brew install awscli'));
+      reject(new Error(AWS_CLI_MISSING));
+      return;
+    }
+
+    // Checked BEFORE spawning: an early return after spawn would leave a
+    // process whose 'error' event has no listener yet, and an unlistened
+    // ChildProcess 'error' is an uncaught exception in the worker.
+    if (options.signal?.aborted) {
+      reject(new Error('Download cancelled'));
       return;
     }
 
     const args = ['s3', 'sync', options.source, options.dest, '--profile', options.profile];
     const proc = spawn(awsBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
+    const onAbort = (): void => { proc.kill(); };
+    // `{ once: true }` fires once; it does NOT detach on normal completion.
+    // One AbortSignal covers a whole sync, so without the detach below a long
+    // backfill leaves one dead listener per period, each pinning a finished
+    // ChildProcess and its piped streams — the leak the gcloud runner had
+    // already fixed.
+    const detachAbort = (): void => { options.signal?.removeEventListener('abort', onAbort); };
     if (options.signal !== undefined) {
-      if (options.signal.aborted) {
-        proc.kill();
-        reject(new Error('Download cancelled'));
-        return;
-      }
-      const onAbort = () => { proc.kill(); };
       options.signal.addEventListener('abort', onAbort, { once: true });
+      // Aborted between the head check and the attach: a past abort never
+      // re-fires the listener, so kill directly ('close' rejects below).
+      if (options.signal.aborted) proc.kill();
     }
 
     let stderr = '';
@@ -93,14 +113,16 @@ function runAwsS3Sync(options: {
     });
 
     proc.on('error', (err: Error) => {
+      detachAbort();
       if (err.message.includes('ENOENT')) {
-        reject(new Error('AWS CLI not found — install it with: brew install awscli'));
+        reject(new Error(AWS_CLI_MISSING));
       } else {
         reject(err);
       }
     });
 
     proc.on('close', (code, signal) => {
+      detachAbort();
       if (signal === 'SIGTERM' || options.signal?.aborted) {
         reject(new Error('Download cancelled'));
       } else if (code === 0) {

@@ -16,7 +16,8 @@ import {
   resolveBucketPath,
   findAwsCli,
   findGcloudCli,
-  gcloudSearchPaths,
+  gcloudChildPath,
+  gcloudSpawnShape,
   logger,
   providerAuth,
 } from '@costgoblin/core';
@@ -416,14 +417,11 @@ export function registerSyncHandlers(app: AppContext): void {
   // bridge and the SSO button, and GCP's ADC login takes no profile at all.
   ipcMain.handle('data:gcloud-login', async (_event, rawMode: unknown, rawProvider: unknown): Promise<void> => {
     const { spawn } = await import('node:child_process');
-    const { delimiter } = await import('node:path');
-    const currentPath = process.env['PATH'] ?? '';
-    // Child-env PATH augmentation only — gcloud itself is spawned by the
-    // absolute path below, but the launcher script still resolves its own
-    // helpers (python, bundled components) from PATH. Derived from core's
-    // candidate list rather than a second hand-written copy, which had
-    // already drifted once (omitting every Windows location).
-    const fullPath = [...new Set([...currentPath.split(delimiter), ...gcloudSearchPaths()])].join(delimiter);
+    // Child-env PATH only — gcloud itself is spawned by the absolute path
+    // below. `gcloudChildPath` puts the trusted SDK dirs first so the
+    // launcher's own helper lookups (python) cannot be served by a writable
+    // early inherited-PATH entry.
+    const fullPath = gcloudChildPath(process.env['PATH'] ?? '');
 
     const mode: GcloudLoginMode = rawMode === 'cli' ? 'cli' : 'adc';
 
@@ -458,23 +456,20 @@ export function registerSyncHandlers(app: AppContext): void {
 
     // `findGcloudCli` returning null is the "not installed" signal on every
     // platform — it cannot come from spawn: on Windows gcloud is a `.cmd`
-    // that needs a shell (CVE-2024-27980), and cmd.exe starts successfully
-    // whether or not gcloud exists, so ENOENT never fires there.
+    // that needs a shell (CVE-2024-27980, encapsulated in gcloudSpawnShape),
+    // and cmd.exe starts successfully whether or not gcloud exists, so ENOENT
+    // never fires there.
     const bin = findGcloudCli();
     if (bin === null) throw new Error('GCLOUD_CLI_NOT_FOUND');
-    const useShell = process.platform === 'win32';
+    const shape = gcloudSpawnShape(bin, loginArgs);
 
     return new Promise<void>((resolve, reject) => {
-      const child = spawn(
-        useShell ? `"${bin}"` : bin,
-        useShell ? loginArgs.map(a => `"${a}"`) : loginArgs,
-        {
-          stdio: 'ignore',
-          detached: true,
-          shell: useShell,
-          env: { ...process.env, PATH: fullPath },
-        },
-      );
+      const child = spawn(shape.command, shape.args, {
+        stdio: 'ignore',
+        detached: true,
+        shell: shape.shell,
+        env: { ...process.env, PATH: fullPath },
+      });
       child.on('error', (err: NodeJS.ErrnoException) => {
         if (err.code === 'ENOENT') {
           reject(new Error('GCLOUD_CLI_NOT_FOUND'));

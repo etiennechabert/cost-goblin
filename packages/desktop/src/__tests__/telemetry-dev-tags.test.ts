@@ -56,12 +56,10 @@ describe('readDevTagsSync', () => {
   });
 
   it('returns no tags when git has no trusted install — no bare-name fallback', () => {
-    mockFindGitCli.mockReturnValue(null);
-    try {
-      expect(readDevTagsSync(false, '/repo')).toStrictEqual({});
-      expect(mockExecFileSync).not.toHaveBeenCalled();
-    } finally {
-      mockFindGitCli.mockReturnValue('/trusted/bin/git');
-    }
+    // Once per gitOut call (branch, then commit); the vi.fn default
+    // implementation resumes afterwards, matching the sibling sync suites.
+    mockFindGitCli.mockReturnValueOnce(null).mockReturnValueOnce(null);
+    expect(readDevTagsSync(false, '/repo')).toStrictEqual({});
+    expect(mockExecFileSync).not.toHaveBeenCalled();
   });
 });
