@@ -473,6 +473,24 @@ describe('MCP server E2E', () => {
     expect(text).toContain('|');
   });
 
+  it('run_sql accepts a trailing semicolon and LIMIT ... OFFSET without doubling LIMIT', async () => {
+    // The validator strips one trailing ';' — the wrapper must too, and its
+    // has-LIMIT probe must see through an OFFSET suffix, or the appended
+    // `LIMIT 100` turns a valid query into a DuckDB parser error.
+    for (const sql of [
+      'SELECT service, SUM(cost) as total FROM costs GROUP BY service ORDER BY total DESC LIMIT 5;',
+      'SELECT service, SUM(cost) as total FROM costs GROUP BY service ORDER BY total DESC LIMIT 5 OFFSET 1',
+      'SELECT service FROM costs GROUP BY service;',
+    ]) {
+      const { text, isError } = await client.callTool('run_sql', {
+        sql,
+        dateRange: { start: '2026-01-01', end: '2026-01-31' },
+      });
+      expect(isError).toBe(false);
+      expect(text).toContain('Query Result');
+    }
+  });
+
   it('run_sql rejects non-SELECT queries', async () => {
     const { text, isError } = await client.callTool('run_sql', {
       sql: 'DROP TABLE costs',

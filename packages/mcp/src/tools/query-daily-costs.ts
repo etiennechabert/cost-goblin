@@ -12,13 +12,86 @@ import {
   defaultDateRange,
   emptyRangeResult,
   lookupDimension,
+  mondayOf,
   resolveFormat,
   structuredToolResult,
   toDimensionId,
   toDateRange,
   toFilterMap,
   toNum,
+  toStr,
 } from './tool-helpers.js';
+
+/** One bucket's per-group costs; the key is a day, or a week's Monday after
+ *  bucketByWeek. */
+type BucketBreakdown = readonly [string, Record<string, number>];
+
+function aggregateByDay(rows: readonly Readonly<Record<string, unknown>>[]): { dayMap: Map<string, Record<string, number>>; totalCost: number } {
+  const dayMap = new Map<string, Record<string, number>>();
+  let totalCost = 0;
+  for (const row of rows) {
+    const date = toStr(row['date']);
+    const group = typeof row['group_name'] === 'string' ? row['group_name'] : '';
+    const cost = toNum(row['cost']);
+    totalCost += cost;
+    const existing = dayMap.get(date);
+    if (existing === undefined) {
+      dayMap.set(date, { [group]: cost });
+    } else {
+      existing[group] = (existing[group] ?? 0) + cost;
+    }
+  }
+  return { dayMap, totalCost };
+}
+
+/** The 5 costliest groups over the window — the only ones broken out as columns. */
+function topGroupsOf(sortedDays: readonly BucketBreakdown[]): string[] {
+  const groupTotals = new Map<string, number>();
+  for (const [, breakdown] of sortedDays) {
+    for (const [group, cost] of Object.entries(breakdown)) {
+      groupTotals.set(group, (groupTotals.get(group) ?? 0) + cost);
+    }
+  }
+  return [...groupTotals.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([name]) => name);
+}
+
+/** Re-buckets daily breakdowns into weeks keyed by their Monday. */
+function bucketByWeek(sortedDays: readonly BucketBreakdown[]): BucketBreakdown[] {
+  const weekMap = new Map<string, Record<string, number>>();
+  for (const [date, breakdown] of sortedDays) {
+    const weekKey = mondayOf(date);
+    const existing = weekMap.get(weekKey);
+    if (existing === undefined) {
+      weekMap.set(weekKey, { ...breakdown });
+    } else {
+      for (const [group, cost] of Object.entries(breakdown)) {
+        existing[group] = (existing[group] ?? 0) + cost;
+      }
+    }
+  }
+  return [...weekMap.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+}
+
+/** Column list and row shape are one positional contract: [label, total,
+ *  ...topGroups]. These two builders sit together so an edit to either has the
+ *  counterpart in view. */
+function breakdownColumns(dateHeader: string, topGroups: readonly string[]): Column[] {
+  return [
+    { key: 'date', header: dateHeader },
+    { key: 'total', header: 'Total', type: 'currency' },
+    ...topGroups.map((g): Column => ({ key: `grp_${g}`, header: g, type: 'currency' })),
+  ];
+}
+
+function breakdownRows(entries: readonly BucketBreakdown[], topGroups: readonly string[], labelOf: (key: string) => string): Cell[][] {
+  return entries.map(([key, breakdown]): Cell[] => {
+    const total = Object.values(breakdown).reduce((s, v) => s + v, 0);
+    return [labelOf(key), total, ...topGroups.map((g): Cell => breakdown[g] ?? 0)];
+  });
+}
 
 export async function queryDailyCosts(
   ctx: McpContext,
@@ -48,44 +121,9 @@ export async function queryDailyCosts(
   logger.info('query-daily-costs', { groupBy, dateRange });
   const rows = await ctx.runPreparedQuery(sql, queryParams);
 
-  const dayMap = new Map<string, Record<string, number>>();
-  let totalCost = 0;
-
-  for (const row of rows) {
-    const rawDate = row['date'];
-    let date: string;
-    if (rawDate instanceof Date) {
-      date = rawDate.toISOString().slice(0, 10);
-    } else if (typeof rawDate === 'string') {
-      date = rawDate;
-    } else {
-      date = '';
-    }
-    const group = typeof row['group_name'] === 'string' ? row['group_name'] : '';
-    const cost = toNum(row['cost']);
-
-    totalCost += cost;
-
-    const existing = dayMap.get(date);
-    if (existing === undefined) {
-      dayMap.set(date, { [group]: cost });
-    } else {
-      existing[group] = (existing[group] ?? 0) + cost;
-    }
-  }
-
-  const sortedDays = [...dayMap.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-
-  const groupTotals = new Map<string, number>();
-  for (const [, breakdown] of sortedDays) {
-    for (const [group, cost] of Object.entries(breakdown)) {
-      groupTotals.set(group, (groupTotals.get(group) ?? 0) + cost);
-    }
-  }
-  const topGroups = [...groupTotals.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map(([name]) => name);
+  const { dayMap, totalCost } = aggregateByDay(rows);
+  const sortedDays: BucketBreakdown[] = [...dayMap.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  const topGroups = topGroupsOf(sortedDays);
 
   const { label: dimLabel } = lookupDimension(groupBy, opts.dimensions);
 
@@ -94,48 +132,10 @@ export async function queryDailyCosts(
   const windowDays = Math.round((endMs - startMs) / 86_400_000) + 1;
   const useWeekly = windowDays > 14;
 
-  const columns: Column[] = [
-    { key: 'date', header: useWeekly ? 'Week' : 'Date' },
-    { key: 'total', header: 'Total', type: 'currency' },
-    ...topGroups.map((g): Column => ({ key: `grp_${g}`, header: g, type: 'currency' })),
-  ];
-
-  let tableRows: Cell[][];
-  if (useWeekly) {
-    const weekMap = new Map<string, Record<string, number>>();
-    for (const [date, breakdown] of sortedDays) {
-      const d = new Date(`${date}T00:00:00Z`);
-      const day = d.getUTCDay();
-      const monday = new Date(d.getTime() - ((day === 0 ? 6 : day - 1) * 86_400_000));
-      const weekKey = monday.toISOString().slice(0, 10);
-      const existing = weekMap.get(weekKey);
-      if (existing === undefined) {
-        weekMap.set(weekKey, { ...breakdown });
-      } else {
-        for (const [group, cost] of Object.entries(breakdown)) {
-          existing[group] = (existing[group] ?? 0) + cost;
-        }
-      }
-    }
-    const sortedWeeks = [...weekMap.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-    tableRows = sortedWeeks.map(([week, breakdown]): Cell[] => {
-      const dayTotal = Object.values(breakdown).reduce((s, v) => s + v, 0);
-      return [
-        `w/${week}`,
-        dayTotal,
-        ...topGroups.map((g): Cell => breakdown[g] ?? 0),
-      ];
-    });
-  } else {
-    tableRows = sortedDays.map(([date, breakdown]): Cell[] => {
-      const dayTotal = Object.values(breakdown).reduce((s, v) => s + v, 0);
-      return [
-        date,
-        dayTotal,
-        ...topGroups.map((g): Cell => breakdown[g] ?? 0),
-      ];
-    });
-  }
+  const columns = breakdownColumns(useWeekly ? 'Week' : 'Date', topGroups);
+  const tableRows: Cell[][] = useWeekly
+    ? breakdownRows(bucketByWeek(sortedDays), topGroups, (week) => `w/${week}`)
+    : breakdownRows(sortedDays, topGroups, (date) => date);
 
   const coverage = await computeDataCoverage(ctx, dateRange);
   const result: StructuredResult = {

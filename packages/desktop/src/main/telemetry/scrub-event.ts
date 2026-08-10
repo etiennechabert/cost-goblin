@@ -27,14 +27,8 @@ function scrubFrame(frame: StackFrame): void {
   delete frame.post_context;
 }
 
-export function redactEventInPlace(event: Event): void {
-  // Direct-identifier / machine-detail fields: drop wholesale.
-  delete event.user;
-  delete event.request;
-  delete event.server_name;
-  delete event.extra;
-
-  // Free-text fields that may quote business data.
+/** Free-text fields that may quote business data. */
+function scrubFreeText(event: Event): void {
   if (typeof event.message === 'string') event.message = redactSensitiveString(event.message);
   if (event.logentry && typeof event.logentry.message === 'string') {
     event.logentry.message = redactSensitiveString(event.logentry.message);
@@ -44,9 +38,11 @@ export function redactEventInPlace(event: Event): void {
   if (typeof event.transaction === 'string') event.transaction = redactSensitiveString(event.transaction);
   // Fingerprints can be set with dynamic values.
   if (event.fingerprint) event.fingerprint = event.fingerprint.map((f) => redactSensitiveString(f));
+}
 
-  // Exceptions and threads share a stack-frame shape — scrub both. (Native
-  // crashes / profiling populate `threads`; JS errors populate `exception`.)
+/** Exceptions and threads share a stack-frame shape — scrub both. (Native
+ *  crashes / profiling populate `threads`; JS errors populate `exception`.) */
+function scrubStacktraces(event: Event): void {
   for (const ex of event.exception?.values ?? []) {
     if (typeof ex.value === 'string') ex.value = redactSensitiveString(ex.value);
     for (const frame of ex.stacktrace?.frames ?? []) scrubFrame(frame);
@@ -54,9 +50,11 @@ export function redactEventInPlace(event: Event): void {
   for (const thread of event.threads?.values ?? []) {
     for (const frame of thread.stacktrace?.frames ?? []) scrubFrame(frame);
   }
+}
 
-  // Transactions: span descriptions (often the operation / SQL shape) and span
-  // data (HTTP hosts, S3 URIs, file paths) are scrubbed in place.
+/** Transactions: span descriptions (often the operation / SQL shape) and span
+ *  data (HTTP hosts, S3 URIs, file paths) are scrubbed in place. */
+function scrubSpans(event: Event): void {
   for (const span of event.spans ?? []) {
     if (typeof span.description === 'string') span.description = redactSensitiveString(span.description);
     for (const [key, value] of Object.entries(span.data)) {
@@ -71,8 +69,10 @@ export function redactEventInPlace(event: Event): void {
       }
     }
   }
+}
 
-  // Breadcrumbs: scrub the message and deep-redact structured data.
+/** Breadcrumbs: scrub the message and deep-redact structured data. */
+function scrubBreadcrumbs(event: Event): void {
   for (const crumb of event.breadcrumbs ?? []) {
     if (typeof crumb.message === 'string') crumb.message = redactSensitiveString(crumb.message);
     if (crumb.data !== undefined) {
@@ -83,28 +83,45 @@ export function redactEventInPlace(event: Event): void {
       crumb.data = isStringRecord(scrubbed) ? { ...scrubbed } : {};
     }
   }
+}
 
-  // Tags: drop secret-bearing keys, pattern-scrub the rest.
-  if (event.tags) {
-    for (const [key, value] of Object.entries(event.tags)) {
-      if (isSensitiveKey(key)) event.tags[key] = '[redacted]';
-      else if (typeof value === 'string') event.tags[key] = redactSensitiveString(value);
-      else if (typeof value === 'number') event.tags[key] = redactNumeric(value);
-    }
+/** Tags: drop secret-bearing keys, pattern-scrub the rest. */
+function scrubTags(event: Event): void {
+  if (!event.tags) return;
+  for (const [key, value] of Object.entries(event.tags)) {
+    if (isSensitiveKey(key)) event.tags[key] = '[redacted]';
+    else if (typeof value === 'string') event.tags[key] = redactSensitiveString(value);
+    else if (typeof value === 'number') event.tags[key] = redactNumeric(value);
   }
+}
 
-  // Contexts: allowlist the low-PII, debugging-useful ones; drop the rest
-  // (e.g. `device` carries the hostname). Kept values are still deep-redacted —
-  // `trace` carries a span description/data that can quote a query or path.
-  // Rebuilt rather than delete-in-loop so we keep the typed shape.
-  if (event.contexts) {
-    const allowed = new Set(['os', 'runtime', 'app', 'trace']);
-    const kept: NonNullable<Event['contexts']> = {};
-    for (const [key, value] of Object.entries(event.contexts)) {
-      if (!allowed.has(key) || value === undefined) continue;
-      const scrubbed = redactValueDeep(value);
-      if (isStringRecord(scrubbed)) kept[key] = scrubbed;
-    }
-    event.contexts = kept;
+/** Contexts: allowlist the low-PII, debugging-useful ones; drop the rest
+ *  (e.g. `device` carries the hostname). Kept values are still deep-redacted —
+ *  `trace` carries a span description/data that can quote a query or path.
+ *  Rebuilt rather than delete-in-loop so we keep the typed shape. */
+function scrubContexts(event: Event): void {
+  if (!event.contexts) return;
+  const allowed = new Set(['os', 'runtime', 'app', 'trace']);
+  const kept: NonNullable<Event['contexts']> = {};
+  for (const [key, value] of Object.entries(event.contexts)) {
+    if (!allowed.has(key) || value === undefined) continue;
+    const scrubbed = redactValueDeep(value);
+    if (isStringRecord(scrubbed)) kept[key] = scrubbed;
   }
+  event.contexts = kept;
+}
+
+export function redactEventInPlace(event: Event): void {
+  // Direct-identifier / machine-detail fields: drop wholesale.
+  delete event.user;
+  delete event.request;
+  delete event.server_name;
+  delete event.extra;
+
+  scrubFreeText(event);
+  scrubStacktraces(event);
+  scrubSpans(event);
+  scrubBreadcrumbs(event);
+  scrubTags(event);
+  scrubContexts(event);
 }

@@ -48,6 +48,7 @@ import type {
   BaselinesListParams,
   BaselinesListResult,
   CostScopeConfig,
+  DateRange,
   DimensionId,
   DimensionsConfig,
   EntityRef,
@@ -56,6 +57,7 @@ import type {
   OrgNode,
   ProviderName,
   ProviderSourceSpec,
+  QueryContextOptions,
   TagValue,
 } from '@costgoblin/core';
 import type { RawRow } from './duckdb-client.js';
@@ -195,30 +197,34 @@ export class BaselineStore {
     if (!isRecord(raw)) return;
     if (isRecord(raw['config'])) this.userConfig = parseConfig(raw['config']);
     const dimensions = await deps.getQueryDimensions();
-    if (Array.isArray(raw['baselines'])) {
-      // Validate per-spec, not atomically — one bad spec (e.g. its scope
-      // references a since-renamed dimension) must not discard every other
-      // baseline, including user-triaged ones with notes/manual bands.
-      let dropped = 0;
-      for (const entry of raw['baselines']) {
-        try {
-          const [spec] = validateBaselines({ baselines: [entry] }, dimensions);
-          if (spec !== undefined) this.specs.set(spec.id, spec);
-        } catch { dropped += 1; }
-      }
-      if (dropped > 0) logger.warn('baselines: dropped invalid specs on load', { dropped });
+    if (Array.isArray(raw['baselines'])) this.ingestSpecEntries(raw['baselines'], dimensions);
+    if (isRecord(raw['meta'])) this.ingestSpecMeta(raw['meta']);
+  }
+
+  /** Validate per-spec, not atomically — one bad spec (e.g. its scope
+   *  references a since-renamed dimension) must not discard every other
+   *  baseline, including user-triaged ones with notes/manual bands. */
+  private ingestSpecEntries(entries: readonly unknown[], dimensions: DimensionsConfig): void {
+    let dropped = 0;
+    for (const entry of entries) {
+      try {
+        const [spec] = validateBaselines({ baselines: [entry] }, dimensions);
+        if (spec !== undefined) this.specs.set(spec.id, spec);
+      } catch { dropped += 1; }
     }
-    if (isRecord(raw['meta'])) {
-      for (const [id, m] of Object.entries(raw['meta'])) {
-        if (!isRecord(m)) continue;
-        if (isRecord(m['triage'])) this.triages.set(id, parseTriage(m['triage']));
-        if (typeof m['bestAchieved'] === 'number') this.bestAchieved.set(id, m['bestAchieved']);
-        if (typeof m['triageStatus'] === 'string') {
-          const t = parseTriageStatus(m['triageStatus']);
-          if (t !== null) this.triageStatuses.set(id, t);
-        }
-        if (m['userTriaged'] === true) this.userTriaged.add(id);
+    if (dropped > 0) logger.warn('baselines: dropped invalid specs on load', { dropped });
+  }
+
+  private ingestSpecMeta(meta: Record<string, unknown>): void {
+    for (const [id, m] of Object.entries(meta)) {
+      if (!isRecord(m)) continue;
+      if (isRecord(m['triage'])) this.triages.set(id, parseTriage(m['triage']));
+      if (typeof m['bestAchieved'] === 'number') this.bestAchieved.set(id, m['bestAchieved']);
+      if (typeof m['triageStatus'] === 'string') {
+        const t = parseTriageStatus(m['triageStatus']);
+        if (t !== null) this.triageStatuses.set(id, t);
       }
+      if (m['userTriaged'] === true) this.userTriaged.add(id);
     }
   }
 
@@ -525,32 +531,7 @@ export class BaselineStore {
           await this.recomputeOne(deps, spec);
         }
       } else {
-        // Start fresh: wipe ALL discovered baselines (incl. user-edited) so the
-        // new grain rediscovers from a clean slate. Manual baselines are kept.
-        if (opts.startFresh) {
-          for (const s of this.specs.values()) if (s.source === 'discovered') this.forget(s.id);
-        }
-        this.setStatus({ state: 'running', phase: 'discovering', done: 0, total: 0 });
-        await this.discover(deps);
-        const specs = [...this.specs.values()];
-        const total = specs.length;
-        let done = 0;
-        this.setStatus({ state: 'running', phase: 'computing', done, total });
-        // Throttle progress broadcasts: with thousands of baselines, one IPC
-        // message per item would flood the renderer.
-        const step = Math.max(1, Math.floor(total / 100));
-        for (const spec of specs) {
-          // `specs` was snapshotted before the awaits below; skip any baseline
-          // the user deleted mid-recompute so we don't re-populate its history.
-          if (!this.specs.has(spec.id)) continue;
-          // Only discovered FILTER baselines had their history set during
-          // discover(); everything else (manual, or any view-scoped spec) needs
-          // a per-baseline query here, or it would finalize on stale history.
-          if (spec.source === 'discovered' && spec.scope.kind === 'filter') this.finalizeFromHistory(spec);
-          else await this.recomputeOne(deps, spec);
-          done += 1;
-          if (done % step === 0 || done === total) this.setStatus({ state: 'running', phase: 'computing', done, total });
-        }
+        await this.recomputeAll(deps, opts.startFresh === true);
       }
       await this.save();
       this.lastSuccessfulRun = new Date().toISOString();
@@ -563,6 +544,37 @@ export class BaselineStore {
       this.setStatus({ state: 'error', message, lastRun: this.lastSuccessfulRun });
     } finally {
       this.recomputing = false;
+    }
+  }
+
+  /** Full recompute: rediscover the baseline set, then refresh every spec's
+   *  history and derived stats, broadcasting throttled progress. */
+  private async recomputeAll(deps: BaselineEngineDeps, startFresh: boolean): Promise<void> {
+    // Start fresh: wipe ALL discovered baselines (incl. user-edited) so the
+    // new grain rediscovers from a clean slate. Manual baselines are kept.
+    if (startFresh) {
+      for (const s of this.specs.values()) if (s.source === 'discovered') this.forget(s.id);
+    }
+    this.setStatus({ state: 'running', phase: 'discovering', done: 0, total: 0 });
+    await this.discover(deps);
+    const specs = [...this.specs.values()];
+    const total = specs.length;
+    let done = 0;
+    this.setStatus({ state: 'running', phase: 'computing', done, total });
+    // Throttle progress broadcasts: with thousands of baselines, one IPC
+    // message per item would flood the renderer.
+    const step = Math.max(1, Math.floor(total / 100));
+    for (const spec of specs) {
+      // `specs` was snapshotted before the awaits below; skip any baseline
+      // the user deleted mid-recompute so we don't re-populate its history.
+      if (!this.specs.has(spec.id)) continue;
+      // Only discovered FILTER baselines had their history set during
+      // discover(); everything else (manual, or any view-scoped spec) needs
+      // a per-baseline query here, or it would finalize on stale history.
+      if (spec.source === 'discovered' && spec.scope.kind === 'filter') this.finalizeFromHistory(spec);
+      else await this.recomputeOne(deps, spec);
+      done += 1;
+      if (done % step === 0 || done === total) this.setStatus({ state: 'running', phase: 'computing', done, total });
     }
   }
 
@@ -585,20 +597,7 @@ export class BaselineStore {
     };
 
     // 1) Probe cardinality of the enabled built-ins to drop high-card dims.
-    const enabledFields = [...new Set(dimensions.builtIn.filter((d) => d.enabled !== false).map((d) => d.field))];
-    const cardinalityByColumn: Record<string, number> = {};
-    let lineItems = 0;
-    try {
-      const probe = buildDimCardinalityQuery(enabledFields, dateRange, opts);
-      const probeRows = await deps.runPreparedQuery(probe.sql, probe.params, false);
-      const row = probeRows[0];
-      if (row !== undefined) {
-        for (const f of enabledFields) cardinalityByColumn[f] = num(row[f]);
-        lineItems = num(row['row_count']);
-      }
-    } catch (err: unknown) {
-      logger.warn('baselines: cardinality probe failed; using empty grain guard', { error: err instanceof Error ? err.message : String(err) });
-    }
+    const { cardinalityByColumn, lineItems } = await this.probeDimCardinality(deps, dateRange, opts);
 
     const grain = resolveDiscoveryGrain({
       dimensions,
@@ -614,9 +613,10 @@ export class BaselineStore {
 
     const grainIds = grain.map((d) => d.name);
     const grainCols = grain.map((d) => d.field);
-    const tupleKeyOf = (values: Record<string, string>): string => grain.map((d) => `${d.name}=${values[d.field] ?? ''}`).sort().join('&');
-    const lookbackMonths = Math.max(1, cfg.lookbackDays / 30);
-    const minTotal = cfg.minMonthlyCost * lookbackMonths;
+    // Auto-ignore threshold over the whole window: minMonthlyCost scaled by the
+    // lookback months. The daily query's minTotalCost is this same number
+    // (clamped to >= 0 there); reconcileDiscovered compares the raw value.
+    const minTotal = cfg.minMonthlyCost * Math.max(1, cfg.lookbackDays / 30);
 
     // Both discovery queries hit the same source/columns — resolve the rollup
     // once (computeShapeSignature isn't free).
@@ -630,69 +630,106 @@ export class BaselineStore {
       { ...opts, ...(mat === undefined ? {} : { materializedSource: mat }) },
     );
     const totalsRows = await deps.runPreparedQuery(totalsQ.sql, totalsQ.params, mat !== undefined);
-    const tuples = new Map<string, { values: Record<string, string>; total: number }>();
-    for (const r of totalsRows) {
-      const values: Record<string, string> = {};
-      for (const d of grain) values[d.field] = str(r[d.field]);
-      tuples.set(tupleKeyOf(values), { values, total: num(r['total']) });
-    }
+    const tuples = foldTotalsByTuple(totalsRows, grain);
     logger.info('baselines: discovered tuples', { count: tuples.size });
 
     // 3) Bounded per-day query — only for tuples worth tracking (>= the
     //    auto-ignore threshold). These are the baselines a user will actually
     //    look at; auto-ignored ones don't need stored history.
-    const dailyByTuple = new Map<string, BaselineDailyPoint[]>();
     const dailyQ = buildBaselineDiscoveryQuery(
       { dateRange, filters: {}, grainDimensionIds: grainIds, minTotalCost: Math.max(0, minTotal) },
       { ...opts, ...(mat === undefined ? {} : { materializedSource: mat }) },
     );
     const dailyRows = await deps.runPreparedQuery(dailyQ.sql, dailyQ.params, mat !== undefined);
-    for (const r of dailyRows) {
-      const values: Record<string, string> = {};
-      for (const d of grain) values[d.field] = str(r[d.field]);
-      const key = tupleKeyOf(values);
-      let pts = dailyByTuple.get(key);
-      if (pts === undefined) { pts = []; dailyByTuple.set(key, pts); }
-      pts.push({ date: asDateString(str(r['date'])), cost: asDollars(num(r['cost'])) });
-    }
+    const dailyByTuple = foldDailyByTuple(dailyRows, grain);
 
-    // 4) Upsert a baseline for every tuple. Auto-ignore the low-value ones via
-    //    triage status — but never override a status the user set themselves.
+    // 4+5) Upsert a baseline per live tuple; prune or blank the vanished ones.
     const basis = await snapshotBasis(deps);
+    // ^ last await before the synchronous reconcile: it indexes this.specs
+    // after this point, so baselines the user deleted mid-discovery stay gone.
+    this.reconcileDiscovered({ tuples, grain, basis, dailyByTuple, historyEnd: dateRange.end, minTotal });
+  }
+
+  /** Probe cardinality of the enabled built-ins (used to drop high-cardinality
+   *  dims from the default discovery grain). A failed probe degrades to the
+   *  empty grain guard rather than failing the whole recompute. */
+  private async probeDimCardinality(
+    deps: BaselineEngineDeps,
+    dateRange: DateRange,
+    opts: QueryContextOptions,
+  ): Promise<{ cardinalityByColumn: Record<string, number>; lineItems: number }> {
+    const enabledFields = [...new Set(opts.dimensions.builtIn.filter((d) => d.enabled !== false).map((d) => d.field))];
+    const cardinalityByColumn: Record<string, number> = {};
+    let lineItems = 0;
+    try {
+      const probe = buildDimCardinalityQuery(enabledFields, dateRange, opts);
+      const probeRows = await deps.runPreparedQuery(probe.sql, probe.params, false);
+      const row = probeRows[0];
+      if (row !== undefined) {
+        for (const f of enabledFields) cardinalityByColumn[f] = num(row[f]);
+        lineItems = num(row['row_count']);
+      }
+    } catch (err: unknown) {
+      logger.warn('baselines: cardinality probe failed; using empty grain guard', { error: err instanceof Error ? err.message : String(err) });
+    }
+    return { cardinalityByColumn, lineItems };
+  }
+
+  /** Index current specs by scope identity: discovered ones for upsert-matching,
+   *  manual ones so discovery never mints a duplicate for a pinned scope. */
+  private indexSpecsByScope(): { existingByScope: Map<string, BaselineSpec>; manualScopes: Set<string> } {
     const existingByScope = new Map<string, BaselineSpec>();
     const manualScopes = new Set<string>();
     for (const s of this.specs.values()) {
       if (s.source === 'discovered') existingByScope.set(scopeKey(s.scope), s);
       else manualScopes.add(scopeKey(s.scope));
     }
+    return { existingByScope, manualScopes };
+  }
+
+  /** Discovery steps 4–5: upsert a baseline for every live tuple — auto-ignoring
+   *  low-value ones via triage status, but never overriding a status the user
+   *  set themselves — then handle vanished discovered tuples (a grain change, or
+   *  a scope that dropped to zero spend over the lookback; this runs on every
+   *  recompute, not just grain changes). Prune the untouched ones so the list
+   *  doesn't accumulate stale rows; keep the ones the user invested in but blank
+   *  their history so they show insufficient-data rather than a stale band. */
+  private reconcileDiscovered(args: {
+    readonly tuples: ReadonlyMap<string, DiscoveredTuple>;
+    readonly grain: readonly GrainDim[];
+    readonly basis: BaselineCostBasis;
+    readonly dailyByTuple: ReadonlyMap<string, readonly BaselineDailyPoint[]>;
+    readonly historyEnd: string;
+    /** UNCLAMPED whole-window auto-ignore threshold (minMonthlyCost × lookback
+     *  months) — the same number the daily query's minTotalCost derives from. */
+    readonly minTotal: number;
+  }): void {
+    const { existingByScope, manualScopes } = this.indexSpecsByScope();
 
     const seenScopes = new Set<string>();
-    for (const [key, tuple] of tuples) {
-      const scope = buildScope(grain, tuple.values);
+    // One timestamp for the whole batch — nothing reads per-tuple-distinct
+    // times, and this skips thousands of Date allocations per recompute.
+    const now = new Date().toISOString();
+    for (const [key, tuple] of args.tuples) {
+      const scope = buildScope(args.grain, tuple.values);
       const scopeId = scopeKey(scope);
       // The user already pinned this exact scope manually — don't mint a
       // duplicate 'discovered' baseline for it.
       if (manualScopes.has(scopeId)) continue;
       seenScopes.add(scopeId);
       const existing = existingByScope.get(scopeId);
-      const now = new Date().toISOString();
       const spec: BaselineSpec = existing !== undefined
-        ? { ...existing, basis, basisSnapshotAt: now, updatedAt: now }
-        : { id: randomUUID(), source: 'discovered', scope, basis, basisSnapshotAt: now, createdAt: now, updatedAt: now };
+        ? { ...existing, basis: args.basis, basisSnapshotAt: now, updatedAt: now }
+        : { id: randomUUID(), source: 'discovered', scope, basis: args.basis, basisSnapshotAt: now, createdAt: now, updatedAt: now };
       this.specs.set(spec.id, spec);
-      this.histories.set(spec.id, clampHistory(dailyByTuple.get(key) ?? [], dateRange.end));
+      this.histories.set(spec.id, clampHistory(args.dailyByTuple.get(key) ?? [], args.historyEnd));
       if (!this.userTriaged.has(spec.id)) {
-        if (tuple.total / lookbackMonths < cfg.minMonthlyCost) this.triageStatuses.set(spec.id, 'ignored');
+        if (tuple.total < args.minTotal) this.triageStatuses.set(spec.id, 'ignored');
         else this.triageStatuses.delete(spec.id); // un-ignore once it grows past the threshold
       }
-      // finalizeFromHistory runs once for every spec in recompute()'s loop.
+      // finalizeFromHistory runs once for every spec in recomputeAll()'s loop.
     }
 
-    // 5) Vanished discovered tuples — a grain change, or a scope that dropped to
-    //    zero spend over the lookback (this runs on every recompute, not just
-    //    grain changes). Prune the untouched ones so the list doesn't accumulate
-    //    stale rows; keep the ones the user invested in but blank their history so
-    //    they show insufficient-data rather than a stale band.
     for (const [key, spec] of existingByScope) {
       if (seenScopes.has(key)) continue;
       if (this.isUserEdited(spec.id)) this.histories.set(spec.id, []);
@@ -888,7 +925,53 @@ function primaryGroupBy(scope: BaselineScope) {
   return asDimensionId('service');
 }
 
-function buildScope(grain: readonly { readonly name: DimensionId; readonly field: string }[], values: Record<string, string>): BaselineScope {
+/** The slice of a discovery-grain dimension the tuple folding needs. */
+type GrainDim = { readonly name: DimensionId; readonly field: string };
+
+interface DiscoveredTuple {
+  readonly values: Record<string, string>;
+  readonly total: number;
+}
+
+/** One tuple's grain values, pulled off a query row. */
+function tupleValuesOf(r: RawRow, grain: readonly GrainDim[]): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const d of grain) values[d.field] = str(r[d.field]);
+  return values;
+}
+
+/** Canonical per-run tuple identity. The totals and daily folds MUST share this
+ *  exact key — reconcileDiscovered joins their maps by it, and a mismatch is
+ *  silently swallowed as empty history (`get(key) ?? []`), not raised. */
+function tupleKeyFor(grain: readonly GrainDim[], values: Record<string, string>): string {
+  return grain.map((d) => `${d.name}=${values[d.field] ?? ''}`).sort().join('&');
+}
+
+/** Folds the totals query's one-row-per-tuple result into a map keyed by tuple
+ *  identity: grain values + total cost over the window. */
+function foldTotalsByTuple(rows: readonly RawRow[], grain: readonly GrainDim[]): Map<string, DiscoveredTuple> {
+  const tuples = new Map<string, DiscoveredTuple>();
+  for (const r of rows) {
+    const values = tupleValuesOf(r, grain);
+    tuples.set(tupleKeyFor(grain, values), { values, total: num(r['total']) });
+  }
+  return tuples;
+}
+
+/** Folds the per-day discovery query's rows into daily history points grouped
+ *  by tuple identity. */
+function foldDailyByTuple(rows: readonly RawRow[], grain: readonly GrainDim[]): Map<string, BaselineDailyPoint[]> {
+  const byTuple = new Map<string, BaselineDailyPoint[]>();
+  for (const r of rows) {
+    const key = tupleKeyFor(grain, tupleValuesOf(r, grain));
+    let pts = byTuple.get(key);
+    if (pts === undefined) { pts = []; byTuple.set(key, pts); }
+    pts.push({ date: asDateString(str(r['date'])), cost: asDollars(num(r['cost'])) });
+  }
+  return byTuple;
+}
+
+function buildScope(grain: readonly GrainDim[], values: Record<string, string>): BaselineScope {
   const fm: Partial<Record<DimensionId, readonly TagValue[]>> = {};
   for (const d of grain) fm[d.name] = [asTagValue(values[d.field] ?? '')];
   return { kind: 'filter', filters: fm };
