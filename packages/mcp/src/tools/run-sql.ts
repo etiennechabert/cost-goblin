@@ -120,6 +120,77 @@ export function validateRunSqlQuery(sql: string): string | null {
   return null;
 }
 
+/** The explicit range when given (validated), else the trailing 60 days ending
+ *  at the default lag. */
+function resolveDateRange(param: { start: string; end: string } | undefined): { start: string; end: string } {
+  if (param !== undefined) {
+    assertDateString(param.start);
+    assertDateString(param.end);
+    return param;
+  }
+  const dayMs = 86_400_000;
+  const end = new Date(Date.now() - DEFAULT_LAG_DAYS * dayMs);
+  const start = new Date(end.getTime() - 59 * dayMs);
+  return {
+    start: start.toISOString().slice(0, 10),
+    end: end.toISOString().slice(0, 10),
+  };
+}
+
+/** The `costs` CTE the user's query runs against: the materialized rollup when
+ *  it covers the range, else the per-provider Parquet union. Returns null when
+ *  no provider has data in range. */
+async function buildCostsCte(ctx: McpContext, dateRange: { start: string; end: string }): Promise<string | null> {
+  const matSource = ctx.materializedBase.getSource(dateRange, 'daily');
+  if (matSource !== undefined) {
+    return `costs AS (SELECT * FROM ${matSource} WHERE usage_date BETWEEN '${dateRange.start}' AND '${dateRange.end}')`;
+  }
+  const allProviders = await getQueryProviders(ctx, 'daily');
+  const required = computePeriodsInRange(dateRange);
+  // Per-provider month intersection; providers with nothing in range are
+  // dropped (a zero-match glob fails the whole union).
+  const branches = allProviders
+    .map(pr => ({
+      name: pr.name,
+      periods: required.filter(m => pr.availablePeriods?.includes(m) ?? false),
+    }))
+    .filter(b => b.periods.length > 0);
+  if (branches.length === 0) return null;
+  // Mirror the dashboards: the active Cost Scope's metric backs `cost`.
+  const scopeMetric = await ctx.getCostScope().then(cs => cs.costMetric).catch(() => 'effective' as const);
+  const source = buildSource({
+    dataDir: ctx.dataDir,
+    tier: 'daily',
+    dimensions: await ctx.getQueryDimensions(),
+    orgAccountsPath: await ctx.getOrgAccountsPath(),
+    providers: branches,
+    costMetric: scopeMetric,
+  });
+  return `costs AS (SELECT * FROM ${source} WHERE usage_date BETWEEN '${dateRange.start}' AND '${dateRange.end}')`;
+}
+
+function columnsOf(firstRow: Readonly<Record<string, unknown>>): Column[] {
+  return Object.keys(firstRow).map(name => {
+    const sample = firstRow[name];
+    return {
+      key: name,
+      header: name,
+      type: typeof sample === 'number' ? 'number' : 'string',
+    };
+  });
+}
+
+function toCellRows(rows: readonly Readonly<Record<string, unknown>>[], columnNames: readonly string[]): Cell[][] {
+  return rows.map(r =>
+    columnNames.map((name): Cell => {
+      const val = r[name];
+      if (typeof val === 'number') return val;
+      if (typeof val === 'bigint') return Number(val);
+      return toStr(val);
+    }),
+  );
+}
+
 export async function runSql(
   ctx: McpContext,
   params: {
@@ -138,54 +209,10 @@ export async function runSql(
     return toolError(validationError);
   }
 
-  const dimensions = await ctx.getQueryDimensions();
-  const orgPath = await ctx.getOrgAccountsPath();
-  // Mirror the dashboards: the active Cost Scope's metric backs `cost`.
-  const scopeMetric = await ctx.getCostScope().then(cs => cs.costMetric).catch(() => 'effective' as const);
-
-  let dateRange: { start: string; end: string };
-  if (params.dateRange !== undefined) {
-    assertDateString(params.dateRange.start);
-    assertDateString(params.dateRange.end);
-    dateRange = params.dateRange;
-  } else {
-    const dayMs = 86_400_000;
-    const end = new Date(Date.now() - DEFAULT_LAG_DAYS * dayMs);
-    const start = new Date(end.getTime() - 59 * dayMs);
-    dateRange = {
-      start: start.toISOString().slice(0, 10),
-      end: end.toISOString().slice(0, 10),
-    };
-  }
-
-  const matSource = ctx.materializedBase.getSource(dateRange, 'daily');
-  let costsCte: string;
-
-  if (matSource !== undefined) {
-    costsCte = `costs AS (SELECT * FROM ${matSource} WHERE usage_date BETWEEN '${dateRange.start}' AND '${dateRange.end}')`;
-  } else {
-    const allProviders = await getQueryProviders(ctx, 'daily');
-    const required = computePeriodsInRange(dateRange);
-    // Per-provider month intersection; providers with nothing in range are
-    // dropped (a zero-match glob fails the whole union).
-    const branches = allProviders
-      .map(pr => ({
-        name: pr.name,
-        periods: required.filter(m => pr.availablePeriods?.includes(m) ?? false),
-      }))
-      .filter(b => b.periods.length > 0);
-    if (branches.length === 0) {
-      return emptyRangeResult(ctx, dateRange, format, `Query Result`);
-    }
-    const source = buildSource({
-      dataDir: ctx.dataDir,
-      tier: 'daily',
-      dimensions,
-      orgAccountsPath: orgPath,
-      providers: branches,
-      costMetric: scopeMetric,
-    });
-    costsCte = `costs AS (SELECT * FROM ${source} WHERE usage_date BETWEEN '${dateRange.start}' AND '${dateRange.end}')`;
+  const dateRange = resolveDateRange(params.dateRange);
+  const costsCte = await buildCostsCte(ctx, dateRange);
+  if (costsCte === null) {
+    return emptyRangeResult(ctx, dateRange, format, `Query Result`);
   }
 
   const hasLimit = /\bLIMIT\s+\d+\s*$/i.test(userSql);
@@ -211,25 +238,9 @@ export async function runSql(
   if (firstRow === undefined) {
     return toolResult('*Query returned no rows.*');
   }
-  const columnNames = Object.keys(firstRow);
 
-  const columns: Column[] = columnNames.map(name => {
-    const sample = firstRow[name];
-    return {
-      key: name,
-      header: name,
-      type: typeof sample === 'number' ? 'number' : 'string',
-    };
-  });
-
-  const tableRows: Cell[][] = rows.map(r =>
-    columnNames.map((name): Cell => {
-      const val = r[name];
-      if (typeof val === 'number') return val;
-      if (typeof val === 'bigint') return Number(val);
-      return toStr(val);
-    }),
-  );
+  const columns = columnsOf(firstRow);
+  const tableRows = toCellRows(rows, Object.keys(firstRow));
 
   const meta: { label: string; value: string | number; type?: 'number' }[] = [
     { label: 'Rows', value: rows.length, type: 'number' },

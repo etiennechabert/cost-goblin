@@ -196,6 +196,19 @@ function cellToCsv(value: Cell, type: CellType | undefined): string {
   return value;
 }
 
+function tableToCsvLines(table: Table): string[] {
+  const lines: string[] = [];
+  if (table.title !== undefined && table.title.length > 0) lines.push(`# ${table.title}`);
+  lines.push(table.columns.map(c => csvEscape(c.header)).join(','));
+  for (const row of table.rows) {
+    lines.push(row.map((cell, i) => csvEscape(cellToCsv(cell, table.columns[i]?.type))).join(','));
+  }
+  if (table.footer !== undefined && table.footer.length > 0) {
+    lines.push(`# ${table.footer.trim().replace(/^\*|\*$/g, '')}`);
+  }
+  return lines;
+}
+
 export function formatAsCsv(result: StructuredResult): string {
   const lines: string[] = [];
   if (result.coverage !== undefined) {
@@ -215,14 +228,7 @@ export function formatAsCsv(result: StructuredResult): string {
       const table = result.tables[ti];
       if (table === undefined) continue;
       if (ti > 0) lines.push('');
-      if (table.title !== undefined && table.title.length > 0) lines.push(`# ${table.title}`);
-      lines.push(table.columns.map(c => csvEscape(c.header)).join(','));
-      for (const row of table.rows) {
-        lines.push(row.map((cell, i) => csvEscape(cellToCsv(cell, table.columns[i]?.type))).join(','));
-      }
-      if (table.footer !== undefined && table.footer.length > 0) {
-        lines.push(`# ${table.footer.trim().replace(/^\*|\*$/g, '')}`);
-      }
+      lines.push(...tableToCsvLines(table));
     }
   }
   return lines.join('\n');

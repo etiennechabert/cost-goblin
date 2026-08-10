@@ -76,6 +76,56 @@ function parseManualBand(v: unknown): ManualBand | undefined {
   };
 }
 
+/** Band config: persisted user override wins, else the same env-configurable
+ *  defaults the desktop store uses, so the run-rate band matches. */
+function parseBandConfig(specsRaw: unknown): { lowerPct: number; upperPct: number; windowDays: number } {
+  let lowerPct = envNum('COSTGOBLIN_BASELINES_LOWER_PCT', 10);
+  let upperPct = envNum('COSTGOBLIN_BASELINES_UPPER_PCT', 90);
+  let windowDays = envNum('COSTGOBLIN_BASELINES_WINDOW_DAYS', 30);
+  if (isRecord(specsRaw) && isRecord(specsRaw['config'])) {
+    const c = specsRaw['config'];
+    if (typeof c['lowerPct'] === 'number') lowerPct = c['lowerPct'];
+    if (typeof c['upperPct'] === 'number') upperPct = c['upperPct'];
+    if (typeof c['windowDays'] === 'number') windowDays = c['windowDays'];
+  }
+  return { lowerPct, upperPct, windowDays };
+}
+
+function parseSpecs(specsRaw: unknown): Spec[] {
+  const specs: Spec[] = [];
+  if (!isRecord(specsRaw) || !Array.isArray(specsRaw['baselines'])) return specs;
+  for (const s of specsRaw['baselines']) {
+    if (!isRecord(s)) continue;
+    specs.push({
+      id: str(s['id']),
+      name: typeof s['name'] === 'string' ? s['name'] : undefined,
+      source: str(s['source']) || 'discovered',
+      scopeLabel: scopeLabel(s['scope']),
+      manualBand: parseManualBand(s['manualBand']),
+    });
+  }
+  return specs;
+}
+
+function parseHistory(dataRaw: unknown): Map<string, readonly BaselineDailyPoint[]> {
+  const history = new Map<string, readonly BaselineDailyPoint[]>();
+  if (!isRecord(dataRaw) || !isRecord(dataRaw['history'])) return history;
+  for (const [id, pts] of Object.entries(dataRaw['history'])) {
+    if (!Array.isArray(pts)) continue;
+    history.set(id, pts.filter(isRecord).map((p) => ({ date: asDateString(str(p['date'])), cost: asDollars(num(p['cost'])) })));
+  }
+  return history;
+}
+
+function parseSnapshots(dataRaw: unknown): Map<string, readonly Record<string, unknown>[]> {
+  const snapshots = new Map<string, readonly Record<string, unknown>[]>();
+  if (!isRecord(dataRaw) || !isRecord(dataRaw['snapshots'])) return snapshots;
+  for (const [id, snaps] of Object.entries(dataRaw['snapshots'])) {
+    if (Array.isArray(snaps)) snapshots.set(id, snaps.filter(isRecord));
+  }
+  return snapshots;
+}
+
 async function load(ctx: McpContext): Promise<Loaded> {
   const base = ctx.stateDir;
   let specsRaw: unknown;
@@ -83,49 +133,12 @@ async function load(ctx: McpContext): Promise<Loaded> {
   try { specsRaw = JSON.parse(await readFile(join(base, 'baselines.json'), 'utf-8')); } catch { specsRaw = {}; }
   try { dataRaw = JSON.parse(await readFile(join(base, 'baselines-data.json'), 'utf-8')); } catch { dataRaw = {}; }
 
-  const specs: Spec[] = [];
-  // Default to the same env-configurable values the desktop store uses, so the
-  // run-rate band matches when no persisted user override exists.
-  let lowerPct = envNum('COSTGOBLIN_BASELINES_LOWER_PCT', 10);
-  let upperPct = envNum('COSTGOBLIN_BASELINES_UPPER_PCT', 90);
-  let windowDays = envNum('COSTGOBLIN_BASELINES_WINDOW_DAYS', 30);
-  if (isRecord(specsRaw)) {
-    if (isRecord(specsRaw['config'])) {
-      const c = specsRaw['config'];
-      if (typeof c['lowerPct'] === 'number') lowerPct = c['lowerPct'];
-      if (typeof c['upperPct'] === 'number') upperPct = c['upperPct'];
-      if (typeof c['windowDays'] === 'number') windowDays = c['windowDays'];
-    }
-    if (Array.isArray(specsRaw['baselines'])) {
-      for (const s of specsRaw['baselines']) {
-        if (!isRecord(s)) continue;
-        specs.push({
-          id: str(s['id']),
-          name: typeof s['name'] === 'string' ? s['name'] : undefined,
-          source: str(s['source']) || 'discovered',
-          scopeLabel: scopeLabel(s['scope']),
-          manualBand: parseManualBand(s['manualBand']),
-        });
-      }
-    }
-  }
-
-  const history = new Map<string, readonly BaselineDailyPoint[]>();
-  const snapshots = new Map<string, readonly Record<string, unknown>[]>();
-  if (isRecord(dataRaw)) {
-    if (isRecord(dataRaw['history'])) {
-      for (const [id, pts] of Object.entries(dataRaw['history'])) {
-        if (!Array.isArray(pts)) continue;
-        history.set(id, pts.filter(isRecord).map((p) => ({ date: asDateString(str(p['date'])), cost: asDollars(num(p['cost'])) })));
-      }
-    }
-    if (isRecord(dataRaw['snapshots'])) {
-      for (const [id, snaps] of Object.entries(dataRaw['snapshots'])) {
-        if (Array.isArray(snaps)) snapshots.set(id, snaps.filter(isRecord));
-      }
-    }
-  }
-  return { specs, history, snapshots, lowerPct, upperPct, windowDays };
+  return {
+    specs: parseSpecs(specsRaw),
+    history: parseHistory(dataRaw),
+    snapshots: parseSnapshots(dataRaw),
+    ...parseBandConfig(specsRaw),
+  };
 }
 
 function derive(spec: Spec, loaded: Loaded): Derived {

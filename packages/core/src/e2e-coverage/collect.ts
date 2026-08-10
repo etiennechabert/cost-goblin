@@ -91,13 +91,30 @@ export function parseIstanbulFileCoverage(value: unknown): IstanbulFileCoverage 
   if (!isStringRecord(statementCounts) || !isStringRecord(functionCounts)) return null;
   if (!isStringRecord(branchCounts)) return null;
 
+  return {
+    statements: parseStatements(statementMap, statementCounts),
+    functions: parseFunctions(fnMap, functionCounts),
+    branches: parseBranches(branchMap, branchCounts),
+  };
+}
+
+function parseStatements(
+  statementMap: Readonly<Record<string, unknown>>,
+  statementCounts: Readonly<Record<string, unknown>>,
+): IstanbulStatement[] {
   const statements: IstanbulStatement[] = [];
   for (const [id, statement] of Object.entries(statementMap)) {
     const line = startLineOf(statement);
     if (line === null) continue;
     statements.push({ line, count: countAt(statementCounts, id) });
   }
+  return statements;
+}
 
+function parseFunctions(
+  fnMap: Readonly<Record<string, unknown>>,
+  functionCounts: Readonly<Record<string, unknown>>,
+): IstanbulFunction[] {
   const functions: IstanbulFunction[] = [];
   for (const [id, fn] of Object.entries(fnMap)) {
     if (!isStringRecord(fn)) continue;
@@ -115,10 +132,16 @@ export function parseIstanbulFileCoverage(value: unknown): IstanbulFileCoverage 
       count: countAt(functionCounts, id),
     });
   }
+  return functions;
+}
 
-  // blockId/branchId are the raw positions in `branchMap` and `locations`, held
-  // even across a skipped entry: renumbering off the surviving entries would
-  // shift every later branch's dedup key out of line with the other shards'.
+// blockId/branchId are the raw positions in `branchMap` and `locations`, held
+// even across a skipped entry: renumbering off the surviving entries would
+// shift every later branch's dedup key out of line with the other shards'.
+function parseBranches(
+  branchMap: Readonly<Record<string, unknown>>,
+  branchCounts: Readonly<Record<string, unknown>>,
+): IstanbulBranch[] {
   const branches: IstanbulBranch[] = [];
   for (const [blockId, [id, branch]] of Object.entries(branchMap).entries()) {
     if (!isStringRecord(branch)) continue;
@@ -135,8 +158,7 @@ export function parseIstanbulFileCoverage(value: unknown): IstanbulFileCoverage 
     }
     branches.push({ blockId, locations });
   }
-
-  return { statements, functions, branches };
+  return branches;
 }
 
 /** An empty report, ready to merge shards into. */
