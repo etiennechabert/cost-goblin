@@ -61,10 +61,19 @@ export {
   type GcpSelectiveSyncOptions,
   parseGcloudCompletedBytes,
   syncGcpSelectedFiles,
-  findGcloudCli,
-  gcloudCliFound,
-  gcloudSearchPaths,
 } from './gcp-selective-sync.js';
+
+// The generic resolver and the raw candidate lists stay module-private: the
+// vetted per-CLI finders are the only public entry points, so no consumer can
+// bypass the trusted lists with its own.
+export {
+  findAwsCli,
+  findGcloudCli,
+  findGhCli,
+  findGitCli,
+  gcloudChildPath,
+  gcloudSpawnShape,
+} from './trusted-binaries.js';
 
 export {
   type CanonicalizeConnection,

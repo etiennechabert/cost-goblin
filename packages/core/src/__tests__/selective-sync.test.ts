@@ -10,6 +10,13 @@ vi.mock('node:child_process');
 vi.mock('node:fs/promises');
 vi.mock('../logger/logger.js');
 
+// The suite must not depend on whether the machine running it has the AWS CLI
+// installed; individual cases flip this to null to exercise the miss path.
+const { mockFindAwsCli } = vi.hoisted(() => ({
+  mockFindAwsCli: vi.fn((): string | null => '/mock/trusted/aws'),
+}));
+vi.mock('../sync/trusted-binaries.js', () => ({ findAwsCli: mockFindAwsCli }));
+
 const file = (key: string, hash = 'h', size = 1): ManifestFileEntry => ({ key, contentHash: hash, size });
 
 const providerName = asProviderName('aws');
@@ -258,6 +265,23 @@ describe('syncSelectedFiles', () => {
         files: [file('cur/billing_period=2026-03/file.parquet')],
       })
     ).rejects.toThrow('AWS CLI not found');
+  });
+
+  it('rejects without spawning when no trusted AWS CLI install exists', async () => {
+    // A miss must disable the feature, not degrade to a bare-name spawn that
+    // PATH order — and therefore a writable early PATH entry — would resolve.
+    mockFindAwsCli.mockReturnValueOnce(null);
+
+    await expect(
+      syncSelectedFiles({
+        bucketPath: 's3://bucket/cur/',
+        profile: 'test',
+        providerName,
+        dataDir: '/tmp',
+        files: [file('cur/billing_period=2026-03/file.parquet')],
+      })
+    ).rejects.toThrow('AWS CLI not found');
+    expect(mockSpawn).not.toHaveBeenCalled();
   });
 
   it.each([
