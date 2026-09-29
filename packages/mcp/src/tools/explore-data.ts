@@ -1,8 +1,10 @@
 import {
+  buildFilterClauses,
   buildSource,
   computePeriodsInRange,
   isSafeColumnIdentifier,
   logger,
+  QueryBuilder,
 } from '@costgoblin/core';
 import type { DateRange } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
@@ -15,9 +17,13 @@ import {
   resolveFormat,
   structuredToolResult,
   toDateRange,
+  toFilterMap,
   toNum,
   toStr,
 } from './tool-helpers.js';
+
+const DEFAULT_LIMIT = 50;
+const MAX_LIMIT = 200;
 
 const VALID_COLUMNS: ReadonlySet<string> = new Set([
   'usage_date', 'account_id', 'account_name', 'region', 'service',
@@ -56,9 +62,24 @@ export async function exploreData(
   const dateRange: DateRange = params.dateRange !== undefined
     ? toDateRange(params.dateRange)
     : defaultDateRange();
-  const limit = Math.min(params.limit ?? 50, 200);
+  // The schema already rejects non-integers and values < 1; this is the second
+  // layer for direct callers.
+  const limit = Math.min(Math.max(Math.trunc(params.limit ?? DEFAULT_LIMIT), 1), MAX_LIMIT);
 
   const dimensions = await ctx.getQueryDimensions();
+
+  // Every value is bound: the dates, the filter values and the limit. Filter
+  // dimension ids resolve through resolveField (unknown ids throw
+  // SecurityError) up front, before any SQL runs or the empty-range early return.
+  const qb = new QueryBuilder();
+  const whereConditions = [
+    `usage_date BETWEEN ${qb.addParam(dateRange.start)} AND ${qb.addParam(dateRange.end)}`,
+    ...buildFilterClauses(toFilterMap(params.filters), dimensions, await ctx.getAccountReverseMap(), qb),
+  ];
+  const whereClause = `WHERE ${whereConditions.join(' AND ')}`;
+  const limitParam = qb.addParam(limit);
+  const queryParams = qb.build().params;
+
   const orgPath = await ctx.getOrgAccountsPath();
   // Mirror the dashboards: the active Cost Scope's metric backs `cost`.
   const scopeMetric = await ctx.getCostScope().then(cs => cs.costMetric).catch(() => 'effective' as const);
@@ -83,8 +104,6 @@ export async function exploreData(
     providers: branches,
     costMetric: scopeMetric,
   });
-
-  const whereClause = `WHERE usage_date BETWEEN '${dateRange.start}' AND '${dateRange.end}'`;
 
   const groupByColumns = params.groupByColumns?.filter(c => isValidColumn(c));
 
@@ -116,10 +135,10 @@ export async function exploreData(
       ${whereClause}
       GROUP BY ${groupByColumns.join(', ')}
       ORDER BY ${sortExpr}
-      LIMIT ${String(limit)}
+      LIMIT ${limitParam}
     `.trim();
 
-    const rows = await ctx.runQuery(sql);
+    const rows = await ctx.runPreparedQuery(sql, queryParams);
 
     const columns: Column[] = [
       ...groupByColumns.map((c): Column => ({ key: c, header: c })),
@@ -161,10 +180,10 @@ export async function exploreData(
     FROM ${source}
     ${whereClause}
     ORDER BY ${sortExpr}
-    LIMIT ${String(limit)}
+    LIMIT ${limitParam}
   `.trim();
 
-  const rows = await ctx.runQuery(sql);
+  const rows = await ctx.runPreparedQuery(sql, queryParams);
 
   const columns: Column[] = [
     { key: 'date', header: 'Date' },

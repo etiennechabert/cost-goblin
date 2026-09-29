@@ -57,6 +57,51 @@ function substituteParams(sql: string, params: readonly unknown[]): string {
   return result;
 }
 
+// ---------- JSON response narrowing ----------
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+interface RunSqlJson {
+  readonly columnKeys: readonly string[];
+  readonly rows: readonly (readonly unknown[])[];
+  readonly rowsMeta: unknown;
+  readonly notes: readonly string[];
+}
+
+/** Narrow a run_sql format=json response to the parts the cap tests check. */
+function runSqlJson(text: string): RunSqlJson {
+  const parsed: unknown = JSON.parse(text);
+  if (!isRecord(parsed)) throw new Error('response is not an object');
+  const tables = parsed['tables'];
+  const table: unknown = Array.isArray(tables) ? tables[0] : undefined;
+  if (!isRecord(table)) throw new Error('response has no table');
+  const columns = table['columns'];
+  const rows = table['rows'];
+  if (!Array.isArray(columns) || !Array.isArray(rows)) throw new Error('table has no columns/rows');
+  const columnKeys = columns.map((c: unknown) => (isRecord(c) && typeof c['key'] === 'string' ? c['key'] : ''));
+  const narrowedRows = rows.map((r: unknown) => {
+    if (!Array.isArray(r)) throw new Error('row is not an array');
+    const cells: unknown[] = r;
+    return cells;
+  });
+  const meta = parsed['meta'];
+  const rowsField: unknown = Array.isArray(meta)
+    ? meta.find((m: unknown) => isRecord(m) && m['label'] === 'Rows')
+    : undefined;
+  const notesField = parsed['notes'];
+  const notes = Array.isArray(notesField)
+    ? notesField.filter((n: unknown): n is string => typeof n === 'string')
+    : [];
+  return {
+    columnKeys,
+    rows: narrowedRows,
+    rowsMeta: isRecord(rowsField) ? rowsField['value'] : undefined,
+    notes,
+  };
+}
+
 // ---------- MCP HTTP client ----------
 
 interface McpClient {
@@ -505,10 +550,11 @@ describe('MCP server E2E', () => {
     expect(text).toContain('|');
   });
 
-  it('run_sql accepts a trailing semicolon and LIMIT ... OFFSET without doubling LIMIT', async () => {
-    // The validator strips one trailing ';' — the wrapper must too, and its
-    // has-LIMIT probe must see through an OFFSET suffix, or the appended
-    // `LIMIT 100` turns a valid query into a DuckDB parser error.
+  it('run_sql accepts a trailing semicolon and LIMIT ... OFFSET inside the capped wrapper', async () => {
+    // The validator tolerates one trailing ';' — the wrapper must strip it too,
+    // or the `) AS _costgoblin_q LIMIT n` that closes the subquery lands after
+    // the ';' and DuckDB rejects the statement. A user LIMIT/OFFSET stays inside
+    // the subquery, where it is legal.
     for (const sql of [
       'SELECT service, SUM(cost) as total FROM costs GROUP BY service ORDER BY total DESC LIMIT 5;',
       'SELECT service, SUM(cost) as total FROM costs GROUP BY service ORDER BY total DESC LIMIT 5 OFFSET 1',
@@ -520,6 +566,117 @@ describe('MCP server E2E', () => {
       });
       expect(isError).toBe(false);
       expect(text).toContain('Query Result');
+    }
+  });
+
+  // #601 / VULN-048: the row cap is an unconditional ceiling, not opt-out.
+  const JAN = { start: '2026-01-01', end: '2026-01-31' };
+
+  it('run_sql caps a query that ends in its own larger LIMIT', async () => {
+    const { text, isError } = await client.callTool('run_sql', {
+      sql: 'SELECT * FROM costs LIMIT 100000',
+      dateRange: JAN,
+      limit: 5,
+      format: 'json',
+    });
+    expect(isError).toBe(false);
+    const res = runSqlJson(text);
+    expect(res.rows).toHaveLength(5);
+    expect(res.rowsMeta).toBe(5);
+    expect(res.notes.join(' ')).toMatch(/truncated to 5 rows/);
+  });
+
+  it('run_sql caps a query whose LIMIT is only inside a trailing comment', async () => {
+    const { text, isError } = await client.callTool('run_sql', {
+      sql: 'SELECT * FROM costs -- LIMIT 1',
+      dateRange: JAN,
+      format: 'json',
+    });
+    expect(isError).toBe(false);
+    const res = runSqlJson(text);
+    expect(res.rows).toHaveLength(100);
+    expect(res.notes.join(' ')).toMatch(/truncated to 100 rows/);
+  });
+
+  it('run_sql runs a WITH query over costs and keeps its ORDER BY', async () => {
+    const { text, isError } = await client.callTool('run_sql', {
+      sql: 'WITH t AS (SELECT service, SUM(cost) c FROM costs GROUP BY 1) SELECT * FROM t ORDER BY c DESC',
+      dateRange: JAN,
+      format: 'json',
+    });
+    expect(isError).toBe(false);
+    const res = runSqlJson(text);
+    const cIdx = res.columnKeys.indexOf('c');
+    expect(cIdx).toBeGreaterThanOrEqual(0);
+    const values = res.rows.map(r => r[cIdx]);
+    expect(values.length).toBeGreaterThan(1);
+    for (let i = 1; i < values.length; i++) {
+      const prev = values[i - 1];
+      const cur = values[i];
+      if (typeof prev !== 'number' || typeof cur !== 'number') throw new Error('non-numeric c');
+      expect(cur).toBeLessThanOrEqual(prev);
+    }
+  });
+
+  it('run_sql adds no truncation note when the result is exactly the limit', async () => {
+    const { text, isError } = await client.callTool('run_sql', {
+      sql: 'SELECT service FROM costs GROUP BY service ORDER BY service LIMIT 3',
+      dateRange: JAN,
+      limit: 3,
+      format: 'json',
+    });
+    expect(isError).toBe(false);
+    const res = runSqlJson(text);
+    expect(res.rows).toHaveLength(3);
+    expect(res.notes).toHaveLength(0);
+  });
+
+  it('run_sql keeps a trailing LIMIT ... OFFSET ...; working', async () => {
+    const { text, isError } = await client.callTool('run_sql', {
+      sql: 'SELECT service FROM costs GROUP BY service ORDER BY service LIMIT 3 OFFSET 1;',
+      dateRange: JAN,
+      format: 'json',
+    });
+    expect(isError).toBe(false);
+    expect(runSqlJson(text).rows).toHaveLength(3);
+  });
+
+  it('run_sql stays capped when the query tries to close the wrapper subquery', async () => {
+    const { text, isError } = await client.callTool('run_sql', {
+      sql: 'SELECT * FROM costs) AS a UNION ALL SELECT * FROM (SELECT * FROM costs',
+      dateRange: JAN,
+      limit: 5,
+      format: 'json',
+    });
+    expect(isError).toBe(false);
+    expect(runSqlJson(text).rows.length).toBeLessThanOrEqual(5);
+  });
+
+  it.each([
+    'SELECT * FROM costs /*',
+    'SELECT * FROM costs) /*',
+  ])('run_sql rejects %s (an unterminated comment cannot swallow the cap)', async (sql) => {
+    const { isError } = await client.callTool('run_sql', { sql, dateRange: JAN });
+    expect(isError).toBe(true);
+  });
+
+  it('run_sql truncates an oversized cell instead of blowing up the markdown table', async () => {
+    const { text, isError } = await client.callTool('run_sql', {
+      sql: "SELECT CASE WHEN row_number() OVER () = 1 THEN repeat('x', 6000000) ELSE 'y' END AS a FROM costs",
+      dateRange: JAN,
+    });
+    expect(isError).toBe(false);
+    expect(text).toContain('…[+');
+    expect(text.length).toBeLessThan(1_000_000);
+  });
+
+  it.each([
+    ['run_sql', { sql: 'SELECT 1 AS x FROM costs' }],
+    ['explore_data', {}],
+  ])('%s rejects a non-integer or non-positive limit', async (tool, extra) => {
+    for (const limit of [-1, 0, 2.5]) {
+      const { isError } = await client.callTool(tool, { ...extra, dateRange: JAN, limit });
+      expect(isError).toBe(true);
     }
   });
 

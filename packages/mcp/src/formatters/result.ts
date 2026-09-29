@@ -228,8 +228,10 @@ export function formatAsCsv(result: StructuredResult): string {
       const table = result.tables[ti];
       if (table === undefined) continue;
       if (ti > 0) lines.push('');
-      // Per-line push, not push(...spread): a run_sql export can exceed V8's
-      // max argument count (~65k) and spread would throw RangeError.
+      // Per-line push, not push(...spread): spread passes every line as an
+      // argument and throws RangeError past V8's max argument count (~65k).
+      // run_sql is now capped at 500 rows, but this formatter is shared and
+      // must not depend on any one tool's cap.
       for (const line of tableToCsvLines(table)) lines.push(line);
     }
   }

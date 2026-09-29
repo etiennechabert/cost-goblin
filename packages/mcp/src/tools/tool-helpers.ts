@@ -3,6 +3,7 @@ import {
   asDollars,
   asDateString,
   asTagValue,
+  assertDateString,
   computePeriodsInRange,
   DEFAULT_LAG_DAYS,
   listLocalMonths,
@@ -45,7 +46,12 @@ export function mondayOf(date: string): string {
   return monday.toISOString().slice(0, 10);
 }
 
+/** Validate and brand a caller-supplied date range. The MCP schema already
+ *  enforces YYYY-MM-DD, but the brand is what every query builder trusts, so
+ *  it must not be an unchecked cast: throws SecurityError otherwise. */
 export function toDateRange(dr: { start: string; end: string }): DateRange {
+  assertDateString(dr.start);
+  assertDateString(dr.end);
   return { start: asDateString(dr.start), end: asDateString(dr.end) };
 }
 

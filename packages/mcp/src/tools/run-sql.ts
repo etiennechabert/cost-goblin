@@ -19,6 +19,54 @@ import {
 } from './tool-helpers.js';
 
 const MAX_LIMIT = 500;
+const DEFAULT_LIMIT = 100;
+
+/** Per-cell and per-header character budget. One multi-megabyte value (a
+ *  `repeat()`, a `string_agg`, a PIVOT header built from a long value) would
+ *  otherwise be padded across every row of the markdown table and blow past
+ *  V8's max string length. ARNs and resource ids are well under this. */
+export const MAX_CELL_CHARS = 4096;
+
+/** The row cap for a run_sql call: the requested limit truncated to an integer
+ *  and clamped into 1..MAX_LIMIT (default 100). The schema already rejects
+ *  non-integers and values < 1; this is the second layer for direct callers. */
+export function resolveRunSqlCap(limit: number | undefined): number {
+  return Math.min(Math.max(Math.trunc(limit ?? DEFAULT_LIMIT), 1), MAX_LIMIT);
+}
+
+/** The statement run_sql executes: the user's query wrapped as a subquery over
+ *  the `costs` CTE, capped at `cap + 1` rows so the caller can tell a result of
+ *  exactly `cap` rows from a truncated one.
+ *
+ *  The cap is unconditional: a LIMIT (or a `-- LIMIT` comment) in the user's
+ *  query stays inside the subquery and cannot lift it. The newlines around the
+ *  user's SQL are load-bearing — they end a trailing `--` comment before the
+ *  closing `)`. The cap is a validated integer literal, not a `$n` parameter,
+ *  so it cannot collide with a placeholder in the user's own SQL. */
+export function buildRunSqlStatement(costsCte: string, userSql: string, cap: number): string {
+  if (!Number.isSafeInteger(cap) || cap < 1) {
+    throw new RangeError(`run_sql row cap must be a positive integer, got ${String(cap)}`);
+  }
+  // The validator tolerates one trailing ';' — strip it, or the closing
+  // `) AS ... LIMIT` lands after it as a second, invalid statement.
+  // (String ops, not a regex: no backtracking over long whitespace runs.)
+  let bareSql = userSql.trimEnd();
+  if (bareSql.endsWith(';')) bareSql = bareSql.slice(0, -1).trimEnd();
+  return `WITH ${costsCte}\nSELECT * FROM (\n${bareSql}\n) AS _costgoblin_q\nLIMIT ${String(cap + 1)}`;
+}
+
+/** Truncate a string over MAX_CELL_CHARS to its first MAX_CELL_CHARS UTF-16
+ *  units plus a `…[+N chars]` marker (N counts the dropped units). Never splits
+ *  a surrogate pair: when the cut would land between a high and a low
+ *  surrogate, the high one is dropped too. */
+export function truncateCell(s: string): string {
+  if (s.length <= MAX_CELL_CHARS) return s;
+  let end = MAX_CELL_CHARS;
+  // charCodeAt, not codePointAt: we need the raw UTF-16 unit before the cut.
+  const last = s.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  return `${s.slice(0, end)}…[+${String(s.length - end)} chars]`;
+}
 
 // NOT the load-bearing control. The desktop app runs every MCP query on a
 // dedicated DuckDB instance that is sandboxed to the workspace data and
@@ -185,8 +233,10 @@ function columnsOf(firstRow: Readonly<Record<string, unknown>>): Column[] {
     // bigint counts as numeric: toCellRows converts bigint cells to Number, so
     // the column type must agree or COUNT(*)/integer SUM columns render as text.
     return {
+      // `key` stays raw: it indexes the row object. Only the displayed
+      // header is budgeted.
       key: name,
-      header: name,
+      header: truncateCell(name),
       type: typeof sample === 'number' || typeof sample === 'bigint' ? 'number' : 'string',
     };
   });
@@ -198,7 +248,7 @@ function toCellRows(rows: readonly Readonly<Record<string, unknown>>[], columnNa
       const val = r[name];
       if (typeof val === 'number') return val;
       if (typeof val === 'bigint') return Number(val);
-      return toStr(val);
+      return truncateCell(toStr(val));
     }),
   );
 }
@@ -214,7 +264,7 @@ export async function runSql(
 ): Promise<{ content: [{ type: 'text'; text: string }] }> {
   const format = resolveFormat(params.format);
   const userSql = params.sql.trim();
-  const limit = Math.min(params.limit ?? 100, MAX_LIMIT);
+  const cap = resolveRunSqlCap(params.limit);
 
   const validationError = validateRunSqlQuery(userSql);
   if (validationError !== null) {
@@ -227,23 +277,21 @@ export async function runSql(
     return emptyRangeResult(ctx, dateRange, format, `Query Result`);
   }
 
-  // The validator tolerates one trailing ';' — strip it here too, or the
-  // appended LIMIT (and anything after the ';') is a second, invalid statement.
-  const bareSql = userSql.replace(/;\s*$/, '');
-  const hasLimit = /\bLIMIT\s+\d+(?:\s+OFFSET\s+\d+)?\s*$/i.test(bareSql);
-  const wrappedSql = hasLimit
-    ? `WITH ${costsCte}\n${bareSql}`
-    : `WITH ${costsCte}\n${bareSql}\nLIMIT ${String(limit)}`;
+  const statement = buildRunSqlStatement(costsCte, userSql, cap);
 
-  logger.info('run-sql', { userSqlLength: userSql.length, limit });
+  logger.info('run-sql', { userSqlLength: userSql.length, cap });
 
-  let rows: Readonly<Record<string, unknown>>[];
+  let fetched: Readonly<Record<string, unknown>>[];
   try {
-    rows = await ctx.runQuery(wrappedSql);
+    fetched = await ctx.runQuery(statement);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     return toolError(`Query failed: ${message}`);
   }
+
+  // The statement asks for cap + 1 rows: an extra row means the query had more.
+  const truncated = fetched.length > cap;
+  const rows = truncated ? fetched.slice(0, cap) : fetched;
 
   if (rows.length === 0) {
     return toolResult('*Query returned no rows.*');
@@ -263,8 +311,8 @@ export async function runSql(
     { label: 'Rows', value: rows.length, type: 'number' },
   ];
   const notes: string[] = [];
-  if (rows.length >= limit) {
-    notes.push(`*Results limited to ${String(limit)} rows.*`);
+  if (truncated) {
+    notes.push(`*Results truncated to ${String(cap)} rows — narrow the query or page with LIMIT/OFFSET inside it.*`);
   }
 
   const coverage = await computeDataCoverage(ctx, dateRange);
