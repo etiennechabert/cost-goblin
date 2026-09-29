@@ -1,0 +1,35 @@
+<h2><g-emoji class="g-emoji" alias="warning">⚠️</g-emoji> Breaking — existing users must re-sync</h2>
+<p><strong>Your local data and your current CUR 2.0 export can no longer be read.</strong> There is no in-place migration.</p>
+<blockquote>
+<p><strong>AWS console → Billing and Cost Management → Data Exports → Create export → FOCUS 1.2, as Parquet</strong></p>
+</blockquote>
+<p>Not the legacy <em>Cost &amp; Usage Reports</em> page, and not the CUR 2.0 table.</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>FOCUS column</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>billed</code></td>
+<td><code>BilledCost</code></td>
+</tr>
+<tr>
+<td><code>effective</code> <em>(default)</em></td>
+<td><code>EffectiveCost</code></td>
+</tr>
+</tbody>
+</table>
+<h2>Multi-cloud</h2>
+<h3>Google Cloud provider</h3>
+<ul>
+<li>A new built-in <strong><code>provider</code> dimension</strong> — filter and group by it like any other. With multiple payers, it's your payer axis.</li>
+<li><strong>Per-provider failure isolation</strong>: one expired SSO session no longer stops the other providers from syncing.</li>
+</ul>
+<h2>What's Changed</h2>
+<ul>
+<li>feat(providers): first-class providers — N billing sources per workspace (<a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5041126218" data-permission-text="Title is private" data-url="https://github.com/etiennechabert/cost-goblin/issues/516" data-hovercard-type="issue" data-hovercard-url="/etiennechabert/cost-goblin/issues/516/hovercard" href="https://github.com/etiennechabert/cost-goblin/issues/516">#516</a>) by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/etiennechabert/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/etiennechabert">@etiennechabert</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5045456721" data-permission-text="Title is private" data-url="https://github.com/etiennechabert/cost-goblin/issues/524" data-hovercard-type="pull_request" data-hovercard-url="/etiennechabert/cost-goblin/pull/524/hovercard" href="https://github.com/etiennechabert/cost-goblin/pull/524">#524</a></li>
+</ul>
+<p><strong>Full Changelog</strong>: <a class="commit-link" href="https://github.com/etiennechabert/cost-goblin/compare/v0.6.3...v0.7.0"><tt>v0.6.3...v0.7.0</tt></a></p>
