@@ -1,6 +1,6 @@
 interface Env {
   SIGNUPS: KVNamespace;
-  TURNSTILE_SECRET_KEY: string;
+  TURNSTILE_SECRET_KEY?: string;
 }
 
 interface TurnstileResponse {
@@ -82,12 +82,16 @@ export default {
 
     const ip = request.headers.get('CF-Connecting-IP') ?? '0.0.0.0';
 
-    // Turnstile verification (skip if secret not configured)
-    if (env.TURNSTILE_SECRET_KEY) {
-      const turnstileValid = await verifyTurnstile(turnstileToken, env.TURNSTILE_SECRET_KEY, ip);
-      if (!turnstileValid) {
-        return json({ ok: false, error: 'Verification failed' }, 403);
-      }
+    // Turnstile verification. Fail closed: a missing or empty secret must never
+    // turn the CAPTCHA off, so the request is rejected instead of stored.
+    const turnstileSecret = env.TURNSTILE_SECRET_KEY;
+    if (turnstileSecret === undefined || turnstileSecret === '') {
+      console.error('signup: TURNSTILE_SECRET_KEY is not configured; rejecting request');
+      return json({ ok: false, error: 'Signup is temporarily unavailable' }, 503);
+    }
+    const turnstileValid = await verifyTurnstile(turnstileToken, turnstileSecret, ip);
+    if (!turnstileValid) {
+      return json({ ok: false, error: 'Verification failed' }, 403);
     }
 
     // Rate limit: 3 submissions per IP per hour

@@ -9,3 +9,12 @@ routes = [
 [[kv_namespaces]]
 binding = "SIGNUPS"
 id = "725d6169dd0f469a9a3167673c34ea83"
+
+# Secrets: TURNSTILE_SECRET_KEY is required. The Worker rejects every signup
+# with 503 when it is missing or empty (it never skips the CAPTCHA).
+# - Production: `wrangler secret put TURNSTILE_SECRET_KEY` (`npm run deploy`
+#   refuses to run until `wrangler secret list` shows it).
+# - Local `wrangler dev`: create a gitignored workers/signup/.dev.vars holding
+#   Cloudflare's documented always-pass test secret:
+#     TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
+# Never put a secret in a [vars] block here: this repository is public.
