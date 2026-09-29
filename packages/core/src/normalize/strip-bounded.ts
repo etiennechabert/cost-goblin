@@ -47,22 +47,23 @@ export const ACCOUNT_MAP_STRIP_BUDGET: StripBudget = { perPatternMs: 500, totalM
 /** Editor preview: re-run as the user edits, so it gets a tighter bound. */
 export const PREVIEW_STRIP_BUDGET: StripBudget = { perPatternMs: 150, totalMs: 300 };
 
-// The only code the inner realm ever runs. `pattern` and `names` are context
-// globals set per run; neither is ever interpolated into this source.
-const STRIP_SOURCE = `'use strict';
-(function stripAll() {
-  const re = new RegExp(pattern, 'g');
-  const out = [];
-  for (let i = 0; i < names.length; i++) out.push(names[i].replaceAll(re, ''));
-  return out;
-})();`;
-
 interface StripSandbox {
   names: readonly string[];
   pattern: string;
 }
 
-const STRIP_SCRIPT = new Script(STRIP_SOURCE, { filename: 'costgoblin-strip-patterns.vm.js' });
+// The only code the inner realm ever runs. `pattern` and `names` are context
+// globals set per run; neither is ever interpolated into this source. Keep it
+// an inline template literal with no `${}` and no other argument: that is what
+// makes it provably constant to static analysis (Sonar S1523 flags vm.Script
+// as soon as any argument, the options object included, is not a literal).
+const STRIP_SCRIPT = new Script(`'use strict';
+(function stripAll() {
+  const re = new RegExp(pattern, 'g');
+  const out = [];
+  for (let i = 0; i < names.length; i++) out.push(names[i].replaceAll(re, ''));
+  return out;
+})();`);
 const sandbox: StripSandbox = { names: [], pattern: '' };
 // No eval/new Function/wasm in the inner realm: defence in depth, since the
 // fixed script needs none of them.

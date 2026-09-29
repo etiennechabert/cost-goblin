@@ -363,6 +363,19 @@ describe('workflow policy (.github/workflows)', () => {
     }
   });
 
+  it('ci.yml fails the sonarcloud job on a failed quality gate for pull requests', () => {
+    // Without the wait the scan only uploads and the job is always green, so a
+    // red gate never reaches the required `sonarcloud` check.
+    const job = ci.jobs.sonarcloud;
+    const scan = stepsOf(job).find((s) => usesAction(s, 'SonarSource/sonarqube-scan-action'));
+    expect(scan).toBeDefined();
+    const args = String(scan?.with?.args ?? '');
+    expect(args).toContain("github.event_name == 'pull_request'");
+    expect(args).toContain('-Dsonar.qualitygate.wait=true');
+    expect(job['continue-on-error']).toBeUndefined();
+    expect(scan?.['continue-on-error']).toBeUndefined();
+  });
+
   it('ci.yml security-audit asserts the npm guards before npm ci', () => {
     const steps = stepsOf(ci.jobs['security-audit']);
     const assertAt = steps.findIndex((s) => runBody(s).includes(ASSERT_SCRIPT));

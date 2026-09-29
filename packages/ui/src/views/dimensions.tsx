@@ -48,6 +48,7 @@ import { useDebouncedValue } from '../hooks/use-debounced-value.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { ConfirmModal } from '../components/confirm-modal.js';
 import { AliasSuggestions } from '../components/alias-suggestions.js';
+import { focusOnMount } from '../lib/focus-on-mount.js';
 
 function useClickOutsideDismiss(
   containerRef: React.RefObject<HTMLDivElement | null>,
@@ -224,7 +225,7 @@ function DefaultValuesPicker({ available, selected, onChange }: Readonly<{
               type="text"
               value={search}
               onChange={e => { setSearch(e.target.value); }}
-              autoFocus
+              ref={focusOnMount}
               className="border-b border-border bg-bg-primary px-2 py-1 text-xs text-text-primary outline-none"
               placeholder="Search…"
             />

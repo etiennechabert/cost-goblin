@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Dimension, DimensionId, FilterMap, TagValue } from '@costgoblin/core/browser';
 import { asTagValue } from '@costgoblin/core/browser';
 import { getDimensionId } from '../lib/dimensions.js';
+import { focusOnMount } from '../lib/focus-on-mount.js';
 import { formatDollars } from './format.js';
 
 interface FilterValue {
@@ -223,7 +224,7 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
               <div className="absolute left-0 top-full z-50 mt-1 w-72 rounded-lg border border-border bg-bg-secondary shadow-lg">
                 <div className="border-b border-border p-2">
                   <input
-                    autoFocus
+                    ref={focusOnMount}
                     type="text"
                     value={search}
                     placeholder={`Search ${dim.label}…`}
@@ -303,9 +304,9 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
                     </button>
                     <button
                       type="button"
-                      onClick={() => { setDraft(filteredValues.map(v => v.value)); }}
+                      onClick={() => { setDraft(prev => [...new Set([...prev, ...filteredValues.map(v => v.value)])]); }}
                       className="text-xs text-text-secondary hover:text-accent"
-                      disabled={filteredValues.length === 0 || draft.length === filteredValues.length}
+                      disabled={filteredValues.every(v => draft.includes(v.value))}
                     >
                       All
                     </button>

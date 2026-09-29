@@ -25,6 +25,7 @@ import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { HourlyHintBanner } from '../components/hourly-hint-banner.js';
 import { getDimensionId } from '../lib/dimensions.js';
 import { bucketKeyToDate, formatBucketKey, normalizeHourKey, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
+import { focusOnMount } from '../lib/focus-on-mount.js';
 import type { TableColumn } from '../lib/table-types.js';
 
 const DEBOUNCE_MS = 250;
@@ -778,6 +779,11 @@ type DropdownState =
   | { status: 'ready'; dimId: string; values: readonly ExplorerFilterValue[] }
   | { status: 'error'; dimId: string; message: string };
 
+/** Shared, so an unfiltered dim hands ValuesPicker the SAME `selected` on every
+ *  render: a fresh `[]` would re-fire its reset effect on each parent render
+ *  and wipe what the user is typing or ticking (e.g. when values finish loading). */
+const NO_ACTIVE_VALUES: readonly string[] = [];
+
 function MultiFilterBar({ dimensions, filters, onChange, fetchValues }: MultiFilterBarProps): React.JSX.Element {
   const [dropdown, setDropdown] = useState<DropdownState>({ status: 'closed' });
   const containerRef = useRef<HTMLDivElement>(null);
@@ -835,7 +841,7 @@ function MultiFilterBar({ dimensions, filters, onChange, fetchValues }: MultiFil
     <div ref={containerRef} className="flex flex-wrap items-center gap-2">
       {visibleDims.map(dim => {
         const dimId = getDimensionId(dim);
-        const active = filters[dimId] ?? [];
+        const active = filters[dimId] ?? NO_ACTIVE_VALUES;
         const isOpen = dropdown.status !== 'closed' && 'dimId' in dropdown && dropdown.dimId === dimId;
         const chipLabel = (() => {
           if (active.length === 0) return dim.label;
@@ -913,7 +919,7 @@ function ValuesPicker({ dropdown, selected, onApply, onClose }: ValuesPickerProp
     <div className="absolute left-0 top-full z-50 mt-1 w-72 rounded-lg border border-border bg-bg-secondary shadow-lg">
       <div className="border-b border-border p-2">
         <input
-          autoFocus
+          ref={focusOnMount}
           type="text"
           value={search}
           placeholder="Search values…"

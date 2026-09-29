@@ -352,6 +352,27 @@ describe('ExplorerView', () => {
       expect(screen.getByText('Service: Amazon EC2')).toBeDefined();
     });
 
+    it('keeps what the user typed in the filter search while its values are still loading', async () => {
+      let release: (() => void) | undefined;
+      class SlowValuesApi extends ExplorerMockApi {
+        override getExplorerFilterValues(params?: ExplorerFilterValuesParams): Promise<ExplorerFilterValue[]> {
+          const values = super.getExplorerFilterValues(params);
+          return new Promise((resolve) => { release = () => { resolve(values); }; });
+        }
+      }
+      const { user } = renderExplorer(new SlowValuesApi());
+      await screen.findByRole('table');
+
+      await user.click(screen.getByRole('button', { name: 'Service' }));
+      const search = screen.getByPlaceholderText('Search values…');
+      expect(document.activeElement).toBe(search);
+      await user.type(search, 'ec2');
+
+      release?.();
+      await screen.findByRole('checkbox', { name: /Amazon EC2/ });
+      expect(screen.getByPlaceholderText('Search values…')).toHaveProperty('value', 'ec2');
+    });
+
     it('toggling Apply Cost Scope and picking a metric re-query with the new params', async () => {
       const { api, user } = renderExplorer();
       await waitFor(() => {

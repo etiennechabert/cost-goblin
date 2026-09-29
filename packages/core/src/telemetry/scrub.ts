@@ -17,7 +17,16 @@ const REDACTED = '[redacted]';
 
 // Patterns redacted inside any free-text string (error messages, breadcrumbs,
 // stack-frame paths). Each is global so every occurrence is replaced.
-const EMAIL_RE = /[\w.+-]+@[\w-]+\.[\w.-]+/g;
+// The local part is capped at 64 characters (the RFC 5321 maximum). Unbounded,
+// a long run of word characters with no `@` after it (a token, a base64 blob)
+// is rescanned from every start position: quadratic, ~18 s on a 200k-char run,
+// synchronously inside Sentry's beforeSend.
+const EMAIL_RE = /[\w.+-]{1,64}@[\w-]+\.[\w.-]+/g;
+// With the cap, a longer run before `@` (a token in URL userinfo, an account ID
+// glued to a name) is matched on its last 64 characters only. This drops the
+// rest of the run, so it fails closed exactly as the unbounded pattern did. The
+// lookbehind lets an attempt start only at the beginning of a run: linear too.
+const EMAIL_RUN_HEAD_RE = /(?<![\w.+-])[\w.+-]+(?=\[redacted-email\])/g;
 const S3_URI_RE = /s3:\/\/[^\s'"]+/gi;
 const ARN_RE = /arn:aws:[^\s'"]+/gi;
 // 12-digit AWS account IDs. Lookarounds (not \b) so an ID glued to letters or
@@ -30,11 +39,16 @@ const AMOUNT_RE = /\$\s?\d[\d,]*(?:\.\d+)?/g;
 const POSIX_HOME_RE = /(\/(?:Users|home)\/)([^/\\\s]+)/g;
 const WIN_HOME_RE = /([A-Za-z]:\\Users\\)([^\\/\s]+)/g;
 
+function redactEmails(input: string): string {
+  // Every match needs an `@`; skip both scans for the common string without one.
+  if (!input.includes('@')) return input;
+  return input.replaceAll(EMAIL_RE, '[redacted-email]').replaceAll(EMAIL_RUN_HEAD_RE, '');
+}
+
 /** Redact sensitive substrings (emails, AWS account IDs, ARNs, S3 URIs, dollar
  *  amounts, home-dir usernames) from a single string. */
 export function redactSensitiveString(input: string): string {
-  return input
-    .replaceAll(EMAIL_RE, '[redacted-email]')
+  return redactEmails(input)
     .replaceAll(S3_URI_RE, 's3://[redacted]')
     .replaceAll(ARN_RE, '[redacted-arn]')
     .replaceAll(ACCOUNT_RE, '[redacted-account]')

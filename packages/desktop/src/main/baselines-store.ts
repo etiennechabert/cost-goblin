@@ -123,10 +123,11 @@ function str(v: unknown): string {
   return typeof v === 'string' ? v : '';
 }
 
-/** Codepoint order, NOT localeCompare: scopeKey is an identity, and collation
- *  ties distinct strings (NFC vs NFD spellings), which would make the key
- *  depend on input order instead of being canonical. */
-function compareCodepoint(a: string, b: string): number {
+/** UTF-16 code-unit order (what `<` and a bare `.sort()` compare), NOT
+ *  localeCompare: scopeKey and tupleKeyFor build identities, and collation ties
+ *  distinct strings (NFC vs NFD spellings) and varies with the runtime's ICU
+ *  data, which would make a key depend on input order or on the machine. */
+function compareCodeUnits(a: string, b: string): number {
   if (a < b) return -1;
   return a > b ? 1 : 0;
 }
@@ -137,9 +138,9 @@ function scopeKey(scope: BaselineScope): string {
   const parts: string[] = [];
   for (const [dim, vals] of Object.entries(scope.filters)) {
     if (vals === undefined) continue;
-    parts.push(`${dim}=${[...vals].map(String).sort(compareCodepoint).join('|')}`);
+    parts.push(`${dim}=${[...vals].map(String).sort(compareCodeUnits).join('|')}`);
   }
-  return `filter:${[...parts].sort(compareCodepoint).join('&')}`;
+  return `filter:${[...parts].sort(compareCodeUnits).join('&')}`;
 }
 
 function scopeFilters(scope: BaselineScope): FilterMap {
@@ -944,7 +945,7 @@ function tupleValuesOf(r: RawRow, grain: readonly GrainDim[]): Record<string, st
  *  exact key — reconcileDiscovered joins their maps by it, and a mismatch is
  *  silently swallowed as empty history (`get(key) ?? []`), not raised. */
 function tupleKeyFor(grain: readonly GrainDim[], values: Record<string, string>): string {
-  return grain.map((d) => `${d.name}=${values[d.field] ?? ''}`).sort().join('&');
+  return grain.map((d) => `${d.name}=${values[d.field] ?? ''}`).sort(compareCodeUnits).join('&');
 }
 
 /** Folds the totals query's one-row-per-tuple result into a map keyed by tuple

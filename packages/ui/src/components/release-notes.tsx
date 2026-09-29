@@ -31,14 +31,14 @@ function renderNode(node: ReleaseNoteNode, key: number): ReactNode {
     case 'void':
       return createElement(node.tag, { key });
     case 'element':
-      return createElement(node.tag, { key }, ...node.children.map(renderNode));
+      return createElement(node.tag, { key }, ...renderChildren(node.children));
     case 'link':
       // target=_blank routes the click through the main process's window-open
       // handler (URL-validated, opened in the system browser) instead of
       // navigating the app window away.
       return (
         <a key={key} href={node.href} target="_blank" rel="noopener noreferrer">
-          {node.children.map(renderNode)}
+          {renderChildren(node.children)}
         </a>
       );
     default: {
@@ -48,6 +48,13 @@ function renderNode(node: ReleaseNoteNode, key: number): ReactNode {
   }
 }
 
+/** Siblings keyed by position. The explicit arrow pins what `renderNode`
+ *  receives: `.map(renderNode)` would also pass the array as a third argument,
+ *  and silently change meaning if `renderNode` ever grew one. */
+function renderChildren(nodes: readonly ReleaseNoteNode[]): ReactNode[] {
+  return nodes.map((child, i) => renderNode(child, i));
+}
+
 /** Renders auto-updater release notes (GitHub HTML, or whatever a
  *  `latest*.yml` `releaseNotes` key carries) from an allow-listed tree —
  *  never as raw HTML, so no attribute, meta refresh, form or same-window
@@ -55,7 +62,7 @@ function renderNode(node: ReleaseNoteNode, key: number): ReactNode {
 export function ReleaseNotes({ html }: Readonly<{ html: string }>): React.JSX.Element | null {
   const tree = useMemo(() => parseReleaseNotes(html), [html]);
   if (tree.length === 0) return null;
-  const children = tree.map(renderNode);
+  const children = renderChildren(tree);
   if (!tree.some(isBlock)) return <div className="whitespace-pre-line">{children}</div>;
   return <>{children}</>;
 }
