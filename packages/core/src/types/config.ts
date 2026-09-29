@@ -112,8 +112,12 @@ export interface BuiltInDimension {
   readonly accountNameFromTag?: string | undefined;
   /** Account-specific: regexes (one per array entry) applied to each resolved
    *  name with empty-string replacement. Lets the user strip noise like
-   *  trailing " production" or a common org prefix. Invalid patterns are
-   *  silently skipped; result is whitespace-collapsed and trimmed. */
+   *  trailing " production" or a common org prefix; the result is
+   *  whitespace-collapsed and trimmed. Capped at 16 patterns of at most 256
+   *  characters (`strip-pattern-limits.ts`: dropped with a warning on load,
+   *  rejected on save). Always run through `stripNamesBounded`, which bounds
+   *  each pattern's wall-clock time: a pattern that is invalid, throws, or
+   *  runs too long is skipped and reported by index, never fatal. */
   readonly nameStripPatterns?: readonly string[] | undefined;
   /** Region-specific: when true, resolve raw region codes (eu-central-1) to
    *  friendly names (Europe (Frankfurt)) via the SSM global-infrastructure

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronUp, ChevronDown, GripVertical, Lock, Database, AlertTriangle } from 'lucide-react';
-import type { BuiltInDimension, DimensionsConfig, TagDimension, ConceptType, NormalizationRule, RollupGrainEstimate, RollupSizeBand } from '@costgoblin/core/browser';
-import { asDimensionId, OU_PATH_SOURCE_KEY, tagDimColumn } from '@costgoblin/core/browser';
+import type { BuiltInDimension, ColumnValuesPreview, DimensionsConfig, TagDimension, ConceptType, NormalizationRule, RollupGrainEstimate, RollupSizeBand, StripPatternIssues } from '@costgoblin/core/browser';
+import { asDimensionId, nameStripPatternViolations, OU_PATH_SOURCE_KEY, tagDimColumn } from '@costgoblin/core/browser';
 import { formatBytes } from '../components/format.js';
 
 const OU_PATH_LABEL = 'OU Path';
@@ -272,6 +272,45 @@ interface EditingBuiltIn {
 
 const TRANSFORM_FREE_FIELDS = new Set(['service', 'service_category']);
 
+/** The preview runs strip patterns in the main process under a time budget —
+ *  wait for the textarea to settle instead of re-running on every keystroke. */
+const STRIP_PATTERN_PREVIEW_DEBOUNCE_MS = 300;
+
+/** One pattern per non-blank line, trimmed — the same list the editor saves. */
+function parseStripPatternLines(text: string): string[] {
+  return text
+    .split('\n')
+    .map(l => l.trim())
+    .filter(l => l.length > 0);
+}
+
+function describePatternPositions(indexes: readonly number[]): { subject: string; plural: boolean } {
+  const positions = indexes.map(i => String(i + 1)).join(', ');
+  return indexes.length === 1
+    ? { subject: `Pattern ${positions}`, plural: false }
+    : { subject: `Patterns ${positions}`, plural: true };
+}
+
+/** User-facing lines for the patterns the preview could not apply. Positions
+ *  are 1-based over the non-blank lines. None of these block saving: the same
+ *  bounded executor skips them the same way when the account map is built. */
+function stripIssueMessages(issues: StripPatternIssues): string[] {
+  const messages: string[] = [];
+  if (issues.slow.length > 0) {
+    const { subject, plural } = describePatternPositions(issues.slow);
+    messages.push(`${subject} took too long and ${plural ? 'were' : 'was'} skipped — simplify ${plural ? 'them' : 'it'} (nested quantifiers such as (.+)+ backtrack catastrophically).`);
+  }
+  if (issues.invalid.length > 0) {
+    const { subject, plural } = describePatternPositions(issues.invalid);
+    messages.push(`${subject} ${plural ? 'are' : 'is'} not a valid regular expression and ${plural ? 'were' : 'was'} skipped.`);
+  }
+  if (issues.skipped.length > 0) {
+    const { subject, plural } = describePatternPositions(issues.skipped);
+    messages.push(`${subject} ${plural ? 'were' : 'was'} not evaluated — the preview ran out of time.`);
+  }
+  return messages;
+}
+
 function buildDiscoverOptions(
   dim: { name: string; field: string },
   state: EditingBuiltIn,
@@ -342,16 +381,19 @@ function BuiltInEditor({ dim, onSave, onCancel, accountTagKeys }: Readonly<{
     else onCancel();
   }
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const stripPatternList = state.nameStripPatterns
-    .split('\n')
-    .map(l => l.trim())
-    .filter(l => l.length > 0);
-  const stripPatternsKey = stripPatternList.join('\u0001');
+  // Caps are checked on the live text (so Save disables immediately); the
+  // preview only sees the debounced text, and never an over-limit list — the
+  // main process would reject it. Patterns are never run in the renderer.
+  const stripPatternViolations = isAccountDim ? nameStripPatternViolations(parseStripPatternLines(state.nameStripPatterns)) : [];
+  const debouncedStripPatterns = useDebouncedValue(state.nameStripPatterns, STRIP_PATTERN_PREVIEW_DEBOUNCE_MS);
+  const previewStripPatternList = parseStripPatternLines(debouncedStripPatterns);
+  const previewBlocked = isAccountDim && nameStripPatternViolations(previewStripPatternList).length > 0;
+  const stripPatternsKey = previewStripPatternList.join('\u0001');
   const normalize: NormalizationRule | undefined = state.normalize.length > 0 ? state.normalize as NormalizationRule : undefined;
-  const discoverOptions = buildDiscoverOptions(dim, state, normalize, stripPatternList);
+  const discoverOptions = buildDiscoverOptions(dim, state, normalize, previewStripPatternList);
   const valuesQuery = useQuery(
-    () => api.discoverColumnValues(dim.field, discoverOptions),
-    [dim.field, dim.name, isAccountDim, isAnyRegionDim, state.useOrgAccounts, state.useRegionNames, state.accountNameFromTag, stripPatternsKey, normalize],
+    (): Promise<ColumnValuesPreview | null> => previewBlocked ? Promise.resolve(null) : api.discoverColumnValues(dim.field, discoverOptions),
+    [dim.field, dim.name, isAccountDim, isAnyRegionDim, state.useOrgAccounts, state.useRegionNames, state.accountNameFromTag, stripPatternsKey, previewBlocked, normalize],
   );
 
   useClickOutsideDismiss(containerRef, onCancel, isDirty, discardConfirm, setDiscardConfirm);
@@ -467,17 +509,32 @@ function BuiltInEditor({ dim, onSave, onCancel, accountTagKeys }: Readonly<{
       </select>
     </label>
   );
+  const stripIssueLines = isAccountDim && preview !== null ? stripIssueMessages(preview.stripIssues) : [];
   const stripPatternsField = (
-    <label className="flex flex-col gap-1">
-      <span className="text-xs text-text-muted">Name strip patterns (one regex per line)</span>
-      <textarea
-        value={state.nameStripPatterns}
-        onChange={e => { setState(s => ({ ...s, nameStripPatterns: e.target.value })); }}
-        rows={3}
-        className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm font-mono text-text-primary outline-none focus:border-accent"
-        placeholder={'\\s+(production|staging|sandbox)$\n^DiBa Cards '}
-      />
-    </label>
+    <div className="flex flex-col gap-1">
+      <label className="flex flex-col gap-1">
+        <span className="text-xs text-text-muted">Name strip patterns (one regex per line)</span>
+        <textarea
+          value={state.nameStripPatterns}
+          onChange={e => { setState(s => ({ ...s, nameStripPatterns: e.target.value })); }}
+          rows={3}
+          className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm font-mono text-text-primary outline-none focus:border-accent"
+          placeholder={'\\s+(production|staging|sandbox)$\n^DiBa Cards '}
+        />
+      </label>
+      {stripPatternViolations.length > 0 && (
+        <div role="alert">
+          <ul className="flex flex-col gap-0.5 text-[11px] text-negative">
+            {stripPatternViolations.map(v => <li key={v}>Can't save: {v}.</li>)}
+          </ul>
+        </div>
+      )}
+      {stripIssueLines.length > 0 && (
+        <ul className="flex flex-col gap-0.5 text-[11px] text-warning">
+          {stripIssueLines.map(m => <li key={m}>{m}</li>)}
+        </ul>
+      )}
+    </div>
   );
   const aliasField = (
     <label className="flex flex-col gap-1">
@@ -582,7 +639,9 @@ function BuiltInEditor({ dim, onSave, onCancel, accountTagKeys }: Readonly<{
           <button
             type="button"
             onClick={() => { onSave(state); }}
-            className="rounded-md bg-accent px-4 py-1.5 text-xs font-medium text-bg-primary hover:bg-accent/90 transition-colors"
+            disabled={stripPatternViolations.length > 0}
+            title={stripPatternViolations.length > 0 ? 'Fix the name strip patterns first' : undefined}
+            className="rounded-md bg-accent px-4 py-1.5 text-xs font-medium text-bg-primary hover:bg-accent/90 transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-accent"
           >
             Save
           </button>

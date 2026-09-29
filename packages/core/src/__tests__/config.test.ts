@@ -1,7 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { join } from 'node:path';
 import { loadConfig, loadDimensions, loadOrgTree, ConfigValidationError } from '../config/index.js';
 import { validateConfig, validateDimensions, validateOrgTree } from '../config/validator.js';
+import { MAX_NAME_STRIP_PATTERN_LENGTH, MAX_NAME_STRIP_PATTERNS, nameStripPatternViolations } from '../config/strip-pattern-limits.js';
+import { logger } from '../logger/logger.js';
 import { dimensionsConfigToYaml } from '../config/dimensions-serialize.js';
 import type { AwsProviderConfig, DimensionsConfig, GcpProviderConfig, ProviderConfig } from '../types/config.js';
 import { OU_PATH_SOURCE_KEY } from '../types/config.js';
@@ -517,6 +519,87 @@ describe('validateDimensions', () => {
     };
     const serialized = dimensionsConfigToYaml(full);
     expect(dimensionsConfigToYaml(validateDimensions(serialized))).toEqual(serialized);
+  });
+});
+
+describe('validateDimensions — nameStripPatterns caps', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  function accountDim(nameStripPatterns: unknown): unknown {
+    return {
+      builtIn: [{ name: 'account', label: 'Account', field: 'account_id', displayField: 'account_name', nameStripPatterns }],
+      tags: [],
+    };
+  }
+
+  const within = Array.from({ length: MAX_NAME_STRIP_PATTERNS }, (_, i) => `^prefix-${String(i)}-`);
+
+  it('loads a config within the caps unchanged, in both modes', () => {
+    expect(validateDimensions(accountDim(within)).builtIn[0]?.nameStripPatterns).toEqual(within);
+    expect(validateDimensions(accountDim(within), { stripPatternLimits: 'reject' }).builtIn[0]?.nameStripPatterns).toEqual(within);
+  });
+
+  it('keeps the first 16 of 17 patterns on load and warns without echoing pattern text', () => {
+    const warn = vi.spyOn(logger, 'warn');
+    const seventeen = [...within, 'secret-pattern-text'];
+    const dims = validateDimensions(accountDim(seventeen));
+    expect(dims.builtIn[0]?.nameStripPatterns).toEqual(within);
+    expect(warn).toHaveBeenCalledTimes(1);
+    const message = String(warn.mock.calls[0]?.[0]);
+    expect(message).toMatch(/nameStripPatterns/);
+    expect(message).not.toContain('secret-pattern-text');
+  });
+
+  it('drops a pattern longer than 256 characters on load, keeping the rest in order', () => {
+    const warn = vi.spyOn(logger, 'warn');
+    const tooLong = 'x'.repeat(MAX_NAME_STRIP_PATTERN_LENGTH + 1);
+    const dims = validateDimensions(accountDim(['^a-', tooLong, '-b$']));
+    expect(dims.builtIn[0]?.nameStripPatterns).toEqual(['^a-', '-b$']);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).not.toContain(tooLong);
+  });
+
+  it('drops over-long patterns before counting', () => {
+    const tooLong = 'x'.repeat(MAX_NAME_STRIP_PATTERN_LENGTH + 1);
+    const dims = validateDimensions(accountDim([tooLong, ...within]));
+    expect(dims.builtIn[0]?.nameStripPatterns).toEqual(within);
+  });
+
+  it('omits the field when every pattern is dropped', () => {
+    const dims = validateDimensions(accountDim(['y'.repeat(MAX_NAME_STRIP_PATTERN_LENGTH + 1)]));
+    expect(dims.builtIn[0]).not.toHaveProperty('nameStripPatterns');
+  });
+
+  it('loads an uncompilable regex — it is skipped at run time, never fatal', () => {
+    expect(validateDimensions(accountDim(['(unclosed'])).builtIn[0]?.nameStripPatterns).toEqual(['(unclosed']);
+    expect(validateDimensions(accountDim(['(unclosed']), { stripPatternLimits: 'reject' }).builtIn[0]?.nameStripPatterns).toEqual(['(unclosed']);
+  });
+
+  it.each([
+    ['17 patterns', [...within, 'one-more']],
+    ['a 257-character pattern', ['z'.repeat(MAX_NAME_STRIP_PATTERN_LENGTH + 1)]],
+  ])('rejects %s in reject mode', (_label, patterns) => {
+    expect(() => validateDimensions(accountDim(patterns), { stripPatternLimits: 'reject' })).toThrow(ConfigValidationError);
+  });
+
+  it('still rejects a non-string entry in either mode', () => {
+    expect(() => validateDimensions(accountDim(['ok', 42]))).toThrow(ConfigValidationError);
+  });
+});
+
+describe('nameStripPatternViolations', () => {
+  it('is empty within the caps', () => {
+    expect(nameStripPatternViolations([])).toEqual([]);
+    expect(nameStripPatternViolations(['a'.repeat(MAX_NAME_STRIP_PATTERN_LENGTH)])).toEqual([]);
+  });
+
+  it('names the count and each over-long pattern by 1-based position, without its text', () => {
+    const tooLong = 'q'.repeat(MAX_NAME_STRIP_PATTERN_LENGTH + 1);
+    const violations = nameStripPatternViolations([...Array.from({ length: MAX_NAME_STRIP_PATTERNS }, () => 'a'), tooLong]);
+    expect(violations).toHaveLength(2);
+    expect(violations[0]).toMatch(/17 patterns/);
+    expect(violations[1]).toMatch(/pattern 17 is 257 characters/);
+    expect(violations.join(' ')).not.toContain(tooLong);
   });
 });
 

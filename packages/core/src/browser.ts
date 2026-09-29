@@ -14,6 +14,10 @@ export type { DuckDbSandboxOptions } from './query/duckdb-sandbox.js';
 export { validateViews } from './config/views-validator.js';
 export { widgetToYaml, viewToYaml, viewsConfigToYaml } from './config/views-serialize.js';
 export { ConfigValidationError } from './config/validator.js';
+// The editor validates strip patterns against the same caps the save handler
+// enforces. Pure leaf module: the bounded executor that RUNS the patterns
+// (normalize/strip-bounded.ts, node:vm) must never be exported from here.
+export { MAX_NAME_STRIP_PATTERNS, MAX_NAME_STRIP_PATTERN_LENGTH, nameStripPatternViolations } from './config/strip-pattern-limits.js';
 export { GCLOUD_ADC_LOGIN_COMMAND, GCLOUD_CLI_LOGIN_COMMAND } from './config/credential-commands.js';
 // The wizard renders a GCS listing's classification and enforces the same
 // tier-overlap rule the config validator applies at load time. Imported from

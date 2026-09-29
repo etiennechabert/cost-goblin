@@ -22,6 +22,7 @@ import type {
   TagValue,
 } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
+import { redactHome, toSingleLine } from '../formatters/neutralize.js';
 import { formatResult, type DataCoverage, type ResponseFormat, type StructuredResult } from '../formatters/result.js';
 
 export function toNum(v: unknown): number {
@@ -142,8 +143,12 @@ export function resolveEntityName(entity: string, accountMap: Map<string, string
   return accountMap.get(entity) ?? entity;
 }
 
+/** The one sink for every tool error. Messages can echo billing values (a
+ *  DuckDB conversion error quotes the offending cell) and local paths (Parquet
+ *  IO errors), so the message is put on one line and the home directory is
+ *  replaced with `~`. Do not log the unredacted message here. */
 export function toolError(message: string): { content: [{ type: 'text'; text: string }]; isError: true } {
-  return { content: [{ type: 'text' as const, text: `Error: ${message}` }], isError: true as const };
+  return { content: [{ type: 'text' as const, text: `Error: ${toSingleLine(redactHome(message))}` }], isError: true as const };
 }
 
 export function toolResult(text: string): { content: [{ type: 'text'; text: string }] } {

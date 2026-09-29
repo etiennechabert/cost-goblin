@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ConfigValidationError } from '@costgoblin/core';
-import { parseDimensionsPayload } from '../main/handlers/dimensions-payload.js';
+import { parseDimensionsPayload, parseDimensionsSavePayload } from '../main/handlers/dimensions-payload.js';
 import { DEFAULT_BUILT_INS } from '../main/handlers/dimensions-merge.js';
 import { rawGlobLiteral } from '../main/handlers/query-utils.js';
 
@@ -44,6 +44,30 @@ describe('parseDimensionsPayload', () => {
   it('returns the default built-ins unchanged', () => {
     const payload = { builtIn: [...DEFAULT_BUILT_INS], tags: [] };
     expect(parseDimensionsPayload(payload)).toEqual(payload);
+  });
+
+  describe('nameStripPatterns caps', () => {
+    function withPatterns(nameStripPatterns: readonly string[]): unknown {
+      return { builtIn: [{ name: 'account', label: 'Account', field: 'account_id', nameStripPatterns }], tags: [] };
+    }
+    const seventeen = Array.from({ length: 17 }, (_, i) => `^p${String(i)}-`);
+
+    it('rejects an over-limit list when saving', () => {
+      expect(() => parseDimensionsSavePayload(withPatterns(seventeen))).toThrow(ConfigValidationError);
+      expect(() => parseDimensionsSavePayload(withPatterns(['x'.repeat(257)]))).toThrow(ConfigValidationError);
+    });
+
+    it('accepts a list within the caps when saving', () => {
+      expect(parseDimensionsSavePayload(withPatterns(['^acme-'])).builtIn[0]?.nameStripPatterns).toEqual(['^acme-']);
+    });
+
+    it('still runs every other check when saving', () => {
+      expect(() => parseDimensionsSavePayload({ builtIn: [], tags: [{ label: 'Draft' }] })).toThrow(ConfigValidationError);
+    });
+
+    it('drops the excess for a non-persisted payload (the estimate probe, whose SQL never sees the patterns)', () => {
+      expect(parseDimensionsPayload(withPatterns(seventeen)).builtIn[0]?.nameStripPatterns).toHaveLength(16);
+    });
   });
 });
 

@@ -12,6 +12,7 @@ import { queryMissingTags } from './query-missing-tags.js';
 import { exploreData } from './explore-data.js';
 import { runSql } from './run-sql.js';
 import { listBaselines, getBaselineDrift } from './baselines.js';
+import { UNTRUSTED_DATA_NOTE } from '../server-instructions.js';
 import { toolError } from './tool-helpers.js';
 
 const dateRangeSchema = z.object({
@@ -25,14 +26,20 @@ const filtersSchema = z.record(z.string(), z.array(z.string())).optional()
 const formatSchema = z.enum(['markdown', 'json', 'csv']).optional().describe(
   'Response format. "markdown" (default) for human-readable tables. ' +
   '"json" for machine-readable rows the LLM can ingest directly without re-parsing markdown — use this when reasoning over many rows or chaining queries. ' +
-  '"csv" for downstream tooling.',
+  '"csv" for downstream tooling. ' +
+  'Values are verbatim only in "json": "markdown" and "csv" escape a `|` inside a value as `\\|` and a line break as `\\n`.',
 );
+
+/** Every tool description ends with the untrusted-data note (#602). */
+function describeTool(description: string): string {
+  return `${description} ${UNTRUSTED_DATA_NOTE}`;
+}
 
 export function registerTools(server: McpServer, ctx: McpContext): void {
   server.registerTool(
     'get_cost_overview',
     {
-      description: 'Get a high-level overview of cloud costs: total spend, top services, top accounts, available dimensions. Start here.',
+      description: describeTool('Get a high-level overview of cloud costs: total spend, top services, top accounts, available dimensions. Start here.'),
       inputSchema: {
         dateRange: dateRangeSchema,
         format: formatSchema,
@@ -50,7 +57,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
   server.registerTool(
     'list_dimensions',
     {
-      description: 'List all available dimensions (groupBy/filter fields) with their IDs, labels, types, and descriptions.',
+      description: describeTool('List all available dimensions (groupBy/filter fields) with their IDs, labels, types, and descriptions.'),
       inputSchema: {
         format: formatSchema,
       },
@@ -67,7 +74,8 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
   server.registerTool(
     'get_filter_values',
     {
-      description: 'Get all values for a dimension with their cost contribution. Useful for discovering what to filter on.',
+      description: describeTool('Get all values for a dimension with their cost contribution. Useful for discovering what to filter on. ' +
+        "Use format:'json' to reuse values as filters: markdown and csv escape pipes and line breaks, so a copied value would not match."),
       inputSchema: {
         dimensionId: z.string().describe('Dimension ID (from list_dimensions)'),
         dateRange: dateRangeSchema,
@@ -88,7 +96,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
   server.registerTool(
     'query_costs',
     {
-      description: 'Break down costs by any dimension. Returns entity table with total cost, percentage, and top-5 service columns.',
+      description: describeTool('Break down costs by any dimension. Returns entity table with total cost, percentage, and top-5 service columns.'),
       inputSchema: {
         groupBy: z.string().describe('Dimension ID to group by (e.g. "service", "account", "region", or a tag column)'),
         dateRange: dateRangeSchema,
@@ -109,7 +117,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
   server.registerTool(
     'query_daily_costs',
     {
-      description: 'Time series of daily (or weekly if window > 14 days) costs broken down by a dimension. Shows top 5 groups.',
+      description: describeTool('Time series of daily (or weekly if window > 14 days) costs broken down by a dimension. Shows top 5 groups.'),
       inputSchema: {
         groupBy: z.string().optional().describe('Dimension ID to group by (default: "service")'),
         dateRange: dateRangeSchema,
@@ -129,7 +137,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
   server.registerTool(
     'query_trends',
     {
-      description: 'Compare current period vs previous period. Shows top increases and savings with delta and % change.',
+      description: describeTool('Compare current period vs previous period. Shows top increases and savings with delta and % change.'),
       inputSchema: {
         groupBy: z.string().describe('Dimension ID to group by'),
         dateRange: dateRangeSchema,
@@ -152,7 +160,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
   server.registerTool(
     'query_entity_detail',
     {
-      description: 'Deep dive on a single entity: total cost, service breakdown, account breakdown, daily trend.',
+      description: describeTool('Deep dive on a single entity: total cost, service breakdown, account breakdown, daily trend.'),
       inputSchema: {
         entity: z.string().describe('Entity value (e.g. account name, service name, tag value)'),
         dimension: z.string().describe('Dimension ID the entity belongs to'),
@@ -173,7 +181,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
   server.registerTool(
     'query_missing_tags',
     {
-      description: 'Find untagged resources and their cost. Shows actionable (taggable) vs likely-untaggable breakdown.',
+      description: describeTool('Find untagged resources and their cost. Shows actionable (taggable) vs likely-untaggable breakdown.'),
       inputSchema: {
         tagDimension: z.string().describe('Tag dimension ID to check (e.g. "tag_team", "tag_environment")'),
         dateRange: dateRangeSchema,
@@ -200,7 +208,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
   server.registerTool(
     'explore_data',
     {
-      description: 'Browse raw CUR line items or aggregated data. Use groupByColumns for aggregation, omit for raw rows.',
+      description: describeTool('Browse raw CUR line items or aggregated data. Use groupByColumns for aggregation, omit for raw rows.'),
       inputSchema: {
         dateRange: dateRangeSchema,
         filters: filtersSchema,
@@ -226,7 +234,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
   server.registerTool(
     'run_sql',
     {
-      description: 'Run an ad-hoc SELECT query. A "costs" CTE is pre-defined with the dataset for the given date range (default: last 60 days). Write: SELECT ... FROM costs WHERE ... At most `limit` rows (default 100, max 500) are returned, even when the query has its own LIMIT; a note says when more rows exist.',
+      description: describeTool('Run an ad-hoc SELECT query. A "costs" CTE is pre-defined with the dataset for the given date range (default: last 60 days). Write: SELECT ... FROM costs WHERE ... At most `limit` rows (default 100, max 500) are returned, even when the query has its own LIMIT; a note says when more rows exist.'),
       inputSchema: {
         sql: z.string().describe('SQL query (SELECT/WITH only). A "costs" CTE with columns: usage_date, account_id, account_name, region, service, service_code, service_category, charge_category, pricing_category, commitment_status, operation, sku_meter, description, resource_id, usage_amount, cost, list_cost, plus tag columns.'),
         dateRange: dateRangeSchema,
@@ -246,7 +254,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
   server.registerTool(
     'list_baselines',
     {
-      description: 'List cost baselines and their drift: current vs the normal band, with potential (above floor) and realized (below ceiling) monthly savings. Use status="actionable" to see scopes drifting up or hitting new lows.',
+      description: describeTool('List cost baselines and their drift: current vs the normal band, with potential (above floor) and realized (below ceiling) monthly savings. Use status="actionable" to see scopes drifting up or hitting new lows.'),
       inputSchema: {
         status: z.enum(['over', 'under', 'in-band', 'insufficient-data', 'actionable']).optional().describe('Filter by drift status'),
         limit: z.number().optional().describe('Max baselines to return (default 25), ranked by potential savings'),
@@ -265,7 +273,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
   server.registerTool(
     'get_baseline_drift',
     {
-      description: 'Drift detail for one baseline: current vs band, potential/realized savings, and the recent snapshot trend. Identify the baseline by id (from list_baselines) or a substring match on its scope/name.',
+      description: describeTool('Drift detail for one baseline: current vs band, potential/realized savings, and the recent snapshot trend. Identify the baseline by id (from list_baselines) or a substring match on its scope/name.'),
       inputSchema: {
         id: z.string().optional().describe('Baseline id from list_baselines'),
         match: z.string().optional().describe('Substring to match against the baseline scope/name (e.g. "AmazonRDS")'),

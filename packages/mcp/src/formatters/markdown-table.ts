@@ -1,3 +1,5 @@
+import { escapeMarkdownCell } from './neutralize.js';
+
 export type Alignment = 'left' | 'right' | 'center';
 
 export interface ColumnDef {
@@ -27,22 +29,26 @@ function separatorCell(width: number, align: Alignment): string {
   }
 }
 
+/** Render a GFM table. Headers and cells may hold billing/config values, so
+ *  each is escaped (single line, `|` as backslash-pipe) BEFORE the column
+ *  widths are measured — padding is computed on what is actually emitted. */
 export function markdownTable(columns: readonly ColumnDef[], rows: readonly (readonly string[])[]): string {
   const aligns: Alignment[] = columns.map(c => c.align ?? 'left');
-  const widths = columns.map(c => c.header.length);
+  const headers = columns.map(c => escapeMarkdownCell(c.header));
+  const cells = rows.map(row => columns.map((_, i) => escapeMarkdownCell(row[i] ?? '')));
+  const widths = headers.map(h => h.length);
 
-  for (const row of rows) {
+  for (const row of cells) {
     for (let i = 0; i < columns.length; i++) {
-      const cell = row[i] ?? '';
-      widths[i] = Math.max(widths[i] ?? 0, cell.length);
+      widths[i] = Math.max(widths[i] ?? 0, (row[i] ?? '').length);
     }
   }
 
-  const headerLine = '| ' + columns.map((c, i) => pad(c.header, widths[i] ?? 0, aligns[i] ?? 'left')).join(' | ') + ' |';
+  const headerLine = '| ' + headers.map((h, i) => pad(h, widths[i] ?? 0, aligns[i] ?? 'left')).join(' | ') + ' |';
   const sepLine = '| ' + columns.map((_, i) => separatorCell(widths[i] ?? 3, aligns[i] ?? 'left')).join(' | ') + ' |';
 
-  const dataLines = rows.map(row =>
-    '| ' + columns.map((_, i) => pad(row[i] ?? '', widths[i] ?? 0, aligns[i] ?? 'left')).join(' | ') + ' |',
+  const dataLines = cells.map(row =>
+    '| ' + row.map((cell, i) => pad(cell, widths[i] ?? 0, aligns[i] ?? 'left')).join(' | ') + ' |',
   );
 
   return [headerLine, sepLine, ...dataLines].join('\n');
