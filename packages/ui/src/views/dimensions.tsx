@@ -1490,6 +1490,17 @@ function pillClass(enabled: boolean, danger = false): string {
  *  pill. */
 function builtInGrainColumn(d: BuiltInDimension): string { return d.field; }
 
+/** The draft config as the rollup estimator should see it: tags with neither
+ *  a resource tag key nor an account-tag fallback are dropped. Such a tag is
+ *  a half-filled editor row, not a dimension yet — the main process validates
+ *  the estimate payload and would reject the whole candidate (surfacing the
+ *  estimate error hint) over a row the user is still typing. */
+export function withoutSourcelessTags(config: DimensionsConfig): DimensionsConfig {
+  const hasSource = (v: string | undefined): boolean => v !== undefined && v.length > 0;
+  const tags = config.tags.filter(t => hasSource(t.tagName) || hasSource(t.accountTagFallback));
+  return tags.length === config.tags.length ? config : { ...config, tags };
+}
+
 /** A digest of the ENABLED grain columns. Drives the estimate refetch: it
  *  changes when a dim is toggled (the grain changes) but not when a dim is
  *  reordered or relabelled (those never touch stored bytes). */
@@ -1897,10 +1908,11 @@ export function DimensionsView(): React.JSX.Element {
   // data). Without this, dragging through several toggles fires a probe per
   // intermediate grain, stacking heavy queries against the worker pool. Wait for
   // the grain to settle (350 ms) so only the final grain is probed.
-  const estimateSig = config === null ? '' : grainSignature(config);
+  const estimateCandidate = config === null ? null : withoutSourcelessTags(config);
+  const estimateSig = estimateCandidate === null ? '' : grainSignature(estimateCandidate);
   const debouncedEstimateSig = useDebouncedValue(estimateSig, 350);
   const estimateQuery = useQuery(
-    () => config === null ? Promise.resolve(null) : api.estimateRollupGrain(config),
+    () => estimateCandidate === null ? Promise.resolve(null) : api.estimateRollupGrain(estimateCandidate),
     // Refetch ONLY when the (settled) draft grain changes. The estimate is a
     // pre-apply preview — it must NOT re-run when the rollup rebuilds. Applying
     // kicks off a re-roll, and re-probing on that transition would fire a heavy

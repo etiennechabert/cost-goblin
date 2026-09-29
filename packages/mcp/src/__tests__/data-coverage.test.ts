@@ -103,3 +103,37 @@ describe('computeDataCoverage — multi-provider', () => {
     expect(coverage.missingPeriods).toContain('2026-08');
   });
 });
+
+describe('computeDataCoverage — quoted data dir', () => {
+  let quotedDir: string;
+
+  beforeAll(async () => {
+    // A profile path like C:\Users\o'brien: the apostrophe must be escaped in
+    // the read_parquet literal or DuckDB fails to parse the MAX() probe.
+    quotedDir = await mkdtemp(join(tmpdir(), "cg-mcp-o'brien-"));
+    await mkdir(join(quotedDir, 'aws', 'raw', 'daily-2026-07'), { recursive: true });
+    await writeFile(join(quotedDir, 'aws', 'raw', 'daily-2026-07', 'data.parquet'), '');
+  });
+
+  afterAll(async () => {
+    await rm(quotedDir, { recursive: true, force: true });
+  });
+
+  it('escapes the apostrophe in the SQL it sends to runQuery', async () => {
+    const seen: string[] = [];
+    const base = ctxWith({ ...TWO_PROVIDERS, providers: [AWS_PROVIDER] }, null);
+    const ctx: McpContext = {
+      ...base,
+      dataDir: quotedDir,
+      runQuery: (sql: string): Promise<RawRow[]> => {
+        seen.push(sql);
+        return Promise.resolve([{ d: '2026-07-15' }]);
+      },
+    };
+    const coverage = await computeDataCoverage(ctx);
+    expect(coverage.latestDay).toBe('2026-07-15');
+    expect(seen).toHaveLength(1);
+    const escaped = `'${quotedDir.replaceAll("'", "''")}/aws/raw/daily-2026-07/*.parquet'`;
+    expect(seen[0]).toContain(escaped);
+  });
+});

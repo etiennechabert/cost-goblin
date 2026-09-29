@@ -2,9 +2,10 @@ import { render, screen, waitFor, cleanup } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { asDimensionId } from '@costgoblin/core/browser';
+import type { DimensionsConfig } from '@costgoblin/core/browser';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
-import { DimensionsView } from '../views/dimensions.js';
+import { DimensionsView, withoutSourcelessTags } from '../views/dimensions.js';
 
 function renderView() {
   const api = new MockCostApi();
@@ -84,5 +85,55 @@ describe('DimensionsView — rollup grain estimate', () => {
       expect(screen.getByText('Actual')).toBeDefined();
     });
     expect(screen.queryByText('Est. rollup')).toBeNull();
+  });
+});
+
+describe('DimensionsView — draft tags without a source', () => {
+  const SOURCELESS = 'Draft tag';
+
+  it('withoutSourcelessTags drops tags with no tag key and no account fallback', () => {
+    const config: DimensionsConfig = {
+      builtIn: [{ name: asDimensionId('service'), label: 'Service', field: 'service' }],
+      tags: [
+        { tagName: 'team', label: 'Team' },
+        { label: SOURCELESS },
+        { tagName: '', accountTagFallback: '', label: 'Empty' },
+        { label: 'OU', accountTagFallback: '__ouPath__' },
+      ],
+      order: ['builtin:service'],
+    };
+    const out = withoutSourcelessTags(config);
+    expect(out.tags.map(t => t.label)).toEqual(['Team', 'OU']);
+    expect(out.builtIn).toEqual(config.builtIn);
+    expect(out.order).toEqual(config.order);
+  });
+
+  it('keeps a sourceless draft tag out of the estimate, so no error hint shows', async () => {
+    const api = new MockCostApi();
+    vi.spyOn(api, 'getDimensionsConfig').mockResolvedValue({
+      builtIn: [{ name: asDimensionId('service'), label: 'Service', field: 'service' }],
+      tags: [{ tagName: 'team', label: 'Team' }, { label: SOURCELESS }],
+    });
+    // Mirror the main process: the handler now validates the candidate and
+    // rejects a tag that has no source.
+    const original = api.estimateRollupGrain.bind(api);
+    const estimateSpy = vi.spyOn(api, 'estimateRollupGrain').mockImplementation((candidate) => {
+      if (candidate.tags.some(t => (t.tagName ?? '') === '' && (t.accountTagFallback ?? '') === '')) {
+        return Promise.reject(new Error('tags[1] must set either tagName or accountTagFallback'));
+      }
+      return original(candidate);
+    });
+    render(
+      <CostApiProvider value={api}>
+        <DimensionsView />
+      </CostApiProvider>,
+    );
+    // No resource_id → the mock reports the grain as matching the built rollup.
+    await waitFor(() => { expect(screen.getByText('Actual')).toBeDefined(); });
+    expect(estimateSpy).toHaveBeenCalled();
+    for (const [candidate] of estimateSpy.mock.calls) {
+      expect(candidate.tags.some(t => t.label === SOURCELESS)).toBe(false);
+    }
+    expect(screen.queryByText(/Couldn’t estimate the rollup size/)).toBeNull();
   });
 });

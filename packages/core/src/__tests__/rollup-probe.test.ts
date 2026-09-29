@@ -3,6 +3,7 @@ import { DuckDBInstance } from '@duckdb/node-api';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildGrainProbeQuery } from '../query/builder.js';
+import { SecurityError } from '../query/identifier-validator.js';
 import { rollupGrainColumns, rollupGrainDimensions } from '../rollup/grain.js';
 import { computeRollupEstimate } from '../rollup/estimator.js';
 import { FIXTURE_PROVIDER_NAME } from '../__fixtures__/layout.js';
@@ -87,6 +88,35 @@ async function probe(
 function dimInputs(cards: Map<string, number>, loo: Map<string, number>): { column: string; cardinality: number; leaveOneOutGrainRows: number }[] {
   return [...cards].map(([column, cardinality]) => ({ column, cardinality, leaveOneOutGrainRows: loo.get(column) ?? 0 }));
 }
+
+describe('buildGrainProbeQuery identifier checks', () => {
+  const opts = { dataDir: SYNTHETIC_DIR, dimensions: stableGrain, providers: [{ name: PROVIDER }], costScope: scope };
+
+  it('rejects an unsafe caller-supplied grainColumns entry', () => {
+    const grain = [...rollupGrainColumns(stableGrain), 'service) FROM x --'];
+    expect(() => buildGrainProbeQuery(PERIOD, grain, opts)).toThrow(SecurityError);
+  });
+
+  it('rejects an unsafe field or displayField in the candidate dimensions', () => {
+    const badField: DimensionsConfig = {
+      builtIn: [{ name: asDimensionId('service'), label: 'Service', field: 'service)' }],
+      tags: [],
+    };
+    const badDisplay: DimensionsConfig = {
+      builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id', displayField: 'a b' }],
+      tags: [],
+    };
+    expect(() => buildGrainProbeQuery(PERIOD, ['usage_date'], { ...opts, dimensions: badField })).toThrow(SecurityError);
+    expect(() => buildGrainProbeQuery(PERIOD, ['usage_date'], { ...opts, dimensions: badDisplay })).toThrow(SecurityError);
+  });
+
+  it('builds the default-config probe unchanged', () => {
+    const sql = buildGrainProbeQuery(PERIOD, rollupGrainColumns(stableGrain), opts);
+    expect(sql).toContain(
+      'CAST(COUNT(DISTINCT hash(concat_ws(chr(31), usage_date, account_id, account_name, region, service, tag_environment, tag_team))) AS BIGINT) AS grain_rows',
+    );
+  });
+});
 
 describe('buildGrainProbeQuery', () => {
   let db: Awaited<ReturnType<typeof DuckDBInstance.create>>;

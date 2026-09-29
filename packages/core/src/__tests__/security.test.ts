@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { buildCostQuery, buildTrendQuery, buildMissingTagsQuery, buildNonResourceCostQuery, buildEntityDetailQuery, buildDailyCostsQuery, buildSource } from '../query/builder.js';
+import { buildCostQuery, buildTrendQuery, buildMissingTagsQuery, buildNonResourceCostQuery, buildEntityDetailQuery, buildDailyCostsQuery, buildGrainProbeQuery, buildSource } from '../query/builder.js';
 import { SecurityError } from '../query/identifier-validator.js';
+import { rollupGrainColumns } from '../rollup/grain.js';
 import type { DimensionsConfig } from '../types/config.js';
+import { OU_PATH_SOURCE_KEY } from '../types/config.js';
+import type { CostScopeConfig } from '../types/cost-scope.js';
 import { asDimensionId, asDateString, asDollars, asEntityRef, asProviderName, asTagValue } from '../types/branded.js';
 
 const dimensions: DimensionsConfig = {
@@ -393,7 +396,11 @@ describe('SQL Injection Prevention', () => {
 
   describe('Data path validation', () => {
     it('does not parameterize data directory paths', () => {
-      // Data directory is a trusted value from config, not user input
+      // The data directory comes from Electron's userData path or a
+      // COSTGOBLIN_DATA_DIR / COSTGOBLIN_USER_DATA_DIR override, never from
+      // renderer or config input. It is not a query parameter (read_parquet
+      // globs can't be), but it IS quote-escaped via sqlStringLiteral so a
+      // profile path with an apostrophe still parses.
       const result = buildCostQuery(
         {
           groupBy: asDimensionId('service'),
@@ -469,6 +476,108 @@ describe('SQL Injection Prevention', () => {
           expect(numbers).toContain(i);
         }
       }
+    });
+  });
+
+  describe('Identifier sinks are checked whoever calls the builder', () => {
+    // Configs built here deliberately skip validateDimensions — the builder
+    // must not rely on its caller having validated.
+    const unsafeBuiltIn: DimensionsConfig = {
+      builtIn: [
+        { name: asDimensionId('account'), label: 'Account', field: 'account_id', displayField: 'account_name' },
+        { name: asDimensionId('service'), label: 'Service', field: 'service) OR (1=1' },
+      ],
+      tags: [],
+    };
+    const range = { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') };
+
+    it('buildCostQuery rejects an unsafe built-in field used as groupBy', () => {
+      expect(() => buildCostQuery(
+        { groupBy: asDimensionId('service'), dateRange: range, filters: {} },
+        { dataDir: '/data', dimensions: unsafeBuiltIn, providers },
+      )).toThrow(SecurityError);
+    });
+
+    it('buildMissingTagsQuery rejects an unsafe built-in field', () => {
+      expect(() => buildMissingTagsQuery(
+        { dateRange: range, filters: {}, minCost: asDollars(0), tagDimension: asDimensionId('service') },
+        { dataDir: '/data', dimensions: unsafeBuiltIn, providers },
+      )).toThrow(SecurityError);
+    });
+
+    it('buildGrainProbeQuery rejects a costScope rule on a DISABLED unsafe built-in', () => {
+      const disabled: DimensionsConfig = {
+        builtIn: [
+          { name: asDimensionId('account'), label: 'Account', field: 'account_id', displayField: 'account_name' },
+          { name: asDimensionId('service'), label: 'Service', field: 'service) OR (1=1', enabled: false },
+        ],
+        tags: [],
+      };
+      const costScope: CostScopeConfig = {
+        costMetric: 'effective',
+        rules: [{
+          id: 'r1', name: 'r1', enabled: true, builtIn: false,
+          conditions: [{ dimensionId: asDimensionId('service'), values: ['x'] }],
+        }],
+      };
+      expect(() => buildGrainProbeQuery(
+        '2026-01',
+        rollupGrainColumns(disabled),
+        { dataDir: '/data', dimensions: disabled, providers, costScope },
+      )).toThrow(SecurityError);
+    });
+
+    it.each([1.5, 0])('rejects pathSegment.index %s on an OU-path tag', (index) => {
+      const dims: DimensionsConfig = {
+        builtIn: [],
+        tags: [{ label: 'OU', accountTagFallback: OU_PATH_SOURCE_KEY, pathSegment: { separator: '/', index } }],
+      };
+      expect(() => buildSource({
+        dataDir: '/data', tier: 'daily', dimensions: dims,
+        orgAccountsPath: '/state/org-account-tags.json',
+        providers: [{ name: asProviderName('aws') }],
+      })).toThrow(SecurityError);
+    });
+
+    it('keeps the slugified raw_ column for a quote-bearing tag name with an account fallback', () => {
+      const dims: DimensionsConfig = {
+        builtIn: [],
+        tags: [{ tagName: "team'); x", label: 'Team', accountTagFallback: 'team' }],
+      };
+      const result = buildMissingTagsQuery(
+        { dateRange: range, filters: {}, minCost: asDollars(0), tagDimension: asDimensionId('tag_team____x') },
+        { dataDir: '/data', dimensions: dims, providers, orgAccountsPath: '/state/org-account-tags.json' },
+      );
+      expect(result.sql).toContain('raw_tag_team____x');
+    });
+  });
+
+  describe('Path literals are quote-escaped', () => {
+    it('escapes an apostrophe in the data directory', () => {
+      const src = buildSource({
+        dataDir: "/data/o'brien", tier: 'daily', dimensions,
+        providers: [{ name: asProviderName('aws'), periods: ['2026-01'] }],
+      });
+      expect(src).toContain("'/data/o''brien/aws/raw/");
+      const wildcard = buildSource({
+        dataDir: "/data/o'brien", tier: 'daily', dimensions,
+        providers: [{ name: asProviderName('aws') }],
+      });
+      expect(wildcard).toContain("'/data/o''brien/aws/raw/");
+    });
+
+    it('escapes the org accounts path and reads it with an explicit schema', () => {
+      const dims: DimensionsConfig = {
+        builtIn: [],
+        tags: [{ tagName: 'team', label: 'Team', accountTagFallback: 'team' }],
+      };
+      const src = buildSource({
+        dataDir: '/data', tier: 'daily', dimensions: dims,
+        orgAccountsPath: "/s/o'b.json",
+        providers: [{ name: asProviderName('aws') }],
+      });
+      expect(src).toContain("read_json('/s/o''b.json', format='array'");
+      expect(src).not.toContain('read_json_auto');
     });
   });
 

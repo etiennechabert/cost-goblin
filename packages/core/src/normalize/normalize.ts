@@ -1,6 +1,8 @@
 import type { NormalizationRule, TagDimension } from '../types/config.js';
 import type { TagValue } from '../types/branded.js';
 import { asTagValue } from '../types/branded.js';
+// A dependency-free leaf module, safe for the browser entry.
+import { SecurityError } from '../query/identifier-validator.js';
 
 function stripSeparatorRuns(value: string): string {
   let out = '';
@@ -207,7 +209,14 @@ export function buildAliasSqlCase(
   dimension: NormalizableDimension,
 ): string {
   if (dimension.normalize !== undefined) {
-    fieldExpr = NORMALIZE_SQL[dimension.normalize](fieldExpr);
+    const rule = dimension.normalize;
+    // Own-property check: an unvalidated config can carry any string, and an
+    // inherited key like 'toString' would otherwise resolve to an
+    // Object.prototype method and emit garbage SQL.
+    if (!Object.hasOwn(NORMALIZE_SQL, rule)) {
+      throw new SecurityError(`Unknown normalize rule "${rule.slice(0, 40)}"`);
+    }
+    fieldExpr = NORMALIZE_SQL[rule](fieldExpr);
   }
 
   if (dimension.aliases === undefined) return fieldExpr;

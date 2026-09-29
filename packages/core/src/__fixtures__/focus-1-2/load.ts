@@ -13,6 +13,7 @@ import { mkdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { sqlStringLiteral } from '../../query/builder.js';
 import { NATIVE_COLUMNS } from './shapes.js';
 import type { SampleProvider } from './shapes.js';
 import { SAMPLE_MONTH } from './samples.js';
@@ -117,7 +118,7 @@ export async function createNativeTable(
   await conn.run(`
     CREATE OR REPLACE TABLE ${tableName} AS
     SELECT ${selects.join(', ')}
-    FROM read_csv('${csvPath}', header = true, all_varchar = true)
+    FROM read_csv(${sqlStringLiteral(csvPath)}, header = true, all_varchar = true)
   `);
   return tableName;
 }
@@ -274,7 +275,7 @@ export async function writeSampleParquet(
   const query = shape === 'native'
     ? `SELECT * FROM ${table}`
     : contractProjection(provider, table);
-  await conn.run(`COPY (${query}) TO '${parquetPath}' (FORMAT PARQUET)`);
+  await conn.run(`COPY (${query}) TO ${sqlStringLiteral(parquetPath)} (FORMAT PARQUET)`);
 
   return { dataDir, providerName, parquetPath };
 }

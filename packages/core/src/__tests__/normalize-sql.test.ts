@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { DuckDBInstance } from '@duckdb/node-api';
 import { applyNormalizationRule, buildAliasSqlCase } from '../normalize/normalize.js';
+import { SecurityError } from '../query/identifier-validator.js';
 import type { NormalizationRule } from '../types/config.js';
 
 /**
@@ -102,5 +103,19 @@ describe('normalize SQL ↔ JS parity', () => {
       aliases: { production: [], staging: ['stg'] },
     });
     expect(await evalScalar(conn, mixed)).toBe('staging');
+  });
+});
+
+describe('buildAliasSqlCase rejects unknown normalize rules', () => {
+  it('throws on an inherited Object.prototype key instead of emitting garbage SQL', () => {
+    // An unvalidated config can carry any string; 'toString' is an inherited
+    // property of the rule table, which used to emit `[object Object]`.
+    const dim: { normalize?: NormalizationRule } = {};
+    Reflect.set(dim, 'normalize', 'toString');
+    expect(() => buildAliasSqlCase('service', dim)).toThrow(SecurityError);
+  });
+
+  it('still applies a known rule', () => {
+    expect(buildAliasSqlCase('service', { normalize: 'lowercase' })).toBe('LOWER(service)');
   });
 });

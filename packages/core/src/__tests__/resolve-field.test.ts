@@ -86,3 +86,20 @@ describe('tryResolveField', () => {
     expect(viaTry).toEqual(viaStrict);
   });
 });
+
+describe('built-in field identifier check at the producer', () => {
+  // A config that never went through validateDimensions (e.g. a renderer
+  // payload): the built-in's `field` is not a bare identifier.
+  const unsafe: DimensionsConfig = {
+    builtIn: [{ name: asDimensionId('service'), label: 'Service', field: 'service) OR (1=1' }],
+    tags: [],
+  };
+
+  it('tryResolveField throws SecurityError instead of returning the raw field', () => {
+    expect(() => tryResolveField(asDimensionId('service'), unsafe)).toThrow(SecurityError);
+  });
+
+  it('resolveField throws SecurityError too', () => {
+    expect(() => resolveField(asDimensionId('service'), unsafe)).toThrow(SecurityError);
+  });
+});

@@ -2,7 +2,8 @@ import { ipcMain } from 'electron';
 import { applyNormalizationRule, applyStripPatterns, buildGrainProbeQuery, buildSource, computeRollupEstimate, dimensionsConfigToYaml, emptyRollupEstimate, generateAliasSuggestions, isStringRecord, rollupGrainColumns, rollupGrainDimensions, sqlEscapeString } from '@costgoblin/core';
 import type { AliasSuggestion, DimensionsConfig, NormalizationRule, RollupGrainEstimate } from '@costgoblin/core';
 import { type AppContext, loadOrgAccountsMap } from './context.js';
-import { toNum, toStr } from './query-utils.js';
+import { parseDimensionsPayload } from './dimensions-payload.js';
+import { rawGlobLiteral, toNum, toStr } from './query-utils.js';
 
 type ValueCostPair = { value: string; cost: number };
 
@@ -86,17 +87,16 @@ export function registerDimensionsHandlers(app: AppContext): void {
 
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
-    const providerRoot = `${ctx.dataDir}/${String(provider.name)}/raw`;
     const dailyDir = path.join(ctx.dataDir, String(provider.name), 'raw');
     let dirs: string[] = [];
     try {
       dirs = (await fs.readdir(dailyDir)).filter(d => /^daily-\d{4}-(0[1-9]|1[0-2])$/.test(d)).sort((a, b) => a.localeCompare(b));
     } catch { /* no data */ }
     const recentDirs = dirs.slice(-2);
-    const parquetGlobs = recentDirs.map(d => `'${providerRoot}/${d}/*.parquet'`).join(', ');
+    const parquetGlobs = recentDirs.map(d => rawGlobLiteral(ctx.dataDir, String(provider.name), `${d}/*.parquet`)).join(', ');
     const rawParquet = recentDirs.length > 0
       ? `read_parquet([${parquetGlobs}])`
-      : `read_parquet('${providerRoot}/daily-*/*.parquet')`;
+      : `read_parquet(${rawGlobLiteral(ctx.dataDir, String(provider.name), 'daily-*/*.parquet')})`;
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
     const totalSql = `SELECT COUNT(*) AS total FROM ${rawParquet} WHERE ChargePeriodStart >= '${thirtyDaysAgo}'`;
@@ -230,22 +230,30 @@ export function registerDimensionsHandlers(app: AppContext): void {
     return { values, distinctCount, period: latest.replace(/^daily-/, '') };
   });
 
-  async function saveDimensionsConfig(config: DimensionsConfig): Promise<void> {
+  // Validates before writing and serializes only the PARSED object, so a
+  // renderer payload (or an edited draft) can never persist a dimensions.yaml
+  // that fails the next load — it is rejected here, visibly, instead.
+  async function saveDimensionsConfig(payload: unknown): Promise<void> {
+    const config = parseDimensionsPayload(payload);
     const yaml = await import('yaml');
     const fs = await import('node:fs/promises');
     await fs.writeFile(ctx.dimensionsPath, yaml.stringify(dimensionsConfigToYaml(config)));
     invalidateDimensions();
   }
 
-  ipcMain.handle('dimensions:save-config', async (_event, config: DimensionsConfig): Promise<void> => {
-    await saveDimensionsConfig(config);
+  ipcMain.handle('dimensions:save-config', async (_event, payload: unknown): Promise<void> => {
+    await saveDimensionsConfig(payload);
   });
 
   // Grain cost/benefit estimator (rollup design §8). Probes the most recent
   // daily month for the candidate grain's cardinality and turns it into
   // directional size/compression/rebuild bands + per-dim raw-only flags. Cheap
   // (one scan, ~150–550 ms) so the UI can call it live as dims are toggled.
-  ipcMain.handle('dimensions:estimate-rollup-grain', async (_event, candidate: DimensionsConfig): Promise<RollupGrainEstimate> => {
+  ipcMain.handle('dimensions:estimate-rollup-grain', async (_event, candidate: unknown): Promise<RollupGrainEstimate> => {
+    // Renderer input: validate before any fs or DuckDB work, then use only
+    // the parsed result. Its field/displayField/pathSegment values land in
+    // the probe SQL, which runs in the main process's DuckDB.
+    const dims = parseDimensionsPayload(candidate);
     const current = rollupStore.getStats();
     const providers = await getQueryProviders('daily');
     const firstProvider = providers[0];
@@ -262,8 +270,8 @@ export function registerDimensionsHandlers(app: AppContext): void {
     if (latest === undefined) return emptyRollupEstimate(current);
 
     const period = latest.replace(/^daily-/, '');
-    const grainColumns = rollupGrainColumns(candidate);
-    const grainDims = rollupGrainDimensions(candidate);
+    const grainColumns = rollupGrainColumns(dims);
+    const grainDims = rollupGrainDimensions(dims);
 
     const costScope = await getCostScope().catch(() => undefined);
     const orgAccountsPath = await getOrgAccountsPath();
@@ -271,7 +279,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
     // Probe the first provider only — its latest month was listed above, and
     // the rollup this estimates is itself bound to the first provider.
     const sql = buildGrainProbeQuery(period, grainColumns, {
-      dataDir: ctx.dataDir, dimensions: candidate, orgAccountsPath, accountReverseMap, costScope,
+      dataDir: ctx.dataDir, dimensions: dims, orgAccountsPath, accountReverseMap, costScope,
       providers: [firstProvider],
     });
     const rows = await runQuery(sql);
@@ -293,7 +301,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
     // against (same signatureForDimensions path getRollupShape uses). When they
     // match, `current` is the real size of this grain, not an estimate.
     const builtSignature = rollupStore.getBuiltSignature();
-    const candidateSignature = await signatureForDimensions(candidate);
+    const candidateSignature = await signatureForDimensions(dims);
     const currentMatchesCandidate = current !== null && builtSignature !== null && builtSignature === candidateSignature;
 
     return computeRollupEstimate({
@@ -328,7 +336,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
     const latest = dirs.at(-1);
     if (latest === undefined) return [];
 
-    const source = `read_parquet('${ctx.dataDir}/${String(provider)}/raw/${latest}/*.parquet')`;
+    const source = `read_parquet(${rawGlobLiteral(ctx.dataDir, String(provider), `${latest}/*.parquet`)})`;
     const rows = await runQuery(`
       WITH tags AS (
         SELECT unnest(map_keys(Tags)) AS tag_key,

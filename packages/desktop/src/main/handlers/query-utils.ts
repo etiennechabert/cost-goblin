@@ -6,6 +6,7 @@ import {
   getDescendantTagValues,
   listLocalMonths,
   logger,
+  sqlStringLiteral,
   tagDimColumn,
 } from '@costgoblin/core';
 import type {
@@ -30,6 +31,14 @@ import type { RawRow } from '../duckdb-client.js';
 import type { RollupStore } from '../rollup-store.js';
 
 export type EffortLevel = 'VeryLow' | 'Low' | 'Medium' | 'High';
+
+/** Quoted SQL literal for a glob under a provider's raw tier directory
+ *  (`<dataDir>/<provider>/raw/<subPath>`), for hand-built `read_parquet`
+ *  calls. The data dir comes from userData or an env override and can hold
+ *  an apostrophe (`C:\Users\o'brien`), so the whole path is quote-escaped. */
+export function rawGlobLiteral(dataDir: string, provider: string, subPath: string): string {
+  return sqlStringLiteral(`${dataDir}/${provider}/raw/${subPath}`);
+}
 
 /** The grain column a dimension id resolves to (built-in `field` or tag column),
  *  mirroring builder.ts resolveField. Used to gate a query against the rollup
