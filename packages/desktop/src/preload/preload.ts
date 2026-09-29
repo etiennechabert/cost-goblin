@@ -70,6 +70,17 @@ import type {
   TelemetryStatus,
   TelemetryOutboxEntry,
 } from '@costgoblin/core';
+import { isTrustedNavigation, trustedRendererFromArgv } from '../main/window-security.js';
+
+// ---------------------------------------------------------------------------
+// Bridge gate — expose nothing to any document but the app's own renderer.
+// A main-frame navigation re-runs this preload on whatever page it lands on;
+// main.ts passes the one trusted renderer URL via additionalArguments, and
+// every exposeInMainWorld below goes through this check. window-security.ts
+// is pure (no node: imports), so it bundles into the sandboxed preload.
+// ---------------------------------------------------------------------------
+const bridgeAllowed = isTrustedNavigation(globalThis.location.href, trustedRendererFromArgv(process.argv), process.platform);
+const exposeInMainWorld = (key: string, api: unknown): void => { if (bridgeAllowed) contextBridge.exposeInMainWorld(key, api); };
 
 // ---------------------------------------------------------------------------
 // Debug query log entry — mirrors QueryLogEntry from main/query-log.ts
@@ -495,9 +506,9 @@ const api: CostApi = {
   },
 };
 
-contextBridge.exposeInMainWorld('costgoblin', api);
+exposeInMainWorld('costgoblin', api);
 
-contextBridge.exposeInMainWorld('costgoblinBaselines', {
+exposeInMainWorld('costgoblinBaselines', {
   getStatus(): Promise<unknown> {
     return invoke<unknown>('baselines:status');
   },
@@ -508,7 +519,7 @@ contextBridge.exposeInMainWorld('costgoblinBaselines', {
   },
 });
 
-contextBridge.exposeInMainWorld('costgoblinUpdate', {
+exposeInMainWorld('costgoblinUpdate', {
   checkForUpdates(): Promise<void> {
     return invoke<undefined>('update:check').then(() => undefined);
   },
@@ -531,7 +542,7 @@ contextBridge.exposeInMainWorld('costgoblinUpdate', {
   },
 });
 
-contextBridge.exposeInMainWorld('costgoblinRollup', {
+exposeInMainWorld('costgoblinRollup', {
   getStatus(): Promise<unknown> {
     return invoke<unknown>('rollup:get-status');
   },
@@ -545,7 +556,7 @@ contextBridge.exposeInMainWorld('costgoblinRollup', {
   },
 });
 
-contextBridge.exposeInMainWorld('costgoblinDebug', {
+exposeInMainWorld('costgoblinDebug', {
   isDev(): boolean { return process.env['NODE_ENV'] === 'development'; },
   isE2E(): boolean { return process.env['COSTGOBLIN_E2E'] === '1'; },
   /** COSTGOBLIN_NOW, parsed to epoch ms — e2e runs pin the renderer clock so
@@ -574,7 +585,7 @@ contextBridge.exposeInMainWorld('costgoblinDebug', {
 });
 
 if (perfMode) {
-  contextBridge.exposeInMainWorld('costgoblinPerf', {
+  exposeInMainWorld('costgoblinPerf', {
     getIpcTimings(): IpcTiming[] { return [...ipcTimings]; },
     clearIpcTimings(): void { ipcTimings.length = 0; },
     startCpuProfile(): Promise<undefined> { return invoke<undefined>('perf:start-cpu-profile'); },

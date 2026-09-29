@@ -1,9 +1,9 @@
-import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, session } from 'electron';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { Session } from 'node:inspector';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { logger, parseJsonObject, isStringRecord, parseTelemetryPreferences, sqlEscapeString } from '@costgoblin/core';
 import { telemetry } from './telemetry/controller.js';
 
@@ -25,17 +25,23 @@ import { registerIpcHandlers } from './ipc.js';
 import { startMcpServer, stopMcpServer } from './mcp.js';
 import { initAutoUpdater, checkForUpdates } from './update-manager.js';
 import { registerUpdateHandlers } from './handlers/update.js';
-import { validateUrl, SecurityError } from './url-validator.js';
 import { validateProfileLabel } from './validators/path-validator.js';
 import { resolveWorkspaceEnv } from './workspace-env.js';
 import type { WorkspaceEnv } from './workspace-env.js';
 import { migrateProviderLayoutSync } from './provider-layout-migration.js';
 import { clearPreFocusData, findPreFocusProviders } from './cur-detection.js';
+import { installPermissionHandlers, installWebContentsGuards, markTrustedRenderer } from './window-guards.js';
+import { buildCsp, RENDERER_ARG_PREFIX } from './window-security.js';
 
-// Log level: debug in dev (NODE_ENV=development or electron-vite serving
-// the renderer), or when COSTGOBLIN_LOG_LEVEL=debug. Otherwise info.
-const isDev = process.env['NODE_ENV'] === 'development'
-  || process.env['ELECTRON_RENDERER_URL'] !== undefined;
+// Dev mode: NODE_ENV=development or electron-vite serving the renderer — and
+// never in a packaged build, where either variable in the user's environment
+// would otherwise select the 'unsafe-inline' dev CSP and a remote renderer URL.
+// Drives the log level (debug, unless COSTGOBLIN_LOG_LEVEL says otherwise),
+// the CSP, and which renderer createWindow loads.
+const isDev = !app.isPackaged && (
+  process.env['NODE_ENV'] === 'development'
+  || process.env['ELECTRON_RENDERER_URL'] !== undefined
+);
 const envLevel = process.env['COSTGOBLIN_LOG_LEVEL'];
 if (envLevel === 'debug' || envLevel === 'info' || envLevel === 'warn' || envLevel === 'error') {
   logger.setLevel(envLevel);
@@ -130,23 +136,7 @@ function resolveConfigPath(base: string, name: string): string {
 }
 
 function installCSP(): void {
-  const csp = isDev
-    ? [
-        "default-src 'self'",
-        "script-src 'self' 'unsafe-inline'",
-        "style-src 'self' 'unsafe-inline'",
-        "img-src 'self' data: blob:",
-        "font-src 'self' data:",
-        "connect-src 'self' ws:",
-      ].join('; ')
-    : [
-        "default-src 'self'",
-        "script-src 'self'",
-        "style-src 'self' 'unsafe-inline'",
-        "img-src 'self' data: blob:",
-        "font-src 'self' data:",
-        "connect-src 'self'",
-      ].join('; ');
+  const csp = buildCsp(isDev);
 
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
@@ -206,6 +196,12 @@ async function createWindow(db: DuckDBClient, syncClient: SyncClient, rollupConc
 
   const headless = process.env['COSTGOBLIN_HEADLESS'] === '1';
 
+  // The one document this window may show. The preload receives it through
+  // additionalArguments and withholds every bridge from any other document.
+  const indexPath = join(__dirname, '..', 'renderer', 'index.html');
+  const devRendererUrl = isDev ? process.env['ELECTRON_RENDERER_URL'] : undefined;
+  const rendererArg = devRendererUrl ?? pathToFileURL(indexPath).href;
+
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -226,37 +222,28 @@ async function createWindow(db: DuckDBClient, syncClient: SyncClient, rollupConc
       // Node.js APIs even if contextBridge is bypassed. Critical for handling
       // sensitive billing data in a local-first app.
       sandbox: true,
+      additionalArguments: [`${RENDERER_ARG_PREFIX}${rendererArg}`],
     },
   });
 
-  if (process.env['NODE_ENV'] === 'development' || process.env['ELECTRON_RENDERER_URL'] !== undefined) {
-    const rendererUrl = process.env['ELECTRON_RENDERER_URL'];
-    if (typeof rendererUrl === 'string') {
-      await win.loadURL(rendererUrl);
-    } else {
-      await win.loadFile(join(__dirname, '..', 'renderer', 'index.html'));
-    }
-    // DevTools available via Cmd+Option+I when needed
+  if (devRendererUrl === undefined) {
+    await win.loadFile(indexPath);
   } else {
-    await win.loadFile(join(__dirname, '..', 'renderer', 'index.html'));
+    await win.loadURL(devRendererUrl);
+    // DevTools available via Cmd+Option+I when needed
   }
-
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    try {
-      validateUrl(url);
-      shell.openExternal(url).catch(() => undefined);
-    } catch (err) {
-      if (err instanceof SecurityError) {
-        logger.warn('Blocked dangerous URL in window.open', { url, error: err.message });
-      }
-    }
-    return { action: 'deny' };
-  });
+  // Trust what actually loaded; navigation and permission guards
+  // (window-guards.ts, installed in main()) key off it from here on.
+  markTrustedRenderer(win.webContents, devRendererUrl);
 
   logger.info('Window created');
 }
 
 async function main(): Promise<void> {
+  // Before anything can create a WebContents: web-contents-created fires
+  // inside `new BrowserWindow`, and its guards must exist before the load.
+  installWebContentsGuards();
+
   // Single-instance lock (packaged builds only): a second instance can switch to
   // a different workspace and then delete or rename the one THIS instance has
   // DuckDB handles and a sync worker pointed at — the first in-app destructive
@@ -373,6 +360,7 @@ async function main(): Promise<void> {
   logger.info('Sync worker ready');
 
   installCSP();
+  installPermissionHandlers();
   if (app.isPackaged) {
     try {
       initAutoUpdater();

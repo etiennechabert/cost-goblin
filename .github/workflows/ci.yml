@@ -128,10 +128,12 @@ jobs:
         # (COSTGOBLIN_USER_DATA_DIR, not the pinned dirs) — the only e2e coverage
         # of v0.7.0's multi-workspace feature. The test strips the pinned-mode
         # env vars below before launching, so it runs correctly in this matrix.
-        # `csp-verification` and `sandbox-verification` are the repo's only
-        # locks on the renderer security posture — cheap (seconds) but they
-        # only protect anything if they actually run on PRs.
-        shard: [views-core, views-config, views-defaults, stress, gcp-provider, workspaces, csp-verification, sandbox-verification]
+        # `navigation-verification`, `csp-verification` and
+        # `sandbox-verification` are the repo's only locks on the renderer
+        # security posture (window confinement + deny-by-default permissions,
+        # CSP, sandbox) — cheap (seconds) but they only protect anything if
+        # they actually run on PRs.
+        shard: [views-core, views-config, views-defaults, stress, gcp-provider, workspaces, navigation-verification, csp-verification, sandbox-verification]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -288,9 +290,10 @@ jobs:
           E2E_RESULT: ${{ needs.test-e2e.result }}
         run: |
           set -euo pipefail
-          # Shards expected to upload coverage. csp/sandbox-verification
-          # deliberately collect none. Keep in sync with the shard names passed
-          # to finishCoverage(app, page, '<shard>') in e2e/*.test.ts.
+          # Shards expected to upload coverage. navigation-, csp- and
+          # sandbox-verification deliberately collect none. Keep in sync with
+          # the shard names passed to finishCoverage(app, page, '<shard>') in
+          # e2e/*.test.ts.
           expected="views-core views-config views-defaults stress gcp-provider workspaces"
           missing=0
           mkdir -p coverage-e2e
