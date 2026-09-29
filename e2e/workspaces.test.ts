@@ -56,14 +56,11 @@ test.describe('Workspaces (workspace mode)', () => {
 
     // Strip the pinned-mode env vars the outer runner may carry — their
     // presence would flip the app into pinned mode and hide the feature.
-    const inherited: Record<string, string> = {};
+    const inherited: Record<string, string | undefined> = {};
     for (const [key, value] of Object.entries(process.env)) {
-      if (value === undefined) continue;
       if (key === 'COSTGOBLIN_DATA_DIR' || key === 'COSTGOBLIN_CONFIG_DIR') continue;
       inherited[key] = value;
     }
-    // launchElectron still cuts this env off from the runner's cloud
-    // credentials; finishCoverage's closeApp removes the sandbox it creates.
     app = await launchElectron({
       inherited,
       env: {

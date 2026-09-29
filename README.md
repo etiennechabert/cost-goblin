@@ -134,7 +134,7 @@ s3://bucket/prefix/<export-name>/
 
 ### AWS Credentials
 
-CostGoblin reads profiles from `~/.aws/config` and `~/.aws/credentials`. The wizard lists available profiles and lets you pick one.
+CostGoblin reads profiles from `~/.aws/config` and `~/.aws/credentials` — or from the files `AWS_CONFIG_FILE` / `AWS_SHARED_CREDENTIALS_FILE` point to, as the AWS CLI does. The wizard lists available profiles and lets you pick one.
 
 **Using SSO:**
 

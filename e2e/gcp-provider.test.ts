@@ -64,8 +64,8 @@ test.describe('mixed AWS + GCP workspace', () => {
     // This suite is where the leak showed: launched with the runner's env, a
     // developer's real ADC let the app query `gs://test-focus-export` as them,
     // and the card below sat on "Checking Cloud Storage for available data..."
-    // while it did. CI has no credentials to leak, so this check is what keeps
-    // a local run equivalent to CI.
+    // while it did. CI holds no credentials to leak, so this check is what
+    // keeps a developer's run as credential-free as CI's.
     await expectCloudSandboxed(app);
   });
 
