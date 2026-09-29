@@ -6,6 +6,24 @@ describe('redactSensitiveString', () => {
     expect(redactSensitiveString('contact jane.doe@example.com now')).toBe('contact [redacted-email] now');
   });
 
+  it('redacts plus-tagged addresses and back-to-back addresses', () => {
+    expect(redactSensitiveString('jane.doe+tag@example.co.uk')).toBe('[redacted-email]');
+    expect(redactSensitiveString('a@b.c+x@y.z')).toBe('[redacted-email][redacted-email]');
+    expect(redactSensitiveString(`${'x'.repeat(64)}@example.com`)).toBe('[redacted-email]');
+  });
+
+  it('redacts the last 64 characters of an over-long local part', () => {
+    expect(redactSensitiveString(`${'y'.repeat(70)}@example.com`)).toBe(`${'y'.repeat(6)}[redacted-email]`);
+  });
+
+  it('scans a long run of word characters in linear time', () => {
+    // Unbounded, this took ~18 s: every start position rescanned to the end.
+    const blob = 'a'.repeat(200_000);
+    const started = performance.now();
+    expect(redactSensitiveString(blob)).toBe(blob);
+    expect(performance.now() - started).toBeLessThan(1000);
+  });
+
   it('redacts 12-digit AWS account IDs', () => {
     expect(redactSensitiveString('account 123456789012 failed')).toBe('account [redacted-account] failed');
   });

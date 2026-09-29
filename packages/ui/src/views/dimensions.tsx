@@ -44,6 +44,7 @@ function migrateLocked(cfg: DimensionsConfig): { config: DimensionsConfig; chang
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useUnsavedChanges } from '../hooks/use-unsaved-changes.js';
 import { useQuery } from '../hooks/use-query.js';
+import { focusOnMount } from '../lib/focus-on-mount.js';
 import { useDebouncedValue } from '../hooks/use-debounced-value.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { ConfirmModal } from '../components/confirm-modal.js';
@@ -224,7 +225,7 @@ function DefaultValuesPicker({ available, selected, onChange }: Readonly<{
               type="text"
               value={search}
               onChange={e => { setSearch(e.target.value); }}
-              autoFocus
+              ref={focusOnMount}
               className="border-b border-border bg-bg-primary px-2 py-1 text-xs text-text-primary outline-none"
               placeholder="Search…"
             />

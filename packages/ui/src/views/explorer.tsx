@@ -16,6 +16,7 @@ import type { SortingState } from '@tanstack/react-table';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useLagDays } from '../hooks/use-lag-days.js';
 import { useBarDragSelect } from '../hooks/use-bar-drag-select.js';
+import { focusOnMount } from '../lib/focus-on-mount.js';
 import { useHourlyConfigured } from '../hooks/use-hourly-configured.js';
 import { formatDollars } from '../components/format.js';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card.js';
@@ -913,7 +914,7 @@ function ValuesPicker({ dropdown, selected, onApply, onClose }: ValuesPickerProp
     <div className="absolute left-0 top-full z-50 mt-1 w-72 rounded-lg border border-border bg-bg-secondary shadow-lg">
       <div className="border-b border-border p-2">
         <input
-          autoFocus
+          ref={focusOnMount}
           type="text"
           value={search}
           placeholder="Search values…"

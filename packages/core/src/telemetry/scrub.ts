@@ -17,7 +17,12 @@ const REDACTED = '[redacted]';
 
 // Patterns redacted inside any free-text string (error messages, breadcrumbs,
 // stack-frame paths). Each is global so every occurrence is replaced.
-const EMAIL_RE = /[\w.+-]+@[\w-]+\.[\w.-]+/g;
+// The local part is capped at 64 characters (the RFC 5321 maximum). Unbounded,
+// a long run of word characters with no `@` after it (a token, a base64 blob)
+// is rescanned from every start position: quadratic, ~18 s on a 200k-char run,
+// synchronously inside Sentry's beforeSend. Only an over-long (invalid) local
+// part behaves differently: its last 64 characters are redacted, not all of it.
+const EMAIL_RE = /[\w.+-]{1,64}@[\w-]+\.[\w.-]+/g;
 const S3_URI_RE = /s3:\/\/[^\s'"]+/gi;
 const ARN_RE = /arn:aws:[^\s'"]+/gi;
 // 12-digit AWS account IDs. Lookarounds (not \b) so an ID glued to letters or

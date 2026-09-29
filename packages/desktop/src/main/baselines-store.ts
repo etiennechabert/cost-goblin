@@ -944,7 +944,15 @@ function tupleValuesOf(r: RawRow, grain: readonly GrainDim[]): Record<string, st
  *  exact key — reconcileDiscovered joins their maps by it, and a mismatch is
  *  silently swallowed as empty history (`get(key) ?? []`), not raised. */
 function tupleKeyFor(grain: readonly GrainDim[], values: Record<string, string>): string {
-  return grain.map((d) => `${d.name}=${values[d.field] ?? ''}`).sort().join('&');
+  return grain.map((d) => `${d.name}=${values[d.field] ?? ''}`).sort(compareCodeUnits).join('&');
+}
+
+/** UTF-16 code-unit order, the same order a bare `.sort()` gives. Deliberately
+ *  not `localeCompare`: tuple keys are identities, so their order must not
+ *  depend on the runtime's locale or ICU data. */
+function compareCodeUnits(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
 }
 
 /** Folds the totals query's one-row-per-tuple result into a map keyed by tuple

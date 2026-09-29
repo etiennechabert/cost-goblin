@@ -91,6 +91,22 @@ describe('FilterBar', () => {
     expect(screen.getByText('$18.9k')).toBeDefined();
   });
 
+  it('focuses the search box when the dropdown opens, and never pulls focus back', async () => {
+    renderFilterBar();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByText('Team'));
+    const search = screen.getByPlaceholderText(/^Search Team/);
+    expect(document.activeElement).toBe(search);
+
+    await waitFor(() => {
+      expect(screen.getByText('platform')).toBeDefined();
+    });
+    // Toggling a value re-renders the dropdown; focus stays where the user put it.
+    await user.click(screen.getByText('platform'));
+    expect(document.activeElement).not.toBe(search);
+  });
+
   it('unchecking a value and clicking Apply excludes it', async () => {
     const onFilterChange = vi.fn();
     renderFilterBar({ onFilterChange });
