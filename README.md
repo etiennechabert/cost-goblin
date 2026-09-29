@@ -143,16 +143,9 @@ aws configure sso
 aws sso login --profile your-profile-name
 ```
 
-**Without giving the app S3 access:**
-Skip the wizard and download the export data manually:
-```bash
-aws s3 sync s3://your-bucket/path/to/focus-export/ ~/Library/Application\ Support/@costgoblin/desktop/data/raw/
-```
-Then use the Data tab to register the downloaded files.
-
 ### GCP
 
-GCP's billing data reaches CostGoblin through its native **FOCUS BigQuery export**. Because SQL cannot delete GCS objects — and stale export shards would silently inflate a month's totals — a small Cloud Run job in your own project copies each billing period into a bucket. CostGoblin then reads that bucket and never holds credentials that can reach BigQuery.
+GCP's billing data reaches CostGoblin through its native **FOCUS BigQuery export**. Because SQL cannot delete GCS objects — and stale export shards would silently inflate a month's totals — a small Cloud Run job in your own project copies each billing period into a bucket. CostGoblin then reads that bucket (plus your project and bucket lists while the wizard sets it up) and never calls BigQuery. Signed in as yourself with `gcloud auth application-default login`, though, it acts as you and can reach whatever your Google account can. On company or shared laptops, give it a read-only service account on the bucket and set `impersonateServiceAccount` — see [Credentials](scripts/gcp-focus-exporter/README.md#credentials) for how, and for what that does and does not confine.
 
 [**scripts/gcp-focus-exporter**](scripts/gcp-focus-exporter/README.md) covers the whole path: enabling the export, deploying the job (Cloud Shell, local, or copy-paste), and the `costgoblin.yaml` entry that points the app at the result.
 
@@ -171,13 +164,35 @@ GCP's billing data reaches CostGoblin through its native **FOCUS BigQuery export
 - **Tag normalization** — aliases applied at query time, fix messy tags without re-processing
 - **Composable views** — drag-and-drop widget builder with 9 widget types (pie, bar, stacked bar, line, treemap, heatmap, bubble, table, summary)
 - **Cost Scope** — configure cost metrics (effective, billed, list price, contracted) and exclusion rules
-- **Vault encryption** — optional AES-256-GCM at-rest encryption for local billing data, with system keychain integration
 - **MCP server** — Model Context Protocol integration for querying cost data from AI assistants
 - **Dark/light mode** — theme toggle with two chart color palettes (standard + Okabe-Ito colorblind-safe)
 - **Auto-updates** — the app checks for new versions on startup and installs them automatically
 - **CSV export** — export any view for reporting
 - **Works offline** — once synced, no internet needed
 
+## Security & data at rest
+
+Everything CostGoblin keeps locally is **stored unencrypted** under its app data directory — for example the downloaded billing Parquet (`workspaces/<name>/data/<provider>/raw/<tier>-YYYY-MM/`) and the rollups built from it, DuckDB spill files in `workspaces/<name>/temp/`, cached account names and tags in `workspaces/<name>/state/`, and the YAML config in `workspaces/<name>/config/`. There is no application-level encryption: anyone who can read those files can read your billing history.
+
+The app data directory of a release build is:
+
+| OS | Path |
+|----|------|
+| macOS | `~/Library/Application Support/costgoblin/` |
+| Windows | `%APPDATA%\costgoblin\` |
+| Linux | `~/.config/costgoblin/` (or `$XDG_CONFIG_HOME/costgoblin/`) |
+
+A development run (`make dev` / `npm run dev`) uses a folder named `@costgoblin/desktop` in place of `costgoblin`. `COSTGOBLIN_USER_DATA_DIR` moves the whole directory elsewhere, and `COSTGOBLIN_DATA_DIR` / `COSTGOBLIN_CONFIG_DIR` switch to a pinned, non-workspace layout; everything below applies wherever the data ends up.
+
+What protects that data is the operating system, so treat these as requirements:
+
+- **Full-disk encryption** — FileVault (macOS), BitLocker (Windows) or LUKS (Linux). Without it, anyone holding a lost or stolen laptop's disk can read the billing data. Require it on every machine that runs CostGoblin.
+- **A user-only data directory** — the app data directory is created readable only by your own account (on Windows, `%APPDATA%` is restricted to you by its ACLs). That keeps out other non-admin users of the same machine; it does not keep out an administrator or software running as you.
+- **No unencrypted copies** — keep the directory out of unencrypted backups and out of cloud-sync folders, or they carry a readable copy somewhere else.
+
+Secrets are written with file mode `0600` (owner read/write only): `mcp-auth-token` at the root of the app data directory, and in each workspace's `config/` the peer-sharing files `peer-identity.json`, `peer-sharing.json` and `peer-source.json` (your private key, your sharing access secret, and a teammate's sharing key). Windows ignores that mode, so there those files rely on the directory's ACLs alone. Every other file is written with default permissions.
+
+Because `config/` holds those peer secrets, **share individual YAML files** (`costgoblin.yaml`, `dimensions.yaml`, …) with teammates or in version control — never the whole `config/` directory.
 
 ## Architecture
 
