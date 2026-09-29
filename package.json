@@ -1,6 +1,6 @@
 {
   "name": "costgoblin",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Desktop app for cloud cost visibility",
   "main": "packages/desktop/out/main/main.js",
   "private": true,
@@ -42,6 +42,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.5",
     "@playwright/test": "^1.62.0",
+    "@sentry/cli": "^2.58.6",
     "@tailwindcss/postcss": "^4.3.3",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/user-event": "^14.6.1",
@@ -53,6 +54,7 @@
     "electron-builder": "^26.15.3",
     "eslint": "^10.8.0",
     "husky": "^9.1.7",
+    "js-yaml": "^4.3.2",
     "jsdom": "^30.0.0",
     "postcss": "^8.5.23",
     "tsx": "^4.23.1",
@@ -77,6 +79,7 @@
     }
   },
   "allowScripts": {
+    "@sentry/cli": false,
     "electron-winstaller@5.4.0": true,
     "esbuild@0.25.12": true,
     "esbuild@0.28.1": true,
