@@ -88,4 +88,8 @@ export type { SettingsTabId, SettingsTabMeta } from './settings/registry.js';
 export { useKeyboardShortcuts, matchesShortcut, formatShortcutLabel } from './hooks/use-keyboard-shortcuts.js';
 export type { Shortcut } from './hooks/use-keyboard-shortcuts.js';
 
+export { ReleaseNotes } from './components/release-notes.js';
+export { parseReleaseNotes } from './lib/release-notes.js';
+export type { ReleaseNoteNode } from './lib/release-notes.js';
+
 export { MockCostApi } from './__fixtures__/mock-api.js';

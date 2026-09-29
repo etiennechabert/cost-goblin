@@ -22,6 +22,17 @@ export default [
       '@typescript-eslint/no-unsafe-member-access': 'error',
       '@typescript-eslint/no-non-null-assertion': 'error',
       'no-console': 'error',
+      // Untrusted HTML (e.g. update release notes) must be rendered from an
+      // allow-listed tree. The Property selectors also catch createElement
+      // props and JSX spreads, which a JSXAttribute-only selector misses.
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            "JSXAttribute[name.name='dangerouslySetInnerHTML'], Property[key.name='dangerouslySetInnerHTML'], Property[key.value='dangerouslySetInnerHTML']",
+          message: 'Render untrusted HTML via an allow-listed tree (see ReleaseNotes).',
+        },
+      ],
     },
   },
   {
