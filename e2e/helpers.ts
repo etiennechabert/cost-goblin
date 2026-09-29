@@ -1,10 +1,17 @@
 import { expect, _electron, type ElectronApplication, type Page } from '@playwright/test';
 import { join } from 'node:path';
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import {
+  cloudSandboxCredentialStores,
+  cloudSandboxDirs,
+  cloudSandboxEnv,
+  cloudSandboxViolations,
+} from '../packages/core/src/e2e-harness/cloud-sandbox.js';
 
 export const ROOT = join(import.meta.dirname, '..');
-export const DESKTOP_DIR = join(ROOT, 'packages', 'desktop');
+// Not exported: launchElectron is the only thing that may start the app.
+const DESKTOP_DIR = join(ROOT, 'packages', 'desktop');
 export const SCREENSHOT_DIR = join(tmpdir(), 'costgoblin-e2e');
 export const V8_DIR = join(tmpdir(), 'costgoblin-e2e-v8');
 mkdirSync(SCREENSHOT_DIR, { recursive: true });
@@ -43,8 +50,93 @@ export const HEADLESS = process.env['COSTGOBLIN_HEADLESS'] === '0' ? '0' : '1';
 export const FIXTURE_NOW = '2026-03-02T12:00:00Z';
 
 // Per-launch temp root, keyed by the app it was created for, so closeApp can
-// delete the throwaway fixture copy on teardown.
+// delete the throwaway fixture copy and cloud sandbox on teardown.
 const RUN_ROOTS = new WeakMap<ElectronApplication, string>();
+
+function cloudSandboxDir(runRoot: string): string {
+  return join(runRoot, 'cloud-sandbox');
+}
+
+/** Best-effort removal for failure paths: an error here (EBUSY/EPERM while a
+ *  killed process still holds files) must not replace the one being thrown. */
+function removeQuietly(dir: string): void {
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch (err) {
+    console.warn(`[e2e] could not remove ${dir}: ${String(err)}`);
+  }
+}
+
+/** Spawn the app. This is the only `_electron` use in e2e/ — launchApp, the
+ *  workspace suite and the diagnostics all come through here, and the policy
+ *  test in packages/core/src/__tests__/e2e-cloud-sandbox.test.ts fails on any
+ *  other. The env starts from `cloudSandboxEnv` (see cloud-sandbox.ts for why
+ *  each variable is pinned), never from a bare `process.env`.
+ *
+ *  `inherited` is the env to sanitize, the runner's by default; the workspace
+ *  suite passes a copy without the pinned-mode vars. `env` is the suite's own
+ *  settings, layered on top — and the merged result is checked before the
+ *  spawn, so an `env` that re-adds a cloud variable or blanks a pin throws here
+ *  instead of silently reaching the app. The sandbox lives in `runRoot` (a
+ *  fresh temp dir when omitted), which closeApp deletes: tear down with
+ *  closeApp / finishCoverage. */
+export async function launchElectron(options: {
+  env: Readonly<Record<string, string>>;
+  inherited?: Readonly<Record<string, string | undefined>>;
+  runRoot?: string;
+}): Promise<ElectronApplication> {
+  const runRoot = options.runRoot ?? mkdtempSync(join(tmpdir(), 'costgoblin-e2e-run-'));
+  try {
+    const sandboxDir = cloudSandboxDir(runRoot);
+    // Empty dirs (gcloud's config dir): the CLI finds no account in them. The
+    // credential FILES the sandbox points at are deliberately never created.
+    for (const dir of cloudSandboxDirs(sandboxDir)) mkdirSync(dir, { recursive: true });
+    const env = { ...cloudSandboxEnv(options.inherited ?? process.env, sandboxDir), ...options.env };
+    const violations = cloudSandboxViolations(env, sandboxDir);
+    if (violations.length > 0) {
+      throw new Error(`launchElectron: refusing to start the app with cloud credentials reachable:\n${violations.join('\n')}`);
+    }
+    const app = await _electron.launch({ args: [join(DESKTOP_DIR, 'out', 'main', 'main.js')], env });
+    RUN_ROOTS.set(app, runRoot);
+    return app;
+  } catch (err) {
+    // No app to hand closeApp, so nothing else would ever delete the root.
+    removeQuietly(runRoot);
+    throw err;
+  }
+}
+
+/** Assert the running app can find no cloud credentials but the sandbox's
+ *  (absent) ones. Reads the main process's live env — what every SDK call and
+ *  every gcloud child inherits — rather than trusting what launchElectron
+ *  passed, and checks that no credential store has appeared in the sandbox
+ *  since (a sign-in completed mid-run would land there). */
+export async function expectCloudSandboxed(app: ElectronApplication): Promise<void> {
+  const runRoot = RUN_ROOTS.get(app);
+  if (runRoot === undefined) throw new Error('expectCloudSandboxed: app was not started by launchElectron, or is already closed');
+  const sandboxDir = cloudSandboxDir(runRoot);
+  // Copied into a plain object: process.env is an exotic host object.
+  const env = await app.evaluate(() => Object.fromEntries(Object.entries(process.env)));
+  expect(cloudSandboxViolations(env, sandboxDir)).toEqual([]);
+  expect(cloudSandboxCredentialStores(readdirSync(sandboxDir, { recursive: true, encoding: 'utf-8' }))).toEqual([]);
+}
+
+/** For the diagnostics in e2e/diag: the app on the developer's REAL local data
+ *  and config (the pre-workspace macOS layout they were written against),
+ *  still through launchElectron so ambient cloud credentials stay out. A
+ *  credential that config names itself — a GCP `keyFile` — still applies.
+ *  `env` is added to the launch (e.g. perf mode). */
+export function launchLocalDataApp(env: Readonly<Record<string, string>> = {}): Promise<ElectronApplication> {
+  const appSupport = join(homedir(), 'Library', 'Application Support', '@costgoblin', 'desktop');
+  return launchElectron({
+    env: {
+      NODE_ENV: 'production',
+      COSTGOBLIN_DATA_DIR: join(appSupport, 'data'),
+      COSTGOBLIN_CONFIG_DIR: join(appSupport, 'config'),
+      ...env,
+    },
+  });
+}
 
 export async function launchApp(overrides?: {
   configDir?: string;
@@ -68,15 +160,19 @@ export async function launchApp(overrides?: {
   const runRoot = mkdtempSync(join(tmpdir(), 'costgoblin-e2e-run-'));
   const runDataDir = join(runRoot, 'data');
   const runConfigDir = join(runRoot, 'config');
-  cpSync(dataDir, runDataDir, { recursive: true });
-  cpSync(configDir, runConfigDir, { recursive: true });
-  for (const [name, content] of Object.entries(overrides?.stateFiles ?? {})) {
-    writeFileSync(join(runRoot, name), content);
+  try {
+    cpSync(dataDir, runDataDir, { recursive: true });
+    cpSync(configDir, runConfigDir, { recursive: true });
+    for (const [name, content] of Object.entries(overrides?.stateFiles ?? {})) {
+      writeFileSync(join(runRoot, name), content);
+    }
+  } catch (err) {
+    removeQuietly(runRoot);
+    throw err;
   }
-  const app = await _electron.launch({
-    args: [join(DESKTOP_DIR, 'out', 'main', 'main.js')],
+  return launchElectron({
+    runRoot,
     env: {
-      ...process.env,
       NODE_ENV: 'production',
       COSTGOBLIN_E2E: '1',
       COSTGOBLIN_HEADLESS: HEADLESS,
@@ -86,8 +182,6 @@ export async function launchApp(overrides?: {
       ...overrides?.env,
     },
   });
-  RUN_ROOTS.set(app, runRoot);
-  return app;
 }
 
 /** Close, but never let a stalled Electron exit fail a suite. Under system
@@ -153,7 +247,7 @@ const COVERAGE = new WeakMap<Page, CoverageSession>();
  * ```
  *
  * Prefer {@link launchAppWithCoverage}, which does the whole dance. Reach for
- * this only when the suite must build its own `_electron.launch` (see
+ * this only when the suite must make its own {@link launchElectron} call (see
  * workspaces.test.ts, which deliberately launches without the pinned-mode env
  * vars). Do not add a bare `startJSCoverage` call site — the ordering lived as
  * a hand-copied comment in six suites and three of them drifted.

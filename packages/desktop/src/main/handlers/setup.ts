@@ -11,6 +11,8 @@ import {
   isStringRecord,
 } from '@costgoblin/core';
 import type { GcpProject, GcsBrowseResult } from '@costgoblin/core';
+import { loadSharedConfigFiles } from '@smithy/shared-ini-file-loader';
+import { awsProfileNames } from '../aws-profiles.js';
 import { upsertWizardProvider } from '../config-upsert.js';
 import { buildConfigTemplate, buildDimensionsTemplate, PROVIDER_ABSENT_DIMENSIONS } from '../config-templates.js';
 import { classifyManifestColumns, parseManifestColumnNames, selectManifestKey } from '../setup-manifest.js';
@@ -88,33 +90,12 @@ export function registerSetupHandlers(app: AppContext): void {
     }
   });
 
-  ipcMain.handle('setup:list-profiles', async (): Promise<string[]> => {
-    const fs = await import('node:fs/promises');
-    const path = await import('node:path');
-    const os = await import('node:os');
-
-    const profiles = new Set<string>();
-    profiles.add('default');
-
-    for (const filename of ['config', 'credentials']) {
-      const filePath = path.join(os.homedir(), '.aws', filename);
-      try {
-        const content = await fs.readFile(filePath, 'utf-8');
-        for (const line of content.split('\n')) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) continue;
-          let name = trimmed.slice(1, -1).trim();
-          if (name.length === 0) continue;
-          if (name.startsWith('profile ')) name = name.slice('profile '.length).trim();
-          profiles.add(name);
-        }
-      } catch {
-        // file doesn't exist
-      }
-    }
-
-    return [...profiles].sort((a, b) => a.localeCompare(b));
-  });
+  // The SDK's own loader, never a hand read of ~/.aws: see awsProfileNames.
+  // ignoreCache because the loader memoises each file for the process
+  // lifetime and a profile added since the last listing must show up. It
+  // resolves to empty maps for a missing or unreadable file, never rejects.
+  ipcMain.handle('setup:list-profiles', async (): Promise<string[]> =>
+    awsProfileNames(await loadSharedConfigFiles({ ignoreCache: true })));
 
   ipcMain.handle('setup:list-buckets', async (_event, profile: string): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }> => {
     try {

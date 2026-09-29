@@ -7,17 +7,15 @@
  * run explicitly with:
  *   npx playwright test --config playwright.diag.config.ts e2e/diag/perf-queries.diag.ts
  */
-import { test, expect, _electron, type ElectronApplication, type Page } from '@playwright/test';
+import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
 import { join } from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { tmpdir, homedir } from 'node:os';
-import { clickNavButton, ensureViewMode, HEADLESS } from '../helpers.js';
+import { tmpdir } from 'node:os';
+import { clickNavButton, ensureViewMode, closeApp, HEADLESS, launchLocalDataApp } from '../helpers.js';
 
 // Page names that now live behind the Settings gear rather than the top nav.
 const SETTINGS_NAMES = new Set(['Cost Scope', 'Dimensions', 'Views', 'Sync', 'AI Assistant']);
 
-const ROOT = join(import.meta.dirname, '..', '..');
-const DESKTOP_DIR = join(ROOT, 'packages', 'desktop');
 const REPORT_DIR = join(tmpdir(), 'costgoblin-perf');
 mkdirSync(REPORT_DIR, { recursive: true });
 
@@ -137,17 +135,7 @@ async function clearFilters(pg: Page): Promise<void> {
 // ---------------------------------------------------------------------------
 
 function launchApp(): Promise<ElectronApplication> {
-  return _electron.launch({
-    args: [join(DESKTOP_DIR, 'out', 'main', 'main.js')],
-    env: {
-      ...process.env,
-      NODE_ENV: 'production',
-      COSTGOBLIN_PERF_MODE: '1',
-      COSTGOBLIN_HEADLESS: HEADLESS,
-      COSTGOBLIN_DATA_DIR: join(homedir(), 'Library', 'Application Support', '@costgoblin', 'desktop', 'data'),
-      COSTGOBLIN_CONFIG_DIR: join(homedir(), 'Library', 'Application Support', '@costgoblin', 'desktop', 'config'),
-    },
-  });
+  return launchLocalDataApp({ COSTGOBLIN_PERF_MODE: '1', COSTGOBLIN_HEADLESS: HEADLESS });
 }
 
 async function waitForAllQueriesComplete(page: Page): Promise<QueryLogEntry[]> {
@@ -385,9 +373,11 @@ test.describe('Query Performance Diagnostics', () => {
   });
 
   test.afterAll(async () => {
-    const report = buildFullReport();
-    writeReports(report);
-    await app.close();
+    try {
+      writeReports(buildFullReport());
+    } finally {
+      await closeApp(app);
+    }
   });
 
   test('Cost Overview', async () => {

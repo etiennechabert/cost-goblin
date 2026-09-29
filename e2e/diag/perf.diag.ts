@@ -7,14 +7,12 @@
  * run explicitly with:
  *   npx playwright test --config playwright.diag.config.ts e2e/diag/perf.diag.ts
  */
-import { test, expect, _electron, type ElectronApplication, type Page } from '@playwright/test';
+import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
 import { join } from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { tmpdir, homedir } from 'node:os';
-import { clickNavButton, HEADLESS } from '../helpers.js';
+import { tmpdir } from 'node:os';
+import { clickNavButton, closeApp, HEADLESS, launchLocalDataApp } from '../helpers.js';
 
-const ROOT = join(import.meta.dirname, '..', '..');
-const DESKTOP_DIR = join(ROOT, 'packages', 'desktop');
 const REPORT_DIR = join(tmpdir(), 'costgoblin-perf');
 mkdirSync(REPORT_DIR, { recursive: true });
 
@@ -65,17 +63,7 @@ const cpuProfiles: { label: string; path: string }[] = [];
 // ---------------------------------------------------------------------------
 
 function launchApp(): Promise<ElectronApplication> {
-  return _electron.launch({
-    args: [join(DESKTOP_DIR, 'out', 'main', 'main.js')],
-    env: {
-      ...process.env,
-      NODE_ENV: 'production',
-      COSTGOBLIN_PERF_MODE: '1',
-      COSTGOBLIN_HEADLESS: HEADLESS,
-      COSTGOBLIN_DATA_DIR: join(homedir(), 'Library', 'Application Support', '@costgoblin', 'desktop', 'data'),
-      COSTGOBLIN_CONFIG_DIR: join(homedir(), 'Library', 'Application Support', '@costgoblin', 'desktop', 'config'),
-    },
-  });
+  return launchLocalDataApp({ COSTGOBLIN_PERF_MODE: '1', COSTGOBLIN_HEADLESS: HEADLESS });
 }
 
 async function waitForQuerySettle(page: Page): Promise<void> {
@@ -287,8 +275,11 @@ test.describe('Performance Benchmarks', () => {
   });
 
   test.afterAll(async () => {
-    writeReport();
-    await app.close();
+    try {
+      writeReport();
+    } finally {
+      await closeApp(app);
+    }
   });
 
   // -------------------------------------------------------------------------
