@@ -114,6 +114,24 @@ describe('WidgetSchedulerProvider + LazyWidgetSlot', () => {
     expect(seenWhenNextMounted).toEqual([true]);
   });
 
+  it('tags the slot with its widget id and mount state', async () => {
+    // e2e/stress.test.ts measures every widget by these attributes, so a
+    // failure can name the widget and the settle can wait on real mounts.
+    setAutoIntersect(false);
+    const { container } = render(
+      <WidgetSchedulerProvider maxConcurrent={1}>
+        <LazyWidgetSlot id="w-pie-small" priority={0} minHeight={10}><Child label="a" /></LazyWidgetSlot>
+      </WidgetSchedulerProvider>,
+    );
+    const slot = container.querySelector('[data-widget-id="w-pie-small"]');
+    expect(slot).not.toBeNull();
+    expect(slot?.getAttribute('data-widget-state')).toBe('deferred');
+
+    act(() => { fireIntersections(true); });
+    expect(await screen.findByText('a')).toBeDefined();
+    expect(slot?.getAttribute('data-widget-state')).toBe('mounted');
+  });
+
   it('ignores non-intersecting entries', () => {
     setAutoIntersect(false);
     render(
