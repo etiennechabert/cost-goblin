@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { logger } from '../logger/logger.js';
 import type { ProviderName } from '../types/branded.js';
 import { canonicalizeGcpPeriod } from './gcp-canonicalize.js';
+import { assertValidGcsBucketName } from './gcs-bucket-name.js';
 import { parseGcsPath } from './gcs-client.js';
 import type { ManifestFileEntry } from './manifest.js';
 import { providerMetaDir, providerRawDir } from './provider-paths.js';
@@ -125,7 +126,8 @@ function runGcloudStorageRsync(options: GcloudRsyncOptions): Promise<void> {
       // Points this invocation at a service-account key without touching the
       // user's global gcloud credential store (which `gcloud auth
       // activate-service-account` would rewrite). With no key file the CLI
-      // uses Application Default Credentials, the documented default.
+      // runs as gcloud's own active account (`gcloud auth login`), NOT
+      // Application Default Credentials — only the listing SDK uses ADC.
       env['CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE'] = options.keyFile;
     }
 
@@ -155,9 +157,13 @@ function runGcloudStorageRsync(options: GcloudRsyncOptions): Promise<void> {
 
     // `gcloudSpawnShape` owns the CVE-2024-27980 recipe: gcloud.cmd cannot
     // spawn without a shell on Windows, and under cmd.exe every token is
-    // quoted — safe because the staging destination has passed
-    // `isSafePeriodPrefix` and the impersonation target is validated at
-    // config load, so no arg carries the metacharacters quoting can't contain.
+    // quoted. What makes that safe: the bucket in the source has passed
+    // `isValidGcsBucketName` (at config load and again at the top of
+    // `syncGcpSelectedFiles`), the period prefix has passed
+    // `isSafePeriodPrefix`, the impersonation target is validated at config
+    // load — and, on win32, `gcloudSpawnShape` itself refuses any arg holding
+    // a character quoting can't contain (`"`, `%`, `!`, CR, LF, NUL), which
+    // also covers the staging path under the data directory.
     const shape = gcloudSpawnShape(gcloudPath, args);
     const proc = spawn(shape.command, shape.args, {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -248,7 +254,9 @@ export interface GcpSelectiveSyncOptions {
    *  analogue, so that tier is unrepresentable here rather than merely
    *  rejected downstream. */
   readonly expectedDataType: 'daily' | 'hourly';
-  /** Absent means Application Default Credentials. */
+  /** Absent means the listing SDK uses Application Default Credentials and
+   *  the rsync download runs as gcloud's own active account
+   *  (`gcloud auth login`). */
   readonly keyFile?: string | undefined;
   /** Service account to run as. See `GcpProviderConfig`. */
   readonly impersonateServiceAccount?: string | undefined;
@@ -305,6 +313,10 @@ export async function syncGcpSelectedFiles(
   const { bucketPath, providerName, dataDir, files, onProgress } = options;
   const tier = options.expectedDataType;
   const gcsPath = parseGcsPath(bucketPath);
+  // Before any rm, mkdir or spawn: on Windows the bucket becomes part of the
+  // rsync source on a cmd.exe line. Thrown rather than added to `skipped` —
+  // every period shares the bucket, so none of them could sync.
+  assertValidGcsBucketName(gcsPath.bucket);
 
   const periods = groupByPeriod(files);
   const periodList = [...periods.entries()]

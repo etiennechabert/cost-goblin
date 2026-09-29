@@ -190,8 +190,8 @@ describe('syncGcpSelectedFiles', () => {
 
   it('only records etags for files under the synced prefix, not the whole period group', async () => {
     // `extractPeriod` matches `billing_period=YYYY-MM` anywhere in a key, so a
-    // provider pointed one level too high (`gs://b/focus` instead of
-    // `gs://b/focus/daily`) groups the daily AND hourly trees under one
+    // provider pointed one level too high (`gs://bkt/focus` instead of
+    // `gs://bkt/focus/daily`) groups the daily AND hourly trees under one
     // period. rsync mirrors only the FIRST file's prefix — but etags used to
     // be written for every file in the group, so the un-downloaded half was
     // marked synced. The next inventory read it as up to date forever.
@@ -229,7 +229,7 @@ describe('syncGcpSelectedFiles', () => {
     });
 
     await syncGcpSelectedFiles({
-      bucketPath: 'gs://b/focus', providerName, dataDir, expectedDataType: 'daily',
+      bucketPath: 'gs://bkt/focus', providerName, dataDir, expectedDataType: 'daily',
       impersonateServiceAccount: 'costgoblin-reader@p.iam.gserviceaccount.com',
       files: [file('focus/billing_period=2026-01/s.parquet')],
     });
@@ -247,7 +247,7 @@ describe('syncGcpSelectedFiles', () => {
       return proc;
     });
     await syncGcpSelectedFiles({
-      bucketPath: 'gs://b/focus', providerName, dataDir, expectedDataType: 'daily',
+      bucketPath: 'gs://bkt/focus', providerName, dataDir, expectedDataType: 'daily',
       files: [file('focus/billing_period=2026-01/s.parquet')],
     });
     expect(argv.some(a => a.startsWith('--impersonate-service-account'))).toBe(false);
@@ -342,6 +342,19 @@ describe('syncGcpSelectedFiles', () => {
       files: [file('focus/billing_period=2026-01/s.parquet')],
     })).rejects.toThrow('Google Cloud CLI not found');
     expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid bucket name before any staging or spawn', async () => {
+    // Defence in depth behind config load: on Windows the rsync source lands
+    // on a cmd.exe line, so a name carrying `"&calc&"` must never get there.
+    // Every period shares the bucket, so this throws rather than skipping.
+    await expect(syncGcpSelectedFiles({
+      bucketPath: String.raw`gs://evil-bkt\o#"&calc&"/focus/daily`, providerName, dataDir, expectedDataType: 'daily',
+      files: [file('focus/daily/billing_period=2026-01/shard-000000000000.parquet')],
+    })).rejects.toThrow(/Invalid GCS bucket name/);
+    expect(mockSpawn).not.toHaveBeenCalled();
+    await expect(readdir(join(dataDir, String(providerName), 'meta', 'staging-gcp'))).rejects.toThrow();
+    await expect(readdir(join(dataDir, String(providerName)))).rejects.toThrow();
   });
 
   it('leaves an already-installed period untouched when the download fails', async () => {
@@ -455,9 +468,9 @@ describe('syncGcpSelectedFiles', () => {
       queueMicrotask(() => {
         void writeBqShard(dest, 1).then(() => {
           proc.stderr.emit('data', Buffer.from(
-            `At gs://b/focus/billing_period=2026-01/**, worker process 1 thread 2 listed 2...\n`
-            + `Copying gs://b/${key('000000000000')} to file:///tmp/a.parquet\n`
-            + `Copying gs://b/${key('000000000001')} to file:///tmp/b.parquet\n`
+            `At gs://bkt/focus/billing_period=2026-01/**, worker process 1 thread 2 listed 2...\n`
+            + `Copying gs://bkt/${key('000000000000')} to file:///tmp/a.parquet\n`
+            + `Copying gs://bkt/${key('000000000001')} to file:///tmp/b.parquet\n`
             + `.......\nAverage throughput: 1.0MiB/s\n`));
           proc.emit('close', 0, null);
         });
@@ -466,7 +479,7 @@ describe('syncGcpSelectedFiles', () => {
     });
 
     await syncGcpSelectedFiles({
-      bucketPath: 'gs://b/focus', providerName, dataDir, expectedDataType: 'daily',
+      bucketPath: 'gs://bkt/focus', providerName, dataDir, expectedDataType: 'daily',
       files: [file(key('000000000000'), 'h1', 1000), file(key('000000000001'), 'h2', 3000)],
       onProgress: (p) => { progress.push(p); },
     });
@@ -489,7 +502,7 @@ describe('syncGcpSelectedFiles', () => {
     const progress: SyncProgress[] = [];
     nextProcess(dest => writeBqShard(dest, 1));
     await syncGcpSelectedFiles({
-      bucketPath: 'gs://b/focus', providerName, dataDir, expectedDataType: 'daily',
+      bucketPath: 'gs://bkt/focus', providerName, dataDir, expectedDataType: 'daily',
       files: [
         file('focus/billing_period=2026-01/a.parquet', 'h1'),
         file('focus/billing_period=2026-01/b.parquet', 'h2'),
@@ -536,7 +549,7 @@ describe('parseGcloudCopyingKey', () => {
   });
 
   it('ignores the other lines gcloud emits', () => {
-    expect(parseGcloudCopyingKey('At gs://b/focus/**, worker process 1 thread 2 listed 2...')).toBeNull();
+    expect(parseGcloudCopyingKey('At gs://bkt/focus/**, worker process 1 thread 2 listed 2...')).toBeNull();
     expect(parseGcloudCopyingKey('.......')).toBeNull();
     expect(parseGcloudCopyingKey('Average throughput: 1.0MiB/s')).toBeNull();
     expect(parseGcloudCopyingKey('')).toBeNull();
