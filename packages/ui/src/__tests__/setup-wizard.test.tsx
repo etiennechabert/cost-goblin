@@ -410,6 +410,19 @@ describe('SetupWizard — GCP', () => {
     expect(screen.queryByText(/I've saved it/)).toBeNull();
   });
 
+  it('describes what the GCP sign-in can reach without overstating it', async () => {
+    // Approvers read this screen to decide whether a read-only service account
+    // is required. On the default sign-in CostGoblin acts with all of the
+    // user's permissions, so it must not claim it can't reach BigQuery — only
+    // that it never calls it — and it must point at the confined alternative.
+    const { user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await waitFor(() => { expect(screen.getByText('scripts/gcp-focus-exporter')).toBeDefined(); });
+    expect(screen.queryByText(/credentials that can reach BigQuery/i)).toBeNull();
+    expect(screen.getByText(/never calls BigQuery/i)).toBeDefined();
+    expect(screen.getByText(/read-only service account/i)).toBeDefined();
+  });
+
   it('scaffolds the GCP arm, not the AWS one', async () => {
     const { api, user } = renderWizard();
     await user.click(screen.getByLabelText('Set up from Google Cloud'));

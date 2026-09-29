@@ -26,6 +26,9 @@ export { costExprFor } from './cost-metric.js';
 
 export { QUERY_CANCELLED_MESSAGE } from './cancellation.js';
 
+export { buildDuckDbSandboxStatements, isDuckDbSandboxOptions } from './duckdb-sandbox.js';
+export type { DuckDbSandboxOptions } from './duckdb-sandbox.js';
+
 export { assertBillingPeriod, assertDateString, assertHourString, assertSafeColumnIdentifier, assertTier, isDateString, isHourString, isSafeColumnIdentifier, SecurityError } from './identifier-validator.js';
 
 export type { ParameterizedQuery } from './parameterized.js';

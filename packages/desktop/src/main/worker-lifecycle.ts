@@ -7,12 +7,17 @@ export interface WorkerLifecycle<P> {
   fatalError: Error | null;
 }
 
+/** Spawn a worker and wait for its ready message. `workerData`, when given, is
+ *  structured-cloned into the worker (`node:worker_threads` `workerData`). If
+ *  init fails the worker is terminated before the rejection propagates, so a
+ *  failed start never leaves a thread (and its DuckDB instance) behind. */
 export async function initWorkerLifecycle<P extends { reject: (err: Error) => void }>(
   workerPath: string,
   isReady: (msg: unknown) => boolean,
   isInitError: (msg: unknown) => string | null,
+  workerData?: unknown,
 ): Promise<WorkerLifecycle<P>> {
-  const worker = new Worker(workerPath);
+  const worker = workerData === undefined ? new Worker(workerPath) : new Worker(workerPath, { workerData });
   const pending = new Map<number, P>();
   const state: WorkerLifecycle<P> = { worker, pending, nextId: 0, fatalError: null };
 
@@ -55,6 +60,11 @@ export async function initWorkerLifecycle<P extends { reject: (err: Error) => vo
     }
   });
 
-  await ready;
+  try {
+    await ready;
+  } catch (err: unknown) {
+    await worker.terminate().catch(() => undefined);
+    throw err;
+  }
   return state;
 }

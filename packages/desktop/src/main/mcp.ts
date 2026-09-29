@@ -3,15 +3,21 @@ import { join } from 'node:path';
 import { logger } from '@costgoblin/core';
 import { createMcpHttpServer } from '@costgoblin/mcp';
 import type { McpContext, McpHttpServer } from '@costgoblin/mcp';
+import { createDuckDBClient } from './duckdb-client.js';
+import type { DuckDBClient } from './duckdb-client.js';
 import type { AppContext } from './handlers/context.js';
+import { prepareMcpSandbox, sandboxedQueryFns } from './mcp-sandbox.js';
 import { loadOrCreateMcpToken, regenerateMcpToken as rotateTokenFile } from './mcp-token.js';
 
-function adaptAppContext(app: AppContext): McpContext {
+/** MCP tools run SQL an AI client controls, so every MCP query goes to the
+ *  dedicated sandboxed instance (`mcpDb`), never the app's shared one. */
+function adaptAppContext(app: AppContext, mcpDb: DuckDBClient): McpContext {
+  const { runQuery, runPreparedQuery } = sandboxedQueryFns(mcpDb);
   return {
     dataDir: app.ctx.dataDir,
     stateDir: app.ctx.stateDir,
-    runQuery: (sql) => app.runQuery(sql),
-    runPreparedQuery: (sql, params) => app.runPreparedQuery(sql, params),
+    runQuery,
+    runPreparedQuery,
     getConfig: () => app.getConfig(),
     getDimensions: () => app.getDimensions(),
     getQueryDimensions: () => app.getQueryDimensions(),
@@ -40,37 +46,84 @@ export function getMcpToken(): string {
   return currentToken;
 }
 
-let server: McpHttpServer | null = null;
-let lastApp: AppContext | null = null;
-
-export async function startMcpServer(app: AppContext): Promise<void> {
-  lastApp = app;
-  const mcpCtx = adaptAppContext(app);
-  const envPort = process.env['COSTGOBLIN_MCP_PORT'];
-  const port = envPort !== undefined && envPort.length > 0 ? Number(envPort) : undefined;
-  server = await createMcpHttpServer(mcpCtx, { port, authToken: getMcpToken() });
-  logger.info('mcp: embedded server started', { port: server.port });
+/** The HTTP server and its dedicated DuckDB worker live and die together. */
+interface RunningMcp {
+  readonly server: McpHttpServer;
+  readonly db: DuckDBClient;
 }
 
-export async function stopMcpServer(): Promise<void> {
-  if (server !== null) {
+let running: RunningMcp | null = null;
+let lastApp: AppContext | null = null;
+
+// Start / stop / token rotation are serialized: the auto-start at launch, the
+// mcp:set-running toggle and regenerateMcpToken can overlap, and an unserialized
+// overlap could spawn a second sandboxed worker (or HTTP server) and orphan one.
+let lifecycleTail: Promise<unknown> = Promise.resolve();
+
+function serialized<T>(op: () => Promise<T>): Promise<T> {
+  const result = lifecycleTail.then(op, op);
+  lifecycleTail = result.catch(() => undefined);
+  return result;
+}
+
+async function doStart(app: AppContext): Promise<void> {
+  if (running !== null) return;
+  lastApp = app;
+  // Fail closed: if the sandbox can't be prepared or applied, MCP doesn't start
+  // (createDuckDBClient rejects with its worker already terminated).
+  const sandbox = prepareMcpSandbox({
+    dataDir: app.ctx.dataDir,
+    stateDir: app.ctx.stateDir,
+    tempDir: app.ctx.workspaceEnv.tempDir,
+  });
+  const db = await createDuckDBClient(app.ctx.duckdbWorkerPath, { sandbox });
+  let server: McpHttpServer;
+  try {
+    const envPort = process.env['COSTGOBLIN_MCP_PORT'];
+    const port = envPort !== undefined && envPort.length > 0 ? Number(envPort) : undefined;
+    server = await createMcpHttpServer(adaptAppContext(app, db), { port, authToken: getMcpToken() });
+  } catch (err: unknown) {
+    await db.terminate().catch(() => undefined);
+    throw err;
+  }
+  running = { server, db };
+  logger.info('mcp: embedded server started (sandboxed DuckDB instance)', { port: server.port });
+}
+
+async function doStop(): Promise<void> {
+  if (running === null) return;
+  const { server, db } = running;
+  running = null;
+  try {
     await server.close();
-    server = null;
+  } finally {
+    await db.terminate();
   }
 }
 
+export function startMcpServer(app: AppContext): Promise<void> {
+  return serialized(() => doStart(app));
+}
+
+export function stopMcpServer(): Promise<void> {
+  return serialized(doStop);
+}
+
 export function isMcpServerRunning(): boolean {
-  return server !== null;
+  return running !== null;
 }
 
 /** Rotate the token and, if the server is running, restart it so the new token
  *  takes effect immediately (existing sessions are dropped). Returns the new
  *  token for the UI to display. */
-export async function regenerateMcpToken(): Promise<string> {
-  currentToken = rotateTokenFile(tokenPath());
-  if (server !== null && lastApp !== null) {
-    await stopMcpServer();
-    await startMcpServer(lastApp);
-  }
-  return currentToken;
+export function regenerateMcpToken(): Promise<string> {
+  return serialized(async () => {
+    const token = rotateTokenFile(tokenPath());
+    currentToken = token;
+    if (running !== null && lastApp !== null) {
+      await doStop();
+      await doStart(lastApp);
+    }
+    return token;
+  });
 }

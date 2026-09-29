@@ -1,3 +1,4 @@
+import type { DuckDbSandboxOptions } from '@costgoblin/core';
 import { initWorkerLifecycle } from './worker-lifecycle.js';
 
 export type RawRow = Readonly<Record<string, unknown>>;
@@ -38,7 +39,18 @@ interface PendingQuery {
   onStarted?: (() => void) | undefined;
 }
 
-export async function createDuckDBClient(workerPath: string): Promise<DuckDBClient> {
+/** Data handed to the DuckDB worker at spawn. `sandbox` switches the worker to
+ *  a dedicated, locked-down instance (see `buildDuckDbSandboxStatements`); the
+ *  worker applies it before reporting ready and fails init if it can't. */
+export interface DuckDBWorkerData {
+  readonly sandbox: DuckDbSandboxOptions;
+}
+
+/** Spawn a DuckDB worker. Without `workerData` it is the app's shared,
+ *  unrestricted instance; with `workerData.sandbox` it is sandboxed and locked,
+ *  and the promise rejects (with the worker already terminated) if the sandbox
+ *  cannot be applied — callers must not fall back to an unsandboxed client. */
+export async function createDuckDBClient(workerPath: string, workerData?: DuckDBWorkerData): Promise<DuckDBClient> {
   const lifecycle = await initWorkerLifecycle<PendingQuery>(
     workerPath,
     (msg) => isWorkerResponse(msg) && msg.kind === 'ready',
@@ -47,6 +59,7 @@ export async function createDuckDBClient(workerPath: string): Promise<DuckDBClie
       if (msg.kind === 'error' && msg.id === -1) return msg.message;
       return null;
     },
+    workerData,
   );
   const { worker, pending } = lifecycle;
 

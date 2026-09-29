@@ -65,6 +65,9 @@ export interface IpcContext {
   /** How the workspace paths were resolved — workspace mode enables the
    *  workspace-management IPC surface; pinned mode (env overrides) disables it. */
   readonly workspaceEnv: import('../workspace-env.js').WorkspaceEnv;
+  /** The built DuckDB worker bundle — the MCP server spawns its own sandboxed
+   *  instance from it (the shared `db` above is never used for MCP SQL). */
+  readonly duckdbWorkerPath: string;
 }
 
 export interface OrgTreeConfig {

@@ -308,8 +308,12 @@ Everything lives under Electron `userData`, organized into named **workspaces**
 (fully isolated config + data + state; see *Feature: Workspaces*):
 
 ```
-~/Library/Application Support/CostGoblin/      # macOS ({userData})
-%APPDATA%/CostGoblin/                          # Windows
+~/Library/Application Support/costgoblin/      # macOS ({userData})
+%APPDATA%/costgoblin/                          # Windows
+~/.config/costgoblin/                          # Linux (or $XDG_CONFIG_HOME/costgoblin/)
+                            # Release builds take the root package name;
+                            # a dev run (`npm run dev`) uses @costgoblin/desktop/.
+                            # Nothing here is encrypted — see README "Security & data at rest".
   app-state.json            # Machine-level: last-used workspace, per-workspace
                             # last-used stamps, theme, chart palette
   mcp-auth-token            # Machine-level MCP shared secret

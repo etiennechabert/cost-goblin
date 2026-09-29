@@ -1,8 +1,8 @@
-import { parentPort } from 'node:worker_threads';
-// Imported from the browser-safe entry so esbuild bundles only this constant's
-// (pure) module graph into the worker — never the node-only sync/aws code that
+import { parentPort, workerData } from 'node:worker_threads';
+// Imported from the browser-safe entry so esbuild bundles only these (pure)
+// modules' graph into the worker — never the node-only sync/aws code that
 // the full `@costgoblin/core` barrel would pull in (it isn't externalized here).
-import { QUERY_CANCELLED_MESSAGE } from '@costgoblin/core/browser';
+import { QUERY_CANCELLED_MESSAGE, buildDuckDbSandboxStatements, isDuckDbSandboxOptions } from '@costgoblin/core/browser';
 import type { DuckDBConnection, DuckDBInstance } from './duckdb-loader.js';
 import { createResourcePool } from './connection-pool.js';
 import type { ResourcePool } from './connection-pool.js';
@@ -41,6 +41,34 @@ if (parentPort === null) {
   throw new Error('duckdb-worker.ts must be run as a Node.js Worker thread');
 }
 const port = parentPort;
+
+// ---------------------------------------------------------------------------
+// Worker mode — decided once from workerData at spawn
+// ---------------------------------------------------------------------------
+
+/** `shared`: the app's unrestricted instance (dashboards, Explorer, rollups),
+ *  tuned by later 'configure' messages. `sandboxed`: a dedicated instance for
+ *  untrusted (MCP) SQL — the ordered sandbox SETs run on the init connection
+ *  before 'ready', the configuration is then locked, and 'configure' is
+ *  ignored. `invalid`: workerData was present but malformed; init fails. */
+type WorkerMode =
+  | { readonly kind: 'shared' }
+  | { readonly kind: 'sandboxed'; readonly statements: readonly string[] }
+  | { readonly kind: 'invalid'; readonly reason: string };
+
+function resolveWorkerMode(data: unknown): WorkerMode {
+  if (data === undefined || data === null) return { kind: 'shared' };
+  if (!hasProps(data) || !isDuckDbSandboxOptions(data['sandbox'])) {
+    return { kind: 'invalid', reason: 'malformed workerData (expected { sandbox: DuckDbSandboxOptions })' };
+  }
+  try {
+    return { kind: 'sandboxed', statements: buildDuckDbSandboxStatements(data['sandbox']) };
+  } catch (err: unknown) {
+    return { kind: 'invalid', reason: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+const mode: WorkerMode = resolveWorkerMode(workerData);
 
 type WorkerResponse =
   | { kind: 'ready' }
@@ -173,17 +201,38 @@ async function fetchAllRowsPrepared(
 let poolPromise: Promise<ResourcePool<DuckDBConnection>> | null = null;
 let dbInstance: DuckDBInstance | null = null;
 
-function getPool(): Promise<ResourcePool<DuckDBConnection>> {
-  poolPromise ??= createDuckDB().then(async (db) => {
-    dbInstance = db;
-    // Apply memory limit and thread count immediately using a temporary
-    // connection. The temp_directory is set later via the 'configure'
-    // message once the main thread knows the userData path.
-    const initConn = await db.connect();
-    await configureDuckDB(initConn, {});
+/** Sandboxed mode: run the ordered sandbox SETs (lock last) on the init
+ *  connection. Any failure propagates — the instance is closed and init fails,
+ *  so the caller never gets an unsandboxed instance it believes is sandboxed. */
+async function applySandbox(db: DuckDBInstance, initConn: DuckDBConnection, statements: readonly string[]): Promise<void> {
+  try {
+    for (const stmt of statements) {
+      await initConn.run(stmt);
+    }
+  } catch (err: unknown) {
     initConn.disconnectSync();
+    db.closeSync();
+    throw err;
+  }
+}
+
+function getPool(): Promise<ResourcePool<DuckDBConnection>> {
+  poolPromise ??= (async () => {
+    if (mode.kind === 'invalid') throw new Error(`sandbox setup failed: ${mode.reason}`);
+    const db = await createDuckDB();
+    const initConn = await db.connect();
+    if (mode.kind === 'sandboxed') {
+      await applySandbox(db, initConn, mode.statements);
+    } else {
+      // Apply memory limit and thread count immediately using a temporary
+      // connection. The temp_directory is set later via the 'configure'
+      // message once the main thread knows the userData path.
+      await configureDuckDB(initConn, {});
+    }
+    initConn.disconnectSync();
+    dbInstance = db;
     return createResourcePool(computeQueryPoolSize(), () => db.connect());
-  });
+  })();
   return poolPromise;
 }
 
@@ -343,6 +392,9 @@ function handleCancelPending(): void {
 }
 
 async function handleConfigure(req: { kind: 'configure'; tempDir?: string; memoryGB?: number; threads?: number }): Promise<void> {
+  // A sandboxed instance is locked (every SET fails) and its limits were fixed
+  // at spawn; ignore rather than attempt a reconfiguration.
+  if (mode.kind !== 'shared') return;
   if (dbInstance === null) return;
   const conn = await dbInstance.connect();
   try {
