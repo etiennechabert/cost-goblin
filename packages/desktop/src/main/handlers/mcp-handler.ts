@@ -1,18 +1,24 @@
 import { ipcMain } from 'electron';
 import { startMcpServer, stopMcpServer, isMcpServerRunning, getMcpToken, regenerateMcpToken } from '../mcp.js';
-import type { AppContext } from './context.js';
+import { applyMcpEnabled, persistMcpEnabled } from '../mcp-prefs.js';
+import { type AppContext, prefsPath } from './context.js';
 
 export function registerMcpHandlers(app: AppContext): void {
   ipcMain.handle('mcp:get-running', (): boolean => {
     return isMcpServerRunning();
   });
 
-  ipcMain.handle('mcp:set-running', async (_event, enabled: boolean): Promise<void> => {
-    if (enabled && !isMcpServerRunning()) {
-      await startMcpServer(app);
-    } else if (!enabled && isMcpServerRunning()) {
-      await stopMcpServer();
-    }
+  // Enable/Disable from Settings → AI Assistant. The choice is saved in the
+  // workspace's ui-preferences.json and read once at launch (main.ts); see
+  // applyMcpEnabled for the ordering and the payload check.
+  ipcMain.handle('mcp:set-running', async (_event, value: unknown): Promise<void> => {
+    const file = await prefsPath(app.ctx.stateDir, 'ui-preferences');
+    await applyMcpEnabled(value, {
+      persist: (enabled) => persistMcpEnabled(file, enabled),
+      start: () => startMcpServer(app),
+      stop: stopMcpServer,
+      isRunning: isMcpServerRunning,
+    });
   });
 
   ipcMain.handle('mcp:get-token', (): string => {

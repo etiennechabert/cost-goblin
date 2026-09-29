@@ -70,6 +70,11 @@ import { DEFAULT_COST_SCOPE, DEFAULT_EXPLORER_HIDDEN_COLUMNS, computeRollupEstim
 
 const MOCK_PEER_HOST = 'mock-peer.local';
 
+/** An active share's idle deadline, 30 min out like the real publisher's. */
+function mockAutoStopsAt(): string {
+  return new Date(Date.now() + 30 * 60_000).toISOString();
+}
+
 export const MOCK_WORKSPACES_INFO: WorkspacesInfo = {
   mode: 'workspace',
   active: 'default',
@@ -601,8 +606,13 @@ export class MockCostApi implements CostApi {
   getPerformanceInfo(): Promise<PerformanceInfo> { return Promise.resolve({ defaultMemoryGB: 8, defaultThreads: 8, defaultRollupConcurrency: 2, totalMemoryGB: 16, maxThreads: 8, maxRollupConcurrency: 8, minMemoryGB: 1, maxMemoryGB: 24, current: { memoryLimitGB: null, threads: null, rollupConcurrency: null } }); }
   setPerformanceSettings(): Promise<void> { return Promise.resolve(); }
   awaitMaterializedBase(): Promise<boolean> { return Promise.resolve(true); }
-  getMcpServerRunning(): Promise<boolean> { return Promise.resolve(true); }
-  setMcpServerRunning(): Promise<void> { return Promise.resolve(); }
+  // Stateful and OFF by default, like the real opt-in.
+  private mcpRunning = false;
+  getMcpServerRunning(): Promise<boolean> { return Promise.resolve(this.mcpRunning); }
+  setMcpServerRunning(enabled: boolean): Promise<void> {
+    this.mcpRunning = enabled;
+    return Promise.resolve();
+  }
   getMcpToken(): Promise<string> { return Promise.resolve('mock-token-abc123'); }
   regenerateMcpToken(): Promise<string> { return Promise.resolve('mock-token-regenerated'); }
   listBaselines(): Promise<BaselinesListResult> {
@@ -674,16 +684,16 @@ export class MockCostApi implements CostApi {
   checkConfigBeacon: (params: CheckConfigBeaconParams) => Promise<CheckConfigBeaconResult> =
     () => Promise.resolve({ status: 'none' });
   getDataSharingStatus(): Promise<DataSharingStatus> {
-    return Promise.resolve({ enabled: false, sharingKey: null, label: 'Mock · CostGoblin', port: null, hosts: [], fingerprint: 'ABCD-EF01-2345-6789', lastServedAt: null, filesServed: 0, lastPeer: null, bytesServed: 0, connectedClients: 0, bytesPerSecond: 0 });
+    return Promise.resolve({ enabled: false, sharingKey: null, label: 'Mock · CostGoblin', port: null, hosts: [], fingerprint: 'ABCD-EF01-2345-6789', lastServedAt: null, filesServed: 0, lastPeer: null, bytesServed: 0, connectedClients: 0, bytesPerSecond: 0, autoStopsAt: null });
   }
   enableDataSharing(): Promise<DataSharingResult> {
-    return Promise.resolve({ status: 'ok', sharing: { enabled: true, sharingKey: 'CGSHARE1-mock-sharing-key', label: 'Mock · CostGoblin', port: 53178, hosts: [MOCK_PEER_HOST], fingerprint: 'ABCD-EF01-2345-6789', lastServedAt: null, filesServed: 0, lastPeer: null, bytesServed: 0, connectedClients: 0, bytesPerSecond: 0 } });
+    return Promise.resolve({ status: 'ok', sharing: { enabled: true, sharingKey: 'CGSHARE1-mock-sharing-key', label: 'Mock · CostGoblin', port: 53178, hosts: [MOCK_PEER_HOST], fingerprint: 'ABCD-EF01-2345-6789', lastServedAt: null, filesServed: 0, lastPeer: null, bytesServed: 0, connectedClients: 0, bytesPerSecond: 0, autoStopsAt: mockAutoStopsAt() } });
   }
   disableDataSharing(): Promise<DataSharingResult> {
-    return Promise.resolve({ status: 'ok', sharing: { enabled: false, sharingKey: null, label: 'Mock · CostGoblin', port: null, hosts: [], fingerprint: 'ABCD-EF01-2345-6789', lastServedAt: null, filesServed: 0, lastPeer: null, bytesServed: 0, connectedClients: 0, bytesPerSecond: 0 } });
+    return Promise.resolve({ status: 'ok', sharing: { enabled: false, sharingKey: null, label: 'Mock · CostGoblin', port: null, hosts: [], fingerprint: 'ABCD-EF01-2345-6789', lastServedAt: null, filesServed: 0, lastPeer: null, bytesServed: 0, connectedClients: 0, bytesPerSecond: 0, autoStopsAt: null } });
   }
   rotateDataSharingKey(): Promise<DataSharingResult> {
-    return Promise.resolve({ status: 'ok', sharing: { enabled: true, sharingKey: 'CGSHARE1-rotated-key', label: 'Mock · CostGoblin', port: 53178, hosts: [MOCK_PEER_HOST], fingerprint: 'ABCD-EF01-2345-6789', lastServedAt: null, filesServed: 0, lastPeer: null, bytesServed: 0, connectedClients: 0, bytesPerSecond: 0 } });
+    return Promise.resolve({ status: 'ok', sharing: { enabled: true, sharingKey: 'CGSHARE1-rotated-key', label: 'Mock · CostGoblin', port: 53178, hosts: [MOCK_PEER_HOST], fingerprint: 'ABCD-EF01-2345-6789', lastServedAt: null, filesServed: 0, lastPeer: null, bytesServed: 0, connectedClients: 0, bytesPerSecond: 0, autoStopsAt: mockAutoStopsAt() } });
   }
   getSharedPullProgress(): Promise<SharedPullProgress> {
     return Promise.resolve({ active: false, phase: 'idle', filesDone: 0, filesTotal: 0, currentPeriod: null, bytesDone: 0, bytesTotal: 0, error: null });
@@ -734,6 +744,7 @@ export const MOCK_SHARED_SOURCE_PREVIEW: SharedSourcePreview = {
   fingerprint: 'ABCD-EF01-2345-6789',
   hasConfig: true,
   configSummary: null,
+  enrichment: { accounts: 12, regions: 30 },
   tiers: [
     { tier: 'daily', periods: ['2026-04', '2026-05', '2026-06'], fileCount: 6, bytes: 24_000_000 },
     { tier: 'hourly', periods: ['2026-05', '2026-06'], fileCount: 4, bytes: 80_000_000 },

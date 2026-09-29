@@ -164,7 +164,7 @@ GCP's billing data reaches CostGoblin through its native **FOCUS BigQuery export
 - **Tag normalization** — aliases applied at query time, fix messy tags without re-processing
 - **Composable views** — drag-and-drop widget builder with 9 widget types (pie, bar, stacked bar, line, treemap, heatmap, bubble, table, summary)
 - **Cost Scope** — configure cost metrics (effective, billed, list price, contracted) and exclusion rules
-- **MCP server** — Model Context Protocol integration for querying cost data from AI assistants
+- **MCP server** — Model Context Protocol integration for querying cost data from AI assistants (opt-in, off by default: enable it under Settings → AI Assistant; clients authenticate with an `Authorization: Bearer` token)
 - **Dark/light mode** — theme toggle with two chart color palettes (standard + Okabe-Ito colorblind-safe)
 - **Auto-updates** — the app checks for new versions on startup and installs them automatically
 - **CSV export** — export any view for reporting

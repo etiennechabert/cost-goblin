@@ -14,7 +14,8 @@ import type { OrgAccount, OrgSyncResult } from '@costgoblin/core';
  *  every consumer reads exactly that (org:get-result's decode, the rollup
  *  shape-signature digest, getAccountMap / loadOrgAccountsMap,
  *  generateFlatOrgTags, and data-sharing enrichment, which ships the file
- *  verbatim). Per-provider metadata rides along in an ADDITIVE `providers`
+ *  verbatim — the pulling side strictly re-decodes it, see peer-enrichment.ts).
+ *  Per-provider metadata rides along in an ADDITIVE `providers`
  *  array that all legacy readers ignore; the top-level orgId/syncedAt are the
  *  most recently synced provider's (last-synced wins).
  *
@@ -60,6 +61,12 @@ function errorCode(err: unknown): unknown {
   return typeof err === 'object' && err !== null && 'code' in err ? err.code : undefined;
 }
 
+/** Every value a string — what OrgAccount.tags promises. isStringRecord alone
+ *  only proves "a plain object", which would let `{ team: 42 }` narrow to it. */
+function isStringValuedRecord(v: unknown): v is Readonly<Record<string, string>> {
+  return isStringRecord(v) && Object.values(v).every(value => typeof value === 'string');
+}
+
 function isOrgAccount(v: unknown): v is OrgAccount {
   if (!isStringRecord(v)) return false;
   return (
@@ -69,7 +76,7 @@ function isOrgAccount(v: unknown): v is OrgAccount {
     typeof v['status'] === 'string' &&
     typeof v['joinedTimestamp'] === 'string' &&
     typeof v['ouPath'] === 'string' &&
-    isStringRecord(v['tags'])
+    isStringValuedRecord(v['tags'])
   );
 }
 

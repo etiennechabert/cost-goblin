@@ -240,6 +240,22 @@ describe('org-merge', () => {
     });
   });
 
+  describe('decodeOrgSyncResult', () => {
+    it('decodes a well-formed payload', () => {
+      const result = syncResult('o-1', '2026-03-01T00:00:00Z', [account('111', { tags: { Team: 'core' } })]);
+      expect(decodeOrgSyncResult(JSON.stringify(result))).toEqual(result);
+    });
+
+    it('rejects an account whose tag values are not all strings', () => {
+      // OrgAccount types tags as Record<string, string>; the guard must
+      // enforce that, not just "some object", before narrowing to it.
+      const raw = JSON.stringify({ accounts: [{ ...account('111'), tags: { Team: 42 } }], orgId: 'o-1', syncedAt: 's' });
+      expect(decodeOrgSyncResult(raw)).toBeNull();
+      const nested = JSON.stringify({ accounts: [{ ...account('111'), tags: { Team: { deep: 'x' } } }], orgId: 'o-1', syncedAt: 's' });
+      expect(decodeOrgSyncResult(nested)).toBeNull();
+    });
+  });
+
   describe('buildFlatOrgTags', () => {
     it('projects id/tags/ouPath per account (the shape getOrgAccountsPath probes for)', () => {
       const accounts = [

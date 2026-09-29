@@ -13,7 +13,7 @@ import {
   loadCostScope,
 } from '@costgoblin/core';
 import type { McpContext, RawRow } from '../context.js';
-import { createMcpHttpServer } from '../http-server.js';
+import { createMcpHttpServer, MCP_MIN_TOKEN_LENGTH } from '../http-server.js';
 import type { McpHttpServer } from '../http-server.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -216,13 +216,16 @@ describe('MCP server E2E', () => {
   let server: McpHttpServer;
   let client: McpClient;
   const port = 19599; // avoid conflict with running dev server
-  const TEST_TOKEN = 'test-secret-token';
+  // Production tokens are 43 chars (32 random bytes, base64url); the server
+  // refuses to start with fewer than MCP_MIN_TOKEN_LENGTH.
+  const TEST_TOKEN = 'test-secret-token-0123456789abcdefghij';
   // Outside the sandbox grants: a fake credentials file (#594 canary) and the
   // target of the stacked-write payload. The instance's spill dir lives here too
   // (granted), in its own subdirectory.
   let scratchDir: string;
   let outsideDir: string;
   const CANARY = 'CANARY-MCP-E2E-SECRET-594';
+  let ctx: McpContext;
 
   beforeAll(async () => {
     scratchDir = realpathSync(await mkdtemp(join(tmpdir(), 'cg-mcp-e2e-'))).replaceAll('\\', '/');
@@ -275,7 +278,7 @@ describe('MCP server E2E', () => {
     const providerName = config.providers[0]?.name;
     if (providerName === undefined) throw new Error('fixture config has no providers');
 
-    const ctx: McpContext = {
+    ctx = {
       dataDir: SYNTHETIC_DIR,
       stateDir: FIXTURES_DIR,
       runQuery: (sql) => queryAll(conn, sql),
@@ -302,6 +305,34 @@ describe('MCP server E2E', () => {
     db.closeSync();
     await rm(scratchDir, { recursive: true, force: true });
   });
+
+  const mcpUrl = (): string => `http://127.0.0.1:${String(port)}/mcp`;
+
+  /** POST an MCP initialize to `url` with the given extra headers. */
+  function postInitialize(url: string, headers: Record<string, string>): Promise<Response> {
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream', ...headers },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'initialize',
+        id: 1,
+        params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'q', version: '0.0.0' } },
+      }),
+    });
+  }
+
+  /** GET /health on `probePort`: the HTTP status, or the connection error code. */
+  function probeHealth(probePort: number): Promise<string> {
+    return new Promise<string>((resolve) => {
+      const req = httpRequest(
+        { host: '127.0.0.1', port: probePort, path: '/health', method: 'GET' },
+        (res) => { res.resume(); resolve(`HTTP ${String(res.statusCode)}`); },
+      );
+      req.on('error', (err: NodeJS.ErrnoException) => { resolve(err.code ?? err.message); });
+      req.end();
+    });
+  }
 
   // ---------- Protocol ----------
 
@@ -777,21 +808,55 @@ describe('MCP server E2E', () => {
     expect(res.status).toBe(401);
   });
 
-  it('accepts the token via a ?token= query param (passes the auth gate)', async () => {
-    const res = await fetch(`http://127.0.0.1:${String(port)}/mcp?token=${TEST_TOKEN}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        method: 'initialize',
-        id: 1,
-        params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'q', version: '0.0.0' } },
-      }),
-    });
-    // The query token satisfies auth, so this is not a 401 (the transport
-    // handles the initialize and responds 200).
-    expect(res.status).not.toBe(401);
+  it('uses a test token at least as long as the server requires', () => {
+    expect(TEST_TOKEN.length).toBeGreaterThanOrEqual(MCP_MIN_TOKEN_LENGTH);
+    expect(MCP_MIN_TOKEN_LENGTH).toBe(32);
+  });
+
+  it('rejects a ?token= query param without an Authorization header', async () => {
+    const res = await postInitialize(`${mcpUrl()}?token=${TEST_TOKEN}`, {});
+    expect(res.status).toBe(401);
+  });
+
+  it('accepts a valid Bearer header and ignores a bogus ?token= param', async () => {
+    const res = await postInitialize(`${mcpUrl()}?token=garbage`, { 'Authorization': `Bearer ${TEST_TOKEN}` });
     expect(res.status).toBe(200);
+  });
+
+  it('rejects a non-Bearer Authorization scheme even alongside a valid ?token=', async () => {
+    const res = await postInitialize(`${mcpUrl()}?token=${TEST_TOKEN}`, { 'Authorization': 'Basic x' });
+    expect(res.status).toBe(401);
+  });
+
+  it('checks the token on every request, including on an established session', async () => {
+    const sessionHeaders = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json, text/event-stream',
+      'Mcp-Session-Id': client.sessionId,
+      'Mcp-Protocol-Version': '2025-03-26',
+    };
+    const body = JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 99 });
+    const noHeader = await fetch(mcpUrl(), { method: 'POST', headers: sessionHeaders, body });
+    expect(noHeader.status).toBe(401);
+    const wrongToken = await fetch(mcpUrl(), {
+      method: 'POST',
+      headers: { ...sessionHeaders, 'Authorization': 'Bearer not-the-real-token' },
+      body,
+    });
+    expect(wrongToken.status).toBe(401);
+    const queryToken = await fetch(`${mcpUrl()}?token=${TEST_TOKEN}`, { method: 'POST', headers: sessionHeaders, body });
+    expect(queryToken.status).toBe(401);
+    // The session itself is untouched: the real client still works.
+    expect(await client.listTools()).toHaveLength(12);
+  });
+
+  it.each([
+    ['an empty token', ''],
+    ['a 16-char token', 'x'.repeat(16)],
+  ])('refuses to start with %s and never listens', async (_label, authToken) => {
+    const shortPort = 19598;
+    await expect(createMcpHttpServer(ctx, { port: shortPort, authToken })).rejects.toThrow(/at least 32 characters/);
+    expect(await probeHealth(shortPort)).toBe('ECONNREFUSED');
   });
 
   it('leaves /health open (unauthenticated liveness probe)', async () => {
