@@ -51,6 +51,10 @@ export async function launchApp(overrides?: {
   dataDir?: string;
   /** Extra env for this launch only (e.g. COSTGOBLIN_USER_DATA_DIR / COSTGOBLIN_MCP_PORT). */
   env?: Readonly<Record<string, string>>;
+  /** Files to write into this launch's state dir before the app starts, keyed
+   *  by file name (e.g. a `ui-preferences.json` carrying a saved setting). In
+   *  pinned mode the state dir is the per-launch run root created below. */
+  stateFiles?: Readonly<Record<string, string>>;
 }): Promise<ElectronApplication> {
   const dataDir = overrides?.dataDir ?? process.env['COSTGOBLIN_DATA_DIR'] ?? FIXTURE_DATA_DIR;
   const configDir = overrides?.configDir ?? process.env['COSTGOBLIN_CONFIG_DIR'] ?? FIXTURE_CONFIG_DIR;
@@ -66,6 +70,9 @@ export async function launchApp(overrides?: {
   const runConfigDir = join(runRoot, 'config');
   cpSync(dataDir, runDataDir, { recursive: true });
   cpSync(configDir, runConfigDir, { recursive: true });
+  for (const [name, content] of Object.entries(overrides?.stateFiles ?? {})) {
+    writeFileSync(join(runRoot, name), content);
+  }
   const app = await _electron.launch({
     args: [join(DESKTOP_DIR, 'out', 'main', 'main.js')],
     env: {

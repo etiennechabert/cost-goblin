@@ -2,7 +2,7 @@ import { test, expect, type ElectronApplication, type Page } from '@playwright/t
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { closeApp, launchApp } from './helpers.js';
+import { closeApp, launchApp, navigateTo } from './helpers.js';
 
 let app: ElectronApplication;
 let page: Page;
@@ -100,7 +100,11 @@ test.describe('MCP queries run on a sandboxed DuckDB instance', () => {
     scratch = mkdtempSync(join(tmpdir(), 'costgoblin-e2e-mcp-'));
     const userDataDir = join(scratch, 'userData');
     writeFileSync(join(scratch, 'creds.txt'), `aws_secret_access_key = ${CANARY}\n`);
-    mcpApp = await launchApp({ env: { COSTGOBLIN_USER_DATA_DIR: userDataDir, COSTGOBLIN_MCP_PORT: String(MCP_PORT) } });
+    // The server is opt-in: a saved `mcp.enabled: true` is what starts it at launch.
+    mcpApp = await launchApp({
+      env: { COSTGOBLIN_USER_DATA_DIR: userDataDir, COSTGOBLIN_MCP_PORT: String(MCP_PORT) },
+      stateFiles: { 'ui-preferences.json': JSON.stringify({ mcp: { enabled: true } }) },
+    });
     await mcpApp.firstWindow();
     const token = await waitForMcp(join(userDataDir, 'mcp-auth-token'));
     callTool = await openSession(token);
@@ -139,5 +143,76 @@ test.describe('MCP queries run on a sandboxed DuckDB instance', () => {
     });
     expect(isError).toBe(true);
     expect(existsSync(target)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MCP opt-in (#599): a default launch leaves the MCP port closed; Enable in
+// Settings → AI Assistant starts the server, Disable stops it. The token is
+// accepted only from the Authorization header.
+// ---------------------------------------------------------------------------
+
+const OPT_IN_PORT = 19632;
+const OPT_IN_BASE = `http://127.0.0.1:${String(OPT_IN_PORT)}`;
+
+/** 'listening' when /health answers, 'refused' when nothing is on the port. */
+async function probeHealth(): Promise<'listening' | 'refused'> {
+  try {
+    const res = await fetch(`${OPT_IN_BASE}/health`);
+    return res.ok ? 'listening' : 'refused';
+  } catch {
+    return 'refused';
+  }
+}
+
+test.describe('the MCP server is opt-in', () => {
+  let optApp: ElectronApplication | undefined;
+  let optPage: Page;
+  let scratch: string;
+  let tokenFile: string;
+
+  test.beforeAll(async () => {
+    scratch = mkdtempSync(join(tmpdir(), 'costgoblin-e2e-mcp-optin-'));
+    const userDataDir = join(scratch, 'userData');
+    tokenFile = join(userDataDir, 'mcp-auth-token');
+    optApp = await launchApp({ env: { COSTGOBLIN_USER_DATA_DIR: userDataDir, COSTGOBLIN_MCP_PORT: String(OPT_IN_PORT) } });
+    optPage = await optApp.firstWindow();
+    await expect(optPage).toHaveTitle('CostGoblin');
+  });
+
+  test.afterAll(async () => {
+    await closeApp(optApp);
+    rmSync(scratch, { recursive: true, force: true });
+  });
+
+  test('nothing listens until Enable; Disable closes the port again', async () => {
+    test.setTimeout(60_000);
+    // main() runs its launch-time check right after the window loads, long
+    // before the settings view below is on screen.
+    await navigateTo(optPage, 'AI Assistant', 'AI Assistant');
+    await expect(optPage.getByText('MCP server stopped')).toBeVisible();
+    expect(await probeHealth()).toBe('refused');
+
+    await optPage.getByRole('button', { name: 'Enable', exact: true }).click();
+    await expect(optPage.getByText('MCP server running')).toBeVisible({ timeout: 25_000 });
+    expect(await probeHealth()).toBe('listening');
+
+    // Header-only auth: the valid token in the query string is refused.
+    const token = readFileSync(tokenFile, 'utf-8').trim();
+    const viaQuery = await fetch(`${OPT_IN_BASE}/mcp?token=${token}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'e2e', version: '0.0.0' } },
+      }),
+    });
+    expect(viaQuery.status).toBe(401);
+
+    await optPage.getByRole('button', { name: 'Disable', exact: true }).click();
+    await expect(optPage.getByText('MCP server stopped')).toBeVisible({ timeout: 15_000 });
+    expect(await probeHealth()).toBe('refused');
   });
 });

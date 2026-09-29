@@ -328,7 +328,8 @@ Everything lives under Electron `userData`, organized into named **workspaces**
         peer-*.json         # Peer-sharing identity/PSK (never copied between workspaces)
         backups/            # Pre-import config backups
       state/                # JSON — app-managed, per-workspace
-        ui-preferences.json         # defaultViewId, performance, telemetry consent
+        ui-preferences.json         # defaultViewId, performance, telemetry consent,
+                                    # MCP opt-in (mcp.enabled)
         app-preferences.json        # auto-sync/auto-prune toggles
         explorer-preferences.json   # Explorer column prefs
         savings-preferences.json
