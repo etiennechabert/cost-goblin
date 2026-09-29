@@ -10,6 +10,7 @@ interface DuckDBModule {
 
 export interface DuckDBInstance {
   connect: () => Promise<DuckDBConnection>;
+  closeSync: () => void;
 }
 
 export interface DuckDBConnection {

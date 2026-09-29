@@ -46,7 +46,12 @@ export const FIXTURE_NOW = '2026-03-02T12:00:00Z';
 // delete the throwaway fixture copy on teardown.
 const RUN_ROOTS = new WeakMap<ElectronApplication, string>();
 
-export async function launchApp(overrides?: { configDir?: string; dataDir?: string }): Promise<ElectronApplication> {
+export async function launchApp(overrides?: {
+  configDir?: string;
+  dataDir?: string;
+  /** Extra env for this launch only (e.g. COSTGOBLIN_USER_DATA_DIR / COSTGOBLIN_MCP_PORT). */
+  env?: Readonly<Record<string, string>>;
+}): Promise<ElectronApplication> {
   const dataDir = overrides?.dataDir ?? process.env['COSTGOBLIN_DATA_DIR'] ?? FIXTURE_DATA_DIR;
   const configDir = overrides?.configDir ?? process.env['COSTGOBLIN_CONFIG_DIR'] ?? FIXTURE_CONFIG_DIR;
   // Pinned mode writes app state NEXT TO the data dir (stateDir =
@@ -71,6 +76,7 @@ export async function launchApp(overrides?: { configDir?: string; dataDir?: stri
       COSTGOBLIN_NOW: process.env['COSTGOBLIN_NOW'] ?? FIXTURE_NOW,
       COSTGOBLIN_DATA_DIR: runDataDir,
       COSTGOBLIN_CONFIG_DIR: runConfigDir,
+      ...overrides?.env,
     },
   });
   RUN_ROOTS.set(app, runRoot);

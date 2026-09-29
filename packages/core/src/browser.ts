@@ -9,6 +9,8 @@ export { TELEMETRY_DEFAULTS, isTelemetryEnabled } from './telemetry/types.js';
 export * from './normalize/index.js';
 export * from './models/index.js';
 export { QUERY_CANCELLED_MESSAGE } from './query/cancellation.js';
+export { buildDuckDbSandboxStatements, isDuckDbSandboxOptions } from './query/duckdb-sandbox.js';
+export type { DuckDbSandboxOptions } from './query/duckdb-sandbox.js';
 export { validateViews } from './config/views-validator.js';
 export { widgetToYaml, viewToYaml, viewsConfigToYaml } from './config/views-serialize.js';
 export { ConfigValidationError } from './config/validator.js';

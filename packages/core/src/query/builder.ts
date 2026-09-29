@@ -11,6 +11,7 @@ import { costExprFor, isUsageOnlyMetric, USAGE_ONLY_METRIC_CHARGE_CATEGORIES } f
 import { QueryBuilder, type ParameterizedQuery } from './parameterized.js';
 import { assertBillingPeriod, assertDateString, assertHourString, assertTier, isSafeColumnIdentifier, SecurityError } from './identifier-validator.js';
 import { rollupGrainColumns, rollupGrainDimensions } from '../rollup/grain.js';
+import { sqlEscapeString } from './sql-escape.js';
 
 /** Label for rows whose SubAccountId is NULL. FOCUS allows a null SubAccountId
  *  and GCP emits it for charges not tied to a project (account-level taxes,
@@ -26,12 +27,7 @@ function assertFiniteNumber(value: number, name: string): void {
   }
 }
 
-/** Escape a string for safe interpolation inside a single-quoted SQL literal.
- *  Use for config/user-derived literals that cannot go through a QueryBuilder
- *  parameter (e.g. handlers that build raw SQL strings). */
-export function sqlEscapeString(value: string): string {
-  return value.replaceAll("'", "''");
-}
+export { sqlEscapeString };
 
 /** Build a SQL IN-list. Uses placeholders when a QueryBuilder is provided;
  *  otherwise falls back to escaped string literals (for exported helpers

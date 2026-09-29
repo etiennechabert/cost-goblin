@@ -1,9 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { DuckDBInstance } from '@duckdb/node-api';
+import { existsSync, realpathSync } from 'node:fs';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  buildDuckDbSandboxStatements,
   loadConfig,
   loadDimensions,
   loadCostScope,
@@ -168,10 +172,35 @@ describe('MCP server E2E', () => {
   let client: McpClient;
   const port = 19599; // avoid conflict with running dev server
   const TEST_TOKEN = 'test-secret-token';
+  // Outside the sandbox grants: a fake credentials file (#594 canary) and the
+  // target of the stacked-write payload. The instance's spill dir lives here too
+  // (granted), in its own subdirectory.
+  let scratchDir: string;
+  let outsideDir: string;
+  const CANARY = 'CANARY-MCP-E2E-SECRET-594';
 
   beforeAll(async () => {
+    scratchDir = realpathSync(await mkdtemp(join(tmpdir(), 'cg-mcp-e2e-'))).replaceAll('\\', '/');
+    outsideDir = `${scratchDir}/outside`;
+    const spillDir = `${scratchDir}/spill`;
+    await mkdir(outsideDir, { recursive: true });
+    await mkdir(spillDir, { recursive: true });
+    await writeFile(`${outsideDir}/creds.txt`, `[default]\naws_secret_access_key = ${CANARY}\n`);
+    await writeFile(`${outsideDir}/adc.json`, JSON.stringify({ type: 'authorized_user', client_secret: CANARY }));
+
     db = await DuckDBInstance.create();
     conn = await db.connect();
+    // Every tool in this suite runs on a sandboxed, locked instance — the same
+    // configuration the desktop app gives its dedicated MCP worker.
+    for (const stmt of buildDuckDbSandboxStatements({
+      allowedDirectories: [realpathSync(SYNTHETIC_DIR), spillDir],
+      allowedPaths: [],
+      tempDirectory: spillDir,
+      memoryLimitGB: 1,
+      threads: 2,
+    })) {
+      await conn.run(stmt);
+    }
 
     const config = await loadConfig(join(CONFIG_DIR, 'costgoblin.yaml'));
     const dimensions = await loadDimensions(join(CONFIG_DIR, 'dimensions.yaml'));
@@ -224,6 +253,9 @@ describe('MCP server E2E', () => {
   afterAll(async () => {
     await client.close();
     await server.close();
+    conn.disconnectSync();
+    db.closeSync();
+    await rm(scratchDir, { recursive: true, force: true });
   });
 
   // ---------- Protocol ----------
@@ -506,6 +538,52 @@ describe('MCP server E2E', () => {
     });
     expect(isError).toBe(true);
     expect(text).toMatch(/not allowed|read_text/i);
+  });
+
+  // #594 / VULN-003: payloads that slip past validateRunSqlQuery. The sandboxed
+  // instance must refuse them — the canary never comes back, nothing is written.
+  it.each([
+    ['a quote-desynced alias hiding read_text', () => `SELECT 1 AS "a'b", * FROM read_text('${outsideDir}/creds.txt')`],
+    ['a comma join onto a JSON path', () => `SELECT * FROM (SELECT 1 AS x) AS costs, '${outsideDir}/adc.json'`],
+    ['a quoted read_text name', () => `SELECT * FROM "read_text"('${outsideDir}/creds.txt')`],
+    [
+      'a quoted json_execute_serialized_sql wrapper',
+      () => `SELECT * FROM "json_execute_serialized_sql"(json_serialize_sql('SELECT content FROM read_text(''${outsideDir}/creds.txt'')'))`,
+    ],
+  ])('run_sql cannot read an outside file via %s', async (_label, sql) => {
+    const { text, isError } = await client.callTool('run_sql', {
+      sql: sql(),
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+    });
+    expect(isError).toBe(true);
+    expect(text).toMatch(/Permission Error/);
+    expect(text).not.toContain(CANARY);
+  });
+
+  it('run_sql cannot stack a COPY that writes outside the workspace', async () => {
+    const target = `${outsideDir}/stacked.csv`;
+    const { text, isError } = await client.callTool('run_sql', {
+      sql: `SELECT 1 AS "a'b"; COPY (SELECT 42) TO '${target}'; SELECT 1 LIMIT 1`,
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+    });
+    expect(isError).toBe(true);
+    expect(text).not.toContain(CANARY);
+    expect(existsSync(target)).toBe(false);
+  });
+
+  it('run_sql still answers with a coverage latest day on the sandboxed instance', async () => {
+    const { text, isError } = await client.callTool('run_sql', {
+      sql: 'SELECT COUNT(*) AS n FROM costs',
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+      format: 'json',
+    });
+    expect(isError).toBe(false);
+    const parsed: unknown = JSON.parse(text);
+    const latestDay = typeof parsed === 'object' && parsed !== null && 'coverage' in parsed
+      && typeof parsed.coverage === 'object' && parsed.coverage !== null && 'latestDay' in parsed.coverage
+      ? parsed.coverage.latestDay
+      : undefined;
+    expect(latestDay).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
   it('rejects requests with a non-loopback Host header (anti DNS-rebinding)', async () => {
