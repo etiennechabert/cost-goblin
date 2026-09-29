@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { validateRunSqlQuery } from '../tools/run-sql.js';
+import {
+  buildRunSqlStatement,
+  MAX_CELL_CHARS,
+  resolveRunSqlCap,
+  truncateCell,
+  validateRunSqlQuery,
+} from '../tools/run-sql.js';
 
 describe('validateRunSqlQuery', () => {
   it('allows a plain SELECT against costs', () => {
@@ -77,5 +83,83 @@ describe('validateRunSqlQuery', () => {
     ])('%s: passes the guard', (_label, sql) => {
       expect(validateRunSqlQuery(sql)).toBeNull();
     });
+  });
+});
+
+describe('buildRunSqlStatement', () => {
+  const CTE = 'costs AS (SELECT 1 AS cost)';
+
+  it('wraps the query in a subquery capped at cap + 1 rows', () => {
+    const sql = buildRunSqlStatement(CTE, 'SELECT * FROM costs', 5);
+    expect(sql.startsWith(`WITH ${CTE}\nSELECT * FROM (\n`)).toBe(true);
+    expect(sql.endsWith('\n) AS _costgoblin_q\nLIMIT 6')).toBe(true);
+  });
+
+  it('keeps the cap even when the query ends in its own LIMIT', () => {
+    expect(buildRunSqlStatement(CTE, 'SELECT * FROM costs LIMIT 100000', 5))
+      .toMatch(/\n\) AS _costgoblin_q\nLIMIT 6$/);
+  });
+
+  it('ends a trailing line comment before the closing parenthesis', () => {
+    const sql = buildRunSqlStatement(CTE, 'SELECT * FROM costs -- LIMIT 1', 100);
+    expect(sql).toContain('SELECT * FROM costs -- LIMIT 1\n) AS _costgoblin_q\nLIMIT 101');
+    expect(sql.endsWith('\n) AS _costgoblin_q\nLIMIT 101')).toBe(true);
+  });
+
+  it('strips one trailing semicolon and the whitespace around it', () => {
+    const sql = buildRunSqlStatement(CTE, 'SELECT 1 FROM costs ;  \n', 3);
+    expect(sql).toContain('\nSELECT 1 FROM costs\n) AS _costgoblin_q\nLIMIT 4');
+    expect(sql).not.toContain(';');
+  });
+
+  it.each([0, -1, Number.NaN, 2.5, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1])(
+    'rejects a cap of %s',
+    (cap) => {
+      expect(() => buildRunSqlStatement(CTE, 'SELECT 1', cap)).toThrow();
+    },
+  );
+});
+
+describe('resolveRunSqlCap', () => {
+  it.each([
+    [undefined, 100],
+    [-1, 1],
+    [0, 1],
+    [2.5, 2],
+    [250, 250],
+    [500, 500],
+    [10_000, 500],
+  ])('%s -> %s', (limit, expected) => {
+    expect(resolveRunSqlCap(limit)).toBe(expected);
+  });
+});
+
+describe('truncateCell', () => {
+  it('leaves strings within the budget untouched', () => {
+    const s = 'x'.repeat(MAX_CELL_CHARS);
+    expect(truncateCell(s)).toBe(s);
+    expect(truncateCell('')).toBe('');
+  });
+
+  it('keeps the first 4096 chars and reports how many were dropped', () => {
+    expect(MAX_CELL_CHARS).toBe(4096);
+    const out = truncateCell('x'.repeat(5000));
+    expect(out).toBe(`${'x'.repeat(4096)}…[+904 chars]`);
+  });
+
+  it('never splits a surrogate pair at the boundary', () => {
+    // An astral char (2 UTF-16 units) straddling index 4096.
+    const s = `${'a'.repeat(4095)}😀${'b'.repeat(100)}`;
+    const out = truncateCell(s);
+    const kept = out.slice(0, out.indexOf('…[+'));
+    expect(kept).toBe('a'.repeat(4095));
+    expect(out).toBe(`${'a'.repeat(4095)}…[+102 chars]`);
+    // No lone high surrogate anywhere in the output.
+    expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(out)).toBe(false);
+  });
+
+  it('keeps a surrogate pair that ends exactly at the boundary', () => {
+    const s = `${'a'.repeat(4094)}😀${'b'.repeat(10)}`;
+    expect(truncateCell(s)).toBe(`${'a'.repeat(4094)}😀…[+10 chars]`);
   });
 });

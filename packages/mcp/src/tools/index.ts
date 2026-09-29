@@ -210,7 +210,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
           column: z.string(),
           direction: z.enum(['asc', 'desc']),
         }).optional().describe('Sort order'),
-        limit: z.number().optional().describe('Max rows (default 50, max 200)'),
+        limit: z.number().int().min(1).optional().describe('Max rows (integer, default 50, values above 200 are clamped to 200)'),
         format: formatSchema,
       },
     },
@@ -226,11 +226,11 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
   server.registerTool(
     'run_sql',
     {
-      description: 'Run an ad-hoc SELECT query. A "costs" CTE is pre-defined with the dataset for the given date range (default: last 60 days). Write: SELECT ... FROM costs WHERE ...',
+      description: 'Run an ad-hoc SELECT query. A "costs" CTE is pre-defined with the dataset for the given date range (default: last 60 days). Write: SELECT ... FROM costs WHERE ... At most `limit` rows (default 100, max 500) are returned, even when the query has its own LIMIT; a note says when more rows exist.',
       inputSchema: {
         sql: z.string().describe('SQL query (SELECT/WITH only). A "costs" CTE with columns: usage_date, account_id, account_name, region, service, service_code, service_category, charge_category, pricing_category, commitment_status, operation, sku_meter, description, resource_id, usage_amount, cost, list_cost, plus tag columns.'),
         dateRange: dateRangeSchema,
-        limit: z.number().optional().describe('Max rows (default 100, max 500)'),
+        limit: z.number().int().min(1).optional().describe('Max rows returned (integer, default 100, values above 500 are clamped to 500). The cap always applies, even when the query has its own LIMIT; page with LIMIT/OFFSET inside the query.'),
         format: formatSchema,
       },
     },

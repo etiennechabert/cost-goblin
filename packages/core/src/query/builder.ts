@@ -141,7 +141,11 @@ function buildSingleFilterClause(
   return `${resolved.fieldExpr} IN (${list})`;
 }
 
-function buildFilterClauses(
+/** One parameterized WHERE clause per non-empty filter entry. Dimension ids
+ *  resolve through `resolveField` (unknown ids throw SecurityError), account
+ *  display names expand to their ids via `accountReverseMap`, and every value
+ *  is bound on `qb`. */
+export function buildFilterClauses(
   filters: FilterMap,
   dimensions: DimensionsConfig,
   accountReverseMap: ReadonlyMap<string, readonly string[]> | undefined,
