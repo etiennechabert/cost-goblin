@@ -42,6 +42,14 @@ updates:
       # minor/patch TypeScript updates are unaffected and still flow through.
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
+      # @sentry/cli only runs in release.yml (debug-ID inject + uploads), and
+      # nothing in ci.yml exercises it, so a breaking major would pass the PR and
+      # surface only at tag time — as a failed release. Take majors by hand,
+      # checking the `sourcemaps inject` / `debug-files upload` CLI and that the
+      # binary still ships in script-free @sentry/cli-<platform> optionals (its
+      # install script is denied in package.json#allowScripts).
+      - dependency-name: "@sentry/cli"
+        update-types: ["version-update:semver-major"]
     groups:
       all-dependencies:
         patterns:

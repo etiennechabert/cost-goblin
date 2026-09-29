@@ -11,6 +11,11 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+# No scope by default. Each job declares exactly what it needs (a job-level
+# block REPLACES this one, it doesn't merge), so only `publish` and `notes` ever
+# hold `contents: write` — pinned by scripts/ci/workflow-policy.test.mjs.
+permissions: {}
+
 jobs:
   build:
     environment: release
@@ -60,6 +65,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here pushes; don't leave the token on disk for later steps.
+          persist-credentials: false
 
       # Fail fast if someone tags `v0.2.5` without first bumping
       # package.json to 0.2.5. Without this guard, electron-builder
@@ -81,8 +89,15 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24
+          # >= 24.18 bundles npm >= 11.16, the first that knows the .npmrc guards.
+          node-version: '^24.18.0'
           cache: npm
+
+      # The .npmrc guards fail OPEN on an npm that doesn't know them; refuse to
+      # install into a job that holds the signing secrets unless they're live.
+      - name: Assert supply-chain guards are active
+        shell: bash
+        run: bash .github/scripts/assert-npm-guards.sh
 
       - run: npm ci
 
@@ -121,14 +136,34 @@ jobs:
           # telemetry stays dark. Not a secret, so a variable not a secret.
           MAIN_VITE_SENTRY_DSN: ${{ vars.SENTRY_DSN }}
 
-      # Inject debug IDs into the built JS (so shipped bundles match the maps)
-      # and upload source maps, so renderer/main stack traces are readable in
-      # Sentry. Runs before packaging so electron-builder ships the injected JS.
-      # `sourcemaps inject` rewrites packages/desktop/out in place, so every arch
-      # job runs it (the renderer/main JS is arch-independent; Sentry dedupes the
-      # maps by debug ID). Electron/Chromium's own native frames are symbolicated
-      # by Sentry's symbol server; third-party native modules are handled by the
-      # next step. Skipped entirely when Sentry isn't configured.
+      # Every sentry-cli call below runs the lockfile-pinned @sentry/cli devDep
+      # by its path — never `npx @sentry/cli@^2`, which resolves (and runs) a
+      # registry version at release time. The native binary comes from the
+      # exact-pinned, script-free @sentry/cli-<platform> optional dependency, so
+      # @sentry/cli's own install script is denied in package.json#allowScripts
+      # and never runs.
+      #
+      # Why a path and not `npx --no-install sentry-cli`: npm 11.16/11.17 (Node
+      # 24.18/24.19, which '^24.18.0' still admits) skip the node_modules/.bin
+      # link of a package whose install script is denied, so npx finds nothing
+      # ("could not determine executable to run"). npm >= 11.18 links it. The
+      # path works on every npm the guard script admits.
+      #
+      # Inject debug IDs into the built JS so shipped bundles match their maps.
+      # Runs before packaging so electron-builder ships the injected JS, and
+      # rewrites packages/desktop/out in place, so every arch job runs it (the
+      # renderer/main JS is arch-independent; Sentry dedupes maps by debug ID).
+      # Purely local — no token, no network — so it HARD-fails: a broken inject
+      # means the bundles don't match what gets uploaded, which is a build bug.
+      - name: Inject Sentry debug IDs
+        if: vars.SENTRY_ORG != ''
+        shell: bash
+        run: node node_modules/@sentry/cli/bin/sentry-cli sourcemaps inject packages/desktop/out
+
+      # Upload the source maps so renderer/main stack traces are readable in
+      # Sentry. Electron/Chromium's own native frames are symbolicated by Sentry's
+      # symbol server; third-party native modules are handled by the next step.
+      # Skipped entirely when Sentry isn't configured.
       - name: Upload source maps to Sentry
         if: vars.SENTRY_ORG != ''
         # Source maps are an observability nicety, not a release artifact — a
@@ -144,15 +179,7 @@ jobs:
         run: |
           set -euo pipefail
           REL="costgoblin@${GITHUB_REF#refs/tags/v}"
-          # --allow-scripts is REQUIRED here, not optional: @sentry/cli ships an
-          # `install` script that downloads its binary, and the repo's .npmrc sets
-          # strict-allow-scripts=true. `npm exec`/`npx` reads that flag but
-          # deliberately ignores package.json#allowScripts, so without this the
-          # command dies with ESTRICTALLOWSCRIPTS. Both steps are
-          # continue-on-error, so the failure would be silent: releases would ship
-          # with no source maps at all.
-          npx --yes --allow-scripts=@sentry/cli @sentry/cli@^2 sourcemaps inject packages/desktop/out
-          npx --yes --allow-scripts=@sentry/cli @sentry/cli@^2 sourcemaps upload --release "$REL" packages/desktop/out
+          node node_modules/@sentry/cli/bin/sentry-cli sourcemaps upload --release "$REL" packages/desktop/out
 
       # Native crashes inside DuckDB (the duckdb.node addon + the libduckdb
       # engine) land in Crashpad minidumps. Sentry has no symbols for third-party
@@ -176,9 +203,8 @@ jobs:
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
           SENTRY_URL: ${{ vars.SENTRY_URL || 'https://de.sentry.io' }}
-        # --allow-scripts: see the source-maps step above — required under
-        # strict-allow-scripts, and this step is continue-on-error too.
-        run: npx --yes --allow-scripts=@sentry/cli @sentry/cli@^2 debug-files upload node_modules/@duckdb
+        # The lockfile-pinned sentry-cli — see the inject step above.
+        run: node node_modules/@sentry/cli/bin/sentry-cli debug-files upload node_modules/@duckdb
 
       # Build the single arch this runner natively is. --publish never: the
       # binaries + per-arch latest*.yml land in dist/ but nothing is uploaded to
@@ -226,10 +252,28 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Load-bearing: this is the one job whose token can write releases.
+          # Don't leave it on disk for any later step to read — `gh` gets its
+          # token explicitly through GH_TOKEN on the upload step only.
+          persist-credentials: false
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24
+          # >= 24.18 bundles npm >= 11.16, the first that knows the .npmrc guards.
+          node-version: '^24.18.0'
+
+      - name: Assert supply-chain guards are active
+        shell: bash
+        run: bash .github/scripts/assert-npm-guards.sh
+
+      # The manifest merge needs js-yaml. Install it from the lockfile — never a
+      # run-time `npm install js-yaml@^4`, which re-resolves against the registry
+      # in the job that rewrites the update manifests (the sha512 there is
+      # electron-updater's only integrity check on the unsigned Win/Linux
+      # builds). --ignore-scripts: nothing here needs an install script, so no
+      # dependency code runs at install time in a contents: write job.
+      - run: npm ci --ignore-scripts
 
       - name: Download all dist artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -247,8 +291,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm install --no-save js-yaml@^4
-
           mkdir -p upload
           find artifacts -type f \( \
             -name '*.dmg' -o -name '*.dmg.blockmap' -o \

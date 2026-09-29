@@ -5,19 +5,15 @@ import { Transform } from 'node:stream';
 import { dirname } from 'node:path';
 import type { ManifestFileEntry } from './manifest.js';
 import type { DownloadOptions, ObjectStoreHandle } from './object-store.js';
+import { assertValidGcsBucketName, splitGcsLocation } from './gcs-bucket-name.js';
 
 /** Splits a `gs://bucket/prefix` location (scheme optional, mirroring how
- *  `parseS3Path` tolerates a bare `bucket/prefix`) into its two parts. */
+ *  `parseS3Path` tolerates a bare `bucket/prefix`) into its two parts. The
+ *  body lives in the import-free `gcs-bucket-name.ts` (`splitGcsLocation`)
+ *  so the config validator shares it; this name stays for existing callers.
+ *  Does NOT validate the bucket — see `isValidGcsBucketName`. */
 export function parseGcsPath(gcsPath: string): { bucket: string; prefix: string } {
-  const stripped = gcsPath.replace(/^gs:\/\//, '');
-  const slashIdx = stripped.indexOf('/');
-  if (slashIdx === -1) {
-    return { bucket: stripped, prefix: '' };
-  }
-  return {
-    bucket: stripped.slice(0, slashIdx),
-    prefix: stripped.slice(slashIdx + 1),
-  };
+  return splitGcsLocation(gcsPath);
 }
 
 // Moved to their own import-free module so `browser.ts` can share them with
@@ -71,6 +67,11 @@ export async function createGcsHandle(keyFile?: string): Promise<ObjectStoreHand
 
   return {
     async listFiles(bucket: string, prefix: string): Promise<ManifestFileEntry[]> {
+      // The SDK puts the bucket in its request URL unencoded, so a name with
+      // `\`, `#`, `?` or `%` would list a different bucket than the one the
+      // config shows. Config load already rejects such names; this is the
+      // guard at the sink itself.
+      assertValidGcsBucketName(bucket);
       // autoPaginate walks nextPageToken internally and resolves with the
       // full set — the pagination loop `createS3Handle` writes by hand.
       const [files] = await storage.bucket(bucket).getFiles({ prefix, autoPaginate: true });
@@ -88,6 +89,7 @@ export async function createGcsHandle(keyFile?: string): Promise<ObjectStoreHand
     },
 
     async downloadFile(bucket: string, key: string, localPath: string, options?: DownloadOptions): Promise<void> {
+      assertValidGcsBucketName(bucket);
       await mkdir(dirname(localPath), { recursive: true });
 
       const sourceStream = storage.bucket(bucket).file(key).createReadStream();
