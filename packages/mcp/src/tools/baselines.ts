@@ -12,7 +12,8 @@ import {
 } from '@costgoblin/core';
 import type { BaselineDailyPoint, BaselineStatus, ManualBand } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
-import { resolveFormat, toolResult } from './tool-helpers.js';
+import type { Cell, Column, MetaField, StructuredResult } from '../formatters/result.js';
+import { resolveFormat, structuredToolResult, toolResult } from './tool-helpers.js';
 
 interface Spec {
   readonly id: string;
@@ -166,7 +167,34 @@ function derive(spec: Spec, loaded: Loaded): Derived {
   };
 }
 
-function fmt(n: number): string { return `$${n.toFixed(2)}`; }
+/** Column keys reuse the field names of the JSON these tools returned before
+ *  they moved onto StructuredResult, so a json consumer finds the same names. */
+const LIST_COLUMNS: readonly Column[] = [
+  { key: 'id', header: 'ID' },
+  { key: 'name', header: 'Name' },
+  { key: 'scope', header: 'Scope' },
+  { key: 'source', header: 'Source' },
+  { key: 'status', header: 'Status' },
+  { key: 'currentPerDay', header: 'Current/day', type: 'currency' },
+  { key: 'bandLowerPerDay', header: 'Band low/day', type: 'currency' },
+  { key: 'bandUpperPerDay', header: 'Band high/day', type: 'currency' },
+  { key: 'potentialPerMonth', header: 'Potential/mo', type: 'currency' },
+  { key: 'realizedPerMonth', header: 'Realized/mo', type: 'currency' },
+  { key: 'dataPoints', header: 'Data points', type: 'number' },
+];
+
+function listRow(r: Derived): Cell[] {
+  return [
+    r.id, r.name ?? r.scopeLabel, r.scopeLabel, r.source, r.status,
+    r.current, r.lower, r.upper, r.potentialMonthly, r.realizedMonthly, r.dataPoints,
+  ];
+}
+
+const SNAPSHOT_COLUMNS: readonly Column[] = [
+  { key: 'date', header: 'Date' },
+  { key: 'current', header: 'Current/day', type: 'currency' },
+  { key: 'status', header: 'Status' },
+];
 
 export async function listBaselines(
   ctx: McpContext,
@@ -183,18 +211,13 @@ export async function listBaselines(
   const format = resolveFormat(params.format);
   if (rows.length === 0) return toolResult('No baselines found. They are discovered after a sync; ask the user to open the Baselines page and Recompute.');
 
-  if (format === 'json') {
-    return toolResult(JSON.stringify(rows.map((r) => ({
-      id: r.id, name: r.name ?? r.scopeLabel, scope: r.scopeLabel, source: r.source, status: r.status,
-      currentPerDay: r.current, bandLowerPerDay: r.lower, bandUpperPerDay: r.upper,
-      potentialPerMonth: r.potentialMonthly, realizedPerMonth: r.realizedMonthly, dataPoints: r.dataPoints,
-    })), null, 2));
-  }
-
-  const header = '| Scope | Status | Current/day | Band/day | Potential/mo | Realized/mo |\n|---|---|---:|---:|---:|---:|';
-  const lines = rows.map((r) => `| ${r.name ?? r.scopeLabel} | ${r.status} | ${fmt(r.current)} | ${fmt(r.lower)}–${fmt(r.upper)} | ${fmt(r.potentialMonthly)} | ${fmt(r.realizedMonthly)} |`);
   const totalPot = rows.reduce((s, r) => s + r.potentialMonthly, 0);
-  return toolResult(`# Cost baselines (${String(rows.length)})\n\nTotal potential savings shown: ${fmt(totalPot)}/mo\n\n${header}\n${lines.join('\n')}`);
+  const result: StructuredResult = {
+    title: `Cost baselines (${String(rows.length)})`,
+    meta: [{ label: 'Total potential', value: totalPot, type: 'currency' }],
+    tables: [{ columns: LIST_COLUMNS, rows: rows.map(listRow) }],
+  };
+  return structuredToolResult(result, format);
 }
 
 export async function getBaselineDrift(
@@ -216,18 +239,27 @@ export async function getBaselineDrift(
   const r = derive(spec, loaded);
   const snaps = (loaded.snapshots.get(spec.id) ?? []).slice(-10);
   const format = resolveFormat(params.format);
-  if (format === 'json') {
-    return toolResult(JSON.stringify({
-      scope: r.scopeLabel, status: r.status, currentPerDay: r.current, bandLowerPerDay: r.lower, bandUpperPerDay: r.upper,
-      potentialPerMonth: r.potentialMonthly, realizedPerMonth: r.realizedMonthly,
-      trend: snaps.map((s) => ({ date: str(s['date']), current: num(s['current']), status: str(s['status']) })),
-    }, null, 2));
-  }
-  const trend = snaps.map((s) => `| ${str(s['date'])} | ${fmt(num(s['current']))} | ${str(s['status'])} |`).join('\n');
-  return toolResult(
-    `# Baseline drift — ${r.name ?? r.scopeLabel}\n\n` +
-    `Status: **${r.status}** · current ${fmt(r.current)}/day · band ${fmt(r.lower)}–${fmt(r.upper)}/day\n` +
-    `Potential ${fmt(r.potentialMonthly)}/mo · realized ${fmt(r.realizedMonthly)}/mo\n\n` +
-    (trend.length > 0 ? `Recent snapshots:\n\n| Date | Current/day | Status |\n|---|---:|---|\n${trend}` : '_No snapshot history yet._'),
-  );
+  const meta: MetaField[] = [
+    { label: 'Scope', value: r.scopeLabel },
+    { label: 'Status', value: r.status },
+    { label: 'Current/day', value: r.current, type: 'currency' },
+    { label: 'Band low/day', value: r.lower, type: 'currency' },
+    { label: 'Band high/day', value: r.upper, type: 'currency' },
+    { label: 'Potential/mo', value: r.potentialMonthly, type: 'currency' },
+    { label: 'Realized/mo', value: r.realizedMonthly, type: 'currency' },
+  ];
+  const result: StructuredResult = {
+    title: `Baseline drift — ${r.name ?? r.scopeLabel}`,
+    meta,
+    ...(snaps.length > 0
+      ? {
+        tables: [{
+          title: 'Recent snapshots',
+          columns: SNAPSHOT_COLUMNS,
+          rows: snaps.map((snap): Cell[] => [str(snap['date']), num(snap['current']), str(snap['status'])]),
+        }],
+      }
+      : { notes: ['_No snapshot history yet._'] }),
+  };
+  return structuredToolResult(result, format);
 }

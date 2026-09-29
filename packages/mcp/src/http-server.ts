@@ -6,6 +6,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { logger } from '@costgoblin/core';
 import type { McpContext } from './context.js';
+import { SERVER_INSTRUCTIONS } from './server-instructions.js';
 import { registerTools } from './tools/index.js';
 
 const DEFAULT_PORT = 19532;
@@ -108,7 +109,9 @@ export async function createMcpHttpServer(ctx: McpContext, options: McpHttpServe
   async function connectTransport(transport: StreamableHTTPServerTransport): Promise<void> {
     const mcpServer = new McpServer(
       { name: 'costgoblin', version: '0.1.0' },
-      { capabilities: { tools: {} } },
+      // `instructions` reaches the client in the initialize result: tool
+      // results are untrusted billing/config data (#602).
+      { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS },
     );
     registerTools(mcpServer, ctx);
     await mcpServer.connect(transport as unknown as Transport);
