@@ -20,7 +20,7 @@ const gcp = (hourly?: string): ProviderConfig => provider({
   name: 'gcp-main',
   type: 'gcp',
   sync: {
-    daily: { bucket: 'gs://b/focus/daily', retentionDays: 365 },
+    daily: { bucket: 'gs://bkt/focus/daily', retentionDays: 365 },
     ...(hourly === undefined ? {} : { hourly: { bucket: hourly, retentionDays: 14 } }),
     intervalMinutes: 60,
   },
@@ -39,9 +39,9 @@ const aws = (extra: Record<string, unknown> = {}): ProviderConfig => provider({
 
 describe('resolveBucketPath — gcp arm', () => {
   it('resolves each configured tier to its own folder', () => {
-    const p = gcp('gs://b/focus/hourly');
-    expect(resolveBucketPath(p, 'daily')).toBe('gs://b/focus/daily');
-    expect(resolveBucketPath(p, 'hourly')).toBe('gs://b/focus/hourly');
+    const p = gcp('gs://bkt/focus/hourly');
+    expect(resolveBucketPath(p, 'daily')).toBe('gs://bkt/focus/daily');
+    expect(resolveBucketPath(p, 'hourly')).toBe('gs://bkt/focus/hourly');
   });
 
   it('refuses an hourly request rather than falling back to daily', () => {
@@ -53,7 +53,7 @@ describe('resolveBucketPath — gcp arm', () => {
   });
 
   it('refuses cost-optimization, which has no GCP analogue', () => {
-    expect(() => resolveBucketPath(gcp('gs://b/focus/hourly'), 'cost-optimization'))
+    expect(() => resolveBucketPath(gcp('gs://bkt/focus/hourly'), 'cost-optimization'))
       .toThrow(/Cost Optimization Hub/);
   });
 

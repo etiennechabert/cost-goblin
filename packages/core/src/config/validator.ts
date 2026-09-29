@@ -3,6 +3,7 @@ import type { BucketPath } from '../types/branded.js';
 import { isSafeColumnIdentifier } from '../query/identifier-validator.js';
 import { parseProviderName } from './provider-name.js';
 import { gcsTiersOverlap } from '../sync/gcs-export-layout.js';
+import { GCS_BUCKET_NAME_RULES, isValidGcsBucketName, splitGcsLocation } from '../sync/gcs-bucket-name.js';
 import { logger } from '../logger/logger.js';
 import type {
   ConceptType,
@@ -73,10 +74,14 @@ function hasControlChar(value: string): boolean {
  *  the key charset is intentionally left unrestricted — over-restricting it
  *  would reject valid existing configs on load.
  *
- *  The same rules hold for a GCS location: it reaches the Cloud Storage JSON
- *  API as a bucket + prefix pair rather than a shell argument, and GCS object
- *  names carry the same permissive charset. `store` only selects the wording
- *  of the rejection message. */
+ *  A GCS location gets these rules plus one more. Its object prefix keeps the
+ *  same permissive charset (GCS object names allow it too), but its BUCKET
+ *  half is not a harmless API parameter: the Storage SDK puts it in the
+ *  request URL unencoded, and on Windows it is also the `gcloud storage
+ *  rsync` source on a cmd.exe command line (gcloud.cmd needs a shell). So
+ *  `validateGcsSyncTier` additionally checks the bucket against the GCS
+ *  naming rules (`isValidGcsBucketName`). `store` only selects the wording of
+ *  the rejection message. */
 function validateBucketPath(raw: unknown, context: string, store: 'S3' | 'GCS' = 'S3'): BucketPath {
   assertString(raw, context);
   if (raw.length === 0 || raw.startsWith('-') || raw.includes('..') || hasControlChar(raw)) {
@@ -107,6 +112,13 @@ function validateGcsSyncTier(raw: unknown, context: string): SyncTierConfig {
     throw new ConfigValidationError(`${context}.bucket is an S3 URL — a 'gcp' provider needs a gs:// bucket location`);
   }
   const bucket = validateBucketPath(bucketRaw, `${context}.bucket`, 'GCS');
+  // The bucket half reaches the Storage SDK's request URL unencoded and, on
+  // Windows, the `gcloud storage rsync` source on a cmd.exe line — so it must
+  // meet the GCS naming rules, which admit no URL or shell metacharacter. The
+  // value is stored unchanged: `gcsTiersOverlap` compares the raw strings.
+  if (!isValidGcsBucketName(splitGcsLocation(String(bucket)).bucket)) {
+    throw new ConfigValidationError(`${context}.bucket has an invalid GCS bucket name — ${GCS_BUCKET_NAME_RULES}`);
+  }
   assertNumber(raw['retentionDays'], `${context}.retentionDays`);
   return {
     bucket,

@@ -123,21 +123,63 @@ export function gcloudChildPath(inheritedPath: string): string {
   return [...new Set([...gcloudSearchPaths(), ...inherited])].join(delimiter);
 }
 
+/** Characters cmd.exe cannot contain inside a `"…"` token, with the name each
+ *  is reported under: `"` ends the quote (so a following `&` starts a new
+ *  command), `%VAR%` expands even inside quotes, `!VAR!` expands when delayed
+ *  expansion is enabled in the registry (`/d` does not stop it), CR/LF end
+ *  the command line, and NUL truncates it. There is no safe escape for `%` on
+ *  a command line, so an arg carrying any of them is refused, never escaped. */
+const CMD_UNQUOTABLE: ReadonlyMap<string, string> = new Map([
+  ['"', '"'],
+  ['%', '%'],
+  ['!', '!'],
+  ['\r', 'CR'],
+  ['\n', 'LF'],
+  ['\0', 'NUL'],
+]);
+
+/** Names of the `CMD_UNQUOTABLE` characters in `arg`, deduped, in order of
+ *  first appearance; empty when the arg is safe to quote. */
+function unquotableChars(arg: string): string[] {
+  const found = new Set<string>();
+  for (const ch of arg) {
+    const name = CMD_UNQUOTABLE.get(ch);
+    if (name !== undefined) found.add(name);
+  }
+  return [...found];
+}
+
 /** Spawn shape for a resolved gcloud path. Windows ships gcloud as
  *  `gcloud.cmd`, which Node refuses to spawn without a shell since
- *  CVE-2024-27980 — and under cmd.exe the binary and every argument must be
- *  quoted (safe only because callers validate args first: staging paths via
- *  `isSafePeriodPrefix`, impersonation targets via the config-load email
- *  check). POSIX spawns the binary directly. One home for the recipe so the
- *  three gcloud spawn sites cannot drift on it. */
+ *  CVE-2024-27980 — so under cmd.exe the binary and every argument are
+ *  quoted. Quoting alone is not enough: on win32 this function THROWS for
+ *  any arg containing `"`, `%`, `!`, CR, LF or NUL (`CMD_UNQUOTABLE`), and
+ *  that assertion is the guarantee every caller relies on. Callers still
+ *  validate their inputs first — the rsync source's bucket via
+ *  `isValidGcsBucketName`, its period prefix via `isSafePeriodPrefix`,
+ *  impersonation targets via the config-load email check — but the
+ *  assertion also covers args nobody validates, such as a staging path under
+ *  a data directory whose name contains `%` or `!`. POSIX spawns the binary
+ *  directly with an argv array, so no shell parses the args and they pass
+ *  through unchanged. One home for the recipe so the three gcloud spawn sites
+ *  cannot drift on it. */
 export function gcloudSpawnShape(
   bin: string,
   args: readonly string[],
 ): { readonly command: string; readonly args: string[]; readonly shell: boolean } {
   const shell = process.platform === 'win32';
-  return shell
-    ? { command: `"${bin}"`, args: args.map(a => `"${a}"`), shell }
-    : { command: bin, args: [...args], shell };
+  if (!shell) return { command: bin, args: [...args], shell };
+  for (const arg of args) {
+    const refused = unquotableChars(arg);
+    if (refused.length > 0) {
+      throw new Error(
+        `An argument cannot be passed to gcloud on Windows: it contains ${refused.join(' ')}, `
+        + 'which cmd.exe cannot quote safely. A Windows data directory whose path contains % or ! '
+        + '(the profile folder, or COSTGOBLIN_DATA_DIR) cannot be used for GCP sync.',
+      );
+    }
+  }
+  return { command: `"${bin}"`, args: args.map(a => `"${a}"`), shell };
 }
 
 /** Locations git installs to. Git for Windows puts the shim in `Git\cmd`
