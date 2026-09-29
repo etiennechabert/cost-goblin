@@ -191,12 +191,63 @@ describe('validateConfig — gcp provider arm', () => {
     expect(() => validateConfig(withBucket('gs://billing-export/focus/'))).not.toThrow();
     expect(() => validateConfig(withBucket('billing-export/focus'))).not.toThrow();
     // The exporter writes lowercase Hive folders — those characters must pass.
-    expect(() => validateConfig(withBucket('gs://b/focus/billing_period=2026-07/'))).not.toThrow();
+    expect(() => validateConfig(withBucket('gs://bkt/focus/billing_period=2026-07/'))).not.toThrow();
     // Pasting the AWS bucket into the GCP form is a real mistake; catch it at
     // load time rather than as a silently empty listing.
     expect(() => validateConfig(withBucket('s3://my-cur-bucket/daily'))).toThrow(ConfigValidationError);
     expect(() => validateConfig(withBucket('-rf'))).toThrow(ConfigValidationError);
     expect(() => validateConfig(withBucket('b/../../etc'))).toThrow(ConfigValidationError);
+  });
+
+  it('rejects a bucket name outside the GCS naming rules on both tiers', () => {
+    // The Storage SDK puts the bucket in its request URL unencoded (so `\`,
+    // `#`, `?`, `%2F` redirect the listing) and on Windows the name is the
+    // rsync source on a cmd.exe line (so `"&calc&"` would run a command).
+    // A shared config must not be able to carry either.
+    const payloads = [
+      String.raw`gs://evil-bkt\o#"&calc&"/focus/daily`,
+      'gs://bkt"&calc&"/f',
+      'gs://bkt?x=1/f',
+      'gs://bkt%2Fo/f',
+      'gs://Bkt/f',
+      'gs:///f',
+    ];
+    for (const bad of payloads) {
+      expect(() => validateConfig(gcp({
+        sync: { daily: { bucket: bad, retentionDays: 365 }, intervalMinutes: 60 },
+      })), `daily ${bad}`).toThrow(ConfigValidationError);
+      expect(() => validateConfig(gcp({
+        sync: {
+          daily: { bucket: 'gs://billing-export/focus/daily', retentionDays: 365 },
+          hourly: { bucket: bad, retentionDays: 14 },
+          intervalMinutes: 60,
+        },
+      })), `hourly ${bad}`).toThrow(ConfigValidationError);
+    }
+    expect(() => validateConfig(gcp({
+      sync: { daily: { bucket: 'gs://Bkt/f', retentionDays: 365 }, intervalMinutes: 60 },
+    }))).toThrow(/invalid GCS bucket name/);
+  });
+
+  it('still accepts legal gs:// and bare GCS locations, stored unchanged', () => {
+    for (const ok of ['gs://billing-export/focus', 'billing-export/focus', 'billing-export', 'gs://bkt/focus/billing_period=2026-07/']) {
+      const provider = gcpArm(validateConfig(gcp({
+        sync: { daily: { bucket: ok, retentionDays: 365 }, intervalMinutes: 60 },
+      })).providers[0]);
+      expect(String(provider.sync.daily.bucket)).toBe(ok);
+    }
+  });
+
+  it('leaves the AWS key charset unrestricted by the GCS bucket rules', () => {
+    // S3 keys legitimately carry `=`, `+`, `:` and spaces.
+    const config = validateConfig({
+      providers: [{
+        name: 'payer-a', type: 'aws', credentialsProfile: 'p',
+        sync: { daily: { bucket: 's3://My_Bucket/a=1/b+c/d:e/f g', retentionDays: 30 }, intervalMinutes: 60 },
+      }],
+      defaults: { periodDays: 30, costMetric: 'effective', lagDays: 1 },
+    });
+    expect(String(awsArm(config.providers[0]).sync.daily.bucket)).toBe('s3://My_Bucket/a=1/b+c/d:e/f g');
   });
 
   it('accepts a service account to impersonate, and rejects a malformed one', () => {
@@ -242,12 +293,12 @@ describe('validateConfig — gcp provider arm', () => {
     // so a GCP provider carries the same two tiers an AWS one does.
     const provider = gcpArm(validateConfig(gcp({
       sync: {
-        daily: { bucket: 'gs://b/focus/daily', retentionDays: 365 },
-        hourly: { bucket: 'gs://b/focus/hourly', retentionDays: 14 },
+        daily: { bucket: 'gs://bkt/focus/daily', retentionDays: 365 },
+        hourly: { bucket: 'gs://bkt/focus/hourly', retentionDays: 14 },
         intervalMinutes: 60,
       },
     })).providers[0]);
-    expect(String(provider.sync.hourly?.bucket)).toBe('gs://b/focus/hourly');
+    expect(String(provider.sync.hourly?.bucket)).toBe('gs://bkt/focus/hourly');
     expect(provider.sync.hourly?.retentionDays).toBe(14);
   });
 
@@ -260,7 +311,7 @@ describe('validateConfig — gcp provider arm', () => {
   it('applies the gs:// bucket rules to the hourly tier too', () => {
     expect(() => validateConfig(gcp({
       sync: {
-        daily: { bucket: 'gs://b/focus/daily', retentionDays: 365 },
+        daily: { bucket: 'gs://bkt/focus/daily', retentionDays: 365 },
         hourly: { bucket: 's3://b/focus/hourly', retentionDays: 14 },
         intervalMinutes: 60,
       },
@@ -273,8 +324,8 @@ describe('validateConfig — gcp provider arm', () => {
     // daily grain and the tiers would fight over retention.
     expect(() => validateConfig(gcp({
       sync: {
-        daily: { bucket: 'gs://b/focus', retentionDays: 365 },
-        hourly: { bucket: 'gs://b/focus', retentionDays: 14 },
+        daily: { bucket: 'gs://bkt/focus', retentionDays: 365 },
+        hourly: { bucket: 'gs://bkt/focus', retentionDays: 14 },
         intervalMinutes: 60,
       },
     }))).toThrow(/must not overlap/);
@@ -287,16 +338,16 @@ describe('validateConfig — gcp provider arm', () => {
     // the daily listing match every hourly shard.
     expect(() => validateConfig(gcp({
       sync: {
-        daily: { bucket: 'gs://b/focus', retentionDays: 365 },
-        hourly: { bucket: 'gs://b/focus/hourly', retentionDays: 14 },
+        daily: { bucket: 'gs://bkt/focus', retentionDays: 365 },
+        hourly: { bucket: 'gs://bkt/focus/hourly', retentionDays: 14 },
         intervalMinutes: 60,
       },
     }))).toThrow(/must not overlap/);
     // A trailing-slash variant of the same daily bucket is the same overlap.
     expect(() => validateConfig(gcp({
       sync: {
-        daily: { bucket: 'gs://b/focus/daily', retentionDays: 365 },
-        hourly: { bucket: 'gs://b/focus/daily/', retentionDays: 14 },
+        daily: { bucket: 'gs://bkt/focus/daily', retentionDays: 365 },
+        hourly: { bucket: 'gs://bkt/focus/daily/', retentionDays: 14 },
         intervalMinutes: 60,
       },
     }))).toThrow(/must not overlap/);
@@ -305,8 +356,8 @@ describe('validateConfig — gcp provider arm', () => {
   it('rejects costOptimization, which has no GCP analogue, instead of ignoring it', () => {
     expect(() => validateConfig(gcp({
       sync: {
-        daily: { bucket: 'gs://b/focus', retentionDays: 365 },
-        costOptimization: { bucket: 'gs://b/other', retentionDays: 30 },
+        daily: { bucket: 'gs://bkt/focus', retentionDays: 365 },
+        costOptimization: { bucket: 'gs://bkt/other', retentionDays: 30 },
         intervalMinutes: 60,
       },
     }))).toThrow(ConfigValidationError);
@@ -331,7 +382,7 @@ describe('validateConfig — gcp provider arm', () => {
     expect(() => validateConfig({
       providers: [
         { name: 'payer-a', type: 'aws', credentialsProfile: 'p', sync: { daily: { bucket: 's3://b/d', retentionDays: 30 }, intervalMinutes: 60 } },
-        { name: 'Payer-A', type: 'gcp', sync: { daily: { bucket: 'gs://b/f', retentionDays: 30 }, intervalMinutes: 60 } },
+        { name: 'Payer-A', type: 'gcp', sync: { daily: { bucket: 'gs://bkt/f', retentionDays: 30 }, intervalMinutes: 60 } },
       ],
       defaults: { periodDays: 30, costMetric: 'effective', lagDays: 1 },
     })).toThrow(ConfigValidationError);
