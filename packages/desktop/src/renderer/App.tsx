@@ -9,8 +9,8 @@ import { DashboardsDropdown } from './top-menu/dashboards-dropdown.js';
 import { SyncStatusButton, type SyncActivity, type SyncTier } from './top-menu/sync-status-button.js';
 import { RollupStatusButton } from './top-menu/rollup-status-button.js';
 import { GeneralTab } from './settings/general-tab.js';
-import { INITIAL_UPDATE_VIEW, applyPulledSnapshot, applyPushedStatus, shouldAutoOpenUpdateModal } from './update-view.js';
-import type { UpdateView } from './update-view.js';
+import { INITIAL_AUTO_OPEN_MEMORY, INITIAL_UPDATE_VIEW, applyPulledSnapshot, applyPushedStatus, decideUpdateAutoOpen } from './update-view.js';
+import type { AutoOpenMemory, UpdateView } from './update-view.js';
 import { PerformanceTab } from './settings/performance-tab.js';
 import { TelemetryTab } from './settings/telemetry-tab.js';
 import { SetupTelemetryStep } from './setup-telemetry-step.js';
@@ -529,7 +529,7 @@ function AppShell(): React.JSX.Element {
   const [devBranch, setDevBranch] = useState<string | null>(null);
   const [branchPr, setBranchPr] = useState<BranchPrInfo | null>(null);
   const memoryMB = useMemoryMB();
-  const autoOpenRef = useMemo(() => ({ current: false }), []);
+  const autoOpenRef = useMemo<{ current: AutoOpenMemory }>(() => ({ current: INITIAL_AUTO_OPEN_MEMORY }), []);
   const initialViewSetRef = useRef(false);
   const headerRef = useRef<HTMLDivElement>(null);
   const [headerHeight, setHeaderHeight] = useState(72);
@@ -601,12 +601,13 @@ function AppShell(): React.JSX.Element {
 
   useEffect(() => {
     if (setupCheck.status !== 'ready') return;
-    // Errors always surface (except a check error pulled on mount — see
-    // shouldAutoOpenUpdateModal); other user-visible states open once per
-    // session.
-    if (!shouldAutoOpenUpdateModal(updateView, autoOpenRef.current)) return;
-    if (updateView.status.state !== 'error') autoOpenRef.current = true;
-    setReleaseNotesOpen(true);
+    // Each error episode opens the modal once (a repeated error push won't
+    // re-open it after the user closed it; a pulled check error never opens
+    // it); an available/downloaded update opens it once per session. See
+    // decideUpdateAutoOpen.
+    const decision = decideUpdateAutoOpen(updateView, autoOpenRef.current);
+    autoOpenRef.current = decision.memory;
+    if (decision.open) setReleaseNotesOpen(true);
   }, [setupCheck.status, updateView, autoOpenRef]);
 
   useEffect(() => {
