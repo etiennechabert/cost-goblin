@@ -426,27 +426,15 @@ function TableBody<TData>({ virtualizer, rows, expandedIdx, setExpandedIdx, onCe
   const virtualItems = virtualizer.getVirtualItems();
   const canExpand = renderExpandedRow !== undefined;
 
-  if (virtualItems.length === 0) {
-    return (
-      <tbody>
-        {rows.map((row, i) => {
-          const isExpanded = expandedIdx === i;
-          return (
-            <TableRow
-              key={row.id}
-              row={row}
-              expanded={isExpanded}
-              canExpand={canExpand}
-              onToggle={() => { setExpandedIdx(prev => prev === i ? null : i); }}
-              onCellClick={onCellClick}
-              renderExpandedRow={renderExpandedRow}
-            />
-          );
-        })}
-      </tbody>
-    );
-  }
-
+  // Before the virtualizer has measured the scroll element it yields no
+  // items, so every row renders unpadded. Both cases go through ONE child
+  // structure: rendering them as two differently-shaped <tbody> trees made
+  // React remount every row once the first measurement landed, detaching the
+  // rows (and any cell button a click was already aimed at) right after
+  // the table first appeared.
+  const indices = virtualItems.length === 0
+    ? rows.map((_, i) => i)
+    : virtualItems.map(virtualRow => virtualRow.index);
   const firstItem = virtualItems[0];
   const lastItem = virtualItems[virtualItems.length - 1];
   const paddingTop = firstItem === undefined ? 0 : firstItem.start;
@@ -457,17 +445,17 @@ function TableBody<TData>({ virtualizer, rows, expandedIdx, setExpandedIdx, onCe
       {paddingTop > 0 && (
         <tr><td style={{ height: paddingTop, padding: 0, border: 'none' }} /></tr>
       )}
-      {virtualItems.map(virtualRow => {
-        const row = rows[virtualRow.index];
+      {indices.map(index => {
+        const row = rows[index];
         if (row === undefined) return null;
-        const isExpanded = expandedIdx === virtualRow.index;
+        const isExpanded = expandedIdx === index;
         return (
           <TableRow
             key={row.id}
             row={row}
             expanded={isExpanded}
             canExpand={canExpand}
-            onToggle={() => { setExpandedIdx(prev => prev === virtualRow.index ? null : virtualRow.index); }}
+            onToggle={() => { setExpandedIdx(prev => prev === index ? null : index); }}
             onCellClick={onCellClick}
             renderExpandedRow={renderExpandedRow}
           />
