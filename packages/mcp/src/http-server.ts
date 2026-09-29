@@ -9,6 +9,10 @@ import type { McpContext } from './context.js';
 import { registerTools } from './tools/index.js';
 
 const DEFAULT_PORT = 19532;
+/** Shortest auth token the server accepts. The desktop app's tokens are 32
+ *  random bytes, base64url-encoded (43 chars); anything shorter is refused
+ *  before the server listens. */
+export const MCP_MIN_TOKEN_LENGTH = 32;
 const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const REAP_INTERVAL_MS = 60 * 1000;    // check every minute
 
@@ -19,10 +23,10 @@ export interface McpHttpServer {
 
 export interface McpHttpServerOptions {
   readonly port?: number | undefined;
-  /** Shared secret required on every /mcp request. When set, callers must send
-   *  it as `Authorization: Bearer <token>` or a `?token=<token>` query param.
-   *  When undefined the server is open (used only in tests). */
-  readonly authToken?: string | undefined;
+  /** Shared secret required on every /mcp request, sent only as an
+   *  `Authorization: Bearer <token>` header. Must be at least
+   *  {@link MCP_MIN_TOKEN_LENGTH} characters, or the server refuses to start. */
+  readonly authToken: string;
 }
 
 interface SessionEntry {
@@ -40,25 +44,24 @@ function tokenMatches(provided: string | undefined, expected: string): boolean {
   return timingSafeEqual(a, b);
 }
 
-/** Pull the caller's token from the Authorization header (preferred) or a
- *  `token` query param (for clients that can only be given a URL). */
-function extractToken(req: IncomingMessage, rawUrl: string): string | undefined {
+/** The caller's token, taken only from an `Authorization: Bearer <token>`
+ *  header. The URL is never consulted: a token in the query string ends up in
+ *  client configs, logs and shell history. */
+function extractBearerToken(req: IncomingMessage): string | undefined {
   const auth = req.headers['authorization'];
-  if (typeof auth === 'string') {
-    const match = /^Bearer\s+(\S.*)$/i.exec(auth.trim());
-    if (match?.[1] !== undefined) return match[1].trim();
-  }
-  const qIndex = rawUrl.indexOf('?');
-  if (qIndex >= 0) {
-    const token = new URLSearchParams(rawUrl.slice(qIndex + 1)).get('token');
-    if (token !== null) return token;
-  }
-  return undefined;
+  if (typeof auth !== 'string') return undefined;
+  const match = /^Bearer\s+(\S.*)$/i.exec(auth.trim());
+  return match?.[1]?.trim();
 }
 
-export async function createMcpHttpServer(ctx: McpContext, options?: McpHttpServerOptions): Promise<McpHttpServer> {
-  const resolvedPort = options?.port ?? DEFAULT_PORT;
-  const authToken = options?.authToken;
+export async function createMcpHttpServer(ctx: McpContext, options: McpHttpServerOptions): Promise<McpHttpServer> {
+  const { authToken } = options;
+  // Before the reaper and any listen: a short (or empty) token must never
+  // produce a listening server.
+  if (authToken.length < MCP_MIN_TOKEN_LENGTH) {
+    throw new Error(`mcp: the auth token must be at least ${String(MCP_MIN_TOKEN_LENGTH)} characters`);
+  }
+  const resolvedPort = options.port ?? DEFAULT_PORT;
   const sessions = new Map<string, SessionEntry>();
 
   function removeSession(sessionId: string): void {
@@ -69,11 +72,6 @@ export async function createMcpHttpServer(ctx: McpContext, options?: McpHttpServ
       logger.warn(`mcp: session close error — ${err instanceof Error ? err.message : String(err)}`);
     });
     logger.info('mcp: session removed', { sessionId });
-  }
-
-  function touchSession(sessionId: string): void {
-    const entry = sessions.get(sessionId);
-    if (entry !== undefined) entry.lastActivity = Date.now();
   }
 
   const reaper = setInterval(() => {
@@ -118,9 +116,9 @@ export async function createMcpHttpServer(ctx: McpContext, options?: McpHttpServ
 
   // Only loopback Host headers are accepted. The server binds 127.0.0.1/::1, but
   // a Host check is still needed to defeat DNS rebinding: a browser tricked into
-  // resolving an attacker domain to 127.0.0.1 would send that domain in Host, so
-  // rejecting non-loopback Hosts stops a malicious web page from driving the
-  // (unauthenticated) MCP tools against the user's local data.
+  // resolving an attacker domain to 127.0.0.1 would send that domain in Host.
+  // The Bearer token already gates every /mcp request; this rejects such a page
+  // before the token is even checked, and keeps it off /health too.
   const allowedHosts = new Set<string>();
   for (const h of ['127.0.0.1', 'localhost', '[::1]']) {
     allowedHosts.add(h);
@@ -147,7 +145,9 @@ export async function createMcpHttpServer(ctx: McpContext, options?: McpHttpServ
     }
 
     if (pathname === '/mcp' && (req.method === 'POST' || req.method === 'GET' || req.method === 'DELETE')) {
-      if (authToken !== undefined && !tokenMatches(extractToken(req, url), authToken)) {
+      // Checked on every request, before any session lookup: a known
+      // Mcp-Session-Id is not a credential.
+      if (!tokenMatches(extractBearerToken(req), authToken)) {
         res.writeHead(401, { 'Content-Type': 'application/json' })
           .end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32001, message: 'Unauthorized: missing or invalid token' }, id: null }));
         return;
@@ -156,7 +156,7 @@ export async function createMcpHttpServer(ctx: McpContext, options?: McpHttpServ
       const existing = typeof sessionId === 'string' ? sessions.get(sessionId) : undefined;
 
       if (existing !== undefined) {
-        touchSession(sessionId as string);
+        existing.lastActivity = Date.now();
         existing.transport.handleRequest(req, res).catch((err: unknown) => {
           logger.warn(`mcp: transport error — ${err instanceof Error ? err.message : String(err)}`);
           if (!res.headersSent) {

@@ -22,7 +22,9 @@ import { createSyncClient } from './sync-client.js';
 import type { SyncClient } from './sync-client.js';
 import { recordSyncLog } from './sync-log.js';
 import { registerIpcHandlers } from './ipc.js';
-import { startMcpServer, stopMcpServer } from './mcp.js';
+import type { AppContext } from './handlers/context.js';
+import { isMcpServerRunning, startMcpServer, stopMcpServer } from './mcp.js';
+import { readMcpEnabledSync } from './mcp-prefs.js';
 import { initAutoUpdater, checkForUpdates } from './update-manager.js';
 import { registerUpdateHandlers } from './handlers/update.js';
 import { validateProfileLabel } from './validators/path-validator.js';
@@ -169,7 +171,7 @@ function readPerformanceOverrides(stateDir: string): { memoryLimitGB: number | n
   return { memoryLimitGB: null, threads: null, rollupConcurrency: null };
 }
 
-async function createWindow(db: DuckDBClient, syncClient: SyncClient, rollupConcurrency: number, wsEnv: WorkspaceEnv): Promise<void> {
+async function createWindow(db: DuckDBClient, syncClient: SyncClient, rollupConcurrency: number, wsEnv: WorkspaceEnv): Promise<AppContext> {
   const appContext = registerIpcHandlers({
     db,
     syncClient,
@@ -189,10 +191,6 @@ async function createWindow(db: DuckDBClient, syncClient: SyncClient, rollupConc
   // a saved override before the first warmup builds anything. The value is read
   // once in main() alongside the memory/threads overrides and passed in.
   appContext.rollupStore.setBuildConcurrency(rollupConcurrency);
-
-  startMcpServer(appContext).catch((err: unknown) => {
-    logger.warn(`mcp: failed to start — ${err instanceof Error ? err.message : String(err)}`);
-  });
 
   const headless = process.env['COSTGOBLIN_HEADLESS'] === '1';
 
@@ -237,6 +235,7 @@ async function createWindow(db: DuckDBClient, syncClient: SyncClient, rollupConc
   markTrustedRenderer(win.webContents, devRendererUrl);
 
   logger.info('Window created');
+  return appContext;
 }
 
 async function main(): Promise<void> {
@@ -372,7 +371,16 @@ async function main(): Promise<void> {
   registerUpdateHandlers();
 
   const startupRollupConcurrency = resolveRollupConcurrency(perf.rollupConcurrency);
-  await createWindow(db, syncClient, startupRollupConcurrency, wsEnv);
+  const appContext = await createWindow(db, syncClient, startupRollupConcurrency, wsEnv);
+
+  // The MCP server is opt-in (Settings → AI Assistant), so nothing listens on
+  // its port unless this workspace saved `mcp.enabled: true`. This is the only
+  // launch-time start; the Enable/Disable IPC handler covers the rest.
+  if (readMcpEnabledSync(join(wsEnv.stateDir, 'ui-preferences.json')) && !isMcpServerRunning()) {
+    startMcpServer(appContext).catch((err: unknown) => {
+      logger.warn(`mcp: failed to start — ${err instanceof Error ? err.message : String(err)}`);
+    });
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

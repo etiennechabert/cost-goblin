@@ -3,8 +3,9 @@ import { parseJsonObject } from '@costgoblin/core';
 /**
  * Serializes read-modify-write cycles on a shared preferences JSON file.
  *
- * Three IPC handlers persist into ui-preferences.json — `ui:save-preferences`,
- * `perf:set`, and `telemetry:set-preferences` — each merging only its own slice.
+ * Four IPC handlers persist into ui-preferences.json — `ui:save-preferences`,
+ * `perf:set`, `telemetry:set-preferences` and `mcp:set-running` — each merging
+ * only its own slice.
  * Run concurrently, two of them both read the old file and the later write drops
  * the earlier slice (e.g. saving a theme could clobber a just-enabled telemetry
  * opt-in). A per-path promise chain makes each read-modify-write atomic against

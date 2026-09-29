@@ -19,13 +19,19 @@ function buildJsonConfig(token: string): string {
   }, null, 2);
 }
 
-/** URL with the token as a query param, for clients that only accept a URL and
- *  can't set an Authorization header. */
-function buildUrlWithToken(token: string): string {
-  return `${MCP_URL}?token=${token}`;
+/** Gemini CLI settings.json: `httpUrl` selects the Streamable HTTP transport. */
+function buildGeminiConfig(token: string): string {
+  return JSON.stringify({
+    mcpServers: {
+      costgoblin: {
+        httpUrl: MCP_URL,
+        headers: { Authorization: `Bearer ${token}` },
+      },
+    },
+  }, null, 2);
 }
 
-function CopyButton({ text }: Readonly<{ text: string }>) {
+function CopyButton({ text, label }: Readonly<{ text: string; label: string }>) {
   const [copied, setCopied] = useState(false);
 
   function handleCopy() {
@@ -40,19 +46,22 @@ function CopyButton({ text }: Readonly<{ text: string }>) {
       type="button"
       onClick={handleCopy}
       className="absolute top-2 right-2 rounded-md p-1.5 text-text-muted hover:text-text-primary hover:bg-bg-tertiary/50 transition-colors"
-      aria-label="Copy to clipboard"
+      aria-label={label}
     >
       {copied ? <Check className="size-4 text-accent" /> : <Copy className="size-4" />}
     </button>
   );
 }
 
-function CodeBlock({ children }: Readonly<{ children: string }>) {
+/** A config snippet. `display` is what's on screen (token masked unless
+ *  revealed); `copyText` is what Copy writes, always with the real token, or
+ *  null while the token hasn't loaded (no Copy button then). */
+function CodeBlock({ display, copyText, copyLabel }: Readonly<{ display: string; copyText: string | null; copyLabel: string }>) {
   return (
     <div className="relative">
-      <CopyButton text={children} />
+      {copyText !== null && <CopyButton text={copyText} label={copyLabel} />}
       <pre className="rounded-lg bg-bg-primary border border-border p-4 pr-12 text-sm text-text-secondary overflow-x-auto font-mono">
-        {children}
+        {display}
       </pre>
     </div>
   );
@@ -85,48 +94,61 @@ const EXAMPLE_PROMPTS = [
   },
 ];
 
-function buildProviders(token: string): { name: string; config: string; docs: string }[] {
-  return [
-    {
-      name: 'Claude / Cursor / Windsurf',
-      config: buildJsonConfig(token),
-      docs: 'Add to claude_desktop_config.json, .mcp.json, or your editor MCP settings:',
-    },
-    {
-      name: 'ChatGPT',
-      config: buildUrlWithToken(token),
-      docs: 'In ChatGPT \u2192 Settings \u2192 Add MCP server, paste this URL (token included):',
-    },
-    {
-      name: 'Gemini',
-      config: buildUrlWithToken(token),
-      docs: 'In Gemini \u2192 Settings \u2192 Extensions \u2192 Add MCP server, paste this URL (token included):',
-    },
-  ];
+interface Provider {
+  readonly name: string;
+  readonly docs: string;
+  readonly render: (token: string) => string;
 }
+
+// Only clients that can send an Authorization header are listed: the server
+// never accepts the token from the URL.
+const PROVIDERS: readonly Provider[] = [
+  {
+    name: 'Claude / Cursor / Windsurf',
+    docs: 'Add to claude_desktop_config.json, .mcp.json, or your editor MCP settings:',
+    render: buildJsonConfig,
+  },
+  {
+    name: 'Gemini CLI',
+    docs: 'Add to ~/.gemini/settings.json (or .gemini/settings.json in a project):',
+    render: buildGeminiConfig,
+  },
+];
+
+type ServerState = boolean | null;
 
 export function McpView() {
   const api = useCostApi();
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
-  const [running, setRunning] = useState(true);
+  // null until the first query answers: never claim "running" (or "stopped")
+  // before the main process has said so.
+  const [running, setRunning] = useState<ServerState>(null);
   const [toggling, setToggling] = useState(false);
+  const [toggleError, setToggleError] = useState<string | null>(null);
   const [token, setToken] = useState('');
   const [tokenRevealed, setTokenRevealed] = useState(false);
   const [confirmingRegen, setConfirmingRegen] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
 
   useEffect(() => {
-    api.getMcpServerRunning().then(setRunning).catch(() => undefined);
+    api.getMcpServerRunning().then(setRunning).catch(() => { setRunning(false); });
     api.getMcpToken().then(setToken).catch(() => undefined);
   }, [api]);
 
   const handleToggle = useCallback(() => {
-    setToggling(true);
+    if (running === null) return;
     const next = !running;
+    setToggling(true);
+    setToggleError(null);
     api.setMcpServerRunning(next).then(() => {
       setRunning(next);
+    }).catch((err: unknown) => {
+      setToggleError(err instanceof Error ? err.message : String(err));
+      // The main process knows the real state (a failed Enable leaves it off).
+      api.getMcpServerRunning().then(setRunning).catch(() => { setRunning(false); });
+    }).finally(() => {
       setToggling(false);
-    }).catch(() => undefined);
+    });
   }, [api, running]);
 
   const handleRegenerate = useCallback(() => {
@@ -140,7 +162,17 @@ export function McpView() {
     });
   }, [api]);
 
-  const providers = useMemo(() => buildProviders(token), [token]);
+  const snippets = useMemo(() => PROVIDERS.map((provider) => ({
+    name: provider.name,
+    docs: provider.docs,
+    display: provider.render(tokenRevealed ? token : TOKEN_MASK),
+    copyText: token.length > 0 ? provider.render(token) : null,
+  })), [token, tokenRevealed]);
+
+  let statusLabel: string;
+  if (running === null) statusLabel = 'Checking…';
+  else if (running) statusLabel = 'MCP server running';
+  else statusLabel = 'MCP server stopped';
 
   let tokenDisplay: string;
   if (token.length === 0) tokenDisplay = 'Loading…';
@@ -163,23 +195,29 @@ export function McpView() {
       <div className="rounded-xl border border-border bg-bg-secondary/50 p-5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <span className={`flex h-2.5 w-2.5 rounded-full ${running ? 'bg-accent animate-pulse' : 'bg-text-muted'}`} />
+            <span className={`flex h-2.5 w-2.5 rounded-full ${running === true ? 'bg-accent animate-pulse' : 'bg-text-muted'}`} />
             <div>
               <p className="text-sm font-medium text-text-primary">
-                MCP server {running ? 'running' : 'stopped'}
+                {statusLabel}
               </p>
-              {running && <p className="text-xs text-text-muted font-mono mt-0.5">{MCP_URL}</p>}
+              {running === true && <p className="text-xs text-text-muted font-mono mt-0.5">{MCP_URL}</p>}
             </div>
           </div>
           <button
             type="button"
-            disabled={toggling}
+            disabled={toggling || running === null}
             onClick={handleToggle}
             className="text-xs px-3 py-1.5 rounded-md border border-border text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50 transition-colors disabled:opacity-50"
           >
-            {running ? 'Stop' : 'Start'}
+            {running === true ? 'Disable' : 'Enable'}
           </button>
         </div>
+        <p className="text-xs text-text-secondary mt-3">
+          Off by default. Once enabled, the server starts automatically each time CostGoblin launches.
+        </p>
+        {toggleError !== null && (
+          <p role="alert" className="text-xs text-negative mt-2 break-words">{toggleError}</p>
+        )}
       </div>
 
       {/* Access token */}
@@ -189,10 +227,10 @@ export function McpView() {
           <h3 className="text-sm font-semibold text-text-primary">Access token</h3>
         </div>
         <p className="text-xs text-text-secondary mb-3">
-          Every request to the server must include this token, so only apps you&rsquo;ve configured can reach your billing data. It&rsquo;s already baked into the configs below. Keep it private &mdash; anyone with it (and access to this machine) can query your costs.
+          Every request to the server must send this token in an <code className="font-mono">Authorization: Bearer</code> header, so only apps you&rsquo;ve configured can reach your billing data. The configs below include it: it stays hidden on screen until you click Reveal, and Copy always copies the real value. Keep it private &mdash; anyone with it (and access to this machine) can query your costs.
         </p>
         <div className="relative">
-          {token.length > 0 && <CopyButton text={token} />}
+          {token.length > 0 && <CopyButton text={token} label="Copy token" />}
           <pre className="rounded-lg bg-bg-primary border border-border p-4 pr-12 text-sm text-text-secondary overflow-x-auto font-mono">
             {tokenDisplay}
           </pre>
@@ -243,28 +281,35 @@ export function McpView() {
       <div>
         <h3 className="text-sm font-semibold text-text-primary mb-3">Connect your AI assistant</h3>
         <div className="space-y-2">
-          {providers.map((provider) => {
-            const isExpanded = expandedProvider === provider.name;
+          {snippets.map((snippet) => {
+            const isExpanded = expandedProvider === snippet.name;
             return (
-              <div key={provider.name} className="rounded-lg border border-border bg-bg-secondary/50 overflow-hidden">
+              <div key={snippet.name} className="rounded-lg border border-border bg-bg-secondary/50 overflow-hidden">
                 <button
                   type="button"
-                  onClick={() => { setExpandedProvider(isExpanded ? null : provider.name); }}
+                  aria-expanded={isExpanded}
+                  onClick={() => { setExpandedProvider(isExpanded ? null : snippet.name); }}
                   className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-bg-tertiary/30 transition-colors"
                 >
-                  <span className="text-sm font-medium text-text-primary">{provider.name}</span>
+                  <span className="text-sm font-medium text-text-primary">{snippet.name}</span>
                   <span className="text-xs text-text-muted">{isExpanded ? 'Hide' : 'Show config'}</span>
                 </button>
                 {isExpanded && (
                   <div className="px-4 pb-4 space-y-2">
-                    <p className="text-xs text-text-secondary">{provider.docs}</p>
-                    <CodeBlock>{provider.config}</CodeBlock>
+                    <p className="text-xs text-text-secondary">{snippet.docs}</p>
+                    <CodeBlock display={snippet.display} copyText={snippet.copyText} copyLabel={`Copy ${snippet.name} config`} />
+                    {!tokenRevealed && snippet.copyText !== null && (
+                      <p className="text-xs text-text-muted">Token hidden. Copy includes it, or click Reveal above.</p>
+                    )}
                   </div>
                 )}
               </div>
             );
           })}
         </div>
+        <p className="text-xs text-text-muted mt-3">
+          ChatGPT and other cloud-hosted assistants can&rsquo;t reach this server: it listens only on this computer&rsquo;s loopback address.
+        </p>
       </div>
 
       {/* Available tools */}

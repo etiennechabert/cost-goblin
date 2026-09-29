@@ -508,10 +508,16 @@ export interface CostApi {
   getBaselinesConfig(): Promise<BaselinesConfigState>;
   setBaselinesConfig(config: BaselinesDiscoveryConfig): Promise<BaselinesConfigState>;
   resetBaselinesConfig(): Promise<BaselinesConfigState>;
+  /** Whether the embedded MCP server is listening right now. */
   getMcpServerRunning(): Promise<boolean>;
+  /** Enable or disable the embedded MCP server (opt-in, OFF by default). The
+   *  choice is saved per workspace as `mcp.enabled` in ui-preferences.json and
+   *  honoured at every launch. Enabling starts the server and saves ON only
+   *  once it listens; a failed start saves OFF and rejects. Disabling saves OFF,
+   *  then stops the server. */
   setMcpServerRunning(enabled: boolean): Promise<void>;
-  /** The shared secret a client must send (as `Authorization: Bearer <token>`
-   *  or a `?token=` query param) to reach the MCP server. */
+  /** The shared secret a client must send as an `Authorization: Bearer <token>`
+   *  header to reach the MCP server. The server never reads it from the URL. */
   getMcpToken(): Promise<string>;
   /** Rotate the MCP token, restarting the server if running. Returns the new
    *  token. Existing clients must update their config to keep working. */
