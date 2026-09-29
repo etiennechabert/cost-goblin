@@ -221,6 +221,25 @@ export interface PruneResult {
   readonly deleted: readonly { readonly tier: DataTier; readonly period: string; readonly provider?: string | undefined }[];
 }
 
+/** Name strip patterns a preview could not apply, as 0-based indexes into the
+ *  `nameStripPatterns` list it was given. Indexes only — never pattern text. */
+export interface StripPatternIssues {
+  /** Did not compile, or threw while running. */
+  readonly invalid: readonly number[];
+  /** Exceeded the per-pattern time budget. */
+  readonly slow: readonly number[];
+  /** Not evaluated: the preview's total time budget ran out first. */
+  readonly skipped: readonly number[];
+}
+
+export interface ColumnValuesPreview {
+  readonly values: { value: string; cost: number }[];
+  readonly distinctCount: number;
+  readonly period: string;
+  /** Always present; all empty when there was nothing to strip. */
+  readonly stripIssues: StripPatternIssues;
+}
+
 export interface CostApi {
   queryCosts(params: CostQueryParams): Promise<CostResult>;
   queryDailyCosts(params: DailyCostsParams): Promise<DailyCostsResult>;
@@ -301,7 +320,11 @@ export interface CostApi {
   getUIPreferences(): Promise<UIPreferences>;
   saveUIPreferences(prefs: UIPreferences): Promise<void>;
   discoverTagKeys(): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }>;
-  discoverColumnValues(field: string, opts?: { useOrgAccounts?: boolean; accountNameFromTag?: string; nameStripPatterns?: readonly string[]; normalize?: NormalizationRule; useRegionNames?: boolean; dimName?: string }): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }>;
+  /** Preview of a built-in column's values for the dimension editor. The
+   *  main process rejects `nameStripPatterns` beyond the caps in
+   *  `strip-pattern-limits.ts`, and reports patterns it could not apply in
+   *  `stripIssues`. */
+  discoverColumnValues(field: string, opts?: { useOrgAccounts?: boolean; accountNameFromTag?: string; nameStripPatterns?: readonly string[]; normalize?: NormalizationRule; useRegionNames?: boolean; dimName?: string }): Promise<ColumnValuesPreview>;
   getDimensionsConfig(): Promise<DimensionsConfig>;
   saveDimensionsConfig(config: DimensionsConfig): Promise<void>;
   /** Estimate the rollup cost/benefit of a candidate dimensions config before

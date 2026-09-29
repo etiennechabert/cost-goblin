@@ -5,6 +5,7 @@ import { parseProviderName } from './provider-name.js';
 import { gcsTiersOverlap } from '../sync/gcs-export-layout.js';
 import { GCS_BUCKET_NAME_RULES, isValidGcsBucketName, splitGcsLocation } from '../sync/gcs-bucket-name.js';
 import { logger } from '../logger/logger.js';
+import { MAX_NAME_STRIP_PATTERN_LENGTH, MAX_NAME_STRIP_PATTERNS, nameStripPatternViolations } from './strip-pattern-limits.js';
 import type {
   ConceptType,
   CostGoblinConfig,
@@ -371,7 +372,42 @@ function optionalStringArray(value: unknown, context: string): string[] | undefi
   return value === undefined ? undefined : validateStringArray(value, context);
 }
 
-function validateBuiltInDimension(dim: unknown, i: number) {
+/** How `validateDimensions` treats `nameStripPatterns` beyond the caps in
+ *  `strip-pattern-limits.ts`:
+ *  - `'drop'` (load: dimensions.yaml, shared bundles, peer pulls) keeps the
+ *    config loadable — over-long patterns are removed, then the first 16 are
+ *    kept, with a warning that carries counts only (never pattern text);
+ *  - `'reject'` (saving a renderer-edited config) throws, so an over-limit
+ *    list is refused visibly instead of being silently truncated on disk. */
+export type StripPatternLimitMode = 'drop' | 'reject';
+
+export interface ValidateDimensionsOptions {
+  readonly stripPatternLimits?: StripPatternLimitMode | undefined;
+}
+
+function capNameStripPatterns(patterns: string[] | undefined, ctx: string, mode: StripPatternLimitMode): string[] | undefined {
+  if (patterns === undefined) return undefined;
+  if (mode === 'reject') {
+    const violations = nameStripPatternViolations(patterns);
+    if (violations.length > 0) {
+      throw new ConfigValidationError(`${ctx}.nameStripPatterns: ${violations.join('; ')}`);
+    }
+    return patterns;
+  }
+  const withinLength = patterns.filter(p => p.length <= MAX_NAME_STRIP_PATTERN_LENGTH);
+  const kept = withinLength.slice(0, MAX_NAME_STRIP_PATTERNS);
+  const droppedLong = patterns.length - withinLength.length;
+  const droppedExtra = withinLength.length - kept.length;
+  if (droppedLong > 0 || droppedExtra > 0) {
+    logger.warn(
+      `${ctx}.nameStripPatterns: ignored ${String(droppedLong)} pattern(s) longer than ${String(MAX_NAME_STRIP_PATTERN_LENGTH)} characters ` +
+      `and ${String(droppedExtra)} beyond the first ${String(MAX_NAME_STRIP_PATTERNS)}; saving the dimension from the editor will require fixing them`,
+    );
+  }
+  return kept;
+}
+
+function validateBuiltInDimension(dim: unknown, i: number, stripPatternLimits: StripPatternLimitMode) {
   const ctx = `builtIn[${String(i)}]`;
   assertObject(dim, ctx);
   assertString(dim['name'], `${ctx}.name`);
@@ -387,7 +423,11 @@ function validateBuiltInDimension(dim: unknown, i: number) {
   const rawUseRegionNames = dim['useRegionNames'];
   const useRegionNames = typeof rawUseRegionNames === 'boolean' ? rawUseRegionNames : undefined;
   const accountNameFromTag = optionalNonEmptyString(dim['accountNameFromTag']);
-  const nameStripPatterns = optionalStringArray(dim['nameStripPatterns'], `${ctx}.nameStripPatterns`);
+  const nameStripPatterns = capNameStripPatterns(
+    optionalStringArray(dim['nameStripPatterns'], `${ctx}.nameStripPatterns`),
+    ctx,
+    stripPatternLimits,
+  );
   const normalize = validateNormalize(dim['normalize'], ctx);
   const aliases = validateAliases(dim['aliases'], ctx);
   const defaultFilterValues = optionalStringArray(dim['defaultFilterValues'], `${ctx}.defaultFilterValues`);
@@ -497,12 +537,13 @@ function validateTagDimension(tag: unknown, i: number) {
   };
 }
 
-export function validateDimensions(raw: unknown): DimensionsConfig {
+export function validateDimensions(raw: unknown, options: ValidateDimensionsOptions = {}): DimensionsConfig {
   assertObject(raw, 'dimensions');
   assertArray(raw['builtIn'], 'builtIn');
   assertArray(raw['tags'], 'tags');
 
-  const builtIn = raw['builtIn'].map((dim, i) => validateBuiltInDimension(dim, i));
+  const stripPatternLimits = options.stripPatternLimits ?? 'drop';
+  const builtIn = raw['builtIn'].map((dim, i) => validateBuiltInDimension(dim, i, stripPatternLimits));
   const tags = raw['tags'].map((tag, i) => validateTagDimension(tag, i));
 
   let order: string[] | undefined;
