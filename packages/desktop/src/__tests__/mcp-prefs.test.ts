@@ -160,6 +160,14 @@ describe('applyMcpEnabled', () => {
     expect(r.deps.isRunning()).toBe(false);
   });
 
+  it('a failed persist(true) leaves a server it did not start running', async () => {
+    const persistError = new Error('disk full');
+    const r = recorder({ running: true, persistError: (enabled) => (enabled ? persistError : undefined) });
+    await expect(applyMcpEnabled(true, r.deps)).rejects.toBe(persistError);
+    expect(r.calls).toStrictEqual(['persist:true']);
+    expect(r.deps.isRunning()).toBe(true);
+  });
+
   it.each([
     ['the string "true"', 'true'],
     ['the number 1', 1],

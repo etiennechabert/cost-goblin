@@ -37,7 +37,7 @@ export interface ApplyMcpEnabledDeps {
  * - disable saves OFF first, then stops the server;
  * - enable starts the server first and saves ON only once it listens. A failed
  *   start saves OFF (best effort) and rethrows; a failed save stops the server
- *   it just started and rethrows.
+ *   if this call started it, and rethrows.
  *
  * The payload comes from the renderer, so anything but a boolean throws before
  * any side effect.
@@ -53,7 +53,8 @@ export async function applyMcpEnabled(value: unknown, deps: ApplyMcpEnabledDeps)
     return;
   }
 
-  if (!deps.isRunning()) {
+  const startedHere = !deps.isRunning();
+  if (startedHere) {
     try {
       await deps.start();
     } catch (err: unknown) {
@@ -67,9 +68,13 @@ export async function applyMcpEnabled(value: unknown, deps: ApplyMcpEnabledDeps)
   try {
     await deps.persist(true);
   } catch (err: unknown) {
-    await deps.stop().catch((stopErr: unknown) => {
-      logger.warn(`mcp: could not stop the server after failing to save the setting — ${stopErr instanceof Error ? stopErr.message : String(stopErr)}`);
-    });
+    // Undo only what this call did: a server that was already running (e.g.
+    // started at launch from the saved setting) is left as it was.
+    if (startedHere) {
+      await deps.stop().catch((stopErr: unknown) => {
+        logger.warn(`mcp: could not stop the server after failing to save the setting — ${stopErr instanceof Error ? stopErr.message : String(stopErr)}`);
+      });
+    }
     throw err;
   }
 }
