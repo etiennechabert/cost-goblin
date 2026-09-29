@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "dev": "wrangler dev",
+    "predeploy": "wrangler secret list | grep -q '\"TURNSTILE_SECRET_KEY\"' || (echo 'TURNSTILE_SECRET_KEY secret missing: run wrangler secret put TURNSTILE_SECRET_KEY' >&2; exit 1)",
     "deploy": "wrangler deploy"
   },
   "devDependencies": {
