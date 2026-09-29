@@ -593,6 +593,20 @@ export type UpdateStatus =
       readonly logs: readonly UpdateLogEntry[];
     };
 
+/**
+ * The updater's state as pulled by the renderer on mount (`update:get-status`).
+ * Status transitions are also pushed (`update:status-changed`), but a push made
+ * before the renderer subscribed — e.g. the launch-time check finishing while
+ * the window is still loading — is lost, so the renderer pulls this first.
+ */
+export interface UpdateSnapshot {
+  readonly status: UpdateStatus;
+  /** A check (startup or manual) has started since the app launched. Lets the
+   *  settings row tell "up to date" (checked, nothing found) apart from "not
+   *  checked yet" (e.g. the startup check is turned off) — both are `idle`. */
+  readonly checkedThisSession: boolean;
+}
+
 export interface UpdateApi {
   checkForUpdates(): Promise<void>;
   downloadUpdate(): Promise<void>;
@@ -604,6 +618,13 @@ export interface UpdateApi {
   relaunch(postSetup?: boolean): void;
   onStatusChanged(callback: (status: UpdateStatus) => void): () => void;
   getAppVersion(): Promise<string>;
+  /** Current updater state — pull on mount, then track `onStatusChanged`. */
+  getStatus(): Promise<UpdateSnapshot>;
+  /** Whether release builds check GitHub Releases at launch (the workspace's
+   *  `updates.checkOnStartup`; missing or corrupt reads as true). */
+  getCheckOnStartup(): Promise<boolean>;
+  /** Save the startup-check preference. Takes effect at the next launch. */
+  setCheckOnStartup(value: boolean): Promise<void>;
 }
 
 /** Live state of the on-disk daily rollup. Pushed to the renderer so the header

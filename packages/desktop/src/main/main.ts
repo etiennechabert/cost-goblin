@@ -4,7 +4,7 @@ import { Session } from 'node:inspector';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { logger, parseJsonObject, isStringRecord, parseTelemetryPreferences, sqlEscapeString } from '@costgoblin/core';
+import { logger, parseJsonObject, isStringRecord, parseTelemetryPreferences, parseUpdatePreferences, sqlEscapeString } from '@costgoblin/core';
 import { telemetry } from './telemetry/controller.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -26,6 +26,7 @@ import type { AppContext } from './handlers/context.js';
 import { isMcpServerRunning, startMcpServer, stopMcpServer } from './mcp.js';
 import { readMcpEnabledSync } from './mcp-prefs.js';
 import { initAutoUpdater, checkForUpdates } from './update-manager.js';
+import { DISABLE_UPDATE_CHECK_ENV, shouldCheckOnStartup } from './update-prefs.js';
 import { registerUpdateHandlers } from './handlers/update.js';
 import { validateProfileLabel } from './validators/path-validator.js';
 import { resolveWorkspaceEnv } from './workspace-env.js';
@@ -280,13 +281,17 @@ async function main(): Promise<void> {
   // from the saved preference. Toggling the channel in Settings saves the choice
   // and restarts the app to re-arm with the new state.
   telemetry.initialize(wsEnv.stateDir);
-  let telemetryPrefs = parseTelemetryPreferences(undefined);
+  // One read of the workspace's ui-preferences.json feeds the launch-time
+  // telemetry and update-check decisions. Each slice parser fails to its own
+  // default: telemetry stays dark, the update check stays on.
+  let launchPrefs: Readonly<Record<string, unknown>> | null = null;
   try {
-    const parsed = parseJsonObject(readFileSync(join(wsEnv.stateDir, 'ui-preferences.json'), 'utf-8'));
-    telemetryPrefs = parseTelemetryPreferences(parsed?.['telemetry']);
+    launchPrefs = parseJsonObject(readFileSync(join(wsEnv.stateDir, 'ui-preferences.json'), 'utf-8'));
   } catch {
-    /* no or invalid prefs file → telemetry stays dark */
+    /* no or invalid prefs file → every slice takes its default */
   }
+  const telemetryPrefs = parseTelemetryPreferences(launchPrefs?.['telemetry']);
+  const updatePrefs = parseUpdatePreferences(launchPrefs?.['updates']);
   // Synchronous + before whenReady: Sentry must init before `ready` to arm
   // native crash capture, so this must not yield to the event loop first.
   telemetry.start(telemetryPrefs);
@@ -362,13 +367,19 @@ async function main(): Promise<void> {
   installPermissionHandlers();
   if (app.isPackaged) {
     try {
+      // Always wired up in a release build, so a manual "Check for updates"
+      // works even when the launch-time check is off.
       initAutoUpdater();
-      checkForUpdates().catch(() => undefined);
+      if (shouldCheckOnStartup({ isPackaged: app.isPackaged, prefs: updatePrefs, env: process.env })) {
+        checkForUpdates().catch(() => undefined);
+      } else {
+        logger.info(`Startup update check skipped (Settings → General, or ${DISABLE_UPDATE_CHECK_ENV}=1); manual checks still work`);
+      }
     } catch {
       logger.warn('Auto-updater unavailable');
     }
   }
-  registerUpdateHandlers();
+  registerUpdateHandlers(wsEnv.stateDir);
 
   const startupRollupConcurrency = resolveRollupConcurrency(perf.rollupConcurrency);
   const appContext = await createWindow(db, syncClient, startupRollupConcurrency, wsEnv);

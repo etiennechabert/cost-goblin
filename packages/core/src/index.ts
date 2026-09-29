@@ -10,4 +10,5 @@ export * from './sync/index.js';
 export * from './logger/index.js';
 export * from './telemetry/index.js';
 export * from './mcp/index.js';
+export * from './updates/index.js';
 export * from './utils/index.js';
