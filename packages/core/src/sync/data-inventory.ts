@@ -7,7 +7,7 @@ import { logger } from '../logger/logger.js';
 import type { DataTier } from '../types/api.js';
 import type { ProviderName } from '../types/branded.js';
 import { providerEtagPath, providerRawDir } from './provider-paths.js';
-import { extractPeriod, getRawDirPrefix, parseEtagsJson } from './sync-utils.js';
+import { getRawDirPrefix, parseEtagsJson, parsePartition, partitionFolderLabel } from './sync-utils.js';
 import { readTierLastSync } from './sync-timestamps.js';
 
 export type PeriodStatus = 'missing' | 'repartitioned' | 'stale';
@@ -163,11 +163,14 @@ export async function getDataInventory(
   const periodMap = new Map<string, ManifestFileEntry[]>();
   let skippedKeys = 0;
   for (const file of remoteFiles) {
-    const period = extractPeriod(file.key);
-    if (period === 'unknown') {
+    // The same parser the sync arms use, so a period listed here is always the
+    // one its etags are saved under — otherwise it would read 'stale' forever.
+    const partition = parsePartition(file.key, tier);
+    if (partition === null) {
       skippedKeys++;
       continue;
     }
+    const { period } = partition;
     const existing = periodMap.get(period);
     if (existing === undefined) {
       periodMap.set(period, [file]);
@@ -180,7 +183,7 @@ export async function getDataInventory(
   // `BILLING_PERIOD=` (CUR-era) or flat, unpartitioned keys. Say so once.
   if (skippedKeys > 0 && periodMap.size === 0) {
     logger.warn(
-      `Listed ${String(skippedKeys)} Parquet file(s) under ${bucketPath} but none carry a lowercase billing_period=YYYY-MM (or date=YYYY-MM-DD) path segment — nothing to sync`,
+      `Listed ${String(skippedKeys)} Parquet file(s) under ${bucketPath} but none sit directly in a ${partitionFolderLabel(tier)} folder — nothing to sync`,
       { provider: String(provider), tier },
     );
   }

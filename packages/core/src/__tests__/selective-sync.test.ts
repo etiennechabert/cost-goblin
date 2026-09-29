@@ -1,7 +1,8 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { EventEmitter } from 'node:events';
+import { EventEmitter, getEventListeners } from 'node:events';
 import { join } from 'node:path';
 import type { ManifestFileEntry } from '../sync/manifest.js';
+import { logger } from '../logger/logger.js';
 import { syncSelectedFiles } from '../sync/selective-sync.js';
 import type { SyncProgress } from '../sync/s3-client.js';
 import { asProviderName } from '../types/branded.js';
@@ -82,6 +83,27 @@ describe('syncSelectedFiles', () => {
     return proc;
   }
 
+  /** Every etag sidecar write, merged in order. `mockReadFile` rejects by
+   *  default, so each write carries only the period it just saved. */
+  function writtenEtags(fileName: string): Record<string, Record<string, string>> {
+    const merged: Record<string, Record<string, string>> = {};
+    for (const call of mockWriteFile.mock.calls) {
+      if (!String(call[0]).endsWith(fileName)) continue;
+      Object.assign(merged, JSON.parse(String(call[1])));
+    }
+    return merged;
+  }
+
+  /** Emits each chunk in order on one stream, then closes with exit 0. */
+  function spawnEmitting(stream: 'stdout' | 'stderr', chunks: readonly Buffer[]): MockChildProcess {
+    const proc = new MockChildProcess();
+    setTimeout(() => {
+      for (const chunk of chunks) proc[stream].emit('data', chunk);
+      proc.emit('close', 0, null);
+    }, 5);
+    return proc;
+  }
+
   it('successfully syncs daily CUR files', async () => {
     const proc = createSuccessfulSpawn();
     mockSpawn.mockReturnValue(proc);
@@ -106,7 +128,7 @@ describe('syncSelectedFiles', () => {
     expect(result.filesDownloaded).toBe(2);
     expect(mockSpawn).toHaveBeenCalledWith(
       expect.stringContaining('aws'),
-      ['s3', 'sync', 's3://test-bucket/cur/data/billing_period=2026-03/', expectedDest, '--profile', 'test-profile'],
+      ['s3', 'sync', 's3://test-bucket/cur/data/billing_period=2026-03/', expectedDest, '--exclude', '*', '--include', '*.parquet', '--profile', 'test-profile'],
       { stdio: ['ignore', 'pipe', 'pipe'] }
     );
   });
@@ -226,29 +248,6 @@ describe('syncSelectedFiles', () => {
     expect(progressEvents.some((p) => p.phase === 'downloading')).toBe(true);
     expect(progressEvents.some((p) => p.phase === 'done')).toBe(true);
     expect(progressEvents.some((p) => p.message?.includes('Completed'))).toBe(true);
-  });
-
-  it('calls onFileDownloaded callback when file downloads', async () => {
-    const proc = createSuccessfulSpawn();
-    mockSpawn.mockReturnValue(proc);
-
-    setTimeout(() => {
-      proc.stdout.emit('data', Buffer.from('download: s3://bucket/file.parquet to /tmp/local/file.parquet\n'));
-    }, 5);
-
-    const files = [file('cur/billing_period=2026-03/file.parquet')];
-    const downloadedPaths: string[] = [];
-
-    await syncSelectedFiles({
-      bucketPath: 's3://bucket/cur/',
-      profile: 'test',
-      providerName,
-      dataDir: '/tmp',
-      files,
-      onFileDownloaded: (localPath) => { downloadedPaths.push(localPath); },
-    });
-
-    expect(downloadedPaths).toContain('/tmp/local/file.parquet');
   });
 
   it('rejects when AWS CLI is not found', async () => {
@@ -834,7 +833,7 @@ describe('syncSelectedFiles', () => {
 
       expect(mockSpawn).toHaveBeenCalledWith(
         expect.stringContaining('aws'),
-        ['s3', 'sync', 's3://test-bucket/cost-opt/date=2026-03-15/', expect.stringContaining('cost-opt-2026-03-15'), '--profile', 'prod-profile'],
+        ['s3', 'sync', 's3://test-bucket/cost-opt/date=2026-03-15/', expect.stringContaining('cost-opt-2026-03-15'), '--exclude', '*', '--include', '*.parquet', '--profile', 'prod-profile'],
         { stdio: ['ignore', 'pipe', 'pipe'] }
       );
     });
@@ -915,6 +914,11 @@ describe('syncSelectedFiles', () => {
 
       expect(result.filesDownloaded).toBe(1);
       expect(syncCount).toBe(1);
+      // Only the date that actually downloaded is recorded as current: the two
+      // never-fetched dates must stay stale so the next run retries them.
+      expect(writtenEtags('sync-etags-cost-optimization.json')).toEqual({
+        '2026-03': { 'cost-opt/date=2026-03-15/file1.parquet': 'h' },
+      });
     });
 
     it('rejects on permission denied', async () => {
@@ -932,6 +936,241 @@ describe('syncSelectedFiles', () => {
           files: [file('cost-opt/date=2026-03-15/file.parquet')],
         })
       ).rejects.toThrow('Forbidden');
+    });
+  });
+
+  describe('partition prefix validation', () => {
+    it('refuses a cost-opt run whose only key has date= in the FILE name', async () => {
+      // `date=2026-01-01_part-0.parquet` used to yield the prefix '': the
+      // source collapsed to `s3://b/` and the whole bucket was mirrored.
+      mockSpawn.mockImplementation(() => createSuccessfulSpawn());
+
+      await expect(syncSelectedFiles({
+        bucketPath: 's3://b/',
+        profile: 'test',
+        providerName,
+        dataDir: '/tmp',
+        expectedDataType: 'cost-optimization',
+        files: [file('cost-opt/date=2026-01-01_part-0.parquet')],
+      })).rejects.toThrow(/date=YYYY-MM-DD\//);
+
+      expect(mockSpawn).not.toHaveBeenCalled();
+      expect(writtenEtags('sync-etags-cost-optimization.json')).toEqual({});
+    });
+
+    it('syncs the date folder but never stamps a flat key of the same date', async () => {
+      mockSpawn.mockImplementation(() => createSuccessfulSpawn());
+
+      const result = await syncSelectedFiles({
+        bucketPath: 's3://b/',
+        profile: 'test',
+        providerName,
+        dataDir: '/tmp',
+        expectedDataType: 'cost-optimization',
+        files: [
+          file('cost-opt/date=2026-01-01_part-0.parquet', 'flat'),
+          file('cost-opt/date=2026-01-01/a.parquet', 'folder'),
+        ],
+      });
+
+      expect(mockSpawn).toHaveBeenCalledTimes(1);
+      expect(mockSpawn.mock.calls[0]?.[1]).toEqual(expect.arrayContaining(['s3://b/cost-opt/date=2026-01-01/']));
+      expect(result.filesDownloaded).toBe(1);
+      expect(writtenEtags('sync-etags-cost-optimization.json')).toEqual({
+        '2026-01': { 'cost-opt/date=2026-01-01/a.parquet': 'folder' },
+      });
+    });
+
+    it('still syncs the valid folder when a -v2 lookalike is listed first', async () => {
+      // '-' sorts before '/', so a first-file guard would have dropped the
+      // real folder along with the lookalike.
+      mockSpawn.mockImplementation(() => createSuccessfulSpawn());
+
+      const result = await syncSelectedFiles({
+        bucketPath: 's3://b/cost-opt/',
+        profile: 'test',
+        providerName,
+        dataDir: '/tmp',
+        expectedDataType: 'cost-optimization',
+        files: [
+          file('cost-opt/date=2026-01-01-v2/a.parquet'),
+          file('cost-opt/date=2026-01-01/a.parquet'),
+        ],
+      });
+
+      expect(mockSpawn).toHaveBeenCalledTimes(1);
+      expect(mockSpawn.mock.calls[0]?.[1]).toEqual(expect.arrayContaining(['s3://b/cost-opt/date=2026-01-01/']));
+      expect(result.filesDownloaded).toBe(1);
+    });
+
+    it('syncs one prefix per period and records only the files under it', async () => {
+      mockSpawn.mockImplementation(() => createSuccessfulSpawn());
+
+      const result = await syncSelectedFiles({
+        bucketPath: 's3://b/',
+        profile: 'test',
+        providerName,
+        dataDir: '/tmp',
+        expectedDataType: 'daily',
+        files: [
+          file('b/billing_period=2026-01/y.parquet', 'hy'),
+          file('a/billing_period=2026-01/x.parquet', 'hx'),
+        ],
+      });
+
+      // Two prefixes into one raw/daily-2026-01 dir would double-count: the
+      // lexicographically smallest wins and the other is left stale.
+      expect(mockSpawn).toHaveBeenCalledTimes(1);
+      expect(mockSpawn.mock.calls[0]?.[1]).toEqual(expect.arrayContaining(['s3://b/a/billing_period=2026-01/']));
+      expect(result.filesDownloaded).toBe(1);
+      expect(writtenEtags('sync-etags.json')).toEqual({
+        '2026-01': { 'a/billing_period=2026-01/x.parquet': 'hx' },
+      });
+    });
+
+    it.each([
+      ['cost-optimization', 's3://b/cost-opt/', 'other/date=2026-03-15/x.parquet', /date=YYYY-MM-DD\//],
+      ['daily', 's3://b/cur/', 'secret/billing_period=2026-01/x.parquet', /billing_period=YYYY-MM\//],
+    ] as const)('refuses a %s key outside the configured prefix', async (tier, bucketPath, key, message) => {
+      // Keys reach this function over IPC from the renderer; a key the
+      // listing under the bucket path could never have returned is rejected.
+      mockSpawn.mockImplementation(() => createSuccessfulSpawn());
+
+      await expect(syncSelectedFiles({
+        bucketPath,
+        profile: 'test',
+        providerName,
+        dataDir: '/tmp',
+        expectedDataType: tier,
+        files: [file(key)],
+      })).rejects.toThrow(message);
+
+      expect(mockSpawn).not.toHaveBeenCalled();
+      expect(mockWriteFile).not.toHaveBeenCalled();
+    });
+
+    it('passes the Parquet-only filters after the positional args, in order', async () => {
+      mockSpawn.mockImplementation(() => createSuccessfulSpawn());
+
+      await syncSelectedFiles({
+        bucketPath: 's3://b/cur/',
+        profile: 'p',
+        providerName,
+        dataDir: '/tmp',
+        files: [file('cur/billing_period=2026-03/x.parquet')],
+      });
+
+      // Later filters win: exclude everything, then re-include only Parquet.
+      expect(mockSpawn.mock.calls[0]?.[1]).toEqual([
+        's3', 'sync', 's3://b/cur/billing_period=2026-03/', expect.any(String),
+        '--exclude', '*', '--include', '*.parquet', '--profile', 'p',
+      ]);
+    });
+  });
+
+  describe('aws output parsing (#454)', () => {
+    const daily = {
+      bucketPath: 's3://b/cur/',
+      profile: 'p',
+      providerName,
+      dataDir: '/tmp',
+      files: [file('cur/billing_period=2026-03/x.parquet')],
+    };
+
+    function downloadingEvents(events: readonly SyncProgress[]): SyncProgress[] {
+      return events.filter(e => e.phase === 'downloading');
+    }
+
+    it('counts a download line split across two chunks once', async () => {
+      mockSpawn.mockReturnValue(spawnEmitting('stdout', [
+        Buffer.from('download: s3://b/cur/billing_period=2026-03/x.parq'),
+        Buffer.from('uet to /tmp/x.parquet\n'),
+      ]));
+      const events: SyncProgress[] = [];
+
+      await syncSelectedFiles({ ...daily, onProgress: (p) => { events.push(p); } });
+
+      const downloading = downloadingEvents(events);
+      expect(downloading).toHaveLength(1);
+      expect(downloading[0]?.filesDone).toBe(1);
+    });
+
+    it('reads a CR-terminated progress line split across chunks', async () => {
+      mockSpawn.mockReturnValue(spawnEmitting('stdout', [
+        Buffer.from('Completed 1.0 MiB/2.0 Mi'),
+        Buffer.from('B (1.0 MiB/s) with 1 file(s) remaining\r'),
+      ]));
+      const events: SyncProgress[] = [];
+
+      await syncSelectedFiles({ ...daily, onProgress: (p) => { events.push(p); } });
+
+      const downloading = downloadingEvents(events);
+      expect(downloading).toHaveLength(1);
+      expect(downloading[0]?.bytesDone).toBe(1024 * 1024);
+      expect(downloading[0]?.bytesTotal).toBe(2 * 1024 * 1024);
+    });
+
+    it('counts a download that follows a CR progress line in the same chunk', async () => {
+      // aws-cli 2.x redraws progress with a bare CR, so the download line
+      // shares a "line" with it unless CR is a line break.
+      mockSpawn.mockReturnValue(spawnEmitting('stdout', [
+        Buffer.from('Completed 1.0 MiB/2.0 MiB (1.0 MiB/s) with 1 file(s) remaining\rdownload: s3://b/cur/billing_period=2026-03/x.parquet to /tmp/x.parquet\n'),
+      ]));
+      const events: SyncProgress[] = [];
+
+      await syncSelectedFiles({ ...daily, onProgress: (p) => { events.push(p); } });
+
+      expect(downloadingEvents(events).at(-1)?.filesDone).toBe(1);
+    });
+
+    it('logs a path split mid-code-point intact', async () => {
+      const line = Buffer.from('download: s3://b/cur/billing_period=2026-03/café.parquet to /tmp/café.parquet\n');
+      const split = line.indexOf(Buffer.from('é')) + 1; // inside the 2-byte é
+      mockSpawn.mockReturnValue(spawnEmitting('stdout', [line.subarray(0, split), line.subarray(split)]));
+
+      const info = vi.spyOn(logger, 'info');
+
+      await syncSelectedFiles(daily);
+
+      const logged = info.mock.calls.map(c => c[0]);
+      expect(logged).toContain('[aws] download: s3://b/cur/billing_period=2026-03/café.parquet to /tmp/café.parquet');
+    });
+
+    it('flushes an unterminated final line when the process closes', async () => {
+      mockSpawn.mockReturnValue(spawnEmitting('stdout', [
+        Buffer.from('download: s3://b/cur/billing_period=2026-03/x.parquet to /tmp/x.parquet'),
+      ]));
+      const events: SyncProgress[] = [];
+
+      await syncSelectedFiles({ ...daily, onProgress: (p) => { events.push(p); } });
+
+      expect(downloadingEvents(events).at(-1)?.filesDone).toBe(1);
+    });
+
+    it('keeps a stderr failure split across chunks whole in the error', async () => {
+      const proc = new MockChildProcess();
+      setTimeout(() => {
+        proc.stderr.emit('data', Buffer.from('fatal error: An error occurred (AccessDe'));
+        proc.stderr.emit('data', Buffer.from('nied) when calling the ListObjectsV2 operation'));
+        proc.emit('close', 1, null);
+      }, 5);
+      mockSpawn.mockReturnValue(proc);
+
+      await expect(syncSelectedFiles(daily)).rejects.toThrow('(AccessDenied) when calling the ListObjectsV2 operation');
+    });
+
+    it('detaches its abort listener once each sync succeeds', async () => {
+      mockSpawn.mockImplementation(() => createSuccessfulSpawn());
+      const controller = new AbortController();
+
+      await syncSelectedFiles({
+        ...daily,
+        files: [file('cur/billing_period=2026-01/a.parquet'), file('cur/billing_period=2026-02/b.parquet')],
+        signal: controller.signal,
+      });
+
+      expect(mockSpawn).toHaveBeenCalledTimes(2);
+      expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
     });
   });
 

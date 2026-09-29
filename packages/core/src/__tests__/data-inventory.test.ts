@@ -554,6 +554,32 @@ describe('getDataInventory with mocked S3', () => {
     expect(inventory.totalRemoteSize).toBe(9000);
   });
 
+  it('creates no period for a flat cost-optimization key (date= in the file name)', async () => {
+    // A key with no date= FOLDER used to create a period whose sync source
+    // collapsed to the bucket root. It must be invisible to the inventory.
+    const mock = createMockObjectStore([
+      file('cost-opt/date=2026-01-01_part-0.parquet', 'hash1', 1000),
+      file('cost-opt/usage_date=2026-02-02/x.parquet', 'hash2', 1000),
+    ]);
+
+    const inventory = await getDataInventory('s3://test-bucket/cost-opt/', AWS_AUTH, tempDir, provider, 'cost-optimization', mock);
+
+    expect(inventory.periods).toEqual([]);
+    expect(inventory.totalRemoteSize).toBe(2000);
+  });
+
+  it('creates no period for a daily key partitioned by usage_date= or date=', async () => {
+    const mock = createMockObjectStore([
+      file('cur/usage_date=2026-01-02/x.parquet', 'hash1', 1000),
+      file('cur/date=2026-01-03/y.parquet', 'hash2', 1000),
+      file('cur/old_billing_period=2026-01/z.parquet', 'hash3', 1000),
+    ]);
+
+    const inventory = await getDataInventory('s3://test-bucket/cur/', AWS_AUTH, tempDir, provider, 'daily', mock);
+
+    expect(inventory.periods).toEqual([]);
+  });
+
   it('calculates local disk bytes correctly across multiple periods', async () => {
     const mock = createMockObjectStore([]);
 

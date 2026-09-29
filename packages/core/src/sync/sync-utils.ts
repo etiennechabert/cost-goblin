@@ -133,6 +133,53 @@ export function extractDate(key: string): string | undefined {
   return match?.[1];
 }
 
+/** Where one listed Parquet key sits in its export's partition layout. */
+export type Partition =
+  | { readonly kind: 'billing-period'; readonly prefix: string; readonly period: string }
+  | { readonly kind: 'date'; readonly prefix: string; readonly period: string; readonly date: string };
+
+const BILLING_PERIOD_SEGMENT = /^billing_period=(\d{4}-\d{2})$/;
+const DATE_SEGMENT = /^date=((\d{4}-\d{2})-\d{2})$/;
+
+/** The partition folder each tier expects, for user-facing messages. */
+export function partitionFolderLabel(tier: ExpectedDataType): string {
+  return tier === 'cost-optimization' ? 'date=YYYY-MM-DD/' : 'billing_period=YYYY-MM/';
+}
+
+/**
+ * Reads a key's partition from its LAST folder segment — never the file name,
+ * never a substring. The returned `prefix` is the folder `aws s3 sync` mirrors,
+ * so it must be a whole partition folder: the substring matchers above let
+ * `date=2026-01-01_part-0.parquet` produce a period with an empty prefix, which
+ * collapsed the sync source to the bucket root.
+ *
+ *  - daily / hourly: exactly lowercase `billing_period=YYYY-MM`. No `date=`
+ *    fallback, and CUR-era uppercase `BILLING_PERIOD=` stays invisible (see
+ *    `extractPeriod`).
+ *  - cost-optimization: exactly `date=YYYY-MM-DD`; the period is its YYYY-MM.
+ *
+ * `prefix` is every segment up to and including the partition folder, plus `/`.
+ */
+export function parsePartition(key: string, tier: ExpectedDataType): Partition | null {
+  const segments = key.split('/');
+  const fileName = segments.at(-1);
+  const folder = segments.at(-2);
+  if (fileName === undefined || fileName.length === 0 || folder === undefined) return null;
+  const prefix = `${segments.slice(0, -1).join('/')}/`;
+
+  if (tier === 'cost-optimization') {
+    const match = DATE_SEGMENT.exec(folder);
+    const date = match?.[1];
+    const period = match?.[2];
+    if (date === undefined || period === undefined) return null;
+    return { kind: 'date', prefix, period, date };
+  }
+
+  const period = BILLING_PERIOD_SEGMENT.exec(folder)?.[1];
+  if (period === undefined) return null;
+  return { kind: 'billing-period', prefix, period };
+}
+
 export function groupByPeriod(files: readonly ManifestFileEntry[]): Map<string, ManifestFileEntry[]> {
   const groups = new Map<string, ManifestFileEntry[]>();
   for (const file of files) {
