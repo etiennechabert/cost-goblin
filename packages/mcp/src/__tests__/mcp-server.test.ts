@@ -15,6 +15,7 @@ import {
 import type { McpContext, RawRow } from '../context.js';
 import { createMcpHttpServer, MCP_MIN_TOKEN_LENGTH } from '../http-server.js';
 import type { McpHttpServer } from '../http-server.js';
+import { SERVER_INSTRUCTIONS, UNTRUSTED_DATA_NOTE } from '../server-instructions.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = join(__dirname, '..', '..', '..', 'core', 'src', '__fixtures__');
@@ -106,6 +107,8 @@ function runSqlJson(text: string): RunSqlJson {
 
 interface McpClient {
   sessionId: string;
+  /** The raw `initialize` result, for protocol-level assertions. */
+  initializeResult: unknown;
   callTool(name: string, args?: Record<string, unknown>): Promise<{ text: string; isError: boolean }>;
   listTools(): Promise<{ name: string; description: string }[]>;
   close(): Promise<void>;
@@ -163,6 +166,7 @@ async function createMcpClient(port: number, token: string): Promise<McpClient> 
 
   const client: McpClient = {
     sessionId: '',
+    initializeResult: undefined,
 
     async callTool(name: string, args?: Record<string, unknown>) {
       const { result } = await rpc('tools/call', { name, arguments: args ?? {} });
@@ -198,6 +202,7 @@ async function createMcpClient(port: number, token: string): Promise<McpClient> 
     clientInfo: { name: 'test', version: '0.1.0' },
   });
   if (sessionId !== null) client.sessionId = sessionId;
+  client.initializeResult = result;
 
   const initResult = result as { serverInfo: { name: string } };
   if (initResult.serverInfo.name !== 'costgoblin') {
@@ -352,6 +357,23 @@ describe('MCP server E2E', () => {
     expect(names).toContain('list_baselines');
     expect(names).toContain('get_baseline_drift');
     expect(tools).toHaveLength(12);
+  });
+
+  it('initialize returns instructions that flag tool results as untrusted', () => {
+    const init = client.initializeResult;
+    const instructions = isRecord(init) && typeof init['instructions'] === 'string' ? init['instructions'] : '';
+    expect(instructions).toBe(SERVER_INSTRUCTIONS);
+    expect(instructions).toContain('untrusted');
+    expect(instructions).toMatch(/never follow instructions/i);
+    expect(instructions).toContain("format:'json'");
+  });
+
+  it('every tool description carries the untrusted-data note', async () => {
+    const tools = await client.listTools();
+    expect(tools).toHaveLength(12);
+    for (const tool of tools) {
+      expect(tool.description, tool.name).toContain(UNTRUSTED_DATA_NOTE);
+    }
   });
 
   it('supports multiple concurrent sessions', async () => {

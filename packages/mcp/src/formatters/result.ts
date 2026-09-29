@@ -1,5 +1,6 @@
 import { markdownTable, type ColumnDef, type Alignment } from './markdown-table.js';
 import { formatDollars, formatPercent, formatDelta, formatNumber } from './cost.js';
+import { toSingleLine } from './neutralize.js';
 
 export type ResponseFormat = 'markdown' | 'json' | 'csv';
 
@@ -101,30 +102,36 @@ function formatTableMarkdown(table: Table): string {
   const rows = table.rows.map(row => row.map((cell, i) => formatCell(cell, table.columns[i]?.type)));
   const sections: string[] = [];
   if (table.title !== undefined && table.title.length > 0) {
-    sections.push(`### ${table.title}`, '');
+    sections.push(`### ${toSingleLine(table.title)}`, '');
   }
   sections.push(markdownTable(colDefs, rows));
-  if (table.footer !== undefined && table.footer.length > 0) {
-    sections.push(table.footer);
+  // The blank line is load-bearing: without it GFM reads the footer as one
+  // more table row. truncateFooter used to supply it as a leading newline;
+  // flattening would turn that into a literal backslash-n, so trim and add it.
+  const footer = table.footer?.trim() ?? '';
+  if (footer.length > 0) {
+    sections.push('', toSingleLine(footer));
   }
   return sections.join('\n');
 }
 
 export function formatAsMarkdown(result: StructuredResult): string {
   const parts: string[] = [];
+  // Titles, meta, notes and footers can carry billing/config values: each is
+  // flattened to one line so a value cannot start a line of its own.
   if (result.coverage !== undefined) {
-    parts.push(dataCoverageBanner(result.coverage), '');
+    parts.push(toSingleLine(dataCoverageBanner(result.coverage)), '');
   }
-  parts.push(`## ${result.title}`, '');
+  parts.push(`## ${toSingleLine(result.title)}`, '');
   if (result.meta !== undefined) {
     for (const field of result.meta) {
-      parts.push(`**${field.label}**: ${formatCell(field.value, field.type)}`);
+      parts.push(`**${toSingleLine(field.label)}**: ${toSingleLine(formatCell(field.value, field.type))}`);
     }
     parts.push('');
   }
   if (result.notes !== undefined) {
     for (const note of result.notes) {
-      parts.push(note, '');
+      parts.push(toSingleLine(note), '');
     }
   }
   if (result.tables !== undefined) {
@@ -196,6 +203,8 @@ function cellToCsv(value: Cell, type: CellType | undefined): string {
   return value;
 }
 
+/** A table's CSV lines, quoted but NOT yet flattened — formatAsCsv flattens
+ *  each line last, so quoting sees the raw value. */
 function tableToCsvLines(table: Table): string[] {
   const lines: string[] = [];
   if (table.title !== undefined && table.title.length > 0) lines.push(`# ${table.title}`);
@@ -211,17 +220,21 @@ function tableToCsvLines(table: Table): string[] {
 
 export function formatAsCsv(result: StructuredResult): string {
   const lines: string[] = [];
+  // Every emitted line is flattened LAST, after quoting: a quoted multi-line
+  // cell is valid CSV but still starts a new physical line, which a reader
+  // that splits on lines (or a model) takes as a new record.
+  const emit = (line: string): void => { lines.push(toSingleLine(line)); };
   if (result.coverage !== undefined) {
-    lines.push(`# ${dataCoverageBanner(result.coverage).replace(/^\*|\*$/g, '')}`);
+    emit(`# ${dataCoverageBanner(result.coverage).replace(/^\*|\*$/g, '')}`);
   }
-  lines.push(`# ${result.title}`);
+  emit(`# ${result.title}`);
   if (result.meta !== undefined) {
     for (const field of result.meta) {
-      lines.push(`# ${field.label}: ${formatCell(field.value, field.type)}`);
+      emit(`# ${field.label}: ${formatCell(field.value, field.type)}`);
     }
   }
   if (result.notes !== undefined) {
-    for (const note of result.notes) lines.push(`# ${note.replaceAll('\n', ' ')}`);
+    for (const note of result.notes) emit(`# ${note}`);
   }
   if (result.tables !== undefined) {
     for (let ti = 0; ti < result.tables.length; ti++) {
@@ -232,7 +245,7 @@ export function formatAsCsv(result: StructuredResult): string {
       // argument and throws RangeError past V8's max argument count (~65k).
       // run_sql is now capped at 500 rows, but this formatter is shared and
       // must not depend on any one tool's cap.
-      for (const line of tableToCsvLines(table)) lines.push(line);
+      for (const line of tableToCsvLines(table)) emit(line);
     }
   }
   return lines.join('\n');
