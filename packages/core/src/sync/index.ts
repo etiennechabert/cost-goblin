@@ -117,12 +117,12 @@ export {
   providerRoot,
 } from './provider-paths.js';
 
+export { type ExpectedDataType, getEtagFileName } from './tiers.js';
+
 export {
-  type ExpectedDataType,
   extractDate,
   extractPeriod,
   extractPeriodPrefix,
-  getEtagFileName,
   getRawDirPrefix,
   groupByPeriod,
   listLocalMonths,

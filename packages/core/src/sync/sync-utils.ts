@@ -1,32 +1,17 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { isStringRecord } from '../utils/json.js';
 import { logger } from '../logger/logger.js';
 import type { ProviderName } from '../types/branded.js';
 import type { ProviderConfig } from '../types/config.js';
 import type { ManifestFileEntry } from './manifest.js';
-import { providerMetaDir } from './provider-paths.js';
-
-export type ExpectedDataType = 'daily' | 'hourly' | 'cost-optimization';
-
-const TIER_ETAG_FILES: Record<ExpectedDataType, string> = {
-  'daily': 'sync-etags.json',
-  'hourly': 'sync-etags-hourly.json',
-  'cost-optimization': 'sync-etags-cost-optimization.json',
-};
+import { providerEtagPath, providerMetaDir } from './provider-paths.js';
+import type { ExpectedDataType } from './tiers.js';
 
 const TIER_RAW_PREFIXES: Record<ExpectedDataType, string> = {
   'daily': 'daily',
   'hourly': 'hourly',
   'cost-optimization': 'cost-opt',
 };
-
-export function getEtagFileName(tier: string): string {
-  if (tier === 'hourly' || tier === 'cost-optimization' || tier === 'daily') {
-    return TIER_ETAG_FILES[tier];
-  }
-  return TIER_ETAG_FILES['daily'];
-}
 
 /**
  * Returns the directory-name prefix used under {providerName}/raw/ for a
@@ -267,9 +252,8 @@ export async function saveEtags(
   period: string,
   periodFiles: readonly ManifestFileEntry[],
 ): Promise<void> {
-  const metaDir = providerMetaDir(dataDir, providerName);
-  await mkdir(metaDir, { recursive: true });
-  const etagPath = join(metaDir, getEtagFileName(tier));
+  await mkdir(providerMetaDir(dataDir, providerName), { recursive: true });
+  const etagPath = providerEtagPath(dataDir, providerName, tier);
   let savedEtags: Record<string, Record<string, string>> = {};
   try {
     const raw = await readFile(etagPath, 'utf-8');
