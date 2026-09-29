@@ -9,6 +9,8 @@ import { DashboardsDropdown } from './top-menu/dashboards-dropdown.js';
 import { SyncStatusButton, type SyncActivity, type SyncTier } from './top-menu/sync-status-button.js';
 import { RollupStatusButton } from './top-menu/rollup-status-button.js';
 import { GeneralTab } from './settings/general-tab.js';
+import { INITIAL_AUTO_OPEN_MEMORY, INITIAL_UPDATE_VIEW, applyPulledSnapshot, applyPushedStatus, decideUpdateAutoOpen } from './update-view.js';
+import type { AutoOpenMemory, UpdateView } from './update-view.js';
 import { PerformanceTab } from './settings/performance-tab.js';
 import { TelemetryTab } from './settings/telemetry-tab.js';
 import { SetupTelemetryStep } from './setup-telemetry-step.js';
@@ -515,7 +517,11 @@ function AppShell(): React.JSX.Element {
   // workspace-naming field is only for the true first run.
   const setupRerunRef = useRef(false);
   const inFlightCount = useDebugBadge();
-  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' });
+  const [updateView, setUpdateView] = useState<UpdateView>(INITIAL_UPDATE_VIEW);
+  const updateStatus = updateView.status;
+  // Settings → General → "Update check". Starts at the default (on) until the
+  // saved value loads.
+  const [checkOnStartup, setCheckOnStartup] = useState(true);
   const [rollupStatus, setRollupStatus] = useState<RollupStatus>({ state: 'idle' });
   const [baselineStatus, setBaselineStatus] = useState<BaselineRecomputeStatus>({ state: 'idle', lastRun: null });
   const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
@@ -523,7 +529,7 @@ function AppShell(): React.JSX.Element {
   const [devBranch, setDevBranch] = useState<string | null>(null);
   const [branchPr, setBranchPr] = useState<BranchPrInfo | null>(null);
   const memoryMB = useMemoryMB();
-  const autoOpenRef = useMemo(() => ({ current: false }), []);
+  const autoOpenRef = useMemo<{ current: AutoOpenMemory }>(() => ({ current: INITIAL_AUTO_OPEN_MEMORY }), []);
   const initialViewSetRef = useRef(false);
   const headerRef = useRef<HTMLDivElement>(null);
   const [headerHeight, setHeaderHeight] = useState(72);
@@ -560,7 +566,21 @@ function AppShell(): React.JSX.Element {
   }, []);
 
   useEffect(() => {
-    return globalThis.costgoblinUpdate.onStatusChanged(setUpdateStatus);
+    // Subscribe BEFORE pulling: IPC is ordered, so any push that lands before
+    // the pull resolves is at least as new as the snapshot (applyPulledSnapshot
+    // relies on this). The pull recovers a status set before this window
+    // subscribed — e.g. the launch-time check finishing while it loaded.
+    const unsubscribe = globalThis.costgoblinUpdate.onStatusChanged((status) => {
+      setUpdateView(prev => applyPushedStatus(prev, status));
+    });
+    globalThis.costgoblinUpdate.getStatus()
+      .then((snapshot) => { setUpdateView(prev => applyPulledSnapshot(prev, snapshot)); })
+      .catch(() => undefined);
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    globalThis.costgoblinUpdate.getCheckOnStartup().then(setCheckOnStartup).catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -581,18 +601,14 @@ function AppShell(): React.JSX.Element {
 
   useEffect(() => {
     if (setupCheck.status !== 'ready') return;
-    // Always surface errors so the user can see what went wrong; for other
-    // user-visible states open only once per session.
-    if (updateStatus.state === 'error') {
-      setReleaseNotesOpen(true);
-      return;
-    }
-    if (autoOpenRef.current) return;
-    if (updateStatus.state === 'available' || updateStatus.state === 'downloaded') {
-      autoOpenRef.current = true;
-      setReleaseNotesOpen(true);
-    }
-  }, [setupCheck.status, updateStatus.state, autoOpenRef]);
+    // Each error episode opens the modal once (a repeated error push won't
+    // re-open it after the user closed it; a pulled check error never opens
+    // it); an available/downloaded update opens it once per session. See
+    // decideUpdateAutoOpen.
+    const decision = decideUpdateAutoOpen(updateView, autoOpenRef.current);
+    autoOpenRef.current = decision.memory;
+    if (decision.open) setReleaseNotesOpen(true);
+  }, [setupCheck.status, updateView, autoOpenRef]);
 
   useEffect(() => {
     async function initialize(): Promise<void> {
@@ -699,6 +715,16 @@ function AppShell(): React.JSX.Element {
 
   function handleCheckForUpdates() {
     globalThis.costgoblinUpdate.checkForUpdates().catch(() => undefined);
+  }
+
+  function handleSetCheckOnStartup(next: boolean) {
+    const previous = checkOnStartup;
+    setCheckOnStartup(next);
+    globalThis.costgoblinUpdate.setCheckOnStartup(next).catch(() => {
+      // Save failed: undo the optimistic flip, then re-read what's on disk.
+      setCheckOnStartup(previous);
+      globalThis.costgoblinUpdate.getCheckOnStartup().then(setCheckOnStartup).catch(() => undefined);
+    });
   }
 
   function handleClearCache() {
@@ -944,6 +970,9 @@ function AppShell(): React.JSX.Element {
             onSetDefaultView={handleSetDefaultView}
             appVersion={appVersion}
             updateStatus={updateStatus}
+            updateChecked={updateView.checked}
+            checkOnStartup={checkOnStartup}
+            onSetCheckOnStartup={handleSetCheckOnStartup}
             onCheckForUpdates={handleCheckForUpdates}
             onShowReleaseNotes={() => { setReleaseNotesOpen(true); }}
             onRerunSetup={handleRerunSetup}

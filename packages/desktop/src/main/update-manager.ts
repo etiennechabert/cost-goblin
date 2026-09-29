@@ -1,13 +1,26 @@
 import pkg from 'electron-updater';
 const { autoUpdater } = pkg;
 import { logger, isStringRecord } from '@costgoblin/core';
-import type { UpdateInfo, UpdateLogEntry, UpdateStage, UpdateStatus } from '@costgoblin/core';
+import type { UpdateInfo, UpdateLogEntry, UpdateSnapshot, UpdateStage, UpdateStatus } from '@costgoblin/core';
 
 type StatusListener = (status: UpdateStatus) => void;
 
 const LOG_BUFFER_LIMIT = 50;
 
+/**
+ * Sent as `x-user-staging-id` on every updater request (checks and downloads).
+ * electron-updater otherwise sends a random UUID it persists per install
+ * (`<userData>/.updaterId`), letting GitHub correlate every launch of one
+ * machine. It only exists to bucket staged rollouts (`stagingPercentage` in the
+ * release manifest), which CostGoblin doesn't publish — so a fixed value costs
+ * nothing and identifies no one.
+ */
+export const UPDATER_STAGING_ID = '00000000-0000-0000-0000-000000000000';
+
 let currentStatus: UpdateStatus = { state: 'idle' };
+// Set once a check (startup or manual) starts, so the settings row can tell
+// "up to date" apart from "not checked yet" — both are `idle`.
+let checkedThisSession = false;
 const listeners = new Set<StatusListener>();
 const logBuffer: UpdateLogEntry[] = [];
 
@@ -94,10 +107,16 @@ let hasTriedFullDownload = false;
 
 export function initAutoUpdater(): void {
   const updater = autoUpdater;
+  // Nothing is downloaded or installed without a click: the modal's Download
+  // and Install buttons are the only callers of downloadUpdate/quitAndInstall.
+  // Install-on-quit stays off — with unsigned Windows/Linux builds a bad
+  // release would otherwise install silently.
   updater.autoDownload = false;
   updater.autoInstallOnAppQuit = false;
+  updater.requestHeaders = { ...(updater.requestHeaders ?? {}), 'x-user-staging-id': UPDATER_STAGING_ID };
 
   updater.on('checking-for-update', () => {
+    checkedThisSession = true;
     pushLog('info', 'Checking for updates');
     setStatus({ state: 'checking' });
   });
@@ -201,6 +220,13 @@ export function downloadUpdate(): Promise<void> {
 export function quitAndInstall(): void {
   pushLog('info', 'User requested install + restart');
   autoUpdater.quitAndInstall();
+}
+
+/** Pull counterpart of {@link onStatusChanged}: the renderer reads this on
+ *  mount, since a status pushed before it subscribed (e.g. the launch check
+ *  finishing while the window loads) never reaches it. */
+export function getStatusSnapshot(): UpdateSnapshot {
+  return { status: currentStatus, checkedThisSession };
 }
 
 export function onStatusChanged(callback: StatusListener): () => void {

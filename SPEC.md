@@ -329,7 +329,8 @@ Everything lives under Electron `userData`, organized into named **workspaces**
         backups/            # Pre-import config backups
       state/                # JSON — app-managed, per-workspace
         ui-preferences.json         # defaultViewId, performance, telemetry consent,
-                                    # MCP opt-in (mcp.enabled)
+                                    # MCP opt-in (mcp.enabled), startup update
+                                    # check (updates.checkOnStartup, default on)
         app-preferences.json        # auto-sync/auto-prune toggles
         explorer-preferences.json   # Explorer column prefs
         savings-preferences.json
@@ -779,6 +780,17 @@ Surfaces AWS Cost Optimization Hub recommendations (Reserved Instances, Savings 
 - Pulls from the latest cost-optimization Parquet snapshot.
 - Recommendations are read-only — the app does not apply them.
 
+#### Feature: Update Notifications (MVP)
+
+Release builds (`app.isPackaged`) use electron-updater against GitHub Releases. Dev and e2e runs never check at launch.
+
+**Behavior:**
+- **Optional startup check, on by default.** One check at launch unless the active workspace's `updates.checkOnStartup` is literally `false` (Settings → General → Update check → "Manual only") or the environment sets `COSTGOBLIN_DISABLE_UPDATE_CHECK=1`. The preference parser fails open to ON (a corrupt prefs file keeps the check); the env var is off-only and exactly `1`. A change takes effect at the next launch. Only the startup call is gated: "Check for updates" and the error modal's Retry always run.
+- **Nothing happens without a click.** `autoDownload` and `autoInstallOnAppQuit` are both `false`. A found update opens the release-notes modal once per session and puts a dot on the Settings gear; **Download** and **Install and Restart** are each one click. The only unprompted request after that is a single full-download retry when a differential download the user started fails. Install-on-quit stays off: with unsigned Windows/Linux builds a bad release would install silently.
+- **Status reaches the renderer by push and pull.** Transitions are pushed on `update:status-changed`; on mount the renderer also pulls `update:get-status` (`UpdateSnapshot { status, checkedThisSession }`), so an update found before the window subscribed still prompts. A check-stage error obtained by that pull (typically an offline launch) does not auto-open the "Update failed" modal — pushed errors do, once per failure (back-to-back error pushes don't re-open it after the user closes it) — and General offers "Retry update check" either way. General says "You're up to date" only after a check ran this session ("Not checked yet" / "Automatic check is off" otherwise).
+- **No per-install identifier.** electron-updater sends `x-user-staging-id`, a UUID it persists in `<userData>/.updaterId`, on every check and download. CostGoblin publishes no staged rollouts, so `requestHeaders` overrides it with the fixed nil UUID.
+- Fleets enforce versions through MDM; the prompt is a notification, not a patching mechanism.
+
 ### v1 — Planned Next
 
 #### Worker Threads (v1)
@@ -821,10 +833,6 @@ viewTemplates:
 #### Smart Alias Suggestions (Maybe Later)
 
 On first sync, fuzzy-match unique tag values to suggest aliases ("prod" + "prd" + "production" → group as `production`). Replaced for now by the manual Dimensions Editor, which works well.
-
-#### Auto-Update via electron-updater (Maybe Later)
-
-Silent background update checks against GitHub Releases. Subtle indicator on the settings icon. User-controlled restart.
 
 #### Telemetry — Opt-in (Maybe Later)
 

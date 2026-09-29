@@ -3,11 +3,12 @@ import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 
 // Approvers read the README, costgoblin.com and the exporter docs to decide
-// which laptop controls to require. These guard against two claims that were
-// false and must not creep back: at-rest "vault" encryption (removed in #271;
-// local data is plaintext) and "never holds credentials that can reach
-// BigQuery" (the default gcloud sign-in acts with all of the user's
-// permissions).
+// which laptop controls to require. These guard against claims that were false
+// and must not creep back: at-rest "vault" encryption (removed in #271; local
+// data is plaintext), "never holds credentials that can reach BigQuery" (the
+// default gcloud sign-in acts with all of the user's permissions), and
+// automatic update installs (download and install each take a click, so an
+// approver must not skip MDM patching on the strength of the docs).
 
 const repoRoot = join(import.meta.dirname, '..', '..', '..', '..');
 
@@ -23,6 +24,10 @@ const FORBIDDEN: readonly { readonly label: string; readonly pattern: RegExp }[]
   { label: 'claims no credential can reach BigQuery', pattern: /(never holds|holds no) credentials? that can reach/i },
   { label: 'advertises at-rest encryption', pattern: /AES-256|vault encryption|keychain integration/i },
   { label: 'points at the stale pre-workspace dev data path', pattern: /@costgoblin\/desktop\/data\/raw/ },
+  {
+    label: 'claims updates install automatically or silently',
+    pattern: /installs? (them|updates?) automatically|auto-?updates when|silent background update/i,
+  },
 ];
 
 describe('security claims in the docs', () => {
@@ -35,6 +40,13 @@ describe('security claims in the docs', () => {
       });
     }
   }
+
+  it('README documents the launch update check and how to turn it off', () => {
+    const readme = readCollapsed('README.md');
+    expect(readme).toMatch(/check GitHub Releases/i);
+    expect(readme).toMatch(/COSTGOBLIN_DISABLE_UPDATE_CHECK=1/);
+    expect(readme).toMatch(/launchctl setenv/);
+  });
 
   it('README states that local data is stored unencrypted and relies on full-disk encryption', () => {
     const readme = readCollapsed('README.md');

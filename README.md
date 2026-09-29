@@ -6,7 +6,8 @@
 
 <p align="center">
   Cloud cost visibility that runs on your machine.<br>
-  No servers, no SaaS fees, no third-party data sharing.
+  No servers, no SaaS fees, and your billing data stays local.<br>
+  Release builds check GitHub Releases for updates at launch (can be turned off).
 </p>
 
 <p align="center">
@@ -48,7 +49,7 @@ CostGoblin is a desktop app that syncs your AWS billing data locally and queries
 
 Download the latest release for your platform from [costgoblin.com](https://costgoblin.com/#download). macOS binaries are signed and notarized. See the [code signing policy](https://costgoblin.com/code-signing.html) for details.
 
-The app auto-updates when a new version is available.
+Release builds check GitHub Releases for a new version once at launch and prompt you when one is out. Downloading and installing are one click each and never happen without your confirmation; **Check for updates** in Settings → General runs a check on demand. To turn the launch check off, choose **Manual only** under Settings → General → Update check (saved per workspace), or set `COSTGOBLIN_DISABLE_UPDATE_CHECK=1` in the app's environment, which covers every workspace (macOS GUI apps don't read shell profiles: use `launchctl setenv COSTGOBLIN_DISABLE_UPDATE_CHECK 1`, e.g. from an MDM LaunchAgent). Turning it off is advisable where github.com is blocked. The prompt is a notification, not a patching mechanism: fleets should enforce versions through MDM.
 
 ## Quick Start
 
@@ -166,7 +167,7 @@ GCP's billing data reaches CostGoblin through its native **FOCUS BigQuery export
 - **Cost Scope** — configure cost metrics (effective, billed, list price, contracted) and exclusion rules
 - **MCP server** — Model Context Protocol integration for querying cost data from AI assistants (opt-in, off by default: enable it under Settings → AI Assistant; clients authenticate with an `Authorization: Bearer` token). Tool results carry values that anyone who can tag your cloud resources or edit a shared config file can write, so treat them as untrusted input: markdown and CSV output escape `|` and line breaks to keep tables intact, but that does not stop prompt injection. Set your AI client to require approval before it runs tools with side effects.
 - **Dark/light mode** — theme toggle with two chart color palettes (standard + Okabe-Ito colorblind-safe)
-- **Auto-updates** — the app checks for new versions on startup and installs them automatically
+- **Update notifications** — release builds check GitHub Releases once at launch and prompt when a new version is out; download and install are one click each, never unconfirmed. Turn the launch check off under Settings → General or with `COSTGOBLIN_DISABLE_UPDATE_CHECK=1` (see [Install](#install))
 - **CSV export** — export any view for reporting
 - **Works offline** — once synced, no internet needed
 

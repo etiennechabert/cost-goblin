@@ -62,6 +62,44 @@ test.describe('App shell', () => {
     await ensureViewMode(page);
   });
 
+  test('General settings offer the startup update-check preference and a manual check', async () => {
+    const rail = page.getByRole('navigation', { name: SETTINGS_NAV_LABEL });
+    const openGeneral = (): Promise<void> => rail.getByRole('button', { name: 'General', exact: true }).click();
+    const readSaved = (): Promise<boolean> => page.evaluate(() => globalThis.costgoblinUpdate.getCheckOnStartup());
+
+    await openSettings(page);
+    await openGeneral();
+    await expect(page.getByText('Update check', { exact: true })).toBeVisible();
+    await expect(page.getByText(/Checks GitHub Releases \(github\.com\) once at startup/)).toBeVisible();
+    // Never clicked here: the e2e build is unpackaged and must not reach github.com.
+    await expect(page.getByRole('button', { name: 'Check for updates' })).toBeVisible();
+
+    const automatic = page.getByRole('button', { name: 'Automatic', exact: true });
+    const manualOnly = page.getByRole('button', { name: 'Manual only', exact: true });
+    await expect(automatic).toHaveAttribute('aria-pressed', 'true');
+    // An unpackaged run never checks at launch, so nothing claims "up to date".
+    await expect(page.getByText(/Not checked yet/)).toBeVisible();
+
+    await manualOnly.click();
+    await expect(manualOnly).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByText(/Automatic check is off/)).toBeVisible();
+    // Saved through the main process, not just held in renderer state.
+    await expect.poll(readSaved).toBe(false);
+
+    // Leave General and come back: the choice sticks.
+    await rail.getByRole('button', { name: 'Dimensions', exact: true }).click();
+    await expect(page.getByText('Update check', { exact: true })).toBeHidden();
+    await openGeneral();
+    await expect(manualOnly).toHaveAttribute('aria-pressed', 'true');
+    await expect(automatic).toHaveAttribute('aria-pressed', 'false');
+
+    // Restore the default for the rest of the suite.
+    await automatic.click();
+    await expect(automatic).toHaveAttribute('aria-pressed', 'true');
+    await expect.poll(readSaved).toBe(true);
+    await ensureViewMode(page);
+  });
+
   test('theme toggle switches dark/light', async () => {
     const html = page.locator('html');
     const hadDark = await html.evaluate(el => el.classList.contains('dark'));

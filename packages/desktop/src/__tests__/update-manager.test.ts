@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EventEmitter } from 'node:events';
-import type { UpdateStatus } from '@costgoblin/core/browser';
+import type { UpdateSnapshot, UpdateStatus } from '@costgoblin/core/browser';
 
 interface MockAutoUpdater extends EventEmitter {
   autoDownload: boolean;
   autoInstallOnAppQuit: boolean;
   disableDifferentialDownload: boolean;
+  requestHeaders: Record<string, string> | null;
   downloadUpdate: ReturnType<typeof vi.fn>;
   checkForUpdates: ReturnType<typeof vi.fn>;
   quitAndInstall: ReturnType<typeof vi.fn>;
@@ -17,6 +18,7 @@ const { mockUpdater } = await vi.hoisted(async () => {
   e.autoDownload = true;
   e.autoInstallOnAppQuit = true;
   e.disableDifferentialDownload = false;
+  e.requestHeaders = null;
   e.downloadUpdate = vi.fn(() => Promise.resolve([]));
   e.checkForUpdates = vi.fn(() => Promise.resolve(null));
   e.quitAndInstall = vi.fn();
@@ -33,18 +35,33 @@ const NEXT_INFO = { version: '0.2.2', releaseDate: '2026-05-20', releaseNotes: '
 async function freshManager(): Promise<{
   init: () => void;
   downloadUpdate: () => Promise<void>;
+  getStatusSnapshot: () => UpdateSnapshot;
+  stagingId: string;
   statuses: UpdateStatus[];
 }> {
   vi.resetModules();
   mockUpdater.removeAllListeners();
+  // electron-updater's own defaults — reset so the "flags off" assertions
+  // below can't pass vacuously on a value a previous test left behind.
+  mockUpdater.autoDownload = true;
+  mockUpdater.autoInstallOnAppQuit = true;
   mockUpdater.disableDifferentialDownload = false;
+  mockUpdater.requestHeaders = null;
   mockUpdater.downloadUpdate.mockClear();
   mockUpdater.downloadUpdate.mockResolvedValue([]);
+  mockUpdater.checkForUpdates.mockClear();
+  mockUpdater.quitAndInstall.mockClear();
 
   const mod = await import('../main/update-manager.js');
   const statuses: UpdateStatus[] = [];
   mod.onStatusChanged(s => statuses.push(s));
-  return { init: mod.initAutoUpdater, downloadUpdate: mod.downloadUpdate, statuses };
+  return {
+    init: mod.initAutoUpdater,
+    downloadUpdate: mod.downloadUpdate,
+    getStatusSnapshot: mod.getStatusSnapshot,
+    stagingId: mod.UPDATER_STAGING_ID,
+    statuses,
+  };
 }
 
 function flushImmediate(): Promise<void> {
@@ -226,5 +243,124 @@ describe('update-manager download feedback', () => {
     if (last?.state === 'downloading') {
       expect(last.percent).toBe(0);
     }
+  });
+});
+
+describe('update-manager leaves download and install to the user', () => {
+  beforeEach(() => {
+    mockUpdater.removeAllListeners();
+  });
+
+  it('turns off electron-updater\'s auto-download and install-on-quit', async () => {
+    const { init } = await freshManager();
+    expect(mockUpdater.autoDownload).toBe(true);
+    expect(mockUpdater.autoInstallOnAppQuit).toBe(true);
+
+    init();
+
+    expect(mockUpdater.autoDownload).toBe(false);
+    expect(mockUpdater.autoInstallOnAppQuit).toBe(false);
+  });
+
+  it('does not download when an update is found', async () => {
+    const { init, statuses } = await freshManager();
+    init();
+
+    mockUpdater.emit('checking-for-update');
+    mockUpdater.emit('update-available', AVAILABLE_INFO);
+    await flushImmediate();
+
+    expect(mockUpdater.downloadUpdate).not.toHaveBeenCalled();
+    expect(statuses.at(-1)?.state).toBe('available');
+  });
+
+  it('does not install when a download completes', async () => {
+    const { init, statuses } = await freshManager();
+    init();
+
+    mockUpdater.emit('update-available', AVAILABLE_INFO);
+    mockUpdater.emit('update-downloaded', AVAILABLE_INFO);
+    await flushImmediate();
+
+    expect(mockUpdater.quitAndInstall).not.toHaveBeenCalled();
+    expect(statuses.at(-1)?.state).toBe('downloaded');
+  });
+
+  it('does not start a download on an error while an update is only available', async () => {
+    const { init, statuses } = await freshManager();
+    init();
+
+    mockUpdater.emit('update-available', AVAILABLE_INFO);
+    mockUpdater.emit('error', new Error('socket hang up'));
+    await flushImmediate();
+
+    // The full-download retry only follows a download the user started.
+    expect(mockUpdater.downloadUpdate).not.toHaveBeenCalled();
+    const last = statuses.at(-1);
+    expect(last?.state).toBe('error');
+    if (last?.state === 'error') {
+      expect(last.stage).toBe('download');
+    }
+  });
+});
+
+describe('update-manager status snapshot', () => {
+  beforeEach(() => {
+    mockUpdater.removeAllListeners();
+  });
+
+  it('reports idle and unchecked before any check', async () => {
+    const { init, getStatusSnapshot } = await freshManager();
+    init();
+
+    expect(getStatusSnapshot()).toStrictEqual({ status: { state: 'idle' }, checkedThisSession: false });
+  });
+
+  it('reports idle and checked after a check finds nothing', async () => {
+    const { init, getStatusSnapshot } = await freshManager();
+    init();
+
+    mockUpdater.emit('checking-for-update');
+    mockUpdater.emit('update-not-available', AVAILABLE_INFO);
+
+    expect(getStatusSnapshot()).toStrictEqual({ status: { state: 'idle' }, checkedThisSession: true });
+  });
+
+  it('carries the latest status for a renderer that subscribed late', async () => {
+    const { init, getStatusSnapshot } = await freshManager();
+    init();
+
+    mockUpdater.emit('checking-for-update');
+    mockUpdater.emit('update-available', AVAILABLE_INFO);
+
+    const snapshot = getStatusSnapshot();
+    expect(snapshot.checkedThisSession).toBe(true);
+    expect(snapshot.status.state).toBe('available');
+  });
+});
+
+describe('update-manager staging id', () => {
+  beforeEach(() => {
+    mockUpdater.removeAllListeners();
+  });
+
+  it('is the nil UUID, not a per-install identifier', async () => {
+    const { stagingId } = await freshManager();
+    expect(stagingId).toBe('00000000-0000-0000-0000-000000000000');
+  });
+
+  it('overrides x-user-staging-id on every updater request', async () => {
+    const { init, stagingId } = await freshManager();
+    init();
+
+    expect(mockUpdater.requestHeaders).toStrictEqual({ 'x-user-staging-id': stagingId });
+  });
+
+  it('keeps request headers that were already set', async () => {
+    const { init, stagingId } = await freshManager();
+    mockUpdater.requestHeaders = { 'x-test': '1' };
+    init();
+
+    expect(mockUpdater.requestHeaders).toStrictEqual({ 'x-test': '1', 'x-user-staging-id': stagingId });
   });
 });

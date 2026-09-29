@@ -541,6 +541,15 @@ exposeInMainWorld('costgoblinUpdate', {
   getAppVersion(): Promise<string> {
     return invoke<string>('update:get-app-version');
   },
+  getStatus(): Promise<unknown> {
+    return invoke<unknown>('update:get-status');
+  },
+  getCheckOnStartup(): Promise<unknown> {
+    return invoke<unknown>('update:get-check-on-startup');
+  },
+  setCheckOnStartup(value: boolean): Promise<void> {
+    return invoke<undefined>('update:set-check-on-startup', value).then(() => undefined);
+  },
 });
 
 exposeInMainWorld('costgoblinRollup', {

@@ -1,6 +1,7 @@
 import { Download, RefreshCw, RotateCw, Check } from 'lucide-react';
 import { getActivePalette } from '@costgoblin/ui';
 import type { UpdateStatus } from '@costgoblin/core/browser';
+import { describeUpdateRow } from './update-row.js';
 
 interface DashboardOption {
   readonly id: string;
@@ -17,6 +18,11 @@ interface Props {
   readonly onSetDefaultView: (id: string) => void;
   readonly appVersion: string;
   readonly updateStatus: UpdateStatus;
+  /** A check (startup or manual) ran this session. */
+  readonly updateChecked: boolean;
+  /** Saved "Update check" preference: true = at launch, false = manual only. */
+  readonly checkOnStartup: boolean;
+  readonly onSetCheckOnStartup: (next: boolean) => void;
   readonly onCheckForUpdates: () => void;
   readonly onShowReleaseNotes: () => void;
   readonly onRerunSetup: () => void;
@@ -117,13 +123,20 @@ export function GeneralTab({
   onSetDefaultView,
   appVersion,
   updateStatus,
+  updateChecked,
+  checkOnStartup,
+  onSetCheckOnStartup,
   onCheckForUpdates,
   onShowReleaseNotes,
   onRerunSetup,
 }: Readonly<Props>): React.JSX.Element {
   const swatches = getActivePalette(palette).slice(0, 8);
-  const versionSuffix = appVersion === '' ? '' : ` · v${appVersion}`;
-  const updatesDescription = updateStatus.state === 'idle' ? `You're up to date${versionSuffix}` : undefined;
+  const updatesDescription = describeUpdateRow({
+    state: updateStatus.state,
+    checked: updateChecked,
+    checkOnStartup,
+    appVersion,
+  });
 
   return (
     <div className="flex max-w-3xl flex-col gap-6 p-6">
@@ -171,6 +184,16 @@ export function GeneralTab({
       </div>
 
       <div className="divide-y divide-border rounded-lg border border-border">
+        <SettingRow
+          label="Update check"
+          description="Checks GitHub Releases (github.com) once at startup; takes effect next launch. Nothing is downloaded or installed without your confirmation."
+        >
+          <Segmented
+            value={checkOnStartup ? 'automatic' : 'manual'}
+            onChange={(next) => { onSetCheckOnStartup(next === 'automatic'); }}
+            options={[{ value: 'automatic', label: 'Automatic' }, { value: 'manual', label: 'Manual only' }]}
+          />
+        </SettingRow>
         <SettingRow label="Software updates" description={updatesDescription}>
           <UpdateControl status={updateStatus} onCheckForUpdates={onCheckForUpdates} onShowReleaseNotes={onShowReleaseNotes} />
         </SettingRow>
