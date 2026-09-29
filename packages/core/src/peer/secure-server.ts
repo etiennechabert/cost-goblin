@@ -1,5 +1,6 @@
 import { createServer, type Server } from 'node:https';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { Socket } from 'node:net';
 import type { TLSSocket } from 'node:tls';
 import { isSafePackPath } from './pack-manifest.js';
 import {
@@ -38,11 +39,84 @@ export interface SharingServerConfig {
   readonly onAccess?: (event: SharingAccessEvent) => void;
   /** Called whenever the count of authenticated, connected peers changes. */
   readonly onConnectionsChanged?: (count: number) => void;
+  /** Stop on our own after this long with no request in flight. Each served
+   *  request re-arms it, and a transfer is never cut: a timer that fires
+   *  mid-request re-arms instead. Idle keep-alive and pre-handshake sockets
+   *  neither hold the server up nor re-arm it. Unset → never auto-stops. */
+  readonly idleTimeoutMs?: number;
+  /** Called once, after an idle auto-stop has closed the server. */
+  readonly onAutoStop?: () => void;
+  /** A connection must finish its TLS handshake within this long or it is
+   *  dropped. Default 10 s (Node's own default is 120 s). */
+  readonly handshakeTimeoutMs?: number;
+  /** Cap on concurrent TCP connections, authenticated or not; excess ones
+   *  are closed on accept. Default 32. */
+  readonly maxConnections?: number;
 }
 
 export interface SharingServer {
   readonly port: number;
+  /** Stop listening and tear down every socket — authenticated or still
+   *  mid-handshake. Idempotent: later calls return the same promise. */
   readonly close: () => Promise<void>;
+  /** Epoch ms at which the idle timer would stop the server, or null when no
+   *  idle timeout is configured or the server is closed. */
+  readonly autoStopAt: () => number | null;
+}
+
+/** Node's own default is 120 s, long enough for an unauthenticated LAN host
+ *  to pin connection slots (and stall a Stop) just by opening sockets. */
+const DEFAULT_HANDSHAKE_TIMEOUT_MS = 10_000;
+/** Concurrent TCP connections, authenticated or not. A pull opens a handful
+ *  (the client's agent pools them), so this leaves ample headroom for a
+ *  team while bounding descriptor use. */
+const DEFAULT_MAX_CONNECTIONS = 32;
+
+interface IdleTracker {
+  readonly requestStarted: () => void;
+  readonly requestEnded: () => void;
+  readonly arm: () => void;
+  readonly deadline: () => number | null;
+  readonly cancel: () => void;
+}
+
+/** Idle auto-stop bookkeeping, keyed on in-flight REQUESTS rather than open
+ *  sockets: an idle keep-alive socket or a half-open handshake never holds
+ *  the server up. Every finished request re-arms the full timeout; a timer
+ *  that lands while a request is in flight re-arms instead of firing, so a
+ *  long transfer is never cut. With no timeout configured it is inert. */
+function createIdleTracker(timeoutMs: number | undefined, onIdle: () => void): IdleTracker {
+  let inFlight = 0;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let deadlineMs: number | null = null;
+  let cancelled = false;
+  const clear = (): void => {
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+  };
+  const arm = (): void => {
+    if (timeoutMs === undefined || cancelled) return;
+    clear();
+    deadlineMs = Date.now() + timeoutMs;
+    timer = setTimeout(() => {
+      timer = null;
+      if (inFlight > 0) { arm(); return; }
+      onIdle();
+    }, timeoutMs);
+    // Never keep the process alive just to stop a server.
+    timer.unref();
+  };
+  return {
+    requestStarted: () => { inFlight++; },
+    requestEnded: () => { inFlight = Math.max(0, inFlight - 1); arm(); },
+    arm,
+    deadline: () => (cancelled ? null : deadlineMs),
+    cancel: () => {
+      cancelled = true;
+      clear();
+      deadlineMs = null;
+    },
+  };
 }
 
 /** Start a TLS-PSK HTTP server exposing GET /manifest and GET /file?path=…
@@ -54,14 +128,30 @@ export async function startSharingServer(
   handlers: SharingServerHandlers,
 ): Promise<SharingServer> {
   const identity = config.pskIdentity ?? SHARING_PSK_IDENTITY;
+  // Assigned below; the idle tracker only calls it after listen().
+  let closeServer: () => Promise<void> = () => Promise.resolve();
+  let autoStopped = false;
+  const idle = createIdleTracker(config.idleTimeoutMs, () => {
+    void closeServer().then(() => {
+      if (autoStopped) return;
+      autoStopped = true;
+      config.onAutoStop?.();
+    });
+  });
+
   const server: Server = createServer(
     {
       ciphers: SHARING_TLS_CIPHERS,
       minVersion: SHARING_TLS_MIN_VERSION,
       maxVersion: SHARING_TLS_MAX_VERSION,
+      handshakeTimeout: config.handshakeTimeoutMs ?? DEFAULT_HANDSHAKE_TIMEOUT_MS,
       pskCallback: (_socket, id) => (id === identity ? config.psk : null),
     },
     (req, res) => {
+      idle.requestStarted();
+      // 'close' fires once per response — finished, errored or aborted — so
+      // the in-flight count can never leak and wedge the server up.
+      res.once('close', () => { idle.requestEnded(); });
       const remoteAddress = req.socket.remoteAddress ?? null;
       const report = (kind: 'manifest' | 'file', path: string | null, bytes: number): void => {
         config.onAccess?.({ kind, path, remoteAddress, bytes });
@@ -69,17 +159,28 @@ export async function startSharingServer(
       void handleRequest(req, res, handlers, report);
     },
   );
+  server.maxConnections = config.maxConnections ?? DEFAULT_MAX_CONNECTIONS;
 
-  // Track authenticated peer sockets so we can report a live connected count
-  // and force-close them on stop (server.close() alone waits for keep-alive
-  // sockets to idle out, which would make "Stop sharing" appear to hang).
-  const sockets = new Set<TLSSocket>();
+  // Every accepted TCP socket, including ones still mid-handshake (or that
+  // never start one). server.close() waits for all of them, so without
+  // destroying these a single silent LAN host stalls Stop/Rotate until its
+  // handshake times out.
+  const rawSockets = new Set<Socket>();
+  server.on('connection', (socket: Socket) => {
+    rawSockets.add(socket);
+    socket.once('close', () => { rawSockets.delete(socket); });
+  });
+
+  // Authenticated peer sockets, for the live connected count (and destroyed
+  // on stop alongside the raw ones — server.close() alone would wait for
+  // keep-alive sockets to idle out).
+  const secureSockets = new Set<TLSSocket>();
   server.on('secureConnection', (socket: TLSSocket) => {
-    sockets.add(socket);
-    config.onConnectionsChanged?.(sockets.size);
+    secureSockets.add(socket);
+    config.onConnectionsChanged?.(secureSockets.size);
     socket.on('close', () => {
-      sockets.delete(socket);
-      config.onConnectionsChanged?.(sockets.size);
+      secureSockets.delete(socket);
+      config.onConnectionsChanged?.(secureSockets.size);
     });
   });
 
@@ -92,14 +193,25 @@ export async function startSharingServer(
     });
   });
 
+  let closing: Promise<void> | null = null;
+  closeServer = () => {
+    if (closing !== null) return closing;
+    idle.cancel();
+    closing = new Promise<void>((resolve) => {
+      server.close(() => { resolve(); });
+      for (const socket of secureSockets) socket.destroy();
+      for (const socket of rawSockets) socket.destroy();
+    });
+    return closing;
+  };
+  idle.arm();
+
   const address = server.address();
   const port = typeof address === 'object' && address !== null ? address.port : 0;
   return {
     port,
-    close: () => new Promise<void>((resolve) => {
-      for (const socket of sockets) socket.destroy();
-      server.close(() => { resolve(); });
-    }),
+    close: () => closeServer(),
+    autoStopAt: () => idle.deadline(),
   };
 }
 

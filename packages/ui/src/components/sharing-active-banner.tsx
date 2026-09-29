@@ -1,17 +1,20 @@
 import type { DataSharingStatus } from '@costgoblin/core/browser';
 import { Network, Square } from 'lucide-react';
 import { formatBytes } from './format.js';
+import { autoStopLabel } from './sharing-auto-stop.js';
 
 /** App-wide banner shown while this machine is sharing its data on the LAN.
- *  Surfaces live activity (connected peers, files + bytes served, throughput)
- *  and a one-click Stop. Purely presentational — the parent owns the status
- *  poll and the disable action. */
+ *  Surfaces live activity (connected peers, files + bytes served, throughput),
+ *  when an idle session will stop on its own, and a one-click Stop. Purely
+ *  presentational — the parent owns the status poll (whose re-renders keep
+ *  the countdown fresh) and the disable action. */
 export function SharingActiveBanner({ status, onStop, stopping = false }: Readonly<{
   status: DataSharingStatus;
   onStop: () => void;
   stopping?: boolean;
 }>): React.JSX.Element {
   const live = status.connectedClients > 0;
+  const autoStop = autoStopLabel(status.autoStopsAt, Date.now());
   return (
     <div className="flex items-center justify-between gap-4 border-b border-accent/30 bg-accent/10 px-4 py-1.5 [-webkit-app-region:no-drag]">
       <div className="flex min-w-0 items-center gap-2">
@@ -30,6 +33,7 @@ export function SharingActiveBanner({ status, onStop, stopping = false }: Readon
         {status.bytesPerSecond > 0 && (
           <span className="font-medium text-accent">{formatBytes(status.bytesPerSecond)}/s</span>
         )}
+        {autoStop !== null && <span className="hidden md:inline text-text-muted">{autoStop}</span>}
         <button
           type="button"
           onClick={onStop}

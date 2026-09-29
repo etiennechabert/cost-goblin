@@ -1,11 +1,12 @@
 import { asBucketPath, asProviderName } from '@costgoblin/core/browser';
-import type { DataSharingStatus } from '@costgoblin/core/browser';
+import type { DataSharingStatus, SharedSourcePreview } from '@costgoblin/core/browser';
 import { render, screen, waitFor } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { BundleSummaryCard, ImportConfigDialog, ShareConfigDialog } from '../components/config-sharing.js';
 import { SharingActiveBanner } from '../components/sharing-active-banner.js';
-import { MOCK_BUNDLE_SUMMARY, MOCK_SHARED_SOURCE, MockCostApi } from '../__fixtures__/mock-api.js';
+import { autoStopLabel, autoStopMinutes } from '../components/sharing-auto-stop.js';
+import { MOCK_BUNDLE_SUMMARY, MOCK_SHARED_SOURCE, MOCK_SHARED_SOURCE_PREVIEW, MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 
 /** Config whose sync profile differs from the alphabetical-first AWS
@@ -150,6 +151,33 @@ describe('ShareConfigDialog', () => {
     await user.type(input, 's3://bucket-only');
     expect(screen.getByText(/Enter a full object location/)).toBeDefined();
     expect(screen.getByRole('button', { name: 'Publish' }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it('shows when sharing will auto-stop once started', async () => {
+    const api = new MockCostApi();
+    const autoStopsAt = new Date(Date.now() + 30 * 60_000).toISOString();
+    const enabled = await api.enableDataSharing();
+    if (enabled.status !== 'ok') throw new Error('mock enable failed');
+    api.enableDataSharing = () => Promise.resolve({ status: 'ok', sharing: { ...enabled.sharing, autoStopsAt } });
+    const user = userEvent.setup();
+    renderWithApi(api, <ShareConfigDialog onClose={() => undefined} />);
+
+    expect(screen.queryByText(/Auto-stops/)).toBeNull();
+    await user.click(await screen.findByText('Start sharing'));
+    expect(await screen.findByText('Auto-stops in 30 min if idle')).toBeDefined();
+  });
+
+  it('shows no auto-stop hint while sharing without a deadline', async () => {
+    const api = new MockCostApi();
+    const enabled = await api.enableDataSharing();
+    if (enabled.status !== 'ok') throw new Error('mock enable failed');
+    api.enableDataSharing = () => Promise.resolve({ status: 'ok', sharing: { ...enabled.sharing, autoStopsAt: null } });
+    const user = userEvent.setup();
+    renderWithApi(api, <ShareConfigDialog onClose={() => undefined} />);
+
+    await user.click(await screen.findByText('Start sharing'));
+    await screen.findByText('Sharing key');
+    expect(screen.queryByText(/Auto-stops/)).toBeNull();
   });
 
   it('surfaces publish errors', async () => {
@@ -325,6 +353,33 @@ describe('ImportConfigDialog', () => {
   });
 });
 
+describe('autoStopMinutes / autoStopLabel', () => {
+  const NOW = Date.parse('2026-09-29T10:00:00.000Z');
+  const at = (offsetMs: number): string => new Date(NOW + offsetMs).toISOString();
+
+  it('is null when there is no deadline (or an unreadable one)', () => {
+    expect(autoStopMinutes(null, NOW)).toBeNull();
+    expect(autoStopMinutes('not a date', NOW)).toBeNull();
+    expect(autoStopLabel(null, NOW)).toBeNull();
+  });
+
+  it('rounds the remaining time up to whole minutes', () => {
+    expect(autoStopMinutes(at(30 * 60_000), NOW)).toBe(30);
+    expect(autoStopMinutes(at(29 * 60_000 + 1), NOW)).toBe(30);
+    expect(autoStopMinutes(at(90_000), NOW)).toBe(2);
+  });
+
+  it('never shows less than 1 minute', () => {
+    expect(autoStopMinutes(at(5_000), NOW)).toBe(1);
+    expect(autoStopMinutes(at(0), NOW)).toBe(1);
+    expect(autoStopMinutes(at(-60_000), NOW)).toBe(1);
+  });
+
+  it('formats the hint', () => {
+    expect(autoStopLabel(at(30 * 60_000), NOW)).toBe('Auto-stops in 30 min if idle');
+  });
+});
+
 describe('SharingActiveBanner', () => {
   const activeStatus: DataSharingStatus = {
     enabled: true,
@@ -339,6 +394,7 @@ describe('SharingActiveBanner', () => {
     bytesServed: 5_000_000,
     connectedClients: 2,
     bytesPerSecond: 1_500_000,
+    autoStopsAt: null,
   };
 
   it('shows connected peers, files + bytes served, and throughput', () => {
@@ -346,6 +402,17 @@ describe('SharingActiveBanner', () => {
     expect(screen.getByText('2 connected')).toBeDefined();
     expect(screen.getByText('12 files · 4.8 MB')).toBeDefined();
     expect(screen.getByText('1.4 MB/s')).toBeDefined();
+  });
+
+  it('shows when sharing will auto-stop if idle', () => {
+    const autoStopsAt = new Date(Date.now() + 30 * 60_000).toISOString();
+    render(<SharingActiveBanner status={{ ...activeStatus, autoStopsAt }} onStop={() => undefined} />);
+    expect(screen.getByText('Auto-stops in 30 min if idle')).toBeDefined();
+  });
+
+  it('shows no auto-stop hint when there is no deadline', () => {
+    render(<SharingActiveBanner status={activeStatus} onStop={() => undefined} />);
+    expect(screen.queryByText(/Auto-stops/)).toBeNull();
   });
 
   it('hides throughput when idle and fires onStop', async () => {
@@ -399,6 +466,52 @@ describe('ImportConfigDialog — pull from a teammate', () => {
     expect(key).toBe('CGSHARE1-teammate');
     expect(selection?.sources).toContain('daily');
     expect(selection?.sources).not.toContain('cost-optimization');
+  });
+
+  async function openPreview(api: MockCostApi, preview: SharedSourcePreview): Promise<ReturnType<typeof userEvent.setup>> {
+    api.previewSharedSource = () => Promise.resolve({ status: 'ok', preview });
+    const user = userEvent.setup();
+    renderWithApi(api, <ImportConfigDialog onClose={() => undefined} onApplied={() => undefined} />);
+    await user.type(screen.getByLabelText('Sharing key from a teammate'), 'CGSHARE1-teammate');
+    await user.click(screen.getByText('Continue'));
+    await screen.findByText('Pull');
+    return user;
+  }
+
+  it('discloses that Configuration also replaces account & region names', async () => {
+    await openPreview(new MockCostApi(), { ...MOCK_SHARED_SOURCE_PREVIEW, enrichment: { accounts: 12, regions: 30 } });
+    expect(screen.getByLabelText(/Configuration/)).toHaveProperty('checked', true);
+    // The existing config hint stays, and the names overwrite is added to it.
+    expect(screen.getByText(/Dimensions, dashboards, cost scope & org tree/)).toBeDefined();
+    expect(screen.getByText('Also replaces your account & region names (12 accounts, 30 regions)')).toBeDefined();
+  });
+
+  it('offers the Configuration checkbox for enrichment alone, even without a config bundle', async () => {
+    await openPreview(new MockCostApi(), { ...MOCK_SHARED_SOURCE_PREVIEW, hasConfig: false, enrichment: { accounts: 1, regions: 0 } });
+    expect(screen.getByLabelText(/Configuration/)).toHaveProperty('checked', true);
+    expect(screen.queryByText(/Dimensions, dashboards/)).toBeNull();
+    // A zero count is left out; singular for one.
+    expect(screen.getByText('Replaces your account & region names (1 account)')).toBeDefined();
+  });
+
+  it('hides the Configuration checkbox when there is neither config nor enrichment', async () => {
+    await openPreview(new MockCostApi(), { ...MOCK_SHARED_SOURCE_PREVIEW, hasConfig: false, enrichment: null });
+    expect(screen.queryByLabelText(/Configuration/)).toBeNull();
+    expect(screen.queryByText(/replaces your account/i)).toBeNull();
+  });
+
+  it('keeps your own names: unticking Configuration drops config from the pull selection', async () => {
+    const api = new MockCostApi();
+    const addSpy = vi.spyOn(api, 'addSharedSource');
+    const user = await openPreview(api, { ...MOCK_SHARED_SOURCE_PREVIEW, hasConfig: false, enrichment: { accounts: 3, regions: 2 } });
+
+    await user.click(screen.getByLabelText(/Configuration/));
+    await user.click(screen.getByText('Pull'));
+
+    await waitFor(() => { expect(addSpy).toHaveBeenCalled(); });
+    const selection = addSpy.mock.calls[0]?.[1];
+    expect(selection?.sources).not.toContain('config');
+    expect(selection?.sources).toContain('daily');
   });
 
   it('locks the dialog shut while a pull is in flight', async () => {

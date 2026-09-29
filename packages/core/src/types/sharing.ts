@@ -159,6 +159,9 @@ export interface DataSharingStatus {
   readonly connectedClients: number;
   /** Recent serving throughput in bytes/second (trailing window), 0 when idle. */
   readonly bytesPerSecond: number;
+  /** When sharing stops on its own if no peer requests anything before then
+   *  (ISO). Every served request pushes it back; null when not sharing. */
+  readonly autoStopsAt: string | null;
 }
 
 export type SharedPullPhase = 'idle' | 'connecting' | 'downloading' | 'importing' | 'done' | 'error';
@@ -177,8 +180,10 @@ export interface SharedPullProgress {
   readonly error: string | null;
 }
 
-/** The selectable parts of a shared snapshot. `config` gates the config +
- *  enrichment bundle; the rest are data tiers, gated and period-filtered. */
+/** The selectable parts of a shared snapshot. `config` gates the config
+ *  bundle AND the enrichment (account/region names) — without it the
+ *  consumer's own names are left untouched. The rest are data tiers, gated
+ *  and period-filtered. */
 export type SharedSourceTier = 'config' | 'daily' | 'hourly' | 'cost-optimization';
 
 /** A data tier (no `config`). */
@@ -204,6 +209,14 @@ export interface SharedSourceTierAvailability {
   readonly bytes: number;
 }
 
+/** How much account/region naming a snapshot would apply (the manifest's
+ *  enrichment, counted after the same strict decode the pull applies). A part
+ *  that fails to decode counts 0 — it would be rejected, not written. */
+export interface SharedEnrichmentSummary {
+  readonly accounts: number;
+  readonly regions: number;
+}
+
 /** What a teammate is offering, fetched + verified without downloading data. */
 export interface SharedSourcePreview {
   readonly label: string;
@@ -211,6 +224,9 @@ export interface SharedSourcePreview {
   readonly hasConfig: boolean;
   /** Digest of the bundled config, when present, for the "what will I apply?" card. */
   readonly configSummary: ConfigBundleSummary | null;
+  /** Account/region names the snapshot would replace — gated, like the config
+   *  bundle, on the `config` tier. Null when neither part would be applied. */
+  readonly enrichment: SharedEnrichmentSummary | null;
   readonly tiers: readonly SharedSourceTierAvailability[];
 }
 
