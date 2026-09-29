@@ -39,6 +39,13 @@ export {
 } from './gcs-client.js';
 
 export {
+  GCS_BUCKET_NAME_RULES,
+  assertValidGcsBucketName,
+  isValidGcsBucketName,
+  splitGcsLocation,
+} from './gcs-bucket-name.js';
+
+export {
   type BillingPeriod,
   type DataInventory,
   getDataInventory,

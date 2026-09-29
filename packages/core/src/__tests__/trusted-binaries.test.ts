@@ -163,6 +163,30 @@ describe('win32 candidate arms', () => {
     expect(shape.command).toBe(String.raw`"C:\Program Files\Google\gcloud.cmd"`);
     expect(shape.args).toStrictEqual(['"auth"', '"login"']);
   });
+
+  it('keeps the quoted shape for clean rsync args, including a Windows staging path', () => {
+    const args = [
+      'storage', 'rsync', 'gs://billing-export/focus/daily/billing_period=2026-01/',
+      String.raw`C:\Users\me\AppData\Roaming\costgoblin\gcp-main\meta\staging-gcp\daily\2026-01`,
+      '--recursive', '--impersonate-service-account=reader@proj.iam.gserviceaccount.com',
+    ];
+    const shape = gcloudSpawnShape(String.raw`C:\gcloud.cmd`, args);
+    expect(shape.shell).toBe(true);
+    expect(shape.args).toStrictEqual(args.map(a => `"${a}"`));
+  });
+
+  it('refuses any arg cmd.exe cannot quote safely', () => {
+    // Under cmd.exe '"' ends the quote (so a following '&' starts a command),
+    // %VAR% expands inside quotes, !VAR! expands when delayed expansion is on,
+    // and CR/LF end the line. No escaping is attempted: the arg is refused.
+    for (const ch of ['"', '%', '!', '\r', '\n', '\0']) {
+      expect(() => gcloudSpawnShape(String.raw`C:\gcloud.cmd`, ['storage', `gs://bkt${ch}x/f`]), JSON.stringify(ch))
+        .toThrow(/cannot be passed to gcloud on Windows/);
+    }
+    // The payload from the security review: the first '"' is enough.
+    expect(() => gcloudSpawnShape(String.raw`C:\gcloud.cmd`, ['storage', 'rsync', 'gs://bkt"&calc&"/f', String.raw`C:\d`]))
+      .toThrow(/cannot be passed to gcloud on Windows/);
+  });
 });
 
 describe('gcloudChildPath', () => {
@@ -196,5 +220,11 @@ describe('gcloudSpawnShape (current platform)', () => {
       args: ['storage', 'rsync'],
       shell: false,
     });
+  });
+
+  it('passes cmd.exe metacharacters through untouched on POSIX, where no shell parses them', () => {
+    if (process.platform === 'win32') return;
+    const args = ['storage', 'rsync', 'gs://bkt/f', '/home/100%!/"x"\n'];
+    expect(gcloudSpawnShape('/usr/bin/gcloud', args)).toStrictEqual({ command: '/usr/bin/gcloud', args, shell: false });
   });
 });

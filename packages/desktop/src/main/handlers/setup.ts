@@ -1,6 +1,7 @@
 import { ipcMain, shell } from 'electron';
 import {
   GCS_READ_ONLY_SCOPE,
+  assertValidGcsBucketName,
   classifyGcsFolder,
   findGcloudCli,
   gcloudChildPath,
@@ -309,6 +310,9 @@ export function registerSetupHandlers(app: AppContext): void {
   ipcMain.handle('setup:browse-gcs', async (_event, params: { projectId: string; bucket: string; prefix: string }): Promise<GcsBrowseResult> => {
     const prefix = normalizeGcsPrefix(params.prefix);
     try {
+      // Before storage.bucket(): the SDK puts the name in its request URL
+      // unencoded. Thrown inside the try so the wizard shows it inline.
+      assertValidGcsBucketName(params.bucket);
       const { Storage } = await import('@google-cloud/storage');
       const storage = new Storage({ projectId: params.projectId, scopes: [GCS_READ_ONLY_SCOPE] });
       const bucket = storage.bucket(params.bucket);

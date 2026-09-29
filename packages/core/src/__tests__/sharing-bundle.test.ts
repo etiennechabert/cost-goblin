@@ -133,6 +133,26 @@ describe('serializeConfigBundle / parseConfigBundle', () => {
     expect(() => parseConfigBundle(broken)).toThrow(ConfigValidationError);
   });
 
+  it('rejects a bundle whose gcp bucket name breaks the GCS naming rules', async () => {
+    // A bundle is attacker-reachable (import, beacon, peer pull). A bucket
+    // name carrying URL and cmd.exe metacharacters must not load.
+    const config = await loadConfig(join(fixturesDir, 'costgoblin.yaml'));
+    const dimensions = await loadDimensions(join(fixturesDir, 'dimensions.yaml'));
+    const payload = String.raw`gs://evil-bkt\o#"&calc&"/focus/daily`;
+    const bundle = buildConfigBundle({
+      config: {
+        ...config,
+        providers: [
+          ...config.providers,
+          { name: parseProviderName('gcp-main'), type: 'gcp', sync: { daily: { bucket: asBucketPath(payload), retentionDays: 365 }, intervalMinutes: 60 } },
+        ],
+      },
+      dimensions,
+      appVersion: '0.0.0-test',
+    });
+    expect(() => parseConfigBundle(serializeConfigBundle(bundle))).toThrow(ConfigValidationError);
+  });
+
   it('discards credentials smuggled into a hand-crafted bundle', async () => {
     const bundle = await buildFixtureBundle();
     const serialized = serializeConfigBundle(bundle);
@@ -198,7 +218,7 @@ describe('bundleConfigWithProfile', () => {
     const shared: SharedCostGoblinConfig = {
       providers: [
         { name: parseProviderName('payer-a'), type: 'aws', sync: { daily: { bucket: asBucketPath('s3://b/d'), retentionDays: 30 }, intervalMinutes: 60 } },
-        { name: parseProviderName('gcp-main'), type: 'gcp', sync: { daily: { bucket: asBucketPath('gs://b/focus'), retentionDays: 365 }, intervalMinutes: 60 } },
+        { name: parseProviderName('gcp-main'), type: 'gcp', sync: { daily: { bucket: asBucketPath('gs://bkt/focus'), retentionDays: 365 }, intervalMinutes: 60 } },
       ],
       defaults: { periodDays: 30, costMetric: 'effective', lagDays: 1 },
     };
@@ -223,7 +243,7 @@ describe('bundleConfigWithProfile', () => {
     // granted only to the service account.
     const shared: SharedCostGoblinConfig = {
       providers: [
-        { name: parseProviderName('gcp-main'), type: 'gcp', sync: { daily: { bucket: asBucketPath('gs://b/focus/daily'), retentionDays: 365 }, intervalMinutes: 60 } },
+        { name: parseProviderName('gcp-main'), type: 'gcp', sync: { daily: { bucket: asBucketPath('gs://bkt/focus/daily'), retentionDays: 365 }, intervalMinutes: 60 } },
       ],
       defaults: { periodDays: 30, costMetric: 'effective', lagDays: 1 },
     };
@@ -236,7 +256,7 @@ describe('bundleConfigWithProfile', () => {
     expect(gcp.impersonateServiceAccount).toBe('reader@proj.iam.gserviceaccount.com');
     // The bucket comes from the BUNDLE, not the stale local entry — only the
     // credential is carried forward.
-    expect(String(gcp.sync.daily.bucket)).toBe('gs://b/focus/daily');
+    expect(String(gcp.sync.daily.bucket)).toBe('gs://bkt/focus/daily');
 
     // And it survives a round-trip to YAML, which needed its own fix:
     // providerToYaml previously serialized keyFile only.
@@ -249,7 +269,7 @@ describe('bundleConfigWithProfile', () => {
   it('does not carry a differently-named local gcp provider\'s credentials onto the bundle one', () => {
     const shared: SharedCostGoblinConfig = {
       providers: [
-        { name: parseProviderName('gcp-new'), type: 'gcp', sync: { daily: { bucket: asBucketPath('gs://b/focus/daily'), retentionDays: 365 }, intervalMinutes: 60 } },
+        { name: parseProviderName('gcp-new'), type: 'gcp', sync: { daily: { bucket: asBucketPath('gs://bkt/focus/daily'), retentionDays: 365 }, intervalMinutes: 60 } },
       ],
       defaults: { periodDays: 30, costMetric: 'effective', lagDays: 1 },
     };
