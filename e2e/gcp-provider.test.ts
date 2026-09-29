@@ -6,6 +6,7 @@ import {
   selectDatePreset,
   waitForQuerySettle,
   assertNoReactCrash,
+  expectCloudSandboxed,
   screenshot,
   FIXTURE_DATA_DIR,
   FIXTURE_MULTI_CONFIG_DIR,
@@ -57,6 +58,15 @@ test.describe('mixed AWS + GCP workspace', () => {
   test('lists both providers on Data & Sync', async () => {
     await openDataSync();
     await expect(page.getByLabel('Provider gcp-main')).toBeVisible();
+  });
+
+  test('runs with cloud credential discovery sandboxed', async () => {
+    // This suite is where the leak showed: launched with the runner's env, a
+    // developer's real ADC let the app query `gs://test-focus-export` as them,
+    // and the card below sat on "Checking Cloud Storage for available data..."
+    // while it did. CI has no credentials to leak, so this check is what keeps
+    // a local run equivalent to CI.
+    await expectCloudSandboxed(app);
   });
 
   test('shows the GCP provider reading a gs:// bucket with ADC', async () => {

@@ -5,18 +5,16 @@
  * run explicitly with:
  *   npx playwright test --config playwright.diag.config.ts e2e/diag/debug-explain.diag.ts
  */
-import { test, expect, _electron, type ElectronApplication } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-
-const ROOT = join(import.meta.dirname, '..', '..');
-const DESKTOP_DIR = join(ROOT, 'packages', 'desktop');
+import { closeApp, launchElectron } from '../helpers.js';
 
 test('run EXPLAIN ANALYZE on Cost Overview queries', async () => {
-  const app = await _electron.launch({
-    args: [join(DESKTOP_DIR, 'out', 'main', 'main.js')],
+  // launchElectron cuts the runner's cloud credentials off: a diagnostic reads
+  // local Parquet, and must not sync or query a real account as the developer.
+  const app = await launchElectron({
     env: {
-      ...process.env,
       NODE_ENV: 'production',
       COSTGOBLIN_DATA_DIR: join(homedir(), 'Library', 'Application Support', '@costgoblin', 'desktop', 'data'),
       COSTGOBLIN_CONFIG_DIR: join(homedir(), 'Library', 'Application Support', '@costgoblin', 'desktop', 'config'),
@@ -53,5 +51,5 @@ test('run EXPLAIN ANALYZE on Cost Overview queries', async () => {
     console.log(explain);
   }
 
-  await app.close();
+  await closeApp(app);
 });

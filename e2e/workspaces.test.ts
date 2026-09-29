@@ -1,9 +1,8 @@
-import { test, expect, _electron, type ElectronApplication, type Page } from '@playwright/test';
+import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
 import { join } from 'node:path';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import {
-  DESKTOP_DIR,
   FIXTURE_CONFIG_DIR,
   FIXTURE_DATA_DIR,
   HEADLESS,
@@ -11,7 +10,9 @@ import {
   openSettings,
   attachCoverage,
   collectCoverage,
+  expectCloudSandboxed,
   finishCoverage,
+  launchElectron,
 } from './helpers.js';
 
 // Workspace-mode e2e: unlike every other suite (which pins paths via
@@ -55,16 +56,17 @@ test.describe('Workspaces (workspace mode)', () => {
 
     // Strip the pinned-mode env vars the outer runner may carry — their
     // presence would flip the app into pinned mode and hide the feature.
-    const env: Record<string, string> = {};
+    const inherited: Record<string, string> = {};
     for (const [key, value] of Object.entries(process.env)) {
       if (value === undefined) continue;
       if (key === 'COSTGOBLIN_DATA_DIR' || key === 'COSTGOBLIN_CONFIG_DIR') continue;
-      env[key] = value;
+      inherited[key] = value;
     }
-    app = await _electron.launch({
-      args: [join(DESKTOP_DIR, 'out', 'main', 'main.js')],
+    // launchElectron still cuts this env off from the runner's cloud
+    // credentials; finishCoverage's closeApp removes the sandbox it creates.
+    app = await launchElectron({
+      inherited,
       env: {
-        ...env,
         NODE_ENV: 'production',
         COSTGOBLIN_E2E: '1',
         COSTGOBLIN_HEADLESS: HEADLESS,
@@ -96,6 +98,12 @@ test.describe('Workspaces (workspace mode)', () => {
     } finally {
       rmSync(userDataDir, { recursive: true, force: true });
     }
+  });
+
+  test('runs with cloud credential discovery sandboxed', async () => {
+    // The one launch that builds its own inherited env — prove the filtering
+    // above did not reopen a path to the runner's cloud credentials.
+    await expectCloudSandboxed(app);
   });
 
   test('settings tab lists both workspaces with active and not-set-up badges', async () => {
