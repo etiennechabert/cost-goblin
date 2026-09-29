@@ -337,7 +337,9 @@ function GcpIntroStep({ state, onBrowse, onScaffold, onDone, onBack }: Readonly<
       <span className="text-2xl font-bold text-accent tracking-wider">Set up from Google Cloud</span>
       <p className="text-text-secondary text-sm max-w-md">
         CostGoblin reads a GCS bucket that your own exporter fills from the FOCUS 1.2 BigQuery
-        billing export. It never holds credentials that can reach BigQuery.
+        billing export. It never calls BigQuery — it only reads Cloud Storage, plus your project
+        list during setup. Signed in as yourself, it can reach whatever your Google account can; to
+        confine it to the export bucket, use a read-only service account (see the exporter docs).
       </p>
       <ol className="flex w-full max-w-md flex-col gap-2 text-left text-sm text-text-secondary list-decimal pl-5">
         <li>

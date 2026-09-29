@@ -26,8 +26,11 @@ only then, since hourly is what makes a billing export large. Point
 `sync.daily.bucket` and `sync.hourly.bucket` at the matching folders, exactly as
 an AWS provider points each tier at its own export prefix.
 
-This is **your** infrastructure, running in **your** project — CostGoblin never
-holds credentials that can reach BigQuery. It reads the bucket, nothing else.
+This is **your** infrastructure, running in **your** project — the exporter is
+what talks to BigQuery. CostGoblin never calls BigQuery: it reads the bucket,
+plus your project and bucket lists while the setup wizard runs. What it *could*
+reach depends on how you sign it in — as yourself it acts as you; see
+[Credentials](#credentials) for confining it to the bucket.
 
 ## Before you start
 
@@ -357,10 +360,11 @@ ignoring it. See "Differences from the AWS integration" below.
 
 ### Credentials
 
-CostGoblin only ever **reads the bucket**. It holds no credential that can reach
-BigQuery, the billing account, or any other API — the exporter is what talks to
-BigQuery, and it runs in your project under its own service account. Two object
-permissions on the one bucket are the entire requirement:
+CostGoblin only ever **reads the bucket** (plus your project and bucket lists
+while the setup wizard runs). It never calls BigQuery, the billing account, or
+any other API — the exporter is what talks to BigQuery, and it runs in your
+project under its own service account. Two object permissions on the one bucket
+are the entire requirement:
 
 | Permission | Used for |
 |---|---|
@@ -371,15 +375,24 @@ Both come from `roles/storage.objectViewer` on the bucket. Nothing at the
 project level is needed — see the `storage.buckets.list` note under "Point
 CostGoblin at it" for the one place that shows.
 
-By default the provider uses **Application Default Credentials**, which is one
-command and no key material on disk:
+What the app *could* reach is a separate question, and it depends on how you
+sign it in. By default the provider uses **Application Default Credentials**,
+which is one command and no service-account key:
 
 ```bash
 gcloud auth application-default login
 ```
 
-For least privilege, create a read-only service account and impersonate it —
-no long-lived key, and it can reach nothing but this bucket:
+Signed in like that, CostGoblin **acts as you**: the credential carries your
+account's full `cloud-platform` access, so the app can reach whatever your
+Google account can — BigQuery and the billing account included — even though
+it never uses that reach. That is fine for a personal project. On a company or
+shared laptop, confine it instead.
+
+For least privilege — the recommendation for company and shared machines —
+create a read-only service account and impersonate it. No long-lived key, and
+the identity CostGoblin reads the bucket with can reach nothing but this
+bucket:
 
 ```bash
 SA=costgoblin-reader@PROJECT.iam.gserviceaccount.com
@@ -413,6 +426,21 @@ Both halves are needed: the `gcloud auth` command covers the listing SDK, which
 reads ADC, while the config field passes the same identity to the
 `gcloud storage rsync` download, which uses gcloud's own credentials and would
 otherwise run as the signed-in user.
+
+Two limits apply even then, so weigh them before telling an approver the app is
+confined to the bucket:
+
+- **Without `impersonateServiceAccount` (or a `keyFile`), the download runs as
+  gcloud's signed-in account**, not as the reader — whatever that account can
+  reach, the `gcloud storage rsync` process can too. And the wizard's project
+  list (`gcloud projects list`) *always* runs as gcloud's active account, with
+  or without impersonation.
+- **Impersonation confines the identity used, not what is stored.** The ADC
+  file written by `gcloud auth application-default login
+  --impersonate-service-account=…` still holds *your own* refresh token as the
+  source credential it impersonates from. Software running as you that reads
+  that file can act as you — so full-disk encryption and an account nobody else
+  uses still matter.
 
 A `keyFile: /path/to/key.json` is also accepted for environments that require a
 service-account key, but impersonation is the better default — there is no
