@@ -170,7 +170,9 @@ describe('DuckDB sandbox (real DuckDB)', () => {
         tags: [{ tagName: 'team', label: 'Team', accountTagFallback: 'cost-center' }],
       };
       const source = buildSource({ dataDir, tier: 'daily', dimensions, orgAccountsPath, providers: [{ name: PROVIDER }] });
-      expect(source).toContain('read_json_auto');
+      // The org-accounts join reads with an explicit-schema read_json (#603);
+      // it must still resolve inside the sandbox's allowed_paths.
+      expect(source).toContain(`read_json('${orgAccountsPath}', format='array'`);
       const rows = await queryAll(sandbox, `SELECT account_id, tag_team AS v FROM ${source} ORDER BY account_id`);
       expect(rows).toHaveLength(2);
       expect(rows[0]?.['v']).toBe('Platform');

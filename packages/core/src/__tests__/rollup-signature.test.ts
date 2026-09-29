@@ -9,6 +9,7 @@ import {
   ROLLUP_SCHEMA_VERSION,
 } from '../rollup/shape-signature.js';
 import { validateManifest, computePartitionEtagHash, type RollupManifest } from '../rollup/manifest.js';
+import { validateDimensions } from '../config/validator.js';
 
 function baseDims(): DimensionsConfig {
   return {
@@ -68,6 +69,16 @@ describe('computeShapeSignature', () => {
     // 'architecture' is aliased in A but not B → the rule drops different rows.
     expect(sig({ dimensions: dimsWithTeamAliases({ architects: ['architecture'] }), rules: teamRule }))
       .not.toBe(sig({ dimensions: dimsWithTeamAliases({ architects: ['arch'] }), rules: teamRule }));
+  });
+
+  it('does NOT change when the dimensions go through validateDimensions (the IPC payload path)', () => {
+    // The estimate handler now validates the renderer's candidate before
+    // signing it; the signature must match the one getRollupShape computes
+    // from the loaded (also validated) config, or the matched-check breaks.
+    const withRules = { rules: rulesOnService() };
+    expect(sig({ ...withRules, dimensions: validateDimensions(baseDims()) })).toBe(sig(withRules));
+    const teamRule: ExclusionRule[] = [{ id: 'rt', name: 't', enabled: true, builtIn: false, conditions: [{ dimensionId: asDimensionId('tag_sb_team'), values: ['architecture'] }] }];
+    expect(sig({ rules: teamRule, dimensions: validateDimensions(baseDims()) })).toBe(sig({ rules: teamRule }));
   });
 
   it('alias change on a dim NOT referenced by any rule does NOT change the signature', () => {

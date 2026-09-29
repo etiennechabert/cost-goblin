@@ -381,6 +381,11 @@ function validateBuiltInDimension(dim: unknown, i: number) {
   const enabled = dim['enabled'] === false ? false : undefined;
   const description = optionalString(dim['description'], `${ctx}.description`);
   const useOrgAccounts = dim['useOrgAccounts'] === true ? true : undefined;
+  // Either explicit value is kept (#452): dropping `false` let
+  // mergeDefaultBuiltIns backfill `true` on every load, undoing the toggle.
+  // A non-boolean is ignored, like `enabled`.
+  const rawUseRegionNames = dim['useRegionNames'];
+  const useRegionNames = typeof rawUseRegionNames === 'boolean' ? rawUseRegionNames : undefined;
   const accountNameFromTag = optionalNonEmptyString(dim['accountNameFromTag']);
   const nameStripPatterns = optionalStringArray(dim['nameStripPatterns'], `${ctx}.nameStripPatterns`);
   const normalize = validateNormalize(dim['normalize'], ctx);
@@ -398,6 +403,7 @@ function validateBuiltInDimension(dim: unknown, i: number) {
     ...(useOrgAccounts === true ? { useOrgAccounts } : {}),
     ...(accountNameFromTag === undefined ? {} : { accountNameFromTag }),
     ...(nameStripPatterns === undefined || nameStripPatterns.length === 0 ? {} : { nameStripPatterns }),
+    ...(useRegionNames === undefined ? {} : { useRegionNames }),
     ...(defaultFilterValues === undefined || defaultFilterValues.length === 0 ? {} : { defaultFilterValues }),
   };
 }
@@ -472,6 +478,7 @@ function validateTagDimension(tag: unknown, i: number) {
   const aliases = validateAliases(tag['aliases'], ctx);
   const enabled = tag['enabled'] === false ? false : undefined;
   const pathSegment = validatePathSegment(tag['pathSegment'], ctx);
+  const description = optionalString(tag['description'], `${ctx}.description`);
   const defaultFilterValues = optionalStringArray(tag['defaultFilterValues'], `${ctx}.defaultFilterValues`);
 
   return {
@@ -485,6 +492,7 @@ function validateTagDimension(tag: unknown, i: number) {
     ...(typeof tag['missingValueTemplate'] === 'string' ? { missingValueTemplate: tag['missingValueTemplate'] } : {}),
     ...(pathSegment === undefined ? {} : { pathSegment }),
     ...(enabled === false ? { enabled } : {}),
+    ...(description === undefined ? {} : { description }),
     ...(defaultFilterValues === undefined || defaultFilterValues.length === 0 ? {} : { defaultFilterValues }),
   };
 }

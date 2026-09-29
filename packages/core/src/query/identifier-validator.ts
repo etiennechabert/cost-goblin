@@ -28,6 +28,29 @@ export function isSafeColumnIdentifier(name: string): boolean {
   return SAFE_COLUMN_IDENTIFIER.test(name);
 }
 
+/** Longest slice of a rejected identifier echoed back in the error message —
+ *  enough to recognise it, without copying an arbitrarily large payload into
+ *  logs and error dialogs. */
+const IDENTIFIER_ECHO_LIMIT = 40;
+
+/**
+ * Throwing form of {@link isSafeColumnIdentifier}, for the SQL producers that
+ * interpolate a column identifier bare (`tryResolveField`, the rollup grain
+ * producers, the grain probe). Config load already validates these, but the
+ * producers are exported and one of their callers (the estimate IPC handler)
+ * is fed renderer input — so the check also lives at the sink.
+ * @param context names the offending setting in the message (e.g. `builtIn.field`)
+ * @throws {SecurityError} If `name` is not a bare SQL column identifier
+ */
+export function assertSafeColumnIdentifier(name: string, context: string): void {
+  if (isSafeColumnIdentifier(name)) return;
+  const shown = name.length > IDENTIFIER_ECHO_LIMIT ? `${name.slice(0, IDENTIFIER_ECHO_LIMIT)}…` : name;
+  throw new SecurityError(
+    `Invalid column identifier for ${context}: "${shown}" - only letters, digits, and underscores are allowed. ` +
+    `This prevents SQL injection via untrusted identifiers.`
+  );
+}
+
 /**
  * Valid table path tiers (billing-data organization levels).
  */

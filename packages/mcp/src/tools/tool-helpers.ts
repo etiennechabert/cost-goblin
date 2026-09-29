@@ -8,6 +8,7 @@ import {
   DEFAULT_LAG_DAYS,
   listLocalMonths,
   logger,
+  sqlStringLiteral,
   tagDimColumn,
 } from '@costgoblin/core';
 import type {
@@ -228,7 +229,7 @@ export async function computeDataCoverage(
     // has it, not just the first.
     const globs = providers
       .filter(p => (p.availablePeriods ?? []).includes(latestMonth))
-      .map(p => `'${ctx.dataDir}/${String(p.name)}/raw/daily-${latestMonth}/*.parquet'`);
+      .map(p => sqlStringLiteral(`${ctx.dataDir}/${String(p.name)}/raw/daily-${latestMonth}/*.parquet`));
     if (globs.length > 0) {
       try {
         const rows = await ctx.runQuery(

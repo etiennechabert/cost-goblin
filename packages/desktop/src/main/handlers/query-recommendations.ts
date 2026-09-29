@@ -15,6 +15,7 @@ import type { AppContext } from './context.js';
 import {
   buildMissingTagsResult,
   providersEmptyForRange,
+  rawGlobLiteral,
   resolveEntityName,
   toEffort,
   toNum,
@@ -86,7 +87,7 @@ export function registerRecommendationHandlers(app: AppContext): void {
       try {
         hasData = (await fs.readdir(rawDir)).some(d => d.startsWith('cost-opt-'));
       } catch { /* no raw dir yet */ }
-      if (hasData) globs.push(`'${ctx.dataDir}/${String(provider.name)}/raw/cost-opt-*/*.parquet'`);
+      if (hasData) globs.push(rawGlobLiteral(ctx.dataDir, String(provider.name), 'cost-opt-*/*.parquet'));
     }
     if (globs.length === 0) {
       return { recommendations: [], totalMonthlySavings: asDollars(0) };

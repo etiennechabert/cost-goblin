@@ -8,3 +8,11 @@
 export function sqlEscapeString(value: string): string {
   return value.replaceAll("'", "''");
 }
+
+/** A complete single-quoted SQL string literal for `value`, quote-escaped.
+ *  Use for literals that cannot be bound as parameters — file paths in
+ *  `read_parquet`/`read_json` and `COPY ... TO` targets. A data dir under a
+ *  profile path with an apostrophe (`C:\Users\o'brien`) must still parse. */
+export function sqlStringLiteral(value: string): string {
+  return `'${sqlEscapeString(value)}'`;
+}

@@ -1,8 +1,23 @@
-import type { DimensionsConfig } from '../types/config.js';
+import type { BuiltInDimension, DimensionsConfig } from '../types/config.js';
 import { tagDimColumn } from '../types/branded.js';
+import { assertSafeColumnIdentifier } from '../query/identifier-validator.js';
 
 function isEnabled(d: { readonly enabled?: boolean | undefined }): boolean {
   return d.enabled !== false;
+}
+
+/** The grain columns a built-in stores: its `field`, plus `displayField` when
+ *  set. Both are interpolated bare into the rollup COPY and the grain probe,
+ *  so each is identifier-checked here — these producers are exported and the
+ *  estimate handler feeds them renderer input. */
+function builtInGrainColumns(d: BuiltInDimension): string[] {
+  assertSafeColumnIdentifier(d.field, `built-in dimension "${String(d.name)}" field`);
+  const columns = [d.field];
+  if (d.displayField !== undefined && d.displayField.length > 0) {
+    assertSafeColumnIdentifier(d.displayField, `built-in dimension "${String(d.name)}" displayField`);
+    columns.push(d.displayField);
+  }
+  return columns;
 }
 
 /** The non-aggregate columns of a rollup partition: `usage_date` plus every
@@ -19,8 +34,7 @@ export function rollupGrainColumns(dims: DimensionsConfig): string[] {
     // per rollup store) — it is never stored in rollup Parquet, so it must
     // not enter the grain even when the provider dimension is enabled.
     if (d.field === 'provider') continue;
-    cols.add(d.field);
-    if (d.displayField !== undefined && d.displayField.length > 0) cols.add(d.displayField);
+    for (const c of builtInGrainColumns(d)) cols.add(c);
   }
   for (const t of dims.tags) if (isEnabled(t)) cols.add(tagDimColumn(t));
   const rest = [...cols].filter(c => c !== 'usage_date').sort((a, b) => a.localeCompare(b));
@@ -53,9 +67,7 @@ export function rollupGrainDimensions(dims: DimensionsConfig): { column: string;
     if (!isEnabled(d)) continue;
     // Injected at read time, never stored — see rollupGrainColumns.
     if (d.field === 'provider') continue;
-    const columns = [d.field];
-    if (d.displayField !== undefined && d.displayField.length > 0) columns.push(d.displayField);
-    add(d.field, columns);
+    add(d.field, builtInGrainColumns(d));
   }
   for (const t of dims.tags) {
     if (!isEnabled(t)) continue;

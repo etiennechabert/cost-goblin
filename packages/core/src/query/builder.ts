@@ -9,9 +9,9 @@ import { DEFAULT_COST_METRIC } from '../types/cost-scope.js';
 import { buildAliasSqlCase, normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
 import { costExprFor, isUsageOnlyMetric, USAGE_ONLY_METRIC_CHARGE_CATEGORIES } from './cost-metric.js';
 import { QueryBuilder, type ParameterizedQuery } from './parameterized.js';
-import { assertBillingPeriod, assertDateString, assertHourString, assertTier, isSafeColumnIdentifier, SecurityError } from './identifier-validator.js';
+import { assertBillingPeriod, assertDateString, assertHourString, assertSafeColumnIdentifier, assertTier, isSafeColumnIdentifier, SecurityError } from './identifier-validator.js';
 import { rollupGrainColumns, rollupGrainDimensions } from '../rollup/grain.js';
-import { sqlEscapeString } from './sql-escape.js';
+import { sqlEscapeString, sqlStringLiteral } from './sql-escape.js';
 
 /** Label for rows whose SubAccountId is NULL. FOCUS allows a null SubAccountId
  *  and GCP emits it for charges not tied to a project (account-level taxes,
@@ -27,7 +27,7 @@ function assertFiniteNumber(value: number, name: string): void {
   }
 }
 
-export { sqlEscapeString };
+export { sqlEscapeString, sqlStringLiteral };
 
 /** Build a SQL IN-list. Uses placeholders when a QueryBuilder is provided;
  *  otherwise falls back to escaped string literals (for exported helpers
@@ -85,6 +85,12 @@ export interface ResolvedDimension {
 export function tryResolveField(dimensionId: DimensionId, dimensions: DimensionsConfig): ResolvedDimension | null {
   const builtIn = dimensions.builtIn.find(d => d.name === dimensionId);
   if (builtIn !== undefined) {
+    // `field` is interpolated bare into every filter, group-by, exclusion rule
+    // and missing-tags SELECT that resolves through here. Config load already
+    // rejects a non-identifier, but this function is exported and some
+    // configs reach it unvalidated, so the check lives at the producer too.
+    // (Not inside buildAliasSqlCase: that receives expressions, not columns.)
+    assertSafeColumnIdentifier(builtIn.field, `built-in dimension "${String(builtIn.name)}" field`);
     // Built-ins now support normalize + aliases just like tags; apply them at
     // query time via the same CASE/LOWER(...) machinery.
     const fieldExpr = buildAliasSqlCase(builtIn.field, builtIn);
@@ -332,6 +338,15 @@ function buildTagValueExpr(
 
 function applyPathSegment(expr: string, pathSegment: { separator: string; index: number } | undefined): string {
   if (pathSegment === undefined) return expr;
+  // `index` is interpolated as a bare number. Config load enforces a non-zero
+  // integer; re-check here so a fractional / NaN / zero index from an
+  // unvalidated config can never reach the SQL.
+  if (!Number.isInteger(pathSegment.index) || pathSegment.index === 0) {
+    throw new SecurityError(
+      `Invalid pathSegment.index ${String(pathSegment.index)} - must be a non-zero integer. ` +
+      `This prevents SQL injection via untrusted configs.`
+    );
+  }
   const sep = sqlEscapeString(pathSegment.separator);
   // DuckDB's split_part is 1-based and supports negative indices (-1 = last).
   // NULLIF guards against returning the empty string when the segment index
@@ -440,8 +455,11 @@ function buildParquetSource(dataDir: string, provider: ProviderName, tier: strin
   // The path components land inside a single-quoted SQL glob literal, so each
   // untrusted-shaped one is validated at this interpolation site: tier and
   // every period must match their allow-list/pattern (provider names are
-  // parse-validated at config load — see parseProviderName — and dataDir is
-  // an app-controlled path, per the trust notes in security.test.ts).
+  // parse-validated at config load — see parseProviderName). dataDir comes
+  // from Electron's userData path or a COSTGOBLIN_DATA_DIR /
+  // COSTGOBLIN_USER_DATA_DIR override, never from renderer or config input;
+  // it is still quote-escaped (sqlStringLiteral) so a profile path with an
+  // apostrophe parses.
   assertTier(tier);
   // union_by_name unifies columns by name across files, filling absent columns
   // with NULL. FOCUS pins the core column set, but AWS adds x_ extension
@@ -452,11 +470,11 @@ function buildParquetSource(dataDir: string, provider: ProviderName, tier: strin
   if (periods !== undefined && periods.length > 0) {
     const paths = periods.map(p => {
       assertBillingPeriod(p);
-      return `'${rawRoot}/${tier}-${p}/*.parquet'`;
+      return sqlStringLiteral(`${rawRoot}/${tier}-${p}/*.parquet`);
     }).join(', ');
     return `read_parquet([${paths}], union_by_name=true)`;
   }
-  return `read_parquet('${rawRoot}/${tier}-*/*.parquet', union_by_name=true)`;
+  return `read_parquet(${sqlStringLiteral(`${rawRoot}/${tier}-*/*.parquet`)}, union_by_name=true)`;
 }
 
 function buildFromClause(
@@ -475,10 +493,14 @@ function buildFromClause(
       const fallbackKey = sqlEscapeString(fallback);
       return `tags->>'${fallbackKey}' AS fallback_${colName}`;
     });
+  // Explicit schema rather than read_json_auto: an org sync that returns no
+  // accounts writes `[]`, and older builds wrote rows without `ouPath`/`tags`.
+  // Auto-detection infers no such columns there and every query fails with a
+  // Binder Error; a fixed schema reads them as zero rows / NULL instead.
   return `${parquetSource} AS src
       LEFT JOIN (
         SELECT id, ${fallbackSelects.join(', ')}
-        FROM read_json_auto('${orgAccountsPath}')
+        FROM read_json(${sqlStringLiteral(orgAccountsPath)}, format='array', columns={id: 'VARCHAR', tags: 'JSON', ouPath: 'VARCHAR'})
       ) AS acct_tags ON src.SubAccountId = acct_tags.id`;
 }
 
@@ -1307,8 +1329,7 @@ export function buildRollupPartitionQuery(
   const select =
     `SELECT ${groupBy}, CAST(SUM(cost) AS DOUBLE) AS cost, CAST(COUNT(*) AS BIGINT) AS line_items ` +
     `FROM ${source} WHERE ${whereConditions.join(' AND ')} GROUP BY ${groupBy}`;
-  const escapedPath = outPath.replaceAll("'", "''");
-  return `COPY (${select}) TO '${escapedPath}' (FORMAT PARQUET)`;
+  return `COPY (${select}) TO ${sqlStringLiteral(outPath)} (FORMAT PARQUET)`;
 }
 
 /** Build the cardinality probe behind the grain cost/benefit estimator (rollup
@@ -1335,9 +1356,10 @@ export function buildRollupPartitionQuery(
  *  distinct-counts and approx error compounds across the ratio. A leave-one-out
  *  can only lower the count, so multipliers are ≥ 1 (also clamped in the estimator).
  *
- *  `grainColumns` come from `rollupGrainColumns` over the candidate dimensions
- *  (usage_date first) and are projected by `buildSource` — the same trusted set
- *  `buildRollupPartitionQuery` interpolates. Exclusion rows are dropped so the
+ *  `grainColumns` normally come from `rollupGrainColumns` over the candidate
+ *  dimensions (usage_date first) and are projected by `buildSource` — the same
+ *  set `buildRollupPartitionQuery` interpolates. They are caller-supplied, so
+ *  each entry is identifier-checked before any SQL is assembled. Exclusion rows are dropped so the
  *  counts match what the rollup would actually store. `chr(31)` (unit separator)
  *  joins the tuple so distinct values never collide across columns. */
 export function buildGrainProbeQuery(
@@ -1348,6 +1370,7 @@ export function buildGrainProbeQuery(
   // Canonical period check (matches buildParquetSource → assertBillingPeriod),
   // run up front so a bad period fails before the probe SQL is assembled.
   assertBillingPeriod(period);
+  for (const col of grainColumns) assertSafeColumnIdentifier(col, 'grain probe column');
   const { dataDir, dimensions, orgAccountsPath, providers, accountReverseMap, costScope } = opts;
   const costMetric = costScope?.costMetric ?? DEFAULT_COST_METRIC;
 
@@ -1390,7 +1413,8 @@ export function buildGrainProbeQuery(
   // compounds across the loo ÷ grain ratio, fabricating spurious ×1.1–×1.5
   // impacts for near-redundant dims).
   // 64-bit hash of a grain tuple — the 8-byte distinct key (see above). `cols`
-  // are trusted grain columns (no user values), same interpolation as the rest.
+  // are grain columns identifier-checked at the top of this function (and by
+  // rollupGrainDimensions for the per-dimension subsets) — no user values.
   const grainHashExpr = (cols: readonly string[]): string => `hash(concat_ws(chr(31), ${cols.join(', ')}))`;
   // Per-dimension cardinality and leave-one-out grain. card_<i> is the
   // dimension's own distinct count (single column — cheap, kept exact); loo_<i>

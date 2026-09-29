@@ -2,7 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { join } from 'node:path';
 import { loadConfig, loadDimensions, loadOrgTree, ConfigValidationError } from '../config/index.js';
 import { validateConfig, validateDimensions, validateOrgTree } from '../config/validator.js';
-import type { AwsProviderConfig, GcpProviderConfig, ProviderConfig } from '../types/config.js';
+import { dimensionsConfigToYaml } from '../config/dimensions-serialize.js';
+import type { AwsProviderConfig, DimensionsConfig, GcpProviderConfig, ProviderConfig } from '../types/config.js';
+import { OU_PATH_SOURCE_KEY } from '../types/config.js';
+import { asDimensionId } from '../types/branded.js';
 
 const fixturesDir = join(import.meta.dirname, '..', '__fixtures__', 'config');
 
@@ -448,6 +451,72 @@ describe('validateDimensions', () => {
       tags: [{ tagName: 'x', label: 'X', aliases: { production: [], development: ['dev'] } }],
     });
     expect(dims.tags[0]?.aliases).toEqual({ development: ['dev'] });
+  });
+
+  // #452: validation used to drop useRegionNames (so mergeDefaultBuiltIns
+  // reset it to true on every load) and tag descriptions.
+  it.each([true, false])('keeps useRegionNames=%s', (useRegionNames) => {
+    const dims = validateDimensions({
+      builtIn: [{ name: 'region', label: 'Region', field: 'region', useRegionNames }],
+      tags: [],
+    });
+    expect(dims.builtIn[0]?.useRegionNames).toBe(useRegionNames);
+  });
+
+  it('ignores a non-boolean useRegionNames, like enabled', () => {
+    const dims = validateDimensions({
+      builtIn: [{ name: 'region', label: 'Region', field: 'region', useRegionNames: 'yes' }],
+      tags: [],
+    });
+    expect(dims.builtIn[0]).not.toHaveProperty('useRegionNames');
+  });
+
+  it('keeps a tag description', () => {
+    const dims = validateDimensions({
+      builtIn: [],
+      tags: [{ tagName: 'team', label: 'Team', description: 'Owning team' }],
+    });
+    expect(dims.tags[0]?.description).toBe('Owning team');
+  });
+
+  it('round-trips every serialized field through validation unchanged', () => {
+    const full: DimensionsConfig = {
+      builtIn: [
+        {
+          name: asDimensionId('account'),
+          label: 'Account',
+          field: 'account_id',
+          displayField: 'account_name',
+          enabled: false,
+          description: 'Linked account',
+          normalize: 'lowercase',
+          aliases: { prod: ['production'] },
+          useOrgAccounts: true,
+          accountNameFromTag: 'Name',
+          nameStripPatterns: [' production$'],
+          useRegionNames: false,
+          defaultFilterValues: ['123'],
+        },
+        { name: asDimensionId('region'), label: 'Region', field: 'region', useRegionNames: false },
+      ],
+      tags: [{
+        tagName: 'team',
+        label: 'Team',
+        concept: 'owner',
+        normalize: 'lowercase-kebab',
+        separator: '/',
+        aliases: { core: ['core_banking'] },
+        accountTagFallback: OU_PATH_SOURCE_KEY,
+        missingValueTemplate: 'unknown-{fallback}',
+        pathSegment: { separator: '/', index: -1 },
+        enabled: false,
+        description: 'Owning team',
+        defaultFilterValues: ['core'],
+      }],
+      order: ['builtin:account', 'tag:team'],
+    };
+    const serialized = dimensionsConfigToYaml(full);
+    expect(dimensionsConfigToYaml(validateDimensions(serialized))).toEqual(serialized);
   });
 });
 

@@ -48,12 +48,25 @@ export function useQuery<T>(
   const [state, setState] = useState<QueryState<T>>({ status: 'idle' });
   const [retryCount, setRetryCount] = useState(0);
 
-  // Report query completion to the surrounding dashboard widget slot (if any)
-  // so the load scheduler can free a concurrency slot for the next widget.
-  // Null outside a LazyWidgetSlot, so this is a no-op for non-widget queries.
+  // Report completion to the surrounding dashboard widget slot (if any) so the
+  // load scheduler can free a concurrency slot for the next widget. Null
+  // outside a LazyWidgetSlot, so this is a no-op for non-widget queries.
   const slot = useWidgetSlot();
   const slotRef = useRef(slot);
   slotRef.current = slot;
+
+  // Release only once the settled state has COMMITTED, not when the promise
+  // settles. Results are applied in a transition, transitions render as one
+  // batch, and the scheduler mounting the next widget is an urgent update that
+  // restarts that batch. Releasing on promise settle therefore mounted the next
+  // wave before this widget's result painted, and its data only appeared once
+  // every widget on the page had loaded and rendered together (seconds under
+  // load). Releasing after commit shows each wave's results before the next
+  // wave starts. A widget that never settles is still released by the
+  // slot's fallback timer.
+  useEffect(() => {
+    if (state.status === 'success' || state.status === 'error') slotRef.current?.onSettled();
+  }, [state]);
 
   useEffect(() => {
     const cancelled = { current: false };
@@ -64,8 +77,7 @@ export function useQuery<T>(
     const timer = setTimeout(() => {
       fetcher()
         .then((data) => { handleFetchSuccess(data, cancelled, setState); })
-        .catch((err: unknown) => { handleFetchError(err, cancelled, retryCount, setState, setRetryCount); })
-        .finally(() => { slotRef.current?.onSettled(); });
+        .catch((err: unknown) => { handleFetchError(err, cancelled, retryCount, setState, setRetryCount); });
     }, delay);
 
     return () => {

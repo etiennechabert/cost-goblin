@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { assertBillingPeriod, assertDateString, assertHourString, assertTier, isSafeColumnIdentifier, SecurityError } from '../query/identifier-validator.js';
+import { assertBillingPeriod, assertDateString, assertHourString, assertSafeColumnIdentifier, assertTier, isSafeColumnIdentifier, SecurityError } from '../query/identifier-validator.js';
 
 describe('isSafeColumnIdentifier', () => {
   it('accepts bare snake_case column identifiers', () => {
@@ -23,6 +23,38 @@ describe('isSafeColumnIdentifier', () => {
     ]) {
       expect(isSafeColumnIdentifier(bad)).toBe(false);
     }
+  });
+});
+
+describe('assertSafeColumnIdentifier', () => {
+  it('accepts bare column identifiers', () => {
+    expect(() => { assertSafeColumnIdentifier('account_id', 'test'); }).not.toThrow();
+    expect(() => { assertSafeColumnIdentifier('tag_team', 'test'); }).not.toThrow();
+  });
+
+  it('rejects anything that is not a bare identifier', () => {
+    for (const bad of ['a b', "a'b", '']) {
+      expect(() => { assertSafeColumnIdentifier(bad, 'test'); }).toThrow(SecurityError);
+    }
+  });
+
+  it('names the context in the message', () => {
+    expect(() => { assertSafeColumnIdentifier('a b', 'builtIn.field'); }).toThrow(/builtIn\.field/);
+  });
+
+  it('echoes at most the first 40 characters of an oversized input', () => {
+    const huge = `${'x'.repeat(40)}${'y'.repeat(460)} OR 1=1`;
+    let message = '';
+    try {
+      assertSafeColumnIdentifier(huge, 'test');
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+    expect(message).toContain('x'.repeat(40));
+    // The 41st character onward is never echoed.
+    expect(message).not.toContain('xy');
+    expect(message).not.toContain('yy');
+    expect(message).not.toContain('OR 1=1');
   });
 });
 

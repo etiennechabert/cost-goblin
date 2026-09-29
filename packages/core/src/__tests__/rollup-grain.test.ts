@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { rm } from 'node:fs/promises';
 import { buildSource, buildRollupPartitionQuery } from '../query/builder.js';
 import { rollupGrainColumns, rollupGrainDimensions } from '../rollup/grain.js';
+import { SecurityError } from '../query/identifier-validator.js';
 import { FIXTURE_PROVIDER_NAME } from '../__fixtures__/layout.js';
 import type { DimensionsConfig } from '../types/config.js';
 import type { CostScopeConfig } from '../types/cost-scope.js';
@@ -101,6 +102,45 @@ describe('rollupGrainDimensions', () => {
     };
     const dims = rollupGrainDimensions(shared);
     expect(dims.map(d => d.column)).toEqual(['region', 'service']);
+  });
+});
+
+describe('grain producers check identifiers', () => {
+  // Unvalidated configs (e.g. a renderer payload): the producers must reject
+  // anything that is not a bare column identifier, since both feed the
+  // rollup COPY and the grain probe verbatim.
+  const unsafeField: DimensionsConfig = {
+    builtIn: [{ name: asDimensionId('service'), label: 'Service', field: 'service, (SELECT 1)' }],
+    tags: [],
+  };
+  const unsafeDisplay: DimensionsConfig = {
+    builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id', displayField: "account_name'" }],
+    tags: [],
+  };
+
+  it('rollupGrainColumns rejects an unsafe field or displayField', () => {
+    expect(() => rollupGrainColumns(unsafeField)).toThrow(SecurityError);
+    expect(() => rollupGrainColumns(unsafeDisplay)).toThrow(SecurityError);
+  });
+
+  it('rollupGrainDimensions rejects an unsafe field or displayField', () => {
+    expect(() => rollupGrainDimensions(unsafeField)).toThrow(SecurityError);
+    expect(() => rollupGrainDimensions(unsafeDisplay)).toThrow(SecurityError);
+  });
+
+  it('leaves a disabled unsafe dim alone (it never enters the grain)', () => {
+    const disabled: DimensionsConfig = {
+      builtIn: [{ name: asDimensionId('service'), label: 'Service', field: 'service, (SELECT 1)', enabled: false }],
+      tags: [],
+    };
+    expect(rollupGrainColumns(disabled)).toEqual(['usage_date']);
+    expect(rollupGrainDimensions(disabled)).toEqual([]);
+  });
+
+  it('keeps the valid-config grain unchanged', () => {
+    expect(rollupGrainColumns(dimensions)).toEqual([
+      'usage_date', 'account_id', 'account_name', 'region', 'service', 'tag_environment', 'tag_team',
+    ]);
   });
 });
 
