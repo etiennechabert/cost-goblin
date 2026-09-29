@@ -11,6 +11,7 @@ import {
   isStringRecord,
 } from '@costgoblin/core';
 import type { GcpProject, GcsBrowseResult } from '@costgoblin/core';
+import { awsSharedConfigFiles } from '../aws-shared-files.js';
 import { upsertWizardProvider } from '../config-upsert.js';
 import { buildConfigTemplate, buildDimensionsTemplate, PROVIDER_ABSENT_DIMENSIONS } from '../config-templates.js';
 import { classifyManifestColumns, parseManifestColumnNames, selectManifestKey } from '../setup-manifest.js';
@@ -90,14 +91,13 @@ export function registerSetupHandlers(app: AppContext): void {
 
   ipcMain.handle('setup:list-profiles', async (): Promise<string[]> => {
     const fs = await import('node:fs/promises');
-    const path = await import('node:path');
     const os = await import('node:os');
 
     const profiles = new Set<string>();
     profiles.add('default');
 
-    for (const filename of ['config', 'credentials']) {
-      const filePath = path.join(os.homedir(), '.aws', filename);
+    const { configFile, credentialsFile } = awsSharedConfigFiles(process.env, os.homedir());
+    for (const filePath of [configFile, credentialsFile]) {
       try {
         const content = await fs.readFile(filePath, 'utf-8');
         for (const line of content.split('\n')) {
