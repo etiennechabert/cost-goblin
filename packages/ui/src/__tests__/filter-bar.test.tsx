@@ -107,6 +107,30 @@ describe('FilterBar', () => {
     expect(document.activeElement).not.toBe(search);
   });
 
+  it('"All" adds the values matching the search and keeps the ones it hides', async () => {
+    const onFilterChange = vi.fn<(filters: FilterMap) => void>();
+    renderFilterBar({ onFilterChange });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByText('Team'));
+    await waitFor(() => {
+      expect(screen.getByText('platform')).toBeDefined();
+    });
+    await user.click(screen.getByText('Clear'));
+    await user.click(screen.getByText('platform'));
+    await user.type(screen.getByPlaceholderText(/^Search Team/), 'da');
+
+    // Same count (1 selected, 1 visible) but `data` isn't selected yet.
+    const all = screen.getByRole('button', { name: 'All' });
+    expect(all).toHaveProperty('disabled', false);
+    await user.click(all);
+    expect(all).toHaveProperty('disabled', true);
+    await user.click(screen.getByText('Apply'));
+
+    const picked = onFilterChange.mock.calls[0]?.[0]?.[asDimensionId('tag_team')] ?? [];
+    expect([...picked].sort()).toEqual([asTagValue('data'), asTagValue('platform')]);
+  });
+
   it('unchecking a value and clicking Apply excludes it', async () => {
     const onFilterChange = vi.fn();
     renderFilterBar({ onFilterChange });

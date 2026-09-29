@@ -44,11 +44,11 @@ function migrateLocked(cfg: DimensionsConfig): { config: DimensionsConfig; chang
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useUnsavedChanges } from '../hooks/use-unsaved-changes.js';
 import { useQuery } from '../hooks/use-query.js';
-import { focusOnMount } from '../lib/focus-on-mount.js';
 import { useDebouncedValue } from '../hooks/use-debounced-value.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { ConfirmModal } from '../components/confirm-modal.js';
 import { AliasSuggestions } from '../components/alias-suggestions.js';
+import { focusOnMount } from '../lib/focus-on-mount.js';
 
 function useClickOutsideDismiss(
   containerRef: React.RefObject<HTMLDivElement | null>,

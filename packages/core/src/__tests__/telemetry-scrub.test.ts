@@ -9,18 +9,26 @@ describe('redactSensitiveString', () => {
   it('redacts plus-tagged addresses and back-to-back addresses', () => {
     expect(redactSensitiveString('jane.doe+tag@example.co.uk')).toBe('[redacted-email]');
     expect(redactSensitiveString('a@b.c+x@y.z')).toBe('[redacted-email][redacted-email]');
-    expect(redactSensitiveString(`${'x'.repeat(64)}@example.com`)).toBe('[redacted-email]');
   });
 
-  it('redacts the last 64 characters of an over-long local part', () => {
-    expect(redactSensitiveString(`${'y'.repeat(70)}@example.com`)).toBe(`${'y'.repeat(6)}[redacted-email]`);
+  it('redacts the whole run before `@`, at the 64-char cap and past it', () => {
+    expect(redactSensitiveString(`${'x'.repeat(64)}@example.com`)).toBe('[redacted-email]');
+    expect(redactSensitiveString(`${'y'.repeat(65)}@example.com`)).toBe('[redacted-email]');
+    expect(redactSensitiveString(`a@b.c+${'z'.repeat(70)}@y.z`)).toBe('[redacted-email][redacted-email]');
+    // Not emails, but the same shape: a token in URL userinfo, a glued account ID.
+    const jwt = `eyJhbGciOiJIUzI1NiJ9.${'e'.repeat(80)}.sig-_x`;
+    expect(redactSensitiveString(`https://oauth2:${jwt}@git.example.com/r.git`)).toBe(
+      'https://oauth2:[redacted-email]/r.git',
+    );
+    expect(redactSensitiveString(`acct-123456789012-${'x'.repeat(57)}.svc@example.com`)).toBe('[redacted-email]');
   });
 
   it('scans a long run of word characters in linear time', () => {
     // Unbounded, this took ~18 s: every start position rescanned to the end.
+    // The `@` is load-bearing — without one, redactEmails never runs a regex.
     const blob = 'a'.repeat(200_000);
     const started = performance.now();
-    expect(redactSensitiveString(blob)).toBe(blob);
+    expect(redactSensitiveString(`${blob} x@y.z`)).toBe(`${blob} [redacted-email]`);
     expect(performance.now() - started).toBeLessThan(1000);
   });
 

@@ -304,9 +304,9 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
                     </button>
                     <button
                       type="button"
-                      onClick={() => { setDraft(filteredValues.map(v => v.value)); }}
+                      onClick={() => { setDraft(prev => [...new Set([...prev, ...filteredValues.map(v => v.value)])]); }}
                       className="text-xs text-text-secondary hover:text-accent"
-                      disabled={filteredValues.length === 0 || draft.length === filteredValues.length}
+                      disabled={filteredValues.every(v => draft.includes(v.value))}
                     >
                       All
                     </button>
