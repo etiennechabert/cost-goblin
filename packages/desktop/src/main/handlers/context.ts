@@ -7,9 +7,7 @@ import { RollupStore, type BuildPartitionSql, type RollupShape } from '../rollup
 import { traceSpan, SPAN_OP, type SpanOptions } from '../telemetry/tracing.js';
 import { BaselineStore, type BaselineEngineDeps } from '../baselines-store.js';
 import {
-  applyNormalizationRule,
   applyRegionFriendlyNames,
-  applyStripPatterns,
   DEFAULT_COST_METRIC,
   dimensionIdSet,
   loadConfig,
@@ -36,6 +34,7 @@ import {
   isS3SyncDownloadFailure,
 } from '@costgoblin/core';
 import { buildAccountReverseMap } from './query-utils.js';
+import { applyAccountNameTransforms } from './account-name-transforms.js';
 import { type TemplateProviderType } from '../config-templates.js';
 import { mergeDefaultBuiltIns } from './dimensions-merge.js';
 import type {
@@ -166,20 +165,6 @@ async function loadAccountCsv(
     }
   } catch { /* no raw dir */ }
   return map;
-}
-
-function applyAccountNameTransforms(
-  raw: Map<string, string>,
-  normalize: import('@costgoblin/core').NormalizationRule | undefined,
-  patterns: readonly string[] | undefined,
-): Map<string, string> {
-  if (normalize === undefined && (patterns === undefined || patterns.length === 0)) return raw;
-  return new Map([...raw].map(([id, name]) => {
-    let v = name;
-    if (normalize !== undefined) v = applyNormalizationRule(v, normalize);
-    if (patterns !== undefined && patterns.length > 0) v = applyStripPatterns(v, patterns);
-    return [id, v];
-  }));
 }
 
 function extractAccountTagEntry(acct: unknown): { id: string; tags: Record<string, string>; ouPath: string } | null {

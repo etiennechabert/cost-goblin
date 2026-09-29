@@ -1,20 +1,10 @@
 import { ipcMain } from 'electron';
-import { applyNormalizationRule, applyStripPatterns, buildGrainProbeQuery, buildSource, computeRollupEstimate, dimensionsConfigToYaml, emptyRollupEstimate, generateAliasSuggestions, isStringRecord, rollupGrainColumns, rollupGrainDimensions, sqlEscapeString } from '@costgoblin/core';
-import type { AliasSuggestion, DimensionsConfig, NormalizationRule, RollupGrainEstimate } from '@costgoblin/core';
+import { applyNormalizationRule, buildGrainProbeQuery, buildSource, computeRollupEstimate, dimensionsConfigToYaml, emptyRollupEstimate, generateAliasSuggestions, isStringRecord, rollupGrainColumns, rollupGrainDimensions, sqlEscapeString } from '@costgoblin/core';
+import type { AliasSuggestion, ColumnValuesPreview, DimensionsConfig, NormalizationRule, RollupGrainEstimate } from '@costgoblin/core';
 import { type AppContext, loadOrgAccountsMap } from './context.js';
-import { parseDimensionsPayload } from './dimensions-payload.js';
+import { parseDimensionsPayload, parseDimensionsSavePayload } from './dimensions-payload.js';
+import { applyNormalizeAndStrip, mergeValuesByLabel, NO_STRIP_ISSUES, parsePreviewStripPatterns, type ValueCostPair } from './dimensions-preview.js';
 import { rawGlobLiteral, toNum, toStr } from './query-utils.js';
-
-type ValueCostPair = { value: string; cost: number };
-
-function mergeValuesByLabel(values: ValueCostPair[], labelFn: (v: string) => string): ValueCostPair[] {
-  const merged = new Map<string, number>();
-  for (const v of values) {
-    const label = labelFn(v.value);
-    merged.set(label, (merged.get(label) ?? 0) + v.cost);
-  }
-  return [...merged.entries()].map(([value, cost]) => ({ value, cost })).sort((a, b) => b.cost - a.cost);
-}
 
 async function applyRegionPreview(
   values: ValueCostPair[],
@@ -34,22 +24,6 @@ async function applyRegionPreview(
     if (info === undefined) return raw;
     const label = pick(info);
     return label.length > 0 ? label : raw;
-  });
-}
-
-function applyNormalizeAndStrip(
-  values: ValueCostPair[],
-  field: string,
-  opts: { normalize?: NormalizationRule; nameStripPatterns?: readonly string[] } | undefined,
-): ValueCostPair[] {
-  const stripPatterns = field === 'account_id' ? opts?.nameStripPatterns : undefined;
-  const normalize = opts?.normalize;
-  if (normalize === undefined && (stripPatterns === undefined || stripPatterns.length === 0)) return values;
-  return mergeValuesByLabel(values, (raw) => {
-    let key = raw;
-    if (normalize !== undefined) key = applyNormalizationRule(key, normalize);
-    if (stripPatterns !== undefined && stripPatterns.length > 0) key = applyStripPatterns(key, stripPatterns);
-    return key;
   });
 }
 
@@ -161,16 +135,21 @@ export function registerDimensionsHandlers(app: AppContext): void {
   // Distinct values + cost for a built-in column — powers the preview on the
   // built-in editor ("Service has 120 distinct values, top 20 by cost are...").
   // Scans the most recent daily period so the preview loads fast.
-  ipcMain.handle('dimensions:discover-column-values', async (_event, field: string, opts?: { useOrgAccounts?: boolean; accountNameFromTag?: string; nameStripPatterns?: readonly string[]; normalize?: NormalizationRule; useRegionNames?: boolean; dimName?: string }): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }> => {
+  ipcMain.handle('dimensions:discover-column-values', async (_event, field: string, opts?: { useOrgAccounts?: boolean; accountNameFromTag?: string; nameStripPatterns?: readonly string[]; normalize?: NormalizationRule; useRegionNames?: boolean; dimName?: string }): Promise<ColumnValuesPreview> => {
+    // Renderer input, run on the main thread: shape-check the strip patterns
+    // (string[] within the save caps) before any other work, then use only
+    // the parsed list. `opts?.` is safe on any IPC value (null, a number, ...).
+    const nameStripPatterns = parsePreviewStripPatterns(opts?.nameStripPatterns);
+    const empty: ColumnValuesPreview = { values: [], distinctCount: 0, period: '', stripIssues: NO_STRIP_ISSUES };
     // Whitelist columns we know are safe to embed in SQL. These match the
     // aliases emitted by buildSource so the query plans identically to what
     // the rest of the app does.
     const ALLOWED = new Set(['account_id', 'account_name', 'region', 'service', 'service_code', 'service_category', 'charge_category', 'pricing_category', 'commitment_status', 'operation', 'sku_meter']);
-    if (!ALLOWED.has(field)) return { values: [], distinctCount: 0, period: '' };
+    if (!ALLOWED.has(field)) return empty;
 
     const providers = await getQueryProviders('daily');
     const firstProvider = providers[0];
-    if (firstProvider === undefined) return { values: [], distinctCount: 0, period: '' };
+    if (firstProvider === undefined) return empty;
 
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
@@ -180,7 +159,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
       dirs = (await fs.readdir(rawDir)).filter(d => /^daily-\d{4}-(0[1-9]|1[0-2])$/.test(d)).sort((a, b) => a.localeCompare(b));
     } catch { /* no data */ }
     const latest = dirs.at(-1);
-    if (latest === undefined) return { values: [], distinctCount: 0, period: '' };
+    if (latest === undefined) return empty;
 
     // Query through buildSource — the same projection the Explorer and rollup
     // use — so the preview sees aliased columns AND the marketplace
@@ -225,16 +204,17 @@ export function registerDimensionsHandlers(app: AppContext): void {
       values = await applyRegionPreview(values, opts, getRegionMap);
     }
 
-    values = applyNormalizeAndStrip(values, field, opts);
+    const transformed = applyNormalizeAndStrip(values, field, { normalize: opts?.normalize, nameStripPatterns });
 
-    return { values, distinctCount, period: latest.replace(/^daily-/, '') };
+    return { values: transformed.values, distinctCount, period: latest.replace(/^daily-/, ''), stripIssues: transformed.stripIssues };
   });
 
   // Validates before writing and serializes only the PARSED object, so a
   // renderer payload (or an edited draft) can never persist a dimensions.yaml
   // that fails the next load — it is rejected here, visibly, instead.
   async function saveDimensionsConfig(payload: unknown): Promise<void> {
-    const config = parseDimensionsPayload(payload);
+    // Persisting: over-limit nameStripPatterns are rejected, not dropped.
+    const config = parseDimensionsSavePayload(payload);
     const yaml = await import('yaml');
     const fs = await import('node:fs/promises');
     await fs.writeFile(ctx.dimensionsPath, yaml.stringify(dimensionsConfigToYaml(config)));
