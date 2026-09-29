@@ -9,6 +9,11 @@ import { telemetry } from './telemetry/controller.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+// Worker bundles are built by `npm run build:worker` (esbuild) into out/worker/
+// — sibling to out/main/ where this file lives. We resolve up one level then
+// into out/worker/ to find them. The shared app instance and the MCP server's
+// dedicated sandboxed instance are both spawned from this bundle.
+const DUCKDB_WORKER_PATH = join(__dirname, '..', 'worker', 'duckdb-worker.cjs');
 import type { LogEntry } from '@costgoblin/core';
 import { createDuckDBClient } from './duckdb-client.js';
 import type { DuckDBClient } from './duckdb-client.js';
@@ -186,6 +191,7 @@ async function createWindow(db: DuckDBClient, syncClient: SyncClient, rollupConc
     dataDir: wsEnv.dataDir,
     stateDir: wsEnv.stateDir,
     workspaceEnv: wsEnv,
+    duckdbWorkerPath: DUCKDB_WORKER_PATH,
   });
 
   // Apply the persisted rollup-build-parallelism override (perf:set updates it
@@ -311,11 +317,7 @@ async function main(): Promise<void> {
     logger.warn(`provider-layout migration failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  // Worker bundles are built by `npm run build:worker` (esbuild) into out/worker/
-  // — sibling to out/main/ where this file lives. We resolve up one level then
-  // into out/worker/ to find them.
-  const duckdbWorkerPath = join(__dirname, '..', 'worker', 'duckdb-worker.cjs');
-  const db = await createDuckDBClient(duckdbWorkerPath);
+  const db = await createDuckDBClient(DUCKDB_WORKER_PATH);
   const tempDir = wsEnv.tempDir;
   mkdirSync(tempDir, { recursive: true });
   const perf = readPerformanceOverrides(wsEnv.stateDir);

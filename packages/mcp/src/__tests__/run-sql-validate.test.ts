@@ -54,4 +54,28 @@ describe('validateRunSqlQuery', () => {
   it('allows identifiers that merely contain a blocked name as a substring', () => {
     expect(validateRunSqlQuery('SELECT query_count, readonly_flag FROM costs')).toBeNull();
   });
+
+  it('blocks the json_execute_serialized_sql evaluator by name', () => {
+    expect(
+      validateRunSqlQuery("SELECT * FROM json_execute_serialized_sql(json_serialize_sql('SELECT content FROM read_text(''/x'')'))"),
+    ).toMatch(/json_execute_serialized_sql/);
+  });
+
+  // Known guard misses (#594, VULN-003). The guard is defence in depth only;
+  // the sandboxed MCP DuckDB instance is what refuses these (see
+  // duckdb-sandbox.integration.test.ts and the run_sql cases in
+  // mcp-server.test.ts). Recorded so a future guard change is a visible,
+  // deliberate diff rather than a silent assumption that they are blocked.
+  describe('known misses — refused by the DuckDB sandbox, not by this guard', () => {
+    it.each([
+      ['a double-quoted alias containing a quote hides the call', `SELECT 1 AS "a'b", * FROM read_text('/home/u/.aws/credentials')`],
+      ['a comma join onto a string path skips the FROM/JOIN check', "SELECT * FROM (SELECT 1 AS x) AS costs, '/home/u/.config/gcloud/application_default_credentials.json'"],
+      ['a quoted function name dodges the name pattern', `SELECT * FROM "read_text"('/home/u/.aws/credentials')`],
+      ['a quoted evaluator name dodges the name pattern', `SELECT * FROM "json_execute_serialized_sql"(json_serialize_sql('SELECT content FROM read_text(''/home/u/.aws/credentials'')'))`],
+      ['a quote-desynced stacked COPY ending in its own LIMIT', `SELECT 1 AS "a'b"; COPY (SELECT 42) TO '/home/u/x.csv'; SELECT 1 LIMIT 1`],
+      ['a quote-desynced stacked ATTACH', `SELECT 1 AS "a'b"; ATTACH '/home/u/x.db' AS x; SELECT 1 LIMIT 1`],
+    ])('%s: passes the guard', (_label, sql) => {
+      expect(validateRunSqlQuery(sql)).toBeNull();
+    });
+  });
 });
