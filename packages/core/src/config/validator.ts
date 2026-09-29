@@ -54,7 +54,10 @@ function isValidNormalizationRule(value: string): value is NormalizationRule {
   return value === 'lowercase' || value === 'uppercase' || value === 'lowercase-kebab' || value === 'lowercase-underscore' || value === 'camelCase';
 }
 
-function hasControlChar(value: string): boolean {
+/** True when `value` holds a C0 control character (U+0000–U+001F) or DEL.
+ *  Exported so other untrusted-string gates (e.g. peer-shared enrichment)
+ *  reuse this one loop instead of growing their own control-char regex. */
+export function hasControlChar(value: string): boolean {
   // Control chars are single BMP units, so comparing each code point's string
   // form directly is exact — and avoids the `| undefined` arm codePointAt(i)
   // would force for an index the loop already guarantees is in range.

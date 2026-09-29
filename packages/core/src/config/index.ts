@@ -1,5 +1,5 @@
 export { loadConfig, loadDimensions, loadOrgTree, loadViews, loadCostScope } from './loader.js';
-export { validateConfig, validateDimensions, validateOrgTree, ConfigValidationError, assertObject, assertArray, assertString, assertNumber } from './validator.js';
+export { validateConfig, validateDimensions, validateOrgTree, ConfigValidationError, assertObject, assertArray, assertString, assertNumber, hasControlChar } from './validator.js';
 export { validateViews } from './views-validator.js';
 export { LEGACY_DIMENSION_ID_RENAMES, dimensionIdSet, migrateLegacyDimensionId } from './legacy-renames.js';
 export { validateCostScope } from './cost-scope-validator.js';

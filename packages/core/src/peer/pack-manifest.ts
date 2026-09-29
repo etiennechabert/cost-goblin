@@ -35,10 +35,15 @@ export interface PackFileEntry {
 }
 
 /** Per-machine enrichment (AWS-Org/SSM-gated) carried inline so an S3-less
- *  consumer sees real account/region names instead of raw IDs. Small JSON. */
+ *  consumer sees real account/region names instead of raw IDs. Small JSON.
+ *  The publisher ships its files verbatim; a consumer applies them only when
+ *  it pulls the `config` tier, and only after a strict decode. */
 export interface PackEnrichment {
   readonly orgAccounts: string | null;
   readonly regionNames: string | null;
+  /** Still published so older consumers (which wrote it verbatim) keep
+   *  working. Current consumers ignore it and derive the flat account-tags
+   *  file from the decoded `orgAccounts` instead. */
   readonly orgAccountTags: string | null;
 }
 

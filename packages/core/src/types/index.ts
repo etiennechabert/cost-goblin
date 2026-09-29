@@ -150,6 +150,7 @@ export type {
   PullSharedSourceResult,
   SharedCostGoblinConfig,
   SharedDataTier,
+  SharedEnrichmentSummary,
   SharedProviderConfig,
   SharedPullPhase,
   SharedPullProgress,

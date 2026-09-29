@@ -48,6 +48,7 @@ import type {
 } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 import { applyBundleSectionsToDisk, buildCurrentBundle } from './bundle-io.js';
+import { applyPulledEnrichment, enrichmentConsent, summarizePeerEnrichment } from '../peer-enrichment.js';
 import {
   clearSharedSource,
   loadOrCreateIdentity,
@@ -100,10 +101,17 @@ function remapPackPath(packPath: string, localProvider: ProviderName | null): st
 /** Trailing window over which serving throughput is averaged for the banner. */
 const THROUGHPUT_WINDOW_MS = 5000;
 /** A peer counts as "connected" if it fetched within this trailing window.
- *  The client opens a fresh socket per request (keep-alive off), so a raw
- *  open-socket count flaps 0↔1 during a pull; a short activity window keyed by
- *  address is a stable, meaningful "currently pulling" gauge. */
+ *  The client's https.globalAgent keeps sockets alive (the Node default since
+ *  v19), so an open-socket count lingers after a pull ends — until the
+ *  server's keep-alive timeout reaps it — and still churns as pooled sockets
+ *  are recycled; a short activity window keyed by address is a stable,
+ *  meaningful "currently pulling" gauge. */
 const ACTIVE_PEER_WINDOW_MS = 8000;
+/** Sharing stops on its own after this long with no peer request, so a
+ *  forgotten session doesn't leave the listener (and every key ever handed
+ *  out) reachable indefinitely. Each served request pushes it back, and an
+ *  in-flight transfer is never cut. */
+const SHARING_IDLE_TIMEOUT_MS = 30 * 60_000;
 
 /** Reach a host from the sharing key, fetch its manifest, and verify both
  *  the signature and that the publisher matches the pinned key. Shared by
@@ -209,17 +217,16 @@ export function registerDataSharingHandlers(app: AppContext): void {
     };
   }
 
-  async function writeEnrichment(enrichment: PackEnrichment): Promise<void> {
-    const fs = await import('node:fs/promises');
-    const path = await import('node:path');
-    const base = ctx.stateDir;
-    await fs.mkdir(base, { recursive: true });
-    const write = async (name: string, content: string | null): Promise<void> => {
-      if (content !== null) await fs.writeFile(path.join(base, name), content, 'utf-8');
-    };
-    await write('org-accounts.json', enrichment.orgAccounts);
-    await write('region-names.json', enrichment.regionNames);
-    await write('org-account-tags.json', enrichment.orgAccountTags);
+  /** Apply a consented pull's enrichment, logging (never throwing on) files
+   *  the strict decode rejected — a bad name payload must not fail the data
+   *  pull it rode along with. Local files are untouched for rejected parts. */
+  async function importEnrichment(enrichment: PackEnrichment): Promise<void> {
+    const reports = await applyPulledEnrichment(ctx.stateDir, enrichment);
+    for (const report of reports) {
+      if (report.status === 'rejected') {
+        logger.warn('Rejected shared enrichment file; kept the local copy', { file: report.file, reason: report.reason });
+      }
+    }
   }
 
   /** Scan local Parquet, hash every file, and bundle config + enrichment into
@@ -276,8 +283,9 @@ export function registerDataSharingHandlers(app: AppContext): void {
     const secret = loadOrCreateSharingSecret(ctx.configPath);
     const fingerprint = publicKeyFingerprint(identity.publicKey);
     if (server === null) {
-      return { enabled: false, sharingKey: null, label: secret.label, port: null, hosts: [], fingerprint, lastServedAt: null, filesServed: 0, lastPeer: null, bytesServed: 0, connectedClients: 0, bytesPerSecond: 0 };
+      return { enabled: false, sharingKey: null, label: secret.label, port: null, hosts: [], fingerprint, lastServedAt: null, filesServed: 0, lastPeer: null, bytesServed: 0, connectedClients: 0, bytesPerSecond: 0, autoStopsAt: null };
     }
+    const autoStopAt = server.autoStopAt();
     const hosts = lanHosts();
     const sharingKey = encodeSharingKey({
       v: SHARING_KEY_VERSION,
@@ -287,7 +295,11 @@ export function registerDataSharingHandlers(app: AppContext): void {
       psk: secret.psk,
       label: secret.label,
     });
-    return { enabled: true, sharingKey, label: secret.label, port: server.port, hosts, fingerprint, lastServedAt, filesServed, lastPeer, bytesServed, connectedClients: activePeerCount(), bytesPerSecond: bytesPerSecond() };
+    return {
+      enabled: true, sharingKey, label: secret.label, port: server.port, hosts, fingerprint, lastServedAt, filesServed, lastPeer, bytesServed,
+      connectedClients: activePeerCount(), bytesPerSecond: bytesPerSecond(),
+      autoStopsAt: autoStopAt === null ? null : new Date(autoStopAt).toISOString(),
+    };
   }
 
   async function enable(): Promise<DataSharingStatus> {
@@ -300,10 +312,17 @@ export function registerDataSharingHandlers(app: AppContext): void {
     bytesServed = 0;
     peerActivity = new Map();
     byteSamples = [];
-    server = await startSharingServer(
+    const started = await startSharingServer(
       {
         psk: Buffer.from(secret.psk, 'base64url'),
         port: SHARING_PORT,
+        idleTimeoutMs: SHARING_IDLE_TIMEOUT_MS,
+        onAutoStop: () => {
+          // Rotate may already have swapped in a fresh server by the time this
+          // one finishes closing — only clear the slot if it is still ours.
+          if (server === started) server = null;
+          logger.info('Data sharing stopped after being idle', { idleMinutes: SHARING_IDLE_TIMEOUT_MS / 60_000 });
+        },
         onAccess: (event) => {
           lastServedAt = new Date().toISOString();
           lastPeer = event.remoteAddress;
@@ -327,7 +346,8 @@ export function registerDataSharingHandlers(app: AppContext): void {
         },
       },
     );
-    logger.info('Data sharing enabled', { port: server.port });
+    server = started;
+    logger.info('Data sharing enabled', { port: started.port });
     return currentStatus();
   }
 
@@ -340,8 +360,10 @@ export function registerDataSharingHandlers(app: AppContext): void {
     return currentStatus();
   }
 
-  /** Summarize what a verified manifest offers — per-tier months/counts/bytes
-   *  plus the config digest — so the UI can show a month picker before pulling. */
+  /** Summarize what a verified manifest offers — per-tier months/counts/bytes,
+   *  the config digest and the account/region names it would replace — so the
+   *  UI can show a month picker (and disclose the name overwrite) before
+   *  pulling. */
   function buildPreview(signed: SignedPackManifest): SharedSourcePreview {
     const byTier = new Map<SharedDataTier, { periods: Set<string>; fileCount: number; bytes: number }>();
     for (const f of signed.manifest.files) {
@@ -370,6 +392,7 @@ export function registerDataSharingHandlers(app: AppContext): void {
       fingerprint: publicKeyFingerprint(signed.manifest.publisher),
       hasConfig: signed.manifest.configBundle !== null,
       configSummary,
+      enrichment: summarizePeerEnrichment(signed.manifest.enrichment),
       tiers,
     };
   }
@@ -400,7 +423,8 @@ export function registerDataSharingHandlers(app: AppContext): void {
     pullProgress = { active: true, phase: 'connecting', filesDone: 0, filesTotal: 0, currentPeriod: null, bytesDone: 0, bytesTotal: 0, error: null };
     try {
       const { endpoint, signed } = await connect(payload);
-      const wantConfig = selection === undefined || selection.sources.includes('config');
+      // One consent gates both the config bundle and the enrichment.
+      const wantConfig = enrichmentConsent(selection);
       const periodSet = selection?.periods === undefined ? null : new Set(selection.periods);
       // Filter the (already-signed) file list to the chosen tiers + months.
       // No protocol change: the manifest signature covers the whole set; we
@@ -458,9 +482,10 @@ export function registerDataSharingHandlers(app: AppContext): void {
       }
 
       pullProgress = { active: true, phase: 'importing', filesDone: done, filesTotal: total, currentPeriod: null, bytesDone, bytesTotal, error: null };
-      // Enrichment (account/region names) is reference data that makes the
-      // pulled rows readable, so it always lands regardless of the config toggle.
-      await writeEnrichment(signed.manifest.enrichment);
+      // Enrichment (account/region names) overwrites the consumer's own names,
+      // so like the config bundle it lands only with the Configuration tier
+      // ticked — and then only after a strict decode (see peer-enrichment.ts).
+      if (wantConfig) await importEnrichment(signed.manifest.enrichment);
       await clearAllCaches();
 
       const periods = [...new Set(

@@ -17,6 +17,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { formatBytes } from './format.js';
 import { ProfilePicker } from './profile-picker.js';
+import { autoStopLabel } from './sharing-auto-stop.js';
 import { Button } from './ui/button.js';
 
 const DATA_TIER_LABELS: Record<SharedDataTier, string> = {
@@ -176,6 +177,8 @@ function ShareDataSection(): React.JSX.Element {
   }
 
   const enabled = status?.enabled === true;
+  // Recomputed on every status poll (every 3 s while sharing).
+  const autoStop = autoStopLabel(status?.autoStopsAt ?? null, Date.now());
 
   return (
     <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3 flex flex-col gap-2">
@@ -232,6 +235,7 @@ function ShareDataSection(): React.JSX.Element {
                 : lastPullSummary(status)}
             </p>
           </div>
+          {autoStop !== null && <p className="text-xs text-text-muted">{autoStop}</p>}
         </div>
       )}
       {error !== null && <p className="text-xs text-negative break-words">{error}</p>}
@@ -264,6 +268,31 @@ function availablePeriods(preview: SharedSourcePreview): string[] {
   return [...new Set(preview.tiers.flatMap(t => t.periods))].sort((a, b) => a.localeCompare(b));
 }
 
+/** The Configuration tier gates the config bundle AND the account/region
+ *  names, so it is offered whenever the snapshot carries either. */
+function offersConfigTier(preview: SharedSourcePreview): boolean {
+  return preview.hasConfig || preview.enrichment !== null;
+}
+
+function countNoun(n: number, noun: string): string {
+  return `${String(n)} ${noun}${n === 1 ? '' : 's'}`;
+}
+
+/** Discloses that pulling Configuration overwrites this machine's own
+ *  account/region names — or null when the snapshot carries none. A zero
+ *  count is left out of the parenthetical. */
+function enrichmentHint(preview: SharedSourcePreview): string | null {
+  const e = preview.enrichment;
+  if (e === null) return null;
+  const counts = [
+    ...(e.accounts > 0 ? [countNoun(e.accounts, 'account')] : []),
+    ...(e.regions > 0 ? [countNoun(e.regions, 'region')] : []),
+  ];
+  const lead = preview.hasConfig ? 'Also replaces' : 'Replaces';
+  const detail = counts.length > 0 ? ` (${counts.join(', ')})` : '';
+  return `${lead} your account & region names${detail}`;
+}
+
 function ChoosingView({ preview, tiers, periods, onToggleTier, onTogglePeriod, onSetPeriods, onBack, onPull }: Readonly<{
   preview: SharedSourcePreview;
   tiers: ReadonlySet<SharedSourceTier>;
@@ -277,17 +306,21 @@ function ChoosingView({ preview, tiers, periods, onToggleTier, onTogglePeriod, o
   const months = availablePeriods(preview);
   const hasData = DATA_TIERS.some(t => tiers.has(t));
   const canPull = tiers.has('config') || (hasData && periods.size > 0);
+  const namesHint = enrichmentHint(preview);
   return (
     <div className="flex flex-col gap-3">
       <p className="text-sm text-text-primary">
         From <span className="font-medium">{preview.label}</span> — choose what to pull.
       </p>
 
-      {preview.hasConfig && (
+      {offersConfigTier(preview) && (
         <label htmlFor="cg-pull-config-tier" className="grid grid-cols-[auto_1fr] items-start gap-x-2 rounded-lg border border-border bg-bg-tertiary/20 px-3 py-2 cursor-pointer">
           <input id="cg-pull-config-tier" type="checkbox" checked={tiers.has('config')} onChange={() => { onToggleTier('config'); }} className="mt-0.5 accent-accent" />
           <span className="text-sm text-text-primary">Configuration</span>
-          <span className="col-start-2 block text-xs text-text-muted">Dimensions, dashboards, cost scope &amp; org tree — applied under your AWS profile.</span>
+          {preview.hasConfig && (
+            <span className="col-start-2 block text-xs text-text-muted">Dimensions, dashboards, cost scope &amp; org tree — applied under your AWS profile.</span>
+          )}
+          {namesHint !== null && <span className="col-start-2 block text-xs text-text-muted">{namesHint}</span>}
         </label>
       )}
 
@@ -389,7 +422,7 @@ function AddSharedSourceSection({ onPulled, onBusyChange }: Readonly<{
       if (res.status === 'error') { setState({ kind: 'entry', error: res.message }); return; }
       const seed = m === 'stored' ? stored?.selection : undefined;
       const defaultTiers: SharedSourceTier[] = [
-        ...(res.preview.hasConfig ? (['config'] satisfies SharedSourceTier[]) : []),
+        ...(offersConfigTier(res.preview) ? (['config'] satisfies SharedSourceTier[]) : []),
         ...res.preview.tiers.map(t => t.tier),
       ];
       setTiers(new Set(seed?.sources ?? defaultTiers));
