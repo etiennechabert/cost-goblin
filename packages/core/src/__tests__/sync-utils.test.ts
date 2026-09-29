@@ -6,6 +6,7 @@ import {
   groupByPeriod,
   parseAwsCompletedBytes,
   parseEtagsJson,
+  parsePartition,
 } from '../sync/sync-utils.js';
 import type { ManifestFileEntry } from '../sync/manifest.js';
 
@@ -153,5 +154,62 @@ describe('parseAwsCompletedBytes', () => {
 
   it('returns null when total is zero', () => {
     expect(parseAwsCompletedBytes('Completed 0 B/0 B (0 B/s) with 0 file(s) remaining')).toBeNull();
+  });
+});
+
+describe('parsePartition', () => {
+  it.each([
+    ['cost-opt/date=2026-03-15/f.parquet', 'cost-opt/date=2026-03-15/'],
+    ['cost-opt/data/date=2026-03-15/f.snappy.parquet', 'cost-opt/data/date=2026-03-15/'],
+    ['date=2026-03-15/f.parquet', 'date=2026-03-15/'],
+    // The documented Cost Optimization Hub layout: a date= FOLDER holding the parts.
+    ['coh/cost-optimization-recommendations/data/date=2026-03-15/part-00000-0a1b2c.snappy.parquet',
+      'coh/cost-optimization-recommendations/data/date=2026-03-15/'],
+  ])('accepts cost-optimization key %s', (key, prefix) => {
+    expect(parsePartition(key, 'cost-optimization')).toEqual({
+      kind: 'date', prefix, period: '2026-03', date: '2026-03-15',
+    });
+  });
+
+  it.each(['daily', 'hourly'] as const)('accepts a %s billing_period= folder', (tier) => {
+    expect(parsePartition('f/data/billing_period=2026-03/x.snappy.parquet', tier)).toEqual({
+      kind: 'billing-period', prefix: 'f/data/billing_period=2026-03/', period: '2026-03',
+    });
+  });
+
+  it('takes the partition from the LAST folder segment, never an earlier one', () => {
+    expect(parsePartition('cost-opt/update_date=2025-12-31/date=2026-01-01/x.parquet', 'cost-optimization')).toEqual({
+      kind: 'date', prefix: 'cost-opt/update_date=2025-12-31/date=2026-01-01/', period: '2026-01', date: '2026-01-01',
+    });
+  });
+
+  it.each([
+    // date= in the file name: the source used to collapse to the bucket root.
+    'cost-opt/date=2026-01-01_part-0.parquet',
+    // substring match on a different column name
+    'cost-opt/usage_date=2026-01-02/x.parquet',
+    // a folder that merely starts with a date
+    'cost-opt/date=2026-01-01-v2/x.parquet',
+    // used to pull the whole billing_period folder
+    'cost-opt/billing_period=2026-01/date=2026-01-04_x.parquet',
+    'cost-opt/date=2026-01-01/',
+    'x.parquet',
+  ])('rejects cost-optimization key %s', (key) => {
+    expect(parsePartition(key, 'cost-optimization')).toBeNull();
+  });
+
+  it.each([
+    // CUR-era uppercase stays invisible
+    'cur/BILLING_PERIOD=2026-03/x.parquet',
+    'f/billing_period=2026-01_shard0.parquet',
+    'cur/old_billing_period=2026-01/x.parquet',
+    // no date= fallback for the daily/hourly tiers
+    'cur/usage_date=2026-01-02/x.parquet',
+    'cost-opt/date=2026-03-15/f.parquet',
+    'cur/billing_period=2026-01/sub/x.parquet',
+    'billing_period=2026-01',
+  ])('rejects daily key %s', (key) => {
+    expect(parsePartition(key, 'daily')).toBeNull();
+    expect(parsePartition(key, 'hourly')).toBeNull();
   });
 });

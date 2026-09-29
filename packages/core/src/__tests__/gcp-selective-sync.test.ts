@@ -284,6 +284,17 @@ describe('syncGcpSelectedFiles', () => {
     await expect(readdir(rawPeriodDir('2026-01'))).rejects.toThrow();
   });
 
+  it('rejects a period folder that only ENDS in billing_period=YYYY-MM', async () => {
+    // `old_billing_period=2026-01/` has the trailing slash, so an unanchored
+    // match accepted it and rsync'd a folder that is not the export's partition.
+    await expect(syncGcpSelectedFiles({
+      bucketPath: 'gs://focus-export/focus', providerName, dataDir, expectedDataType: 'daily',
+      files: [file('focus/old_billing_period=2026-01/s.parquet', 'crc-1')],
+    })).rejects.toThrow(/No GCP period could be synced/);
+
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
   it('syncs the good periods and only warns when SOME have an odd layout', async () => {
     // A partial mismatch must not fail the whole request — the periods that
     // are laid out correctly still install.

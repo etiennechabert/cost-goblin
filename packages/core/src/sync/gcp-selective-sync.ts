@@ -275,12 +275,14 @@ export interface GcpSelectiveSyncOptions {
  *     .parquet`). `extractPeriod` still matches, so the period survives the
  *     filter, and the source collapses to `gs://bucket/` — mirroring the WHOLE
  *     bucket into one period's staging dir, which the canonicalizer then folds
- *     into that month.
+ *     into that month. The match is anchored to a whole segment, so a folder
+ *     that merely ends in the token (`old_billing_period=2026-01/`) is
+ *     rejected too.
  *   - the prefix comes from a listed object key, and on Windows it reaches
  *     cmd.exe; a key carrying shell metacharacters is rejected rather than
  *     escaped. */
 function isSafePeriodPrefix(prefix: string): boolean {
-  if (!/billing_period=\d{4}-\d{2}\/$/.test(prefix)) return false;
+  if (!/(?:^|\/)billing_period=\d{4}-\d{2}\/$/.test(prefix)) return false;
   return !/["'`$%&|<>^\\\r\n]/.test(prefix);
 }
 
