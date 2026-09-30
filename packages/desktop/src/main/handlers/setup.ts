@@ -3,6 +3,7 @@ import {
   GCS_READ_ONLY_SCOPE,
   assertValidGcsBucketName,
   classifyGcsFolder,
+  dimensionsConfigToYaml,
   findGcloudCli,
   gcloudChildPath,
   gcloudSpawnShape,
@@ -14,8 +15,10 @@ import type { GcpProject, GcsBrowseResult } from '@costgoblin/core';
 import { loadSharedConfigFiles } from '@smithy/shared-ini-file-loader';
 import { awsProfileNames } from '../aws-profiles.js';
 import { upsertWizardProvider } from '../config-upsert.js';
-import { buildConfigTemplate, buildDimensionsTemplate, PROVIDER_ABSENT_DIMENSIONS } from '../config-templates.js';
+import { buildConfigTemplate, buildDimensionsTemplate } from '../config-templates.js';
 import { classifyManifestColumns, parseManifestColumnNames, selectManifestKey } from '../setup-manifest.js';
+import { buildWizardDimensions } from '../setup-dimensions.js';
+import type { WizardTagChoice } from '../setup-dimensions.js';
 import { collectGcsPrefixes, gcsNextPageToken, parseGcloudProjects } from '../setup-gcp.js';
 import type { DetectedReportType } from '../setup-manifest.js';
 import type { AppContext } from './context.js';
@@ -374,11 +377,16 @@ export function registerSetupHandlers(app: AppContext): void {
     costOptRetentionDays?: number | undefined;
     hourlyBucket?: string | undefined;
     costOptBucket?: string | undefined;
-    tags?: { tagName: string; label: string; concept?: string | undefined }[] | undefined;
+    tags?: readonly WizardTagChoice[] | undefined;
   }): Promise<void> => {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
     const { stringify, parse: parseYaml } = await import('yaml');
+
+    // `tags` comes from the renderer: validate the dimensions before either
+    // file is written, so a bad entry fails the save instead of replacing a
+    // working dimensions.yaml with one the next load rejects.
+    const dimensions = buildWizardDimensions(wizardConfig.type, wizardConfig.tags);
 
     const configDir = path.dirname(ctx.configPath);
     await fs.mkdir(configDir, { recursive: true });
@@ -402,79 +410,13 @@ export function registerSetupHandlers(app: AppContext): void {
 
     await fs.writeFile(ctx.configPath, stringify(costgoblinYaml), 'utf-8');
 
-    const builtInDimensions = [
-      {
-        name: 'account',
-        label: 'Account',
-        field: 'account_id',
-        displayField: 'account_name',
-        description: 'AWS account the cost was charged to. Main axis for org/team-level rollups.',
-        useOrgAccounts: true,
-      },
-      {
-        name: 'region',
-        label: 'Region',
-        field: 'region',
-        description: 'AWS region where the resource ran. Useful for spotting unintended multi-region sprawl.',
-      },
-      {
-        name: 'service',
-        label: 'Service',
-        field: 'service',
-        description: 'Service the cost came from (FOCUS ServiceName, e.g. "Amazon Simple Storage Service") — the broadest "what cost me this?" view.',
-      },
-      {
-        name: 'service_category',
-        label: 'Service Category',
-        field: 'service_category',
-        description: 'Standardized FOCUS category (Compute, Storage, Databases). Good for exec summaries.',
-      },
-      {
-        name: 'charge_category',
-        label: 'Charge Category',
-        field: 'charge_category',
-        description: 'Usage vs Purchase vs Tax vs Credit vs Adjustment. Filter this to isolate real usage from billing events.',
-      },
-      {
-        name: 'sku_meter',
-        label: 'SKU Meter',
-        field: 'sku_meter',
-        description: 'Fine-grained usage meter like EUC1-Requests-Tier2. Use for instance/storage-tier breakdowns.',
-      },
-      {
-        name: 'operation',
-        label: 'Operation',
-        field: 'operation',
-        description: 'API operation billed for (RunInstances, GetObject). Useful for API-level cost attribution.',
-        enabled: false,
-      },
-    ];
-
-    const tagDimensions = (wizardConfig.tags ?? []).map(t => ({
-      tagName: t.tagName,
-      label: t.label,
-      ...(t.concept === undefined ? {} : { concept: t.concept }),
-    }));
-
-    // GCP's FOCUS export has no ServiceCategory, and the canonicalizer only
-    // NULL-fills x_Operation and SkuMeter — so scaffolding them for a gcp
-    // provider produces dimensions that render one blank value for every row.
-    // `buildDimensionsTemplate('gcp')` already drops them, and the default-
-    // dimension merge (context.ts) skips re-adding them; all three read the
-    // same PROVIDER_ABSENT_DIMENSIONS map so the routes cannot disagree.
-    const absentDims = wizardConfig.type === 'gcp' ? PROVIDER_ABSENT_DIMENSIONS.gcp : PROVIDER_ABSENT_DIMENSIONS.aws;
-    const dimensionsYaml = {
-      builtIn: builtInDimensions.filter(d => !absentDims.has(d.name)),
-      tags: tagDimensions,
-    };
-
     // Only (re)write dimensions.yaml when the wizard actually collected tag
     // choices or no file exists yet (true first run). A re-run that skipped
     // the tag step — per-tier Configure, Add Provider — must not wipe the
     // user's curated dimensions with the defaults.
     const dimensionsExist = await fs.access(ctx.dimensionsPath).then(() => true, () => false);
     if (!dimensionsExist || wizardConfig.tags !== undefined) {
-      await fs.writeFile(ctx.dimensionsPath, stringify(dimensionsYaml), 'utf-8');
+      await fs.writeFile(ctx.dimensionsPath, stringify(dimensionsConfigToYaml(dimensions)), 'utf-8');
     }
 
     invalidateConfig();
