@@ -112,9 +112,9 @@ test.describe('Widget growth', () => {
 
   test('every widget type stays bounded at every size', async () => {
     // Budget: navigation + waitForQuerySettle (~6s) + widgets on the dashboard
-    // (10s) + every slot mounted (20s) + observation (15s + a window) — the
+    // (10s) + every slot mounted (60s) + observation (15s + a window) — the
     // whole matrix in one test, so well past the 30s default.
-    test.setTimeout(90_000);
+    test.setTimeout(120_000);
     const page = widgetPage;
     await clickNavButton(page, VIEW_NAME);
     await waitForQuerySettle(page);
@@ -127,16 +127,16 @@ test.describe('Widget growth', () => {
     }, { message: 'every matrix widget is on the dashboard', timeout: 10_000 }).toEqual([]);
 
     // Slots mount lazily — only once scrolled near the viewport — so walk
-    // each one into view; the scheduler then mounts them. Re-walk whatever
-    // is still deferred, in case an observer entry was missed.
+    // each one into view; the scheduler then mounts them a few at a time, as
+    // their queries settle. That is ~1s locally but tens of seconds on a
+    // loaded CI runner, hence the budget. Each poll re-walks whatever is still
+    // deferred, in case an observer entry was missed, and a timeout reports
+    // the ids still waiting.
     await page.mouse.move(0, 0); // over the sticky header, so the walk hovers no widget
-    await expect(async () => {
+    await expect.poll(async () => {
       await requestMounts(page);
-      await expect.poll(() => slotIds('[data-widget-state="deferred"]'), {
-        message: 'every widget slot mounts',
-        timeout: 3_000,
-      }).toEqual([]);
-    }).toPass({ timeout: 20_000 });
+      return slotIds('[data-widget-state="deferred"]');
+    }, { message: 'every widget slot mounts', timeout: 60_000, intervals: [1_000] }).toEqual([]);
 
     const { recent, waitedMs } = await observe(page);
 
