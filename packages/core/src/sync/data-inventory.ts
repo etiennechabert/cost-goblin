@@ -1,4 +1,4 @@
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createObjectStoreHandle, parseObjectPath } from './object-store.js';
 import type { ObjectStoreHandle, ProviderAuth } from './object-store.js';
@@ -6,8 +6,8 @@ import type { ManifestFileEntry } from './manifest.js';
 import { logger } from '../logger/logger.js';
 import type { DataTier } from '../types/api.js';
 import type { ProviderName } from '../types/branded.js';
-import { providerEtagPath, providerRawDir } from './provider-paths.js';
-import { parseEtagsJson, parsePartition, partitionFolderLabel } from './sync-utils.js';
+import { providerRawDir } from './provider-paths.js';
+import { hasEtagSidecar, parsePartition, partitionFolderLabel, readEtags } from './sync-utils.js';
 import { getRawDirPrefix } from './tiers.js';
 import { readTierLastSync } from './sync-timestamps.js';
 
@@ -108,14 +108,11 @@ async function getRawPeriodSizes(rawDir: string, tierPrefix: string): Promise<Ma
 /** Whether this tier has ever been synced from S3 (its etag file exists). An
  *  imported snapshot has raw Parquet on disk but no etag file, so this cleanly
  *  separates "AWS configured and synced before" from "imported, no AWS" — the
- *  former should surface credential errors, the latter falls back silently. */
+ *  former should surface credential errors, the latter falls back silently.
+ *  Only a missing etag file means "never synced"; a check that fails for any
+ *  other reason rejects (see `hasEtagSidecar`). */
 export async function hasSyncedTier(dataDir: string, provider: ProviderName, tier: DataTier = 'daily'): Promise<boolean> {
-  try {
-    await stat(providerEtagPath(dataDir, provider, tier));
-    return true;
-  } catch {
-    return false;
-  }
+  return hasEtagSidecar(dataDir, provider, tier);
 }
 
 /** Build an inventory purely from what's on disk — no S3 listing. Used by a
@@ -195,14 +192,9 @@ export async function getDataInventory(
   const diskBytes = await getRawTierSize(rawDir, tierPrefix);
   const lastSync = await readTierLastSync(dataDir, provider, tier);
   const localPeriods = new Set(localPeriodList);
-
-  let savedEtags: Record<string, Record<string, string>> = {};
-  try {
-    const raw = await readFile(providerEtagPath(dataDir, provider, tier), 'utf-8');
-    savedEtags = parseEtagsJson(raw);
-  } catch {
-    // no saved etags yet
-  }
+  // Rejects when the sidecar exists but can't be read: reporting every local
+  // period 'stale' instead would have auto-sync re-download them all.
+  const savedEtags = await readEtags(dataDir, provider, tier);
 
   function getPeriodStatus(period: string, files: ManifestFileEntry[]): PeriodStatus {
     if (!localPeriods.has(period)) return 'missing';

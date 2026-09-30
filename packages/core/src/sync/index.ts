@@ -127,6 +127,7 @@ export {
   listLocalMonths,
   parseEtagsJson,
   pruneEtagPeriod,
+  readEtags,
   resolveBucketPath,
   saveEtags,
 } from './sync-utils.js';

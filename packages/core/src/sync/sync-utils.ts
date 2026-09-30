@@ -261,6 +261,41 @@ async function readEtagSidecarRaw(etagPath: string): Promise<string | null> {
   }
 }
 
+/**
+ * One tier's saved etags, as `saveEtags` recorded them. As strict as the
+ * writers' read: a tier with no sidecar yet has none (`{}`), transient failures
+ * are retried, and anything else rejects. Reading an unreadable sidecar as `{}`
+ * would make every local period look unverified — inventory would report them
+ * all stale (auto-sync re-downloads the whole retention window) and rollup
+ * validation would rebuild every partition.
+ */
+export async function readEtags(
+  dataDir: string,
+  providerName: ProviderName,
+  tier: ExpectedDataType,
+): Promise<EtagSidecar> {
+  const raw = await readEtagSidecarRaw(providerEtagPath(dataDir, providerName, tier));
+  return raw === null ? {} : parseEtagsJson(raw);
+}
+
+/** Whether a tier's sidecar exists, with `readEtags`'s strictness: only ENOENT
+ *  means no, and any other failure — once transient ones have been retried —
+ *  rejects rather than reading as "never synced". */
+export async function hasEtagSidecar(
+  dataDir: string,
+  providerName: ProviderName,
+  tier: ExpectedDataType,
+): Promise<boolean> {
+  const etagPath = providerEtagPath(dataDir, providerName, tier);
+  try {
+    await retryTransient(() => stat(etagPath));
+    return true;
+  } catch (err: unknown) {
+    if (hasErrnoCode(err, ['ENOENT'])) return false;
+    throw err;
+  }
+}
+
 // A writer that dies between writing its temp file and renaming it (the sync
 // worker dies with the app; a crash) never reaches its cleanup, and the temp's
 // random name is never reused, so sweep them. A live update's temp is

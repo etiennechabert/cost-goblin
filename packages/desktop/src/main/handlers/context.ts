@@ -20,8 +20,7 @@ import {
   computeShapeSignature,
   computeOrgAccountsDigest,
   rollupGrainColumns,
-  parseEtagsJson,
-  providerEtagPath,
+  readEtags,
   listLocalMonths,
   logger,
   isStringRecord,
@@ -475,14 +474,13 @@ export function createAppContext(ctx: IpcContext): AppContext {
     return { signature, grainDimensions: rollupGrainColumns(dimensions) };
   }
 
+  // Rejects when the sidecar exists but can't be read. Validating against `{}`
+  // instead marks every partition stale, and the rebuilds are stamped with that
+  // hash, so the next warmup rebuilds them all again.
   async function getEtagsByPeriod(): Promise<Record<string, Record<string, string>>> {
-    const fs = await import('node:fs/promises');
     const provider = await getFirstProviderName();
     if (provider === null) return {};
-    try {
-      const raw = await fs.readFile(providerEtagPath(ctx.dataDir, provider, 'daily'), 'utf-8');
-      return parseEtagsJson(raw);
-    } catch { return {}; }
+    return readEtags(ctx.dataDir, provider, 'daily');
   }
 
   async function buildRollupSqlFor(): Promise<BuildPartitionSql> {
@@ -535,7 +533,18 @@ export function createAppContext(ctx: IpcContext): AppContext {
       const periods = changed.filter(p => available.includes(p));
       if (periods.length === 0) return;
       const shape = await getRollupShape();
-      const etags = await getEtagsByPeriod();
+      let etags: Record<string, Record<string, string>>;
+      try {
+        etags = await getEtagsByPeriod();
+      } catch (err: unknown) {
+        // A sync or delete just changed these months' raw files, so their
+        // partitions are stale, and without the etags a rebuild can't be
+        // stamped. Stop serving them: their queries read raw until the next
+        // warmup rebuilds them.
+        await Promise.allSettled(periods.map(p => rollupStore.deletePeriod(p)));
+        resultCache.clear();
+        throw err;
+      }
       if (!rollupStore.isReady()) await rollupStore.loadAndValidate(shape, etags);
       const buildSql = await buildRollupSqlFor();
       await traceSpan(
