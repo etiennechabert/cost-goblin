@@ -1,10 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-
-// Node-only (node:fs). Exported from the Node entry via utils/index.ts; the
-// browser entry never re-exports the utils barrel.
 
 /** True when `err` is a Node system error carrying one of `codes`. */
 export function hasErrnoCode(err: unknown, codes: readonly string[]): boolean {
@@ -52,8 +49,13 @@ export async function readTextIfExists(path: string): Promise<string | null> {
 // never reused, so sweep them. A live write's temp is milliseconds old: an
 // hour is far past anything still in flight.
 const STALE_TEMP_AGE_MS = 60 * 60 * 1000;
+// Leftovers only come from an earlier process, so one sweep per file per
+// process finds them all.
+const sweptPaths = new Set<string>();
 
 async function sweepStaleTemps(path: string): Promise<void> {
+  if (sweptPaths.has(path)) return;
+  sweptPaths.add(path);
   const dir = dirname(path);
   const prefix = `${basename(path)}.`;
   const names = await readdir(dir).catch((): string[] => []);
@@ -75,16 +77,20 @@ async function sweepStaleTemps(path: string): Promise<void> {
  * temp file beside the target (same filesystem, so the rename is atomic; unique,
  * so concurrent writers never share one), then renamed over it. Transient
  * Windows lock errors on either step are retried; on failure the temp is
- * removed and the previous file is left untouched.
+ * removed and the previous file is left untouched. Like the in-place write it
+ * replaces, it writes through a symlink and keeps the file's permissions.
  */
 export async function writeFileAtomic(path: string, data: string): Promise<void> {
-  await sweepStaleTemps(path);
-  const tmpPath = `${path}.${randomUUID()}.tmp`;
+  const target = await realpath(path).catch(() => path);
+  const mode = await stat(target).then((s) => s.mode & 0o7777, () => null);
+  await sweepStaleTemps(target);
+  const tmpPath = `${target}.${randomUUID()}.tmp`;
   try {
     // Flushed, so the rename can't reach the disk before the data does and
     // leave a power cut with a renamed but empty file.
     await retryTransientFs(() => writeFile(tmpPath, data, { flush: true }));
-    await retryTransientFs(() => rename(tmpPath, path));
+    if (mode !== null) await chmod(tmpPath, mode);
+    await retryTransientFs(() => rename(tmpPath, target));
   } catch (err: unknown) {
     await rm(tmpPath, { force: true }).catch(() => { /* best effort */ });
     throw err;
