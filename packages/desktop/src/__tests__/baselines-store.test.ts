@@ -204,14 +204,14 @@ describe('BaselineStore', () => {
     it('setConfig overrides env, persists across a reload; resetConfig restores env-driven defaults', async () => {
       vi.stubEnv('COSTGOBLIN_BASELINES_WINDOW_DAYS', '3');
       const custom: BaselinesDiscoveryConfig = { ...DISCOVERY_CONFIG, windowDays: 14 };
-      const set = await store.setConfig(custom);
+      const set = await store.setConfig(deps, custom);
       expect(set).toEqual({ config: custom, isCustom: true });
 
       const reloaded = new BaselineStore(stateDir);
       await reloaded.load(deps);
       expect(reloaded.getConfigState()).toEqual({ config: custom, isCustom: true });
 
-      const reset = await store.resetConfig();
+      const reset = await store.resetConfig(deps);
       expect(reset.isCustom).toBe(false);
       expect(reset.config.windowDays).toBe(3);
     });
@@ -230,7 +230,7 @@ describe('BaselineStore', () => {
       const stateDir = await newStateDir();
       store = new BaselineStore(stateDir);
       deps = makeDeps(stateDir);
-      await store.setConfig(DISCOVERY_CONFIG);
+      await store.setConfig(deps, DISCOVERY_CONFIG);
       const [tuples] = await sql(`SELECT COUNT(*) AS n FROM (SELECT DISTINCT SubAccountId, COALESCE(ServiceName, '') FROM ${GLOB})`);
       expectedTuples = num(tuples?.['n']);
       const [services] = await sql(`SELECT COUNT(DISTINCT COALESCE(ServiceName, '')) AS n FROM ${GLOB}`);
@@ -356,7 +356,7 @@ describe('BaselineStore', () => {
       pinnedId = target.spec.id;
 
       await store.update(deps, pinnedId, { triageStatus: 'tracking' });
-      await store.setConfig({ ...DISCOVERY_CONFIG, minMonthlyCost: asDollars(1_000_000) });
+      await store.setConfig(deps, { ...DISCOVERY_CONFIG, minMonthlyCost: asDollars(1_000_000) });
       await store.recompute(deps);
 
       const squeezed = await store.list(deps, {});
@@ -364,7 +364,7 @@ describe('BaselineStore', () => {
       expect(squeezed.items.find((r) => r.spec.id === pinnedId)?.triageStatus).toBe('tracking');
       expect(squeezed.items.find((r) => r.spec.id === other.spec.id)?.triageStatus).toBe('ignored');
 
-      await store.setConfig(DISCOVERY_CONFIG);
+      await store.setConfig(deps, DISCOVERY_CONFIG);
       await store.recompute(deps);
       const restored = await store.list(deps, {});
       expect(restored.items.find((r) => r.spec.id === other.spec.id)?.triageStatus).toBe('new');
@@ -372,7 +372,7 @@ describe('BaselineStore', () => {
     });
 
     it('a grain change prunes untouched baselines but keeps user-edited ones with blanked history', async () => {
-      await store.setConfig({ ...DISCOVERY_CONFIG, grainDimensions: [asDimensionId('service')] });
+      await store.setConfig(deps, { ...DISCOVERY_CONFIG, grainDimensions: [asDimensionId('service')] });
       await store.recompute(deps);
 
       const res = await store.list(deps, {});
@@ -402,7 +402,7 @@ describe('BaselineStore', () => {
       const stateDir = await newStateDir();
       const st = new BaselineStore(stateDir);
       const deps = makeDeps(stateDir);
-      await st.setConfig({ ...DISCOVERY_CONFIG, grainDimensions: [asDimensionId('service')] });
+      await st.setConfig(deps, { ...DISCOVERY_CONFIG, grainDimensions: [asDimensionId('service')] });
       await st.recompute(deps);
       expect(st.getStatus()).toEqual({ state: 'idle', lastRun: NOW_ISO });
 
@@ -429,7 +429,7 @@ describe('BaselineStore', () => {
       stateDir = await newStateDir();
       store = new BaselineStore(stateDir);
       deps = makeDeps(stateDir);
-      await store.setConfig(DISCOVERY_CONFIG);
+      await store.setConfig(deps, DISCOVERY_CONFIG);
     });
 
     it('create recomputes immediately and returns the derived record', async () => {
@@ -617,7 +617,7 @@ describe('BaselineStore', () => {
       const stateDir = await newStateDir();
       store = new BaselineStore(stateDir);
       deps = makeDeps(stateDir);
-      await store.setConfig(DISCOVERY_CONFIG);
+      await store.setConfig(deps, DISCOVERY_CONFIG);
       const created = await store.create(deps, { scope: svcScope(EC2) });
       id = created.spec.id;
     });
@@ -733,7 +733,7 @@ describe('BaselineStore', () => {
       const stateDir = await newStateDir();
       const store = new BaselineStore(stateDir);
       const { deps, resolveCalls, prepared } = makeCapturingDeps(stateDir);
-      await store.setConfig({ ...DISCOVERY_CONFIG, lookbackDays: MAT_LOOKBACK });
+      await store.setConfig(deps, { ...DISCOVERY_CONFIG, lookbackDays: MAT_LOOKBACK });
 
       const created = await store.create(deps, { scope: svcScope(EC2), name: 'EC2 (rollup)' });
 
@@ -768,7 +768,7 @@ describe('BaselineStore', () => {
       const stateDir = await newStateDir();
       const store = new BaselineStore(stateDir);
       const { deps, resolveCalls, prepared } = makeCapturingDeps(stateDir);
-      await store.setConfig({ ...DISCOVERY_CONFIG, lookbackDays: MAT_LOOKBACK });
+      await store.setConfig(deps, { ...DISCOVERY_CONFIG, lookbackDays: MAT_LOOKBACK });
 
       const created = await store.create(deps, { scope: accountServiceScope(topEc2Account, EC2) });
 

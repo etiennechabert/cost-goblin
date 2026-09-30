@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   asDateString,
@@ -23,9 +23,13 @@ import {
   estimateBytesPerRow,
   getAncestorPath,
   logger,
+  parseJsonObject,
+  quarantineFile,
+  readTextIfExists,
   resolveDiscoveryGrain,
   runRateSeries,
   validateBaselines,
+  writeFileAtomic,
 } from '@costgoblin/core';
 import type {
   BaselineCostBasis,
@@ -112,6 +116,45 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
+type StateDoc = Readonly<Record<string, unknown>>;
+
+function absentOr(v: unknown, guard: (v: unknown) => boolean): boolean {
+  return v === undefined || guard(v);
+}
+
+function isSpecsDoc(doc: StateDoc): boolean {
+  return absentOr(doc['baselines'], Array.isArray)
+    && absentOr(doc['meta'], isRecord)
+    && (doc['config'] === null || absentOr(doc['config'], isRecord));
+}
+
+function isDataDoc(doc: StateDoc): boolean {
+  return absentOr(doc['history'], isRecord) && absentOr(doc['snapshots'], isRecord);
+}
+
+/** Strictly read one persisted state file. null means there is nothing to
+ *  load: the file doesn't exist, or it held something unparseable (a write
+ *  torn under an older build, a hand edit) and has been moved aside — bytes
+ *  kept for recovery — so the store starts it afresh. Any read failure other
+ *  than ENOENT throws and leaves the file alone. */
+async function readStateDoc(path: string, isValid: (doc: StateDoc) => boolean): Promise<StateDoc | null> {
+  const text = await readTextIfExists(path);
+  if (text === null) return null;
+  const doc = parseJsonObject(text);
+  if (doc !== null && isValid(doc)) return doc;
+  const movedTo = await quarantineFile(path);
+  logger.error('baselines: moved an unreadable state file aside and started it afresh', { file: path, movedTo });
+  return null;
+}
+
+/** A persisted spec that failed validation on load, kept verbatim with its
+ *  meta entry so saves write it back. */
+interface UnvalidatedSpec {
+  readonly entry: unknown;
+  readonly id: string | null;
+  readonly meta: unknown;
+}
+
 function num(v: unknown): number {
   // DuckDB COUNT/aggregate columns come back as bigint — coerce them, else every
   // cardinality probe reads 0 and the high-cardinality grain guard is defeated.
@@ -172,7 +215,19 @@ export class BaselineStore {
   private status: BaselineRecomputeStatus = { state: 'idle', lastRun: null };
   private lastSuccessfulRun: string | null = null;
   private readonly listeners = new Set<(s: BaselineRecomputeStatus) => void>();
+  /** Specs whose scope or basis no longer validates (e.g. it names a dimension
+   *  that has since been disabled). Hidden from every query, but written back
+   *  on save: deleting them over what may be a temporary config change would
+   *  lose the user's baselines and triage for good. */
+  private unvalidatedSpecs: readonly UnvalidatedSpec[] = [];
+  /** Set only once both state files have been read and committed. Until then
+   *  save() refuses to run, so a failed or pending load can never overwrite
+   *  the files with a partial (or empty) in-memory state. */
   private loaded = false;
+  /** The in-flight load, shared by concurrent first accesses. */
+  private loading: Promise<void> | null = null;
+  /** Saves run one at a time, each writing the state as of when it runs. */
+  private saveChain: Promise<void> = Promise.resolve();
   private recomputing = false;
 
   constructor(stateDir: string) {
@@ -186,39 +241,62 @@ export class BaselineStore {
 
   async load(deps: BaselineEngineDeps): Promise<void> {
     if (this.loaded) return;
-    this.loaded = true;
-    await this.loadSpecs(deps);
-    await this.loadData();
-    await this.primeOrgDigest(deps);
+    this.loading ??= this.loadOnce(deps).finally(() => { this.loading = null; });
+    await this.loading;
   }
 
-  private async loadSpecs(deps: BaselineEngineDeps): Promise<void> {
-    let raw: unknown;
-    try { raw = JSON.parse(await readFile(this.specsPath(), 'utf-8')); } catch { return; }
-    if (!isRecord(raw)) return;
-    if (isRecord(raw['config'])) this.userConfig = parseConfig(raw['config']);
-    const dimensions = await deps.getQueryDimensions();
-    if (Array.isArray(raw['baselines'])) this.ingestSpecEntries(raw['baselines'], dimensions);
-    if (isRecord(raw['meta'])) this.ingestSpecMeta(raw['meta']);
+  /** Read both state files, then commit them to memory in one synchronous
+   *  step. A failure before the commit leaves the store empty and unloaded:
+   *  the error reaches the caller, the next access retries, and nothing is
+   *  saved in between. */
+  private async loadOnce(deps: BaselineEngineDeps): Promise<void> {
+    try {
+      const specsDoc = await readStateDoc(this.specsPath(), isSpecsDoc);
+      const dataDoc = await readStateDoc(this.dataPath(), isDataDoc);
+      const specs = specsDoc === null ? null : { doc: specsDoc, dimensions: await deps.getQueryDimensions() };
+      await this.primeOrgDigest(deps);
+      if (specs !== null) this.ingestSpecs(specs.doc, specs.dimensions);
+      if (dataDoc !== null) this.ingestData(dataDoc);
+      this.loaded = true;
+    } catch (err: unknown) {
+      logger.error('baselines: failed to load saved baselines; retrying on next access', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+  }
+
+  private ingestSpecs(doc: StateDoc, dimensions: DimensionsConfig): void {
+    if (isRecord(doc['config'])) this.userConfig = parseConfig(doc['config']);
+    const meta = isRecord(doc['meta']) ? doc['meta'] : {};
+    if (Array.isArray(doc['baselines'])) this.ingestSpecEntries(doc['baselines'], dimensions, meta);
+    this.ingestSpecMeta(meta);
   }
 
   /** Validate per-spec, not atomically — one bad spec (e.g. its scope
    *  references a since-renamed dimension) must not discard every other
-   *  baseline, including user-triaged ones with notes/manual bands. */
-  private ingestSpecEntries(entries: readonly unknown[], dimensions: DimensionsConfig): void {
-    let dropped = 0;
+   *  baseline, including user-triaged ones with notes/manual bands. The bad
+   *  ones are set aside, not dropped (see `unvalidatedSpecs`). */
+  private ingestSpecEntries(entries: readonly unknown[], dimensions: DimensionsConfig, meta: StateDoc): void {
+    const unvalidated: UnvalidatedSpec[] = [];
     for (const entry of entries) {
       try {
         const [spec] = validateBaselines({ baselines: [entry] }, dimensions);
         if (spec !== undefined) this.specs.set(spec.id, spec);
-      } catch { dropped += 1; }
+      } catch {
+        const id = isRecord(entry) && typeof entry['id'] === 'string' ? entry['id'] : null;
+        unvalidated.push({ entry, id, meta: id !== null && Object.hasOwn(meta, id) ? meta[id] : undefined });
+      }
     }
-    if (dropped > 0) logger.warn('baselines: dropped invalid specs on load', { dropped });
+    this.unvalidatedSpecs = unvalidated;
+    if (unvalidated.length > 0) {
+      logger.warn('baselines: kept specs that failed validation (hidden until they validate)', { count: unvalidated.length });
+    }
   }
 
-  private ingestSpecMeta(meta: Record<string, unknown>): void {
+  private ingestSpecMeta(meta: StateDoc): void {
     for (const [id, m] of Object.entries(meta)) {
-      if (!isRecord(m)) continue;
+      if (!this.specs.has(id) || !isRecord(m)) continue;
       if (isRecord(m['triage'])) this.triages.set(id, parseTriage(m['triage']));
       if (typeof m['bestAchieved'] === 'number') this.bestAchieved.set(id, m['bestAchieved']);
       if (typeof m['triageStatus'] === 'string') {
@@ -229,24 +307,33 @@ export class BaselineStore {
     }
   }
 
-  private async loadData(): Promise<void> {
-    let raw: unknown;
-    try { raw = JSON.parse(await readFile(this.dataPath(), 'utf-8')); } catch { return; }
-    if (!isRecord(raw)) return;
-    if (isRecord(raw['history'])) {
-      for (const [id, pts] of Object.entries(raw['history'])) {
+  private ingestData(doc: StateDoc): void {
+    if (isRecord(doc['history'])) {
+      for (const [id, pts] of Object.entries(doc['history'])) {
         if (Array.isArray(pts)) this.histories.set(id, parsePoints(pts));
       }
     }
-    if (isRecord(raw['snapshots'])) {
-      for (const [id, snaps] of Object.entries(raw['snapshots'])) {
+    if (isRecord(doc['snapshots'])) {
+      for (const [id, snaps] of Object.entries(doc['snapshots'])) {
         if (Array.isArray(snaps)) this.snapshots.set(id, parseSnapshots(snaps));
       }
     }
   }
 
   private async save(): Promise<void> {
+    if (!this.loaded) throw new Error('baselines: refusing to save before the saved baselines have loaded');
+    const write = (): Promise<void> => this.writeState();
+    const next = this.saveChain.then(write, write);
+    // Keep the chain going past a failed write; the caller still sees its own.
+    this.saveChain = next.catch(() => undefined);
+    await next;
+  }
+
+  private async writeState(): Promise<void> {
     const meta: Record<string, unknown> = {};
+    for (const u of this.unvalidatedSpecs) {
+      if (u.id !== null && u.meta !== undefined) meta[u.id] = u.meta;
+    }
     for (const id of this.specs.keys()) {
       meta[id] = {
         triage: this.triages.get(id) ?? { notes: [] },
@@ -258,7 +345,7 @@ export class BaselineStore {
     const specsDoc = {
       version: 1,
       config: this.userConfig,
-      baselines: [...this.specs.values()],
+      baselines: [...this.specs.values(), ...this.unvalidatedSpecs.map((u) => u.entry)],
       meta,
     };
     const history: Record<string, unknown> = {};
@@ -268,8 +355,8 @@ export class BaselineStore {
     for (const [id, pts] of this.histories) if (this.specs.has(id)) history[id] = pts;
     for (const [id, s] of this.snapshots) if (this.specs.has(id)) snaps[id] = s;
     const dataDoc = { version: 1, history, snapshots: snaps };
-    await writeFile(this.specsPath(), JSON.stringify(specsDoc, null, 2));
-    await writeFile(this.dataPath(), JSON.stringify(dataDoc, null, 2));
+    await writeFileAtomic(this.specsPath(), JSON.stringify(specsDoc, null, 2));
+    await writeFileAtomic(this.dataPath(), JSON.stringify(dataDoc, null, 2));
   }
 
   // --- status channel ---------------------------------------------------------
@@ -295,13 +382,15 @@ export class BaselineStore {
     return { config: this.effectiveConfig(), isCustom: this.userConfig !== null };
   }
 
-  async setConfig(config: BaselinesDiscoveryConfig): Promise<BaselinesConfigState> {
+  async setConfig(deps: BaselineEngineDeps, config: BaselinesDiscoveryConfig): Promise<BaselinesConfigState> {
+    await this.load(deps);
     this.userConfig = config;
     await this.save();
     return this.getConfigState();
   }
 
-  async resetConfig(): Promise<BaselinesConfigState> {
+  async resetConfig(deps: BaselineEngineDeps): Promise<BaselinesConfigState> {
+    await this.load(deps);
     this.userConfig = null;
     await this.save();
     return this.getConfigState();
@@ -555,6 +644,7 @@ export class BaselineStore {
     // new grain rediscovers from a clean slate. Manual baselines are kept.
     if (startFresh) {
       for (const s of this.specs.values()) if (s.source === 'discovered') this.forget(s.id);
+      this.unvalidatedSpecs = this.unvalidatedSpecs.filter((u) => !isRecord(u.entry) || u.entry['source'] !== 'discovered');
     }
     this.setStatus({ state: 'running', phase: 'discovering', done: 0, total: 0 });
     await this.discover(deps);
