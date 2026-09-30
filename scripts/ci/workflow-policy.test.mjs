@@ -337,6 +337,13 @@ describe('workflow policy (.github/workflows)', () => {
     expect(checkAssertBeforeNpmCi('release.yml', release)).toEqual([]);
   });
 
+  // CLAUDE.md promises this for every CI/release job, not just release.yml and
+  // ci.yml's security-audit: the guards fail open on an npm that doesn't know
+  // them, and any job's `npm ci` runs dependency install scripts.
+  it('every workflow asserts the npm guards before every npm ci', () => {
+    expect(workflows.flatMap(({ name, wf }) => checkAssertBeforeNpmCi(name, wf))).toEqual([]);
+  });
+
   it('release.yml installs with --ignore-scripts in the manifest-merge job', () => {
     expect(checkMergeJobIgnoresScripts('release.yml', release)).toEqual({ mergeJobs: 1, violations: [] });
   });
