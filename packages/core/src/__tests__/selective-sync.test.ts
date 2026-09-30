@@ -43,9 +43,9 @@ describe('syncSelectedFiles', () => {
   let mockRm: ReturnType<typeof vi.fn<(...args: unknown[]) => Promise<unknown>>>;
   /** In-memory stand-in for the files the sync writes (the etag sidecars).
    *  `saveEtags` writes a temp file and renames it over the sidecar, so reads,
-   *  writes and renames are all modelled: a test sees the committed sidecar,
-   *  never an in-flight temp file. */
-  let files: Map<string, string>;
+   *  writes, renames and removals are all modelled: a test sees the committed
+   *  sidecar, never an in-flight temp file. */
+  let disk: Map<string, string>;
 
   const enoent = (path: unknown): NodeJS.ErrnoException =>
     Object.assign(new Error(`ENOENT: no such file or directory, open '${String(path)}'`), { code: 'ENOENT' });
@@ -60,17 +60,20 @@ describe('syncSelectedFiles', () => {
     childProcess.spawn = mockSpawn as typeof childProcess.spawn;
 
     mockMkdir = vi.fn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(undefined);
-    files = new Map();
+    disk = new Map();
     mockReadFile = vi.fn<(...args: unknown[]) => Promise<unknown>>().mockImplementation((path: unknown) => {
-      const content = files.get(String(path));
+      const content = disk.get(String(path));
       return content === undefined ? Promise.reject(enoent(path)) : Promise.resolve(content);
     });
     mockWriteFile = vi.fn<(...args: unknown[]) => Promise<unknown>>().mockImplementation((path: unknown, content: unknown) => {
-      files.set(String(path), String(content));
+      disk.set(String(path), String(content));
       return Promise.resolve();
     });
     mockReaddir = vi.fn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue([]);
-    mockRm = vi.fn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(undefined);
+    mockRm = vi.fn<(...args: unknown[]) => Promise<unknown>>().mockImplementation((path: unknown) => {
+      disk.delete(String(path));
+      return Promise.resolve();
+    });
 
     fsPromises.mkdir = mockMkdir as typeof fsPromises.mkdir;
     fsPromises.readFile = mockReadFile as typeof fsPromises.readFile;
@@ -78,10 +81,10 @@ describe('syncSelectedFiles', () => {
     fsPromises.readdir = mockReaddir as typeof fsPromises.readdir;
     fsPromises.rm = mockRm as typeof fsPromises.rm;
     vi.mocked(fsPromises.rename).mockImplementation((from, to) => {
-      const content = files.get(String(from));
+      const content = disk.get(String(from));
       if (content === undefined) return Promise.reject(enoent(from));
-      files.delete(String(from));
-      files.set(String(to), content);
+      disk.delete(String(from));
+      disk.set(String(to), content);
       return Promise.resolve();
     });
   });
@@ -105,19 +108,12 @@ describe('syncSelectedFiles', () => {
     return proc;
   }
 
-  /** Raw text of the committed etag sidecar `fileName`, or `'{}'` if none. */
-  function committedEtagsRaw(fileName: string): string {
-    for (const [path, content] of files) {
-      if (path.endsWith(fileName)) return content;
-    }
-    return '{}';
-  }
-
-  /** The committed etag sidecar `fileName`, parsed. */
+  /** The committed etag sidecar `fileName`, parsed, or `{}` if none. */
   function writtenEtags(fileName: string): Record<string, Record<string, string>> {
-    const saved: Record<string, Record<string, string>> = {};
-    Object.assign(saved, JSON.parse(committedEtagsRaw(fileName)));
-    return saved;
+    for (const [path, content] of disk) {
+      if (path.endsWith(fileName)) return JSON.parse(content);
+    }
+    return {};
   }
 
   /** Emits each chunk in order on one stream, then closes with exit 0. */
@@ -414,7 +410,7 @@ describe('syncSelectedFiles', () => {
 
     const dataDir = '/tmp';
     const expectedEtagFile = join(dataDir, 'aws', 'meta', 'sync-etags.json');
-    files.set(expectedEtagFile, JSON.stringify({ '2026-01': { 'old-file.parquet': 'old-hash' } }));
+    disk.set(expectedEtagFile, JSON.stringify({ '2026-01': { 'old-file.parquet': 'old-hash' } }));
 
     await syncSelectedFiles({
       bucketPath: 's3://bucket/cur/',
@@ -424,7 +420,7 @@ describe('syncSelectedFiles', () => {
       files: [file('cur/billing_period=2026-02/new-file.parquet', 'new-hash')],
     });
 
-    expect(JSON.parse(files.get(expectedEtagFile) ?? '{}')).toEqual({
+    expect(JSON.parse(disk.get(expectedEtagFile) ?? '{}')).toEqual({
       '2026-01': { 'old-file.parquet': 'old-hash' },
       '2026-02': { 'cur/billing_period=2026-02/new-file.parquet': 'new-hash' },
     });
@@ -513,7 +509,7 @@ describe('syncSelectedFiles', () => {
 
       // Download succeeded and etags were still persisted despite the prune error.
       expect(result.filesDownloaded).toBe(1);
-      expect(files.has(join(dataDir, 'aws', 'meta', 'sync-etags.json'))).toBe(true);
+      expect(disk.has(join(dataDir, 'aws', 'meta', 'sync-etags.json'))).toBe(true);
     });
 
     it('does not prune when the period sync fails', async () => {
@@ -594,14 +590,8 @@ describe('syncSelectedFiles', () => {
   });
 
   describe('per-period orchestration', () => {
-    /** Helper: reads back the committed etag sidecar as a raw string */
-    function setupEtagTracking(etagFileName = 'sync-etags.json'): { getLastWritten: () => string } {
-      return { getLastWritten: () => committedEtagsRaw(etagFileName) };
-    }
-
     it('saves ETags after each period completes', async () => {
       mockSpawn.mockImplementation(() => createSuccessfulSpawn());
-      const { getLastWritten } = setupEtagTracking();
 
       await syncSelectedFiles({
         bucketPath: 's3://bucket/cur/',
@@ -617,7 +607,7 @@ describe('syncSelectedFiles', () => {
 
       expect(mockWriteFile).toHaveBeenCalledTimes(3);
 
-      const saved = JSON.parse(getLastWritten());
+      const saved = writtenEtags('sync-etags.json');
       expect(saved['2026-01']?.['cur/billing_period=2026-01/a.parquet']).toBe('hash-jan');
       expect(saved['2026-02']?.['cur/billing_period=2026-02/b.parquet']).toBe('hash-feb');
       expect(saved['2026-03']?.['cur/billing_period=2026-03/c.parquet']).toBe('hash-mar');
@@ -674,10 +664,7 @@ describe('syncSelectedFiles', () => {
       ).rejects.toThrow('Access Denied for period 2');
 
       expect(spawnCount).toBe(2);
-      expect(mockWriteFile).toHaveBeenCalledTimes(1);
-      const written = String(mockWriteFile.mock.calls[0]?.[1]);
-      expect(written).toContain('2026-01');
-      expect(written).not.toContain('2026-02');
+      expect(Object.keys(writtenEtags('sync-etags.json'))).toEqual(['2026-01']);
     });
 
     it('tracks progress correctly across multiple periods', async () => {
@@ -716,26 +703,6 @@ describe('syncSelectedFiles', () => {
       expect(doneEvent?.filesDone).toBe(4);
     });
 
-    it('preserves ETags from previous sync sessions', async () => {
-      mockSpawn.mockImplementation(() => createSuccessfulSpawn());
-
-      const { getLastWritten } = setupEtagTracking();
-      // Seed with pre-existing etag data
-      files.set(join('/tmp', 'aws', 'meta', 'sync-etags.json'), JSON.stringify({ '2025-12': { 'old-file.parquet': 'old-hash' } }));
-
-      await syncSelectedFiles({
-        bucketPath: 's3://bucket/cur/',
-        profile: 'test',
-        providerName,
-        dataDir: '/tmp',
-        files: [file('cur/billing_period=2026-01/new-file.parquet', 'new-hash-1')],
-      });
-
-      const saved = JSON.parse(getLastWritten());
-      expect(saved['2025-12']?.['old-file.parquet']).toBe('old-hash');
-      expect(saved['2026-01']?.['cur/billing_period=2026-01/new-file.parquet']).toBe('new-hash-1');
-    });
-
     it('handles abort between periods — saves completed period ETags only', async () => {
       const controller = new AbortController();
       let spawnCount = 0;
@@ -743,7 +710,7 @@ describe('syncSelectedFiles', () => {
       mockWriteFile.mockImplementation((path: unknown, content: unknown) => {
         // The user cancels while period 1's etags are being saved.
         if (String(path).includes('sync-etags.json') && spawnCount === 1) controller.abort();
-        files.set(String(path), String(content));
+        disk.set(String(path), String(content));
         return Promise.resolve();
       });
 

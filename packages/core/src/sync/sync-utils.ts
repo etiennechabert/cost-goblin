@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { isStringRecord } from '../utils/json.js';
 import { logger } from '../logger/logger.js';
@@ -257,97 +258,141 @@ function hasErrnoCode(err: unknown, codes: readonly string[]): boolean {
   return err instanceof Error && 'code' in err && typeof err.code === 'string' && codes.includes(err.code);
 }
 
-/** Raw sidecar text, or null when there is none yet. ONLY ENOENT means "none
- *  yet": any other failure (EMFILE, a Windows scanner's EBUSY/EPERM) must
- *  propagate. Reading it as an empty sidecar would rewrite the file with just
- *  the caller's change, and every other period would turn stale and be
- *  re-downloaded. */
+// A Windows antivirus, indexer or backup tool can briefly hold the sidecar or
+// a just-written temp file (EPERM/EACCES/EBUSY on open or rename), and a busy
+// process can momentarily run out of descriptors (EMFILE). Those are retried
+// with backoff; anything else, or one that outlasts the backoff, propagates.
+const TRANSIENT_FS_ERRORS: readonly string[] = ['EPERM', 'EACCES', 'EBUSY', 'EMFILE'];
+const TRANSIENT_RETRY_DELAYS_MS: readonly number[] = [25, 50, 100, 200, 400, 800];
+
+async function retryTransient<T>(op: () => Promise<T>): Promise<T> {
+  for (const delayMs of TRANSIENT_RETRY_DELAYS_MS) {
+    try {
+      return await op();
+    } catch (err: unknown) {
+      if (!hasErrnoCode(err, TRANSIENT_FS_ERRORS)) throw err;
+      await sleep(delayMs);
+    }
+  }
+  return op();
+}
+
+/** Raw sidecar text, or null when there is none yet. Only ENOENT means that:
+ *  reading any other failure as an empty sidecar would rewrite it with just
+ *  the caller's change and turn every other period stale. */
 async function readEtagSidecarRaw(etagPath: string): Promise<string | null> {
   try {
-    return await readFile(etagPath, 'utf-8');
+    return await retryTransient(() => readFile(etagPath, 'utf-8'));
   } catch (err: unknown) {
     if (hasErrnoCode(err, ['ENOENT'])) return null;
     throw err;
   }
 }
 
-// Windows refuses to rename over a file another process (antivirus, indexer,
-// backup) holds open without delete sharing. Those locks are short-lived, so
-// retry briefly; anything else fails at once.
-const TRANSIENT_RENAME_ERRORS: readonly string[] = ['EPERM', 'EACCES', 'EBUSY'];
-const RENAME_RETRY_DELAYS_MS: readonly number[] = [25, 50, 100, 200];
+// A writer that dies between writing its temp file and renaming it (the sync
+// worker dies with the app; a crash) never reaches its cleanup, and the temp's
+// random name is never reused, so sweep them. A live update's temp is
+// milliseconds old: an hour is far past anything still in flight.
+const STALE_TEMP_AGE_MS = 60 * 60 * 1000;
 
-async function renameWithRetry(from: string, to: string): Promise<void> {
-  for (const delayMs of RENAME_RETRY_DELAYS_MS) {
-    try {
-      await rename(from, to);
-      return;
-    } catch (err: unknown) {
-      if (!hasErrnoCode(err, TRANSIENT_RENAME_ERRORS)) throw err;
-      await sleep(delayMs);
+async function sweepStaleTemps(etagPath: string): Promise<void> {
+  const dir = dirname(etagPath);
+  const prefix = `${basename(etagPath)}.`;
+  const names = await readdir(dir).catch((): string[] => []);
+  const cutoff = Date.now() - STALE_TEMP_AGE_MS;
+  for (const name of names) {
+    if (!name.startsWith(prefix) || !name.endsWith('.tmp')) continue;
+    const tmpPath = join(dir, name);
+    const info = await stat(tmpPath).catch(() => null);
+    if (info !== null && info.mtimeMs < cutoff) {
+      await rm(tmpPath, { force: true }).catch(() => { /* best effort */ });
     }
   }
-  await rename(from, to);
 }
 
-/** Verified commits before the last attempt commits unverified. */
-const MAX_SIDECAR_ATTEMPTS = 3;
+/** Times one update re-applies itself to a sidecar another thread replaced
+ *  underneath it before giving up. Committing anyway would overwrite that
+ *  thread's change with a merge onto a stale read. */
+const MAX_REMERGES = 5;
 
 async function replaceEtagSidecar(
   etagPath: string,
   mutate: (etags: EtagSidecar) => EtagSidecar | null,
 ): Promise<void> {
-  // One temp file per update, beside the sidecar so the rename never crosses
-  // a filesystem. Unique so two threads' updates never share one.
+  await sweepStaleTemps(etagPath);
+  // Beside the sidecar so the rename never crosses a filesystem; unique so two
+  // threads' updates never share one.
   const tmpPath = `${etagPath}.${randomUUID()}.tmp`;
-  let committed = false;
+  let tmpWritten = false;
   try {
     let raw = await readEtagSidecarRaw(etagPath);
-    for (let attempt = 1; ; attempt++) {
-      const next = mutate(raw === null ? {} : parseEtagsJson(raw));
-      if (next === null) return;
-      await writeFile(tmpPath, JSON.stringify(next, null, 2));
-      if (attempt < MAX_SIDECAR_ATTEMPTS) {
-        // Re-read and merge: another thread may have replaced the sidecar
-        // since our read. If so, re-apply our change to its version.
-        const current = await readEtagSidecarRaw(etagPath);
-        if (current !== raw) {
-          raw = current;
-          continue;
-        }
+    let tmpIsCurrent = false;
+    let remerges = 0;
+    let renameRetries = 0;
+    for (;;) {
+      if (!tmpIsCurrent) {
+        const next = mutate(raw === null ? {} : parseEtagsJson(raw));
+        if (next === null) return;
+        tmpWritten = true;
+        // Flushed, so the rename can't reach the disk before the data does and
+        // leave a power cut with a renamed but empty sidecar.
+        await retryTransient(() => writeFile(tmpPath, JSON.stringify(next, null, 2), { flush: true }));
+        tmpIsCurrent = true;
       }
-      await renameWithRetry(tmpPath, etagPath);
-      committed = true;
-      return;
+      // Re-read and merge before every rename attempt (backoff retries too): if
+      // another thread replaced the sidecar since our read, re-apply our change
+      // to its version rather than overwrite it.
+      const current = await readEtagSidecarRaw(etagPath);
+      if (current !== raw) {
+        if (remerges >= MAX_REMERGES) {
+          throw new Error(`${etagPath} kept changing during the update; gave up after ${String(MAX_REMERGES)} re-merges`);
+        }
+        raw = current;
+        tmpIsCurrent = false;
+        remerges++;
+        continue;
+      }
+      try {
+        await rename(tmpPath, etagPath);
+        tmpWritten = false;
+        return;
+      } catch (err: unknown) {
+        const delayMs = TRANSIENT_RETRY_DELAYS_MS[renameRetries];
+        if (delayMs === undefined || !hasErrnoCode(err, TRANSIENT_FS_ERRORS)) throw err;
+        renameRetries++;
+        await sleep(delayMs);
+      }
     }
   } finally {
-    if (!committed) await rm(tmpPath, { force: true }).catch(() => { /* best effort */ });
+    if (tmpWritten) await rm(tmpPath, { force: true }).catch(() => { /* best effort */ });
   }
 }
 
-// Every sidecar update in this thread runs through one chain, so two updates
-// can't interleave their read-modify-write (same pattern as writeTierLastSync).
-let etagSidecarChain: Promise<void> = Promise.resolve();
+// Updates to one sidecar run one at a time in this thread, so two can't
+// interleave their read-modify-write; different sidecars never wait on each
+// other. An entry lives only while updates to its sidecar are queued.
+const sidecarChains = new Map<string, Promise<void>>();
 
 /**
  * Read-modify-write one etag sidecar. `mutate` receives the current contents
  * and returns the replacement, or null to leave the file untouched (no write,
  * so a missing sidecar stays missing — `hasSyncedTier` relies on that).
  *
- *  - Strict read: only ENOENT is "no sidecar yet"; other read errors reject.
- *  - Atomic: the new contents go to a temp file that is renamed over the
- *    sidecar. A writer killed mid-write (app quit terminates the sync worker,
+ *  - Strict read: only ENOENT is "no sidecar yet". Transient lock/descriptor
+ *    errors are retried briefly; anything else rejects and nothing is written.
+ *  - Atomic: the new contents are flushed to a temp file that is renamed over
+ *    the sidecar. A writer killed mid-write (the sync worker dies with the app,
  *    a crash, power loss) leaves the previous sidecar intact, never truncated
- *    JSON that `parseEtagsJson` would read as `{}` — i.e. the whole tier stale.
- *  - Serialized within the calling thread (see `etagSidecarChain`).
- *  - Re-read and merge across threads: right before committing, the sidecar is
- *    re-read; if another thread replaced it meanwhile, `mutate` is re-applied
- *    to that version (bounded, then the last attempt commits unverified).
+ *    JSON that `parseEtagsJson` would read as `{}` — the whole tier stale.
+ *  - Serialized per sidecar within the calling thread (`sidecarChains`).
+ *  - Re-read and merge across threads: before each rename attempt the sidecar
+ *    is re-read, and if another thread replaced it meanwhile, `mutate` is
+ *    re-applied to that version (giving up after MAX_REMERGES).
  *
  * Remaining window: the two writers — `saveEtags` in the sync worker and
  * `pruneEtagPeriod` on the main thread — don't share a chain, and nothing
  * locks across threads. A replace by the other thread that lands between our
- * final re-read and our rename is still overwritten. That window is a read
+ * last re-read and our rename is still overwritten. That window is a read
  * plus a rename wide (it used to span the whole read-modify-write). A lost
  * save leaves one period stale, so the next sync re-downloads it. A lost prune
  * leaves etags behind for a deleted period: inventory still reports it missing
@@ -364,8 +409,13 @@ function updateEtagSidecar(
   const run = (): Promise<void> => replaceEtagSidecar(etagPath, mutate);
   // Run regardless of whether the previous update settled or rejected; the
   // returned promise carries this update's own outcome to the caller.
-  etagSidecarChain = etagSidecarChain.then(run, run);
-  return etagSidecarChain;
+  const update = (sidecarChains.get(etagPath) ?? Promise.resolve()).then(run, run);
+  sidecarChains.set(etagPath, update);
+  const forget = (): void => {
+    if (sidecarChains.get(etagPath) === update) sidecarChains.delete(etagPath);
+  };
+  void update.then(forget, forget);
+  return update;
 }
 
 /**
@@ -398,27 +448,25 @@ export async function saveEtags(
 }
 
 /**
- * Forget a deleted period's etags: the `period` key itself and any day-keyed
- * entries under it (`2026-03` also drops `2026-03-15`, the cost-optimization
- * grain). Writes nothing when no entry matches or the sidecar doesn't exist.
- * The counterpart of `saveEtags`, with the same guarantees.
+ * Forget a deleted period's etags: the `period` key and any key under it
+ * (`${period}-…`), the same match `deleteLocalPeriodFiles` applies to raw dirs.
+ * Writes nothing when no entry matches or the sidecar doesn't exist. The
+ * counterpart of `saveEtags`, with the same guarantees.
  */
 export async function pruneEtagPeriod(
   dataDir: string,
   providerName: ProviderName,
-  tier: string,
+  tier: ExpectedDataType,
   period: string,
 ): Promise<void> {
+  // A prefix match on a malformed period ('2026') would drop a whole year.
+  if (!/^\d{4}-\d{2}(-\d{2})?$/.test(period)) {
+    throw new Error(`Invalid period "${period}" — expected YYYY-MM or YYYY-MM-DD`);
+  }
   await updateEtagSidecar(providerEtagPath(dataDir, providerName, tier), (savedEtags) => {
-    const kept: EtagSidecar = {};
-    let changed = false;
-    for (const [key, value] of Object.entries(savedEtags)) {
-      if (key === period || key.startsWith(`${period}-`)) {
-        changed = true;
-        continue;
-      }
-      kept[key] = value;
-    }
-    return changed ? kept : null;
+    const kept = Object.fromEntries(
+      Object.entries(savedEtags).filter(([key]) => key !== period && !key.startsWith(`${period}-`)),
+    );
+    return Object.keys(kept).length === Object.keys(savedEtags).length ? null : kept;
   });
 }
