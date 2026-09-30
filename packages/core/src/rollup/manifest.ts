@@ -36,6 +36,11 @@ export function computePartitionEtagHash(periodEtags: Readonly<Record<string, st
   return sha256Hex(canonicalJson(periodEtags ?? {}));
 }
 
+/** Stamp for a partition built without its period's etags (the sidecar
+ *  couldn't be read). Never a sha256 hex, so it never matches
+ *  `computePartitionEtagHash`: the next validation rebuilds the partition. */
+export const UNVERIFIED_ETAG_HASH = 'unverified';
+
 export function validateManifest(
   manifest: RollupManifest | null,
   opts: {

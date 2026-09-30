@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { LocalSyncStateError } from '@costgoblin/core';
 import { runOnce, getAutoSyncStatus, type AutoSyncDeps, type AutoSyncProvider } from '../main/auto-sync.js';
 import { parseSyncId, resolveProvider, resolveSyncId, syncStatusKey } from '../main/sync-id.js';
 
@@ -241,6 +242,53 @@ describe('auto-sync runOnce (multi-provider orchestration)', () => {
     expect(status.state).toBe('idle');
     if (status.state === 'idle') {
       expect(status.providerErrors).toBeUndefined();
+    }
+  });
+
+  it('records unreadable local sync state as a provider error instead of skipping the tier', async () => {
+    writePrefs({ autoSync: true, autoPrune: false });
+    const calls = newCalls();
+    const unreadable = new LocalSyncStateError('the saved daily sync state', Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }));
+    const deps = buildDeps({
+      getInventory: (provider, tier) => {
+        calls.inventory.push({ provider, tier });
+        if (provider === 'aws-a') return Promise.reject(unreadable);
+        return Promise.resolve(missingPeriodInventory());
+      },
+    }, calls);
+
+    await runOnce(deps);
+
+    // A skip would retry and skip on every pass, the tier never syncing again
+    // with nothing on screen to say why.
+    expect(calls.sync.every(c => c.provider === 'aws-b')).toBe(true);
+    const status = getAutoSyncStatus();
+    expect(status.state).toBe('idle');
+    if (status.state === 'idle') {
+      expect(status.providerErrors).toEqual([{ provider: 'aws-a', message: unreadable.message }]);
+    }
+  });
+
+  it('keeps syncing a provider\'s other tiers past one with unreadable local sync state', async () => {
+    writePrefs({ autoSync: true, autoPrune: false });
+    const calls = newCalls();
+    const unreadable = new LocalSyncStateError('the saved daily sync state', Object.assign(new Error('EIO: i/o error'), { code: 'EIO' }));
+    const deps = buildDeps({
+      getInventory: (provider, tier) => {
+        calls.inventory.push({ provider, tier });
+        if (provider === 'aws-b' && tier === 'daily') return Promise.reject(unreadable);
+        return Promise.resolve(missingPeriodInventory());
+      },
+    }, calls);
+
+    await runOnce(deps);
+
+    // Each tier has its own sidecar: B's hourly still syncs.
+    expect(calls.sync.map(c => `${c.provider}/${c.tier}`)).toEqual(['aws-a/daily', 'aws-b/hourly']);
+    const status = getAutoSyncStatus();
+    expect(status.state).toBe('idle');
+    if (status.state === 'idle') {
+      expect(status.providerErrors).toEqual([{ provider: 'aws-b', message: unreadable.message }]);
     }
   });
 

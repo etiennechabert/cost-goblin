@@ -3,6 +3,7 @@ import {
   getDataInventory,
   getLocalDataInventory,
   hasSyncedTier,
+  LocalSyncStateError,
   getRawDirPrefix,
   extractPeriod,
   listLocalMonths,
@@ -56,13 +57,6 @@ function resolveDataType(syncId: string): ExpectedDataType {
 
 function matchesPeriodPrefix(entry: string, prefix: string, period: string): boolean {
   return entry === `${prefix}-${period}` || entry.startsWith(`${prefix}-${period}-`);
-}
-
-/** `hasSyncedTier` rejected — the etag file couldn't be checked. Log it and
- *  count the tier as synced. */
-function logSyncedCheckFailure(err: unknown): true {
-  logger.warn(`Could not check whether this tier was synced before: ${err instanceof Error ? err.message : String(err)}`);
-  return true;
 }
 
 // Prefer byte-fraction for the headline progress number — it's smooth
@@ -186,23 +180,24 @@ export function registerSyncHandlers(app: AppContext): void {
       const inv = await getDataInventory(bucket, providerAuth(provider), ctx.dataDir, provider.name, t);
       return { ...inv, provider: provider.name };
     } catch (err: unknown) {
+      // Our own sync state is unreadable: surface it. The local-only fallback
+      // below would show every local month as up to date and hide new ones.
+      if (err instanceof LocalSyncStateError) {
+        logger.warn(err.message, { tier: t, provider: provider.name, cause: String(err.cause) });
+        throw err;
+      }
       // Expired/invalid credentials on an install that has synced this tier from
       // S3 before (its etag file exists) is a real auth failure, not the
       // imported-snapshot case — surface it so the user re-authenticates instead
       // of silently showing stale local data as if everything were up to date.
-      // An etag file that can't be checked counts as synced: the credential
-      // failure is the one problem known to be real.
-      if (isAnyCredentialError(err) && await hasSyncedTier(ctx.dataDir, provider.name, t).catch(logSyncedCheckFailure)) {
+      if (isAnyCredentialError(err) && await hasSyncedTier(ctx.dataDir, provider.name, t)) {
         throw toUserFriendlyError(err, providerAuth(provider));
       }
       // Otherwise fall back to a disk-only inventory so a consumer that imported
-      // a shared snapshot (no S3 access) still sees the data it has. Also the
-      // path for an etag file that exists but can't be read.
+      // a shared snapshot (no S3 access) still sees the data it has.
       const local = await getLocalDataInventory(ctx.dataDir, provider.name, t);
       if (local.totalLocalPeriods > 0) {
-        logger.info('S3 inventory unavailable — using local-only inventory', {
-          tier: t, provider: provider.name, reason: err instanceof Error ? err.message : String(err),
-        });
+        logger.info('S3 inventory unavailable — using local-only inventory', { tier: t, provider: provider.name });
         return { ...local, provider: provider.name };
       }
       throw toUserFriendlyError(err, providerAuth(provider));
