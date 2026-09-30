@@ -1,4 +1,4 @@
-import { logger, parseJsonObject, configuredTierRetentions, periodsOutsideRetention, retentionCutoffPeriod, isCredentialError, isGcpCredentialError } from '@costgoblin/core';
+import { logger, parseJsonObject, configuredTierRetentions, periodsOutsideRetention, retentionCutoffPeriod, isCredentialError, isGcpCredentialError, LocalSyncStateError } from '@costgoblin/core';
 import type { AutoSyncStatus, ProviderSyncError, SyncLogLevel } from '@costgoblin/core';
 import { updatePrefsFile } from './handlers/prefs-file.js';
 
@@ -124,9 +124,10 @@ function note(deps: AutoSyncDeps, level: SyncLogLevel, message: string): void {
 }
 
 /** Sync one tier of one provider. Returns 'ok' | 'skip'; THROWS on a hard
- *  failure (credential-blocked inventory or a failed download) so runOnce can
- *  record a ProviderSyncError for this provider and move on to the next one.
- *  Transient inventory failures stay a silent skip as before. */
+ *  failure (credential-blocked inventory, unreadable local sync state, or a
+ *  failed download) so runOnce can record a ProviderSyncError for this
+ *  provider and move on to the next one. Transient inventory failures stay a
+ *  silent skip as before. */
 async function syncTier(
   deps: AutoSyncDeps,
   providerName: string,
@@ -149,6 +150,13 @@ async function syncTier(
     if (isCredentialError(err) || isGcpCredentialError(err)) {
       note(deps, 'warn', `Auto-sync: ${providerName}/${tier.name} inventory failed (credentials) — ${errorMessage(err)}`);
       throw asError(err);
+    }
+    // Unreadable etag sidecar or raw dir: already retried, so it won't clear by
+    // the next pass either. A skip would repeat every pass, never syncing the
+    // tier and never saying why.
+    if (err instanceof LocalSyncStateError) {
+      note(deps, 'warn', `Auto-sync: ${providerName}/${tier.name} inventory failed — ${err.message}`);
+      throw err;
     }
     note(deps, 'warn', `Auto-sync: failed to get ${providerName}/${tier.name} inventory — ${errorMessage(err)}`);
     return 'skip';
@@ -251,9 +259,18 @@ export async function runOnce(deps: AutoSyncDeps): Promise<void> {
         const tiers = configuredTierRetentions(provider.sync)
           .map(t => ({ name: t.tier, retention: t.retentionDays }));
         try {
+          // Local sync state is per tier (each has its own sidecar), so one
+          // unreadable tier still reports but doesn't hold back the others.
+          let localStateError: LocalSyncStateError | null = null;
           for (const tier of tiers) {
-            await syncTier(deps, provider.name, tier);
+            try {
+              await syncTier(deps, provider.name, tier);
+            } catch (err: unknown) {
+              if (!(err instanceof LocalSyncStateError)) throw err;
+              localStateError ??= err;
+            }
           }
+          if (localStateError !== null) throw localStateError;
         } catch (err: unknown) {
           providerErrors.push({ provider: provider.name, message: errorMessage(err) });
         }

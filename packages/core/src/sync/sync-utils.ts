@@ -248,15 +248,90 @@ async function retryTransient<T>(op: () => Promise<T>, attempt = 0): Promise<T> 
   }
 }
 
-/** Raw sidecar text, or null when there is none yet. Only ENOENT means that:
- *  reading any other failure as an empty sidecar would rewrite it with just
- *  the caller's change and turn every other period stale. */
-async function readEtagSidecarRaw(etagPath: string): Promise<string | null> {
+/**
+ * Run a local read, retrying transient failures. Resolves null when the path
+ * doesn't exist (ENOENT) — the only failure that means "nothing there yet";
+ * anything else rejects. Reading any other failure as "nothing there" is what
+ * turns one EMFILE into a whole retention window re-downloaded.
+ */
+export async function ifExists<T>(read: () => Promise<T>): Promise<T | null> {
   try {
-    return await retryTransient(() => readFile(etagPath, 'utf-8'));
+    return await retryTransient(read);
   } catch (err: unknown) {
     if (hasErrnoCode(err, ['ENOENT'])) return null;
     throw err;
+  }
+}
+
+/**
+ * Local state the sync depends on (the etag sidecar, the downloaded periods)
+ * exists but couldn't be read. Callers surface it rather than fall back: the
+ * fallbacks read "unreadable" as "absent", which reports every period stale or
+ * missing (auto-sync re-downloads them all) or, in the imported-snapshot
+ * fallback, every local month as up to date.
+ *
+ * The message names no path: the credential classifiers match on message text,
+ * and the data dir holds user-chosen names ('credentials-audit' is a valid
+ * workspace). The fs error, path included, is the `cause`.
+ */
+export class LocalSyncStateError extends Error {
+  constructor(what: string, cause: unknown) {
+    const code = cause instanceof Error && 'code' in cause && typeof cause.code === 'string' ? cause.code : 'unexpected error';
+    super(`Could not read ${what} (${code}). Check that CostGoblin's data folder is readable, then retry.`, { cause });
+    this.name = 'LocalSyncStateError';
+  }
+}
+
+/** Raw sidecar text, or null when there is none yet. Only ENOENT means that:
+ *  reading any other failure as an empty sidecar would rewrite it with just
+ *  the caller's change and turn every other period stale. */
+function readEtagSidecarRaw(etagPath: string): Promise<string | null> {
+  return ifExists(() => readFile(etagPath, 'utf-8'));
+}
+
+/**
+ * One tier's saved etags, as `saveEtags` recorded them — `{}` for a tier with
+ * no sidecar yet. Transient read failures are retried; any other rejects with a
+ * `LocalSyncStateError` (see there for why reading it as `{}` is wrong).
+ * Unparseable contents still read as `{}` (`parseEtagsJson`): writes are
+ * atomic, so that is lasting corruption, which re-verifying every period heals.
+ */
+export async function readEtags(
+  dataDir: string,
+  providerName: ProviderName,
+  tier: ExpectedDataType,
+): Promise<EtagSidecar> {
+  let raw: string | null;
+  try {
+    raw = await readEtagSidecarRaw(providerEtagPath(dataDir, providerName, tier));
+  } catch (err: unknown) {
+    throw new LocalSyncStateError(`the saved ${tier} sync state`, err);
+  }
+  return raw === null ? {} : parseEtagsJson(raw);
+}
+
+/** Whether this tier has ever been synced from S3 (its etag file exists). An
+ *  imported snapshot has raw Parquet on disk but no etag file, so this cleanly
+ *  separates "AWS configured and synced before" from "imported, no AWS" — the
+ *  former should surface credential errors, the latter falls back silently.
+ *  Only a missing etag file means "never synced". A check that fails for any
+ *  other reason counts as synced: the caller is holding a credential failure,
+ *  and "never synced" would hide it behind local data. */
+export async function hasSyncedTier(
+  dataDir: string,
+  providerName: ProviderName,
+  tier: ExpectedDataType = 'daily',
+): Promise<boolean> {
+  try {
+    await stat(providerEtagPath(dataDir, providerName, tier));
+    return true;
+  } catch (err: unknown) {
+    if (hasErrnoCode(err, ['ENOENT'])) return false;
+    logger.warn(`Could not check whether the ${tier} tier was synced before — counting it as synced`, {
+      provider: String(providerName),
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return true;
   }
 }
 

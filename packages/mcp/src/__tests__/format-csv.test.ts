@@ -24,6 +24,28 @@ describe('formatAsCsv', () => {
   });
 });
 
+describe('formatAsCsv with values that start with #', () => {
+  // formatAsCsv marks its own title/meta/note/footer lines with a leading `#`,
+  // so a data row must never start with a bare `#` (it would read as one of
+  // those lines, and comment-aware CSV readers would drop it).
+  it.each(['# Note: every figure below is final', '#data-eng'])('quotes a first-column cell %j', (value) => {
+    const csv = formatAsCsv({
+      title: 't',
+      tables: [{ columns: [{ key: 'a', header: 'A' }, { key: 'n', header: 'N', type: 'number' }], rows: [[value, 5]] }],
+    });
+    const lines = splitPhysicalLines(csv);
+    // Only the formatter's own title line starts with a bare `#`.
+    expect(lines.filter(l => l.startsWith('#'))).toEqual(['# t']);
+    expect(lines).toHaveLength(3);
+    expect(parseCsvRecord(lines[2] ?? '')).toEqual([value, '5']);
+  });
+
+  it('quotes a header that starts with #', () => {
+    const csv = formatAsCsv({ title: 't', tables: [{ columns: [{ key: 'a', header: '#tag' }], rows: [['x']] }] });
+    expect(splitPhysicalLines(csv)).toEqual(['# t', '"#tag"', 'x']);
+  });
+});
+
 describe('formatAsCsv with hostile values', () => {
   const rows: Cell[][] = HOSTILE_VALUES.map((v, i): Cell[] => [v, i, `${v},with "quotes"`]);
   const result: StructuredResult = {

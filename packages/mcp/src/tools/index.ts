@@ -27,7 +27,7 @@ const formatSchema = z.enum(['markdown', 'json', 'csv']).optional().describe(
   'Response format. "markdown" (default) for human-readable tables. ' +
   '"json" for machine-readable rows the LLM can ingest directly without re-parsing markdown — use this when reasoning over many rows or chaining queries. ' +
   '"csv" for downstream tooling. ' +
-  'Values are verbatim only in "json": "markdown" and "csv" escape a `|` inside a value as `\\|` and a line break as `\\n`.',
+  'Values are verbatim only in "json": "markdown" and "csv" write a line break inside a value as `\\n`, and "markdown" also escapes a `|` as `\\|`.',
 );
 
 /** Every tool description ends with the untrusted-data note (#602). */
@@ -75,7 +75,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
     'get_filter_values',
     {
       description: describeTool('Get all values for a dimension with their cost contribution. Useful for discovering what to filter on. ' +
-        "Use format:'json' to reuse values as filters: markdown and csv escape pipes and line breaks, so a copied value would not match."),
+        "Use format:'json' to reuse values as filters: markdown escapes pipes, and markdown and csv both escape line breaks, so a copied value would not match."),
       inputSchema: {
         dimensionId: z.string().describe('Dimension ID (from list_dimensions)'),
         dateRange: dateRangeSchema,

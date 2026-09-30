@@ -1,17 +1,19 @@
-import { mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getDataInventory } from '../sync/data-inventory.js';
 import type { ManifestFileEntry } from '../sync/manifest.js';
-import { providerEtagPath, providerMetaDir } from '../sync/provider-paths.js';
-import { pruneEtagPeriod, saveEtags } from '../sync/sync-utils.js';
+import type { ObjectStoreHandle, ProviderAuth } from '../sync/object-store.js';
+import { providerEtagPath, providerMetaDir, providerRawDir } from '../sync/provider-paths.js';
+import { hasSyncedTier, LocalSyncStateError, pruneEtagPeriod, readEtags, saveEtags } from '../sync/sync-utils.js';
 import { asProviderName } from '../types/branded.js';
 
-// Every test runs against a real tmp dir. The fs calls the sidecar update goes
-// through are pass-through wrappers, so a test that needs a failure at one
-// precise point — an EMFILE read, a writer killed mid-write, another thread's
-// replace landing mid-update — injects it with a `...Once`.
+// Every test runs against a real tmp dir. The fs calls the sidecar reads and
+// updates go through are pass-through wrappers, so a test that needs a failure
+// at one precise point — an EMFILE read, a writer killed mid-write, another
+// thread's replace landing mid-update — injects it with a `...Once`.
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
   return {
@@ -20,6 +22,8 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     writeFile: vi.fn(actual.writeFile),
     rename: vi.fn(actual.rename),
     rm: vi.fn(actual.rm),
+    stat: vi.fn(actual.stat),
+    readdir: vi.fn(actual.readdir),
   };
 });
 // Retry backoff resolves at once; tests assert the delays it asked for.
@@ -36,8 +40,9 @@ const provider = asProviderName('aws');
 const entry = (key: string, contentHash: string): ManifestFileEntry => ({ key, contentHash, size: 1 });
 const errno = (code: string): NodeJS.ErrnoException => Object.assign(new Error(`${code}: injected`), { code });
 const sleptMs = (): unknown[] => vi.mocked(sleep).mock.calls.map(([ms]) => ms);
+const ALL_RETRY_DELAYS_MS = [25, 50, 100, 200, 400, 800];
 
-describe('etag sidecar updates', () => {
+describe('etag sidecar', () => {
   let dataDir: string;
 
   const etagPath = (tier = 'daily'): string => providerEtagPath(dataDir, provider, tier);
@@ -77,7 +82,7 @@ describe('etag sidecar updates', () => {
   afterEach(async () => {
     // Restores the pass-through implementations and drops any unconsumed
     // `...Once` so one test's injection can never leak into the next.
-    for (const fn of [readFile, writeFile, rename, rm]) vi.mocked(fn).mockReset();
+    for (const fn of [readFile, writeFile, rename, rm, stat, readdir]) vi.mocked(fn).mockReset();
     vi.mocked(sleep).mockClear();
     await fsActual.rm(dataDir, { recursive: true, force: true });
   });
@@ -153,7 +158,7 @@ describe('etag sidecar updates', () => {
 
       // Every other period is still recorded as up to date.
       expect(await readSidecar()).toEqual(seed);
-      expect(sleptMs()).toEqual([25, 50, 100, 200, 400, 800]);
+      expect(sleptMs()).toEqual(ALL_RETRY_DELAYS_MS);
     });
 
     it('propagates a non-transient read failure at once, without writing', async () => {
@@ -434,6 +439,140 @@ describe('etag sidecar updates', () => {
         '2026-04': { 'k/n.parquet': 'h-n' },
         '2026-05': { 'k/o.parquet': 'h-o' },
       });
+    });
+  });
+
+  describe('readEtags', () => {
+    it('is empty for a tier with no sidecar yet', async () => {
+      expect(await readEtags(dataDir, provider, 'daily')).toEqual({});
+      expect(sleptMs()).toEqual([]);
+    });
+
+    it('reads back what saveEtags recorded', async () => {
+      await saveEtags(dataDir, provider, 'daily', '2026-01', [entry('k/a.parquet', 'h-a')]);
+      await saveEtags(dataDir, provider, 'daily', '2026-02', [entry('k/b.parquet', 'h-b')]);
+
+      expect(await readEtags(dataDir, provider, 'daily')).toEqual({
+        '2026-01': { 'k/a.parquet': 'h-a' },
+        '2026-02': { 'k/b.parquet': 'h-b' },
+      });
+    });
+
+    it.each(['EMFILE', 'EBUSY', 'EPERM', 'EACCES'])('retries a transient %s read', async (code) => {
+      const seed: Sidecar = { '2026-01': { 'k/a.parquet': 'h-a' } };
+      await seedSidecar(seed);
+      vi.mocked(readFile).mockRejectedValueOnce(errno(code));
+
+      expect(await readEtags(dataDir, provider, 'daily')).toEqual(seed);
+      expect(sleptMs()).toEqual([25]);
+    });
+
+    it('rejects a read failure that outlasts the retries instead of reading it as no etags', async () => {
+      await seedSidecar({ '2026-01': { 'k/a.parquet': 'h-a' } });
+      vi.mocked(readFile).mockRejectedValue(errno('EBUSY'));
+
+      const err: unknown = await readEtags(dataDir, provider, 'daily').catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(LocalSyncStateError);
+      expect(err).toMatchObject({ cause: { code: 'EBUSY' } });
+      expect(sleptMs()).toEqual(ALL_RETRY_DELAYS_MS);
+    });
+
+    it('rejects a non-transient read failure at once, without the path in its message', async () => {
+      await seedSidecar({ '2026-01': { 'k/a.parquet': 'h-a' } });
+      // Node puts the path in an fs error's message.
+      vi.mocked(readFile).mockRejectedValueOnce(Object.assign(new Error(`EIO: i/o error, open '${etagPath()}'`), { code: 'EIO' }));
+
+      const err: unknown = await readEtags(dataDir, provider, 'daily').catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(LocalSyncStateError);
+      expect(readFile).toHaveBeenCalledTimes(1);
+      expect(sleptMs()).toEqual([]);
+      // The credential classifiers match on message text, and the data dir
+      // holds user-chosen names ('credentials-audit' is a valid workspace).
+      expect(String(err)).not.toContain(dataDir);
+    });
+  });
+
+  describe('hasSyncedTier', () => {
+    it.each(['EMFILE', 'EACCES', 'EIO'])('counts a sidecar it cannot check (%s) as synced', async (code) => {
+      vi.mocked(stat).mockRejectedValueOnce(errno(code));
+
+      // No sidecar here, yet only a confirmed ENOENT may read as "never synced":
+      // that answer hides a real credential failure behind local data.
+      expect(await hasSyncedTier(dataDir, provider, 'daily')).toBe(true);
+    });
+  });
+
+  describe('getDataInventory', () => {
+    const AWS_AUTH: ProviderAuth = { kind: 'aws-profile', profile: 'default' };
+    const remote = [
+      entry('cur/data/billing_period=2026-01/a.parquet', 'h-a'),
+      entry('cur/data/billing_period=2026-02/b.parquet', 'h-b'),
+    ];
+    const store: ObjectStoreHandle = {
+      listFiles: () => Promise.resolve([...remote]),
+      downloadFile: () => Promise.reject(new Error('downloadFile not used by the inventory')),
+    };
+    const inventory = () => getDataInventory('s3://bucket/cur/', AWS_AUTH, dataDir, provider, 'daily', store);
+    const statuses = async (): Promise<Record<string, string>> =>
+      Object.fromEntries((await inventory()).periods.map(p => [p.period, p.localStatus]));
+    const UP_TO_DATE = { '2026-01': 'repartitioned', '2026-02': 'repartitioned' };
+
+    /** Both periods downloaded and recorded as up to date. */
+    async function seedSyncedPeriods(): Promise<void> {
+      for (const period of ['2026-01', '2026-02']) {
+        const dir = join(providerRawDir(dataDir, provider), `daily-${period}`);
+        await fsActual.mkdir(dir, { recursive: true });
+        await fsActual.writeFile(join(dir, 'data.parquet'), 'x');
+      }
+      await seedSidecar({
+        '2026-01': { 'cur/data/billing_period=2026-01/a.parquet': 'h-a' },
+        '2026-02': { 'cur/data/billing_period=2026-02/b.parquet': 'h-b' },
+      });
+    }
+
+    /** Fails reads of the daily sidecar — the next `times`, or all of them —
+     *  and passes every other read (the sync timestamps) through. */
+    function failSidecarReads(code: string, times = Number.POSITIVE_INFINITY): void {
+      let left = times;
+      vi.mocked(readFile).mockImplementation(async (file, options) => {
+        if (file === etagPath() && left > 0) {
+          left -= 1;
+          throw errno(code);
+        }
+        return fsActual.readFile(file, options);
+      });
+    }
+
+    it('retries a transient sidecar read instead of reporting every local period stale', async () => {
+      await seedSyncedPeriods();
+      failSidecarReads('EMFILE', 1);
+
+      expect(await statuses()).toEqual(UP_TO_DATE);
+      expect(sleptMs()).toEqual([25]);
+    });
+
+    it('rejects when the sidecar stays unreadable, so auto-sync cannot re-download the retention window', async () => {
+      await seedSyncedPeriods();
+      failSidecarReads('EBUSY');
+
+      await expect(inventory()).rejects.toBeInstanceOf(LocalSyncStateError);
+    });
+
+    it('retries a transient listing of the downloaded data instead of reporting every period missing', async () => {
+      await seedSyncedPeriods();
+      vi.mocked(readdir).mockRejectedValueOnce(errno('EMFILE'));
+
+      expect(await statuses()).toEqual(UP_TO_DATE);
+      expect(sleptMs()).toEqual([25]);
+    });
+
+    it('rejects when the downloaded data cannot be listed, rather than reporting every period missing', async () => {
+      await seedSyncedPeriods();
+      vi.mocked(readdir).mockRejectedValue(errno('EIO'));
+
+      await expect(inventory()).rejects.toBeInstanceOf(LocalSyncStateError);
     });
   });
 });

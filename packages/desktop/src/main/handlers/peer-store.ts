@@ -1,8 +1,9 @@
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { generateIdentityKeyPair, isStringRecord, type IdentityKeyPair, type SharedPullSelection, type SharedSourceTier } from '@costgoblin/core';
+import { tightenToOwnerOnly, writeOwnerOnlyFileSync } from '../owner-only-file.js';
 
 const SHARED_SOURCE_TIERS: readonly SharedSourceTier[] = ['config', 'daily', 'hourly', 'cost-optimization'];
 
@@ -28,7 +29,10 @@ function configDir(configPath: string): string {
   return dirname(configPath);
 }
 
+/** Read one of the peer secret files, first tightening it to owner-only: a
+ *  file loosened outside the app must not stay readable by other users. */
 function readJson(path: string): Readonly<Record<string, unknown>> | null {
+  tightenToOwnerOnly(path);
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, 'utf-8'));
     return isStringRecord(parsed) ? parsed : null;
@@ -38,9 +42,8 @@ function readJson(path: string): Readonly<Record<string, unknown>> | null {
 }
 
 function writeSecret(path: string, value: object): void {
-  mkdirSync(dirname(path), { recursive: true });
   // 0o600: only the current user can read the private key / access secret.
-  writeFileSync(path, JSON.stringify(value, null, 2), { mode: 0o600 });
+  writeOwnerOnlyFileSync(path, JSON.stringify(value, null, 2));
 }
 
 function defaultLabel(): string {

@@ -72,10 +72,15 @@ function fail<T>(reason: string): DecodeResult<T> {
   return { ok: false, reason };
 }
 
-/** At most `max` UTF-16 units and free of control characters (NUL included —
- *  it would cut a SQL alias CASE short). */
+/** An unpaired UTF-16 surrogate. JSON.stringify writes it as a `\\uD800`
+ *  escape that DuckDB's read_json rejects, failing every query that joins the
+ *  flat tags file. (Code units, not the `u` flag, so a lone half matches.) */
+const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
+
+/** At most `max` UTF-16 units, free of control characters (NUL included —
+ *  it would cut a SQL alias CASE short) and well-formed UTF-16. */
 function isBoundedText(value: string, max: number): boolean {
-  return value.length <= max && !hasControlChar(value);
+  return value.length <= max && !hasControlChar(value) && !LONE_SURROGATE.test(value);
 }
 
 /** Why one decoded account is unacceptable, or null when it is fine. The
@@ -123,9 +128,14 @@ export function decodePeerOrgAccounts(raw: string): DecodeResult<OrgSyncResult> 
   if (!isBoundedText(decoded.orgId, MAX_ORG_META) || !isBoundedText(decoded.syncedAt, MAX_ORG_META)) {
     return fail('orgId/syncedAt is too long or has a control character');
   }
+  // The flat tags file derived from these accounts is LEFT JOINed onto every
+  // cost row by id, so a repeated id would repeat that account's costs.
+  const seen = new Set<string>();
   for (const account of decoded.accounts) {
     const problem = accountProblem(account);
     if (problem !== null) return fail(problem);
+    if (seen.has(account.id)) return fail(`duplicate account id ${account.id}`);
+    seen.add(account.id);
   }
   return {
     ok: true,

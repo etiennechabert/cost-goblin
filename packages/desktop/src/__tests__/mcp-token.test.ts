@@ -56,6 +56,15 @@ describe('loadOrCreateMcpToken', () => {
     expect(await fileMode(tokenFile)).toBe(0o600);
   });
 
+  // A file loosened outside the app (a restore, a copy under umask 022) must
+  // not stay readable by other users just because its token is still valid.
+  posixOnly('tightens a 0644 file holding a valid token to 0600 on load', async () => {
+    await writeFile(tokenFile, 'a'.repeat(MCP_MIN_TOKEN_LENGTH));
+    await chmod(tokenFile, 0o644);
+    loadOrCreateMcpToken(tokenFile);
+    expect(await fileMode(tokenFile)).toBe(0o600);
+  });
+
   posixOnly('tightens a 0644 file to 0600 when it replaces a short token', async () => {
     await writeFile(tokenFile, 'short');
     await chmod(tokenFile, 0o644);

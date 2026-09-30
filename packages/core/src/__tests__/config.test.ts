@@ -522,6 +522,59 @@ describe('validateDimensions', () => {
   });
 });
 
+describe('validateDimensions — values that reach SQL literals and array holes', () => {
+  // A NUL ends DuckDB's SQL text early ('unterminated quoted string'), and
+  // buildSource maps every tag, so one such value failed every cost query.
+  it.each([
+    ['an alias key', { tagName: 'team', label: 'Team', aliases: { 'a\u0000b': ['x'] } }],
+    ['an alias value', { tagName: 'team', label: 'Team', aliases: { a: ['x\u0000'] } }],
+    ['tagName', { tagName: 'te\u0000am', label: 'Team' }],
+    ['accountTagFallback', { label: 'OU', accountTagFallback: 'OU\u0000Path' }],
+    ['missingValueTemplate', { tagName: 'team', label: 'Team', missingValueTemplate: 'none\u0000' }],
+    ['pathSegment.separator', { tagName: 'team', label: 'Team', pathSegment: { separator: '\u0000', index: 1 } }],
+  ])('rejects a NUL in %s', (_label, tag) => {
+    expect(() => validateDimensions({ builtIn: [], tags: [tag] })).toThrow(/NUL/);
+  });
+
+  it('rejects a NUL in a built-in alias', () => {
+    expect(() => validateDimensions({
+      builtIn: [{ name: 'svc', label: 'Service', field: 'service', aliases: { EC2: ['Amazon\u0000EC2'] } }],
+      tags: [],
+    })).toThrow(/NUL/);
+  });
+
+  // Array.prototype.map skips holes, so a sparse array (which survives
+  // Electron's structured clone) passed validation and was saved as
+  // `- null`, which the next load rejects.
+  it.each([
+    ['tags', () => ({ builtIn: [], tags: sparse(1, { tagName: 'team', label: 'Team' }) })],
+    ['builtIn', () => ({ builtIn: sparse(1, { name: 'svc', label: 'Service', field: 'service' }), tags: [] })],
+    ['order', () => ({ builtIn: [], tags: [], order: sparse(1, 'svc') })],
+    ['an alias list', () => ({ builtIn: [], tags: [{ tagName: 'team', label: 'Team', aliases: { a: sparse(1, 'x') } }] })],
+  ])('rejects a hole in %s', (_label, build) => {
+    expect(() => validateDimensions(build())).toThrow(ConfigValidationError);
+  });
+
+  // A cosmetic field must not make a previously loadable config unloadable:
+  // an empty `description:` in YAML parses to null.
+  it.each([null, 2024, true])('ignores a non-string tag description (%s)', (description) => {
+    const dims = validateDimensions({ builtIn: [], tags: [{ tagName: 'team', label: 'Team', description }] });
+    expect(dims.tags[0]).not.toHaveProperty('description');
+  });
+
+  it('keeps a string tag description', () => {
+    const dims = validateDimensions({ builtIn: [], tags: [{ tagName: 'team', label: 'Team', description: 'Owning team' }] });
+    expect(dims.tags[0]?.description).toBe('Owning team');
+  });
+});
+
+/** An array of `length + 1` whose index 0 is a hole and whose last slot is `last`. */
+function sparse(length: number, last: unknown): unknown[] {
+  const arr: unknown[] = [];
+  arr[length] = last;
+  return arr;
+}
+
 describe('validateDimensions — nameStripPatterns caps', () => {
   afterEach(() => { vi.restoreAllMocks(); });
 
