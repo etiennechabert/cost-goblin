@@ -8,17 +8,15 @@ import { providerRawDir, providerRoot } from './provider-paths.js';
 import { parseS3Path } from './s3-client.js';
 import type { ProgressCallback } from './s3-client.js';
 import type { ManifestFileEntry } from './manifest.js';
-import type { ExpectedDataType } from './sync-utils.js';
+import type { ExpectedDataType } from './tiers.js';
+import { getRawDirPrefix } from './tiers.js';
 import {
-  getRawDirPrefix,
   parseAwsCompletedBytes,
   parsePartition,
   partitionFolderLabel,
   saveEtags,
 } from './sync-utils.js';
 import { findAwsCli } from './trusted-binaries.js';
-
-export type { ExpectedDataType } from './sync-utils.js';
 
 /** One const for the pre-spawn guard and the ENOENT race below, so the two
  *  user-facing copies cannot drift. The 'AWS CLI not found' head is pinned by

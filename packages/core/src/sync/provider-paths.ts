@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import type { ProviderName } from '../types/branded.js';
-import { getEtagFileName } from './sync-utils.js';
+import { getEtagFileName } from './tiers.js';
 
 /** On-disk layout of one provider inside a profile's data dir:
  *

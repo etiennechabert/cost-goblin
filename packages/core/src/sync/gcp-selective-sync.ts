@@ -10,7 +10,8 @@ import { parseGcsPath } from './gcs-client.js';
 import type { ManifestFileEntry } from './manifest.js';
 import { providerMetaDir, providerRawDir } from './provider-paths.js';
 import type { ProgressCallback } from './s3-client.js';
-import { extractPeriodPrefix, getRawDirPrefix, groupByPeriod, saveEtags } from './sync-utils.js';
+import { extractPeriodPrefix, groupByPeriod, saveEtags } from './sync-utils.js';
+import { getRawDirPrefix } from './tiers.js';
 import { findGcloudCli, gcloudChildPath, gcloudSpawnShape } from './trusted-binaries.js';
 
 /** One const for the pre-spawn guard and the ENOENT race below, so the two
