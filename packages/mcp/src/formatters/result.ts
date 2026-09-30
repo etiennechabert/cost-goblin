@@ -186,8 +186,11 @@ export function formatAsJson(result: StructuredResult): string {
   return JSON.stringify(out, null, 2);
 }
 
+/** RFC 4180 quoting, plus a quote for any value that starts with `#`: this
+ *  format marks its own title/meta/note/footer lines with a leading `#`, so a
+ *  data row or header must never start with a bare one. */
 function csvEscape(value: string): string {
-  if (/[",\n\r]/.test(value)) {
+  if (value.startsWith('#') || /[",\n\r]/.test(value)) {
     return `"${value.replaceAll('"', '""')}"`;
   }
   return value;

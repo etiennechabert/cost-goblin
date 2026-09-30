@@ -70,31 +70,53 @@ export function escapeMarkdownCell(s: string): string {
   return toSingleLine(s).replaceAll('|', '\\|');
 }
 
-function isBoundaryAfterHome(ch: string): boolean {
-  return ch === '' || ch === '/' || ch === '\\' || ch === "'" || ch === '"';
+/** A character that can continue a path-segment name (`/home/eveline`,
+ *  `/home/eve-old`, `/home/eve.bak`, `/home/evé` are other directories).
+ *  Unicode-aware, combining marks included: macOS stores names decomposed,
+ *  so `/Users/evé` arrives as `/Users/eve` followed by U+0301. */
+const NAME_CHAR = /[\p{L}\p{M}\p{N}_-]/u;
+
+/** Whether the home directory ends at `end`: the next character cannot
+ *  continue its last segment. A `.` counts only when no name character
+ *  follows it (a sentence-ending dot, not `eve.bak`). */
+function endsHome(message: string, end: number): boolean {
+  const ch = message.charAt(end);
+  if (ch === '') return true;
+  if (ch === '.') return !NAME_CHAR.test(message.charAt(end + 1));
+  return !NAME_CHAR.test(ch);
 }
 
-function redactOne(message: string, home: string): string {
+function redactOne(message: string, home: string, caseInsensitive: boolean): string {
+  // Search a lowercased copy so Windows' case-insensitive spellings match,
+  // and slice the original. Offsets only line up while lowercasing keeps the
+  // length; if it doesn't (a rare Unicode case), match case-sensitively.
+  const lowered = caseInsensitive ? message.toLowerCase() : message;
+  const loweredHome = caseInsensitive ? home.toLowerCase() : home;
+  const aligned = lowered.length === message.length && loweredHome.length === home.length;
+  const haystack = aligned ? lowered : message;
+  const needle = aligned ? loweredHome : home;
   let out = '';
   let from = 0;
-  for (let at = message.indexOf(home); at !== -1; at = message.indexOf(home, from)) {
-    const end = at + home.length;
-    out += message.slice(from, at) + (isBoundaryAfterHome(message.charAt(end)) ? '~' : home);
+  for (let at = haystack.indexOf(needle); at !== -1; at = haystack.indexOf(needle, from)) {
+    const end = at + needle.length;
+    out += message.slice(from, at) + (endsHome(message, end) ? '~' : message.slice(at, end));
     from = end;
   }
   return from === 0 ? message : out + message.slice(from);
 }
 
 /**
- * Replace the user's home directory with `~` wherever it is followed by a path
- * separator, a quote or the end of the message (so `/home/eveline` is left
- * alone for home `/home/eve`). The forward-slash spelling of a Windows home
- * (`C:/Users/eve`, as DuckDB prints paths) is redacted too. No-op when the home
- * directory is empty or `/`.
+ * Replace the user's home directory with `~` wherever it ends a path segment:
+ * followed by a separator, quote, colon, space, bracket, comma, sentence-ending
+ * dot, line break or the end of the message (so `/home/eveline` is left alone
+ * for home `/home/eve`). The forward-slash spelling of a Windows home
+ * (`C:/Users/eve`, as DuckDB prints paths) is redacted too, and on win32 the
+ * match ignores case. No-op when the home directory is empty or `/`.
  */
-export function redactHome(message: string, home: string = homedir()): string {
+export function redactHome(message: string, home: string = homedir(), platform: NodeJS.Platform = process.platform): string {
   if (home === '' || home === '/') return message;
-  const redacted = redactOne(message, home);
+  const caseInsensitive = platform === 'win32';
+  const redacted = redactOne(message, home, caseInsensitive);
   const forwardSlashHome = home.replaceAll('\\', '/');
-  return forwardSlashHome === home ? redacted : redactOne(redacted, forwardSlashHome);
+  return forwardSlashHome === home ? redacted : redactOne(redacted, forwardSlashHome, caseInsensitive);
 }
