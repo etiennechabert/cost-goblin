@@ -1,29 +1,13 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { isStringRecord } from '../utils/json.js';
 import { logger } from '../logger/logger.js';
 import type { ProviderName } from '../types/branded.js';
 import type { ProviderConfig } from '../types/config.js';
 import type { ManifestFileEntry } from './manifest.js';
-import { providerEtagPath, providerMetaDir } from './provider-paths.js';
+import { providerEtagPath, providerRawDir } from './provider-paths.js';
 import type { ExpectedDataType } from './tiers.js';
-
-const TIER_RAW_PREFIXES: Record<ExpectedDataType, string> = {
-  'daily': 'daily',
-  'hourly': 'hourly',
-  'cost-optimization': 'cost-opt',
-};
-
-/**
- * Returns the directory-name prefix used under {providerName}/raw/ for a
- * given tier. Files for a period live under {providerName}/raw/{prefix}-{period}/
- * — e.g. aws-main/raw/daily-2026-04/, aws-main/raw/cost-opt-2026-04-08/.
- */
-export function getRawDirPrefix(tier: string): string {
-  if (tier === 'hourly' || tier === 'cost-optimization' || tier === 'daily') {
-    return TIER_RAW_PREFIXES[tier];
-  }
-  return TIER_RAW_PREFIXES['daily'];
-}
+import { getRawDirPrefix } from './tiers.js';
 
 /**
  * Bucket location for one provider's tier. Shared by manual and background
@@ -68,12 +52,10 @@ export function resolveBucketPath(provider: ProviderConfig, tier: ExpectedDataTy
  * match zero files, so missing months must be filtered out before query time.
  */
 export async function listLocalMonths(dataDir: string, provider: ProviderName, tier: string): Promise<string[]> {
-  const fs = await import('node:fs/promises');
-  const path = await import('node:path');
   const prefix = getRawDirPrefix(tier);
-  const rawDir = path.join(dataDir, String(provider), 'raw');
+  const rawDir = providerRawDir(dataDir, provider);
   try {
-    const entries = await fs.readdir(rawDir);
+    const entries = await readdir(rawDir);
     const months = new Set<string>();
     for (const entry of entries) {
       if (!entry.startsWith(`${prefix}-`)) continue;
@@ -83,7 +65,7 @@ export async function listLocalMonths(dataDir: string, provider: ProviderName, t
       // glob. Empty dirs can linger after interrupted downloads or partial
       // deletes; silently skip them.
       try {
-        const files = await fs.readdir(path.join(rawDir, entry));
+        const files = await readdir(join(rawDir, entry));
         if (files.some(f => f.endsWith('.parquet'))) months.add(period);
       } catch { /* dir vanished mid-scan */ }
     }
@@ -252,8 +234,8 @@ export async function saveEtags(
   period: string,
   periodFiles: readonly ManifestFileEntry[],
 ): Promise<void> {
-  await mkdir(providerMetaDir(dataDir, providerName), { recursive: true });
   const etagPath = providerEtagPath(dataDir, providerName, tier);
+  await mkdir(dirname(etagPath), { recursive: true });
   let savedEtags: Record<string, Record<string, string>> = {};
   try {
     const raw = await readFile(etagPath, 'utf-8');

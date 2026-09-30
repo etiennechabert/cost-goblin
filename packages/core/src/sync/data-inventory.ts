@@ -7,7 +7,8 @@ import { logger } from '../logger/logger.js';
 import type { DataTier } from '../types/api.js';
 import type { ProviderName } from '../types/branded.js';
 import { providerEtagPath, providerRawDir } from './provider-paths.js';
-import { getRawDirPrefix, parseEtagsJson, parsePartition, partitionFolderLabel } from './sync-utils.js';
+import { parseEtagsJson, parsePartition, partitionFolderLabel } from './sync-utils.js';
+import { getRawDirPrefix } from './tiers.js';
 import { readTierLastSync } from './sync-timestamps.js';
 
 export type PeriodStatus = 'missing' | 'repartitioned' | 'stale';

@@ -4,8 +4,8 @@ import { parse } from 'yaml';
 import { isStringRecord, isValidProviderName, logger } from '@costgoblin/core';
 
 /** Sync sidecars that lived at the dataDir ROOT before #516 and move into
- *  `{providerName}/meta/`. Keep in lockstep with core's TIER_ETAG_FILES (sync/tiers.ts) +
- *  sync-timestamps.json. */
+ *  `{providerName}/meta/`. A frozen list of those historical names: do NOT
+ *  update it when core renames a sidecar, or old root files stop migrating. */
 const ROOT_SIDECAR_FILES: readonly string[] = [
   'sync-etags.json',
   'sync-etags-hourly.json',

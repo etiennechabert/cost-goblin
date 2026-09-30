@@ -299,7 +299,7 @@ The hourly and cost-optimization tiers are optional. Daily is mandatory.
 - For each missing or stale period, the user (or auto-sync) triggers a per-period download via `syncPeriods()`.
 - Download is delegated to `aws s3 sync` (subprocess), which handles concurrency, retries, and partial-file resume natively.
 - Files land directly in `{providerName}/raw/{tier}-{period}/` — **no repartitioning**, no DuckDB-side rewrite. The downloaded Parquet is the queried Parquet.
-- Per-period etag manifests (`{providerName}/meta/sync-etags-{tier}.json`) record what's locally present so re-sync can skip unchanged files.
+- Per-period etag manifests (`{providerName}/meta/sync-etags.json` for daily, `sync-etags-{tier}.json` for the other tiers) record what's locally present so re-sync can skip unchanged files.
 - Tag columns are NOT pre-flattened at sync time. Queries extract from the FOCUS `Tags` map and apply aliases via SQL CASE expressions at query time.
 
 **Local storage layout:**

@@ -1,8 +1,5 @@
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { providerEtagPath } from '../sync/provider-paths.js';
-import { getEtagFileName } from '../sync/tiers.js';
-import { asProviderName } from '../types/branded.js';
+import { getEtagFileName, getRawDirPrefix } from '../sync/tiers.js';
 
 describe('getEtagFileName', () => {
   it('maps each tier to its own sidecar file', () => {
@@ -16,9 +13,14 @@ describe('getEtagFileName', () => {
   });
 });
 
-describe('providerEtagPath', () => {
-  it('places the tier sidecar under the provider meta dir', () => {
-    const provider = asProviderName('aws-main');
-    expect(providerEtagPath('/data', provider, 'hourly')).toBe(join('/data', 'aws-main', 'meta', 'sync-etags-hourly.json'));
+describe('getRawDirPrefix', () => {
+  it('maps each tier to its raw dir prefix — cost-optimization is shortened', () => {
+    expect(getRawDirPrefix('daily')).toBe('daily');
+    expect(getRawDirPrefix('hourly')).toBe('hourly');
+    expect(getRawDirPrefix('cost-optimization')).toBe('cost-opt');
+  });
+
+  it('falls back to the daily prefix for an unknown tier', () => {
+    expect(getRawDirPrefix('weekly')).toBe('daily');
   });
 });

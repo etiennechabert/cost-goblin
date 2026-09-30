@@ -124,7 +124,7 @@ export function isSafePackPath(path: string): boolean {
 export type PackTier = 'daily' | 'hourly' | 'cost-optimization';
 
 /** Maps an on-disk `{provider}/raw/` directory prefix to its tier. Mirrors
- *  sync-utils' TIER_RAW_PREFIXES; kept here so the peer module stays
+ *  sync/tiers.ts' TIER_RAW_PREFIXES; kept here so the peer module stays
  *  self-contained. */
 const TIER_BY_PREFIX: ReadonlyMap<string, PackTier> = new Map([
   ['daily', 'daily'],
