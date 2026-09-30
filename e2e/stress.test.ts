@@ -1,10 +1,13 @@
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
 import { join } from 'node:path';
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { stringify } from 'yaml';
+import { WIDGET_TYPES } from '../packages/core/src/config/views-validator.js';
+import type { WidgetSize, WidgetType } from '../packages/core/src/types/views.js';
 import {
   FIXTURE_CONFIG_DIR,
-  LOAD_TIMEOUT,
+  assertNoReactCrash,
   clickNavButton,
   launchAppWithCoverage,
   finishCoverage,
@@ -12,272 +15,259 @@ import {
 } from './helpers.js';
 
 // ---------------------------------------------------------------------------
-// Widget growth regression — every widget × every size stays bounded
+// Widget growth regression — every widget type × every size stays bounded
 // ---------------------------------------------------------------------------
 //
 // Hunts runaway layout growth (a ResizeObserver feeding its own measurement
 // back into the size it observes, a flex item chasing its content, …) across
-// every widget type at every lane width, all on ONE dashboard so the whole
-// matrix shares a single navigation, settle and observation window.
-
-const WIDGET_TYPES = ['summary', 'pie', 'stackedBar', 'line', 'topNBar', 'treemap', 'heatmap', 'bubble', 'table'] as const;
-const SIZES = ['small', 'medium', 'large', 'full'] as const;
-type WidgetType = (typeof WIDGET_TYPES)[number];
-type Size = (typeof SIZES)[number];
+// every widget type the app knows (core's own list, so a new type joins the
+// matrix automatically) at every lane width, all on ONE dashboard so the whole
+// matrix shares a single navigation and a single observation.
 
 const VIEW_NAME = 'widget-matrix';
 
 interface MatrixWidget {
   readonly id: string;
   readonly type: WidgetType;
-  readonly size: Size;
+  readonly size: WidgetSize;
 }
-const matrixWidget = (type: WidgetType, size: Size): MatrixWidget => ({ id: `w-${type}-${size}`, type, size });
-/** Tops up the one medium lane left over when the matrix is packed (see
- *  {@link matrixRows}). Measured like every other widget. */
-const PAD: MatrixWidget = { id: 'pad-summary-medium', type: 'summary', size: 'medium' };
+const matrixWidget = (type: WidgetType, size: WidgetSize): MatrixWidget => ({ id: `w-${type}-${size}`, type, size });
+const SIZES: readonly WidgetSize[] = ['small', 'medium', 'large', 'full'];
 const MATRIX_IDS: readonly string[] = WIDGET_TYPES.flatMap(t => SIZES.map(s => matrixWidget(t, s).id));
+/** A lane's share of its row (custom-view.tsx: flexBasis per size, flexGrow 1). */
+const LANE_FRACTION: Readonly<Record<WidgetSize, number>> = { small: 0.25, medium: 0.5, large: 0.75, full: 1 };
+/** Row gap between lanes (custom-view.tsx `gap-4`): the slack a lane's width may
+ *  show against its nominal fraction of a full-width lane. */
+const LANE_GAP_PX = 16;
 
-// Settle: after every widget has data, wait for QUIET_MS of unchanged layout
-// before sampling. Short CSS transitions on data arrival (bar widths animate
-// for 0.2s) finish well inside it. A runaway grower is never quiet, so the
-// wait is capped — the cap is spent only on a failing run, and sampling
-// then names the offender rather than the settle timing out anonymously.
-const SETTLE_POLL_MS = 100;
-const QUIET_MS = 500;
-const SETTLE_CAP_MS = 5_000;
-
-// Observation window: 10 samples 250ms apart (2.25s). Each inter-sample
-// delta is checked against a growth budget proportional to the time that
-// actually elapsed between the two samples (timers stretch under CI load, and
-// a feedback loop grows per rendered frame, i.e. per unit of time).
+// Observation: sample every 250ms and pass on the first window of 10
+// consecutive samples (2.25s) that is clean — every widget present, none
+// loading, and no metric growing. There is no separate settle: late data, a
+// chart sizing itself, a one-shot reflow just reject windows until they slide
+// out of view. A widget that keeps growing never yields a clean window, and
+// at the deadline the last window names it.
 //
-// 32 px/s keeps the old suite's sensitivity (20px per 600ms ≈ 33 px/s) and
-// works out to 8px per nominal 250ms interval. Both sides have wide margin:
-//  - a settled layout is deterministic — repeated measurements are identical,
-//    so an honest widget's delta is 0 (sub-pixel rounding is < 1px);
-//  - a ResizeObserver loop re-fires every frame it changes the size it
-//    watches, so even a 1px-per-frame creep at 60fps is 60 px/s (15px per
-//    interval, ~2× the budget); real loops step by a padding or border width
-//    per frame and blow through it by orders of magnitude.
+// "Growing" is judged two ways:
+//  - rate: each inter-sample delta against 32 px/s × the time that actually
+//    elapsed (timers stretch under CI load; a feedback loop grows per rendered
+//    frame, i.e. per unit of time). 32 px/s keeps the old suite's sensitivity
+//    (20px per 600ms ≈ 33 px/s): 8px per nominal interval. A ResizeObserver
+//    loop driven every frame is ≥60 px/s even at 1px per frame at 60fps.
+//  - net: any metric more than 1px bigger at the end of the window than at
+//    its start. This catches creep under the rate budget — charts sized by
+//    visx ParentSize re-measure through a 300ms debounce, so a loop there
+//    steps only a few times a second and can stay under 8px per interval.
+// A settled layout is deterministic — repeated measurements are identical,
+// sub-pixel rounding aside — so an honest widget shows 0 on both.
 const SAMPLE_COUNT = 10;
 const SAMPLE_INTERVAL_MS = 250;
 const MAX_GROWTH_PX_PER_SEC = 32;
+const MAX_NET_GROWTH_PX = 1;
+/** Time to find a clean window, counted from the first sample. Covers the
+ *  tail of data loading on a slow runner; a passing run needs 2.25s. */
+const OBSERVE_DEADLINE_MS = 15_000;
 
-/** What one sample records per widget slot (plus a `page` entry for the
- *  document, the old suite's only signal). */
-interface Extent {
-  readonly id: string;
-  /** The slot's border box: its lane's width, and its natural (un-stretched)
-   *  height. */
-  readonly width: number;
-  readonly height: number;
-  /** The slot's scrollable overflow: content spilling out of the lane. */
-  readonly scrollWidth: number;
-  readonly scrollHeight: number;
-  /** Overflow clipped inside descendant scroll/clip containers (a table's
-   *  scroll body, a truncated label). Growth there never moves the slot's
-   *  box or the document, so it is summed separately. */
-  readonly clippedWidth: number;
-  readonly clippedHeight: number;
-}
-
+/** What each sample records per widget slot (plus a `page` entry for the
+ *  document — the old suite's only signal — as a backstop for growth outside
+ *  any slot):
+ *  - width / height: the slot's border box — its lane's width, and its
+ *    natural (un-stretched) height;
+ *  - scrollWidth / scrollHeight: the slot's scrollable overflow, i.e. content
+ *    spilling out of the lane;
+ *  - clippedWidth / clippedHeight: overflow clipped inside descendant
+ *    scroll/clip containers (a table's scroll body, a chart's fixed-height
+ *    wrapper). Growth there never moves the slot's box or the document. */
 const METRICS = ['width', 'height', 'scrollWidth', 'scrollHeight', 'clippedWidth', 'clippedHeight'] as const;
+type Extent = { readonly id: string } & { readonly [M in (typeof METRICS)[number]]: number };
 
 interface Sample {
+  /** The renderer's clock, so intervals don't include CDP round-trips. */
   readonly at: number;
   readonly extents: readonly Extent[];
-}
-
-interface Observation {
-  readonly quietAfterMs: number | null;
-  readonly samples: readonly Sample[];
+  /** Slots still showing a loading state. */
+  readonly loading: readonly string[];
 }
 
 test.describe('Widget growth', () => {
-  const TEMP_CONFIG_DIR = join(tmpdir(), `costgoblin-widget-growth-${String(Date.now())}`);
-
+  let configDir: string;
   let widgetApp: ElectronApplication;
   let widgetPage: Page;
 
   test.beforeAll(async () => {
-    mkdirSync(TEMP_CONFIG_DIR, { recursive: true });
+    configDir = mkdtempSync(join(tmpdir(), 'costgoblin-widget-growth-'));
     for (const f of ['costgoblin.yaml', 'dimensions.yaml', 'org-tree.yaml']) {
       const src = join(FIXTURE_CONFIG_DIR, f);
-      if (existsSync(src)) writeFileSync(join(TEMP_CONFIG_DIR, f), readFileSync(src));
+      if (existsSync(src)) writeFileSync(join(configDir, f), readFileSync(src));
     }
-    writeFileSync(join(TEMP_CONFIG_DIR, 'views.yaml'), buildWidgetMatrixYaml());
+    writeFileSync(join(configDir, 'views.yaml'), buildWidgetMatrixYaml());
 
-    ({ app: widgetApp, page: widgetPage } = await launchAppWithCoverage({ configDir: TEMP_CONFIG_DIR }));
+    ({ app: widgetApp, page: widgetPage } = await launchAppWithCoverage({ configDir }));
     await widgetPage.setViewportSize({ width: 1400, height: 900 });
   });
 
   test.afterAll(async () => {
     await finishCoverage(widgetApp, widgetPage, 'stress');
+    rmSync(configDir, { recursive: true, force: true });
   });
 
   test('every widget type stays bounded at every size', async () => {
+    // Budget: navigation + waitForQuerySettle (~6s) + widgets on the dashboard
+    // (10s) + every slot mounted (20s) + observation (15s + a window) — the
+    // whole matrix in one test, so well past the 30s default.
+    test.setTimeout(90_000);
     const page = widgetPage;
     await clickNavButton(page, VIEW_NAME);
     await waitForQuerySettle(page);
 
+    const slotIds = (selector: string): Promise<(string | null)[]> =>
+      page.locator(selector).evaluateAll(els => els.map(el => el.getAttribute('data-widget-id')));
     await expect.poll(async () => {
-      const ids = new Set(await page.locator('[data-widget-id]').evaluateAll(els => els.map(el => el.getAttribute('data-widget-id'))));
+      const ids = new Set(await slotIds('[data-widget-id]'));
       return MATRIX_IDS.filter(id => !ids.has(id));
-    }, { message: 'every matrix widget is on the dashboard' }).toEqual([]);
+    }, { message: 'every matrix widget is on the dashboard', timeout: 10_000 }).toEqual([]);
 
     // Slots mount lazily — only once scrolled near the viewport — so walk
-    // each one into view; the scheduler then mounts them in order. Re-walk
-    // whatever is still deferred, in case an observer entry was missed.
-    const deferred = page.locator('[data-widget-id][data-widget-state="deferred"]');
+    // each one into view; the scheduler then mounts them. Re-walk whatever
+    // is still deferred, in case an observer entry was missed.
+    await page.mouse.move(0, 0); // over the sticky header, so the walk hovers no widget
     await expect(async () => {
       await requestMounts(page);
-      await expect(deferred, 'every widget slot mounts').toHaveCount(0, { timeout: 3_000 });
+      await expect.poll(() => slotIds('[data-widget-state="deferred"]'), {
+        message: 'every widget slot mounts',
+        timeout: 3_000,
+      }).toEqual([]);
     }).toPass({ timeout: 20_000 });
-    // CoinRainLoader is an <output> announcing "Loading"; its coins move
-    // inside a clip box, so no sampling until every widget has its data.
-    await expect(page.locator('[data-widget-id] output', { hasText: 'Loading' }), 'every widget finishes loading')
-      .toHaveCount(0, { timeout: LOAD_TIMEOUT * 2 });
 
-    const observation = await observe(page);
-    test.info().annotations.push({
-      type: 'settle',
-      description: observation.quietAfterMs === null
-        ? `layout never went quiet within ${String(SETTLE_CAP_MS)}ms`
-        : `layout quiet after ${String(Math.round(observation.quietAfterMs))}ms`,
-    });
+    const { recent, waitedMs } = await observe(page);
 
-    const sampled = new Set(observation.samples[0]?.extents.map(e => e.id));
-    expect(MATRIX_IDS.filter(id => !sampled.has(id)), 'every widget was measured').toEqual([]);
-    expect(findGrowth(observation.samples), 'widgets that grew during the observation window').toEqual([]);
+    await assertNoReactCrash(page);
+    expect(windowProblems(recent), `widgets loading, missing or growing in the last window (${String(Math.round(waitedMs))}ms of sampling)`).toEqual([]);
+    expect(laneWidthProblems(recent[0]), 'lanes off their nominal width').toEqual([]);
   });
 });
 
-/** Scroll every still-deferred slot through the IntersectionObserver window
- *  so it asks the scheduler for a mount (the request is sticky; the mount then
- *  waits for its turn). Two frames per stop let the observer deliver. */
+/** Scroll every still-deferred slot into view so its IntersectionObserver
+ *  asks the scheduler for a mount (the request is sticky; the mount then waits
+ *  for its turn).
+ *
+ *  A slot is skipped only if it was inside the viewport in the layout the
+ *  observer last computed — intersecting under any non-negative root margin.
+ *  That layout is snapshotted from a rAF callback: nothing commits between it
+ *  and the same frame's intersection pass, whereas live rects read later can
+ *  already reflect a mount wave that moved slots the observer never saw. */
 async function requestMounts(page: Page): Promise<void> {
   await page.evaluate(async () => {
-    // Matches DEFAULT_ROOT_MARGIN in widget-load-scheduler.tsx; anything
-    // already inside it at the current stop has been observed and is skipped.
-    const ROOT_MARGIN = 400;
     const frame = (): Promise<void> => new Promise(resolve => { requestAnimationFrame(() => { resolve(); }); });
-    for (const el of document.querySelectorAll('[data-widget-id][data-widget-state="deferred"]')) {
+    const inViewport = (): Set<Element> => new Set([...document.querySelectorAll('[data-widget-id]')].filter(el => {
       const r = el.getBoundingClientRect();
-      if (r.bottom >= -ROOT_MARGIN && r.top <= window.innerHeight + ROOT_MARGIN) continue;
+      return r.bottom > 0 && r.top < window.innerHeight;
+    }));
+    // Each stop: snapshot in this frame's rAF, then one more frame so the
+    // observer has computed and delivered on that layout.
+    const settleAt = async (): Promise<Set<Element>> => {
+      await frame();
+      const seen = inViewport();
+      await frame();
+      return seen;
+    };
+    let seen = await settleAt();
+    for (const el of document.querySelectorAll('[data-widget-id][data-widget-state="deferred"]')) {
+      if (seen.has(el)) continue;
       el.scrollIntoView({ block: 'start' });
-      await frame();
-      await frame();
+      seen = await settleAt();
     }
     window.scrollTo(0, 0);
   });
 }
 
-/** Settle, then sample — both in-page so the timings are the renderer's own
- *  clock, not CDP round-trips. */
-async function observe(page: Page): Promise<Observation> {
-  return page.evaluate(async (cfg) => {
-    const sleep = (ms: number): Promise<void> => new Promise(resolve => { setTimeout(resolve, ms); });
-
-    function measure(): Extent[] {
-      // The old suite's only signal, kept as a backstop for growth outside
-      // any slot. Read before the slots are un-stretched below.
-      const page: Extent = {
-        id: 'page',
-        width: document.body.scrollWidth,
-        height: document.body.scrollHeight,
-        scrollWidth: 0,
-        scrollHeight: 0,
-        clippedWidth: 0,
-        clippedHeight: 0,
-      };
-
-      // Rows stretch every slot to the tallest one, so a widget that grows
-      // drags its row-mates' boxes with it and the report would blame them
-      // too. Measure each slot at its natural height instead: un-stretch,
-      // read, restore — all in this one task, so no frame renders the
-      // change and no ResizeObserver or IntersectionObserver can see it.
-      const slots = [...document.querySelectorAll('[data-widget-id]')].filter(el => el instanceof HTMLElement);
-      const alignSelf = slots.map(slot => slot.style.alignSelf);
-      for (const slot of slots) slot.style.alignSelf = 'flex-start';
-
-      const extents: Extent[] = slots.map(slot => {
-        let clippedWidth = 0;
-        let clippedHeight = 0;
-        for (const el of slot.querySelectorAll('*')) {
-          if (!(el instanceof HTMLElement)) continue;
-          const overX = el.scrollWidth - el.clientWidth;
-          const overY = el.scrollHeight - el.clientHeight;
-          if (overX <= 0 && overY <= 0) continue;
-          const style = getComputedStyle(el);
-          if (overX > 0 && style.overflowX !== 'visible') clippedWidth += overX;
-          if (overY > 0 && style.overflowY !== 'visible') clippedHeight += overY;
-        }
-        const box = slot.getBoundingClientRect();
-        return {
-          id: slot.dataset['widgetId'] ?? '(unnamed)',
-          width: box.width,
-          height: box.height,
-          scrollWidth: slot.scrollWidth,
-          scrollHeight: slot.scrollHeight,
-          clippedWidth,
-          clippedHeight,
-        };
-      });
-
-      slots.forEach((slot, i) => { slot.style.alignSelf = alignSelf[i] ?? ''; });
-      extents.push(page);
-      return extents;
+/** Sample until the last SAMPLE_COUNT samples form a clean window, or the
+ *  deadline passes; returns that last window either way. */
+async function observe(page: Page): Promise<{ recent: readonly Sample[]; waitedMs: number }> {
+  const samples: Sample[] = [];
+  for (;;) {
+    samples.push(await page.evaluate(measureLayout));
+    const recent = samples.slice(-SAMPLE_COUNT);
+    const first = samples[0];
+    const last = samples.at(-1);
+    const waitedMs = first === undefined || last === undefined ? 0 : last.at - first.at;
+    if (recent.length === SAMPLE_COUNT && (windowProblems(recent).length === 0 || waitedMs >= OBSERVE_DEADLINE_MS)) {
+      return { recent, waitedMs };
     }
-
-    function sameLayout(a: readonly Extent[], b: readonly Extent[]): boolean {
-      if (a.length !== b.length) return false;
-      return a.every((x, i) => {
-        const y = b[i];
-        return y !== undefined && x.id === y.id && cfg.metrics.every(m => Math.abs(x[m] - y[m]) < 0.5);
-      });
-    }
-
-    const start = performance.now();
-    let quietSince = start;
-    let quietAfterMs: number | null = null;
-    let last = measure();
-    while (performance.now() - start < cfg.settleCapMs) {
-      await sleep(cfg.settlePollMs);
-      const now = measure();
-      const t = performance.now();
-      if (!sameLayout(last, now)) quietSince = t;
-      last = now;
-      if (t - quietSince >= cfg.quietMs) {
-        quietAfterMs = t - start;
-        break;
-      }
-    }
-
-    const samples: Sample[] = [];
-    for (let i = 0; i < cfg.sampleCount; i++) {
-      if (i > 0) await sleep(cfg.sampleIntervalMs);
-      samples.push({ at: performance.now(), extents: measure() });
-    }
-    return { quietAfterMs, samples };
-  }, {
-    settlePollMs: SETTLE_POLL_MS,
-    quietMs: QUIET_MS,
-    settleCapMs: SETTLE_CAP_MS,
-    sampleCount: SAMPLE_COUNT,
-    sampleIntervalMs: SAMPLE_INTERVAL_MS,
-    metrics: METRICS,
-  });
+    await page.waitForTimeout(SAMPLE_INTERVAL_MS);
+  }
 }
 
-/** One line per widget that grew faster than the budget in any interval,
- *  listing each offending metric at its worst interval. */
-function findGrowth(samples: readonly Sample[]): string[] {
-  interface Growth { readonly growth: number; readonly budget: number; readonly dt: number; readonly interval: number }
-  const worst = new Map<string, Map<string, Growth>>();
-  for (let i = 1; i < samples.length; i++) {
-    const prev = samples[i - 1];
-    const cur = samples[i];
+/** Runs in the renderer (serialized by page.evaluate — no outer references). */
+function measureLayout(): Sample {
+  const at = performance.now();
+  const page: Extent = {
+    id: 'page',
+    width: document.body.scrollWidth,
+    height: document.body.scrollHeight,
+    scrollWidth: 0,
+    scrollHeight: 0,
+    clippedWidth: 0,
+    clippedHeight: 0,
+  };
+
+  // Rows stretch every slot to the tallest one, so a widget that grows drags
+  // its row-mates' boxes with it and the report would blame them too. Measure
+  // each slot at its natural height instead: un-stretch, read, restore — all
+  // in this one task, so no frame renders the change and no ResizeObserver or
+  // IntersectionObserver can see it.
+  const slots = [...document.querySelectorAll('[data-widget-id]')].filter(el => el instanceof HTMLElement);
+  const alignSelf = slots.map(slot => slot.style.alignSelf);
+  for (const slot of slots) slot.style.alignSelf = 'flex-start';
+
+  const extents: Extent[] = slots.map(slot => {
+    let clippedWidth = 0;
+    let clippedHeight = 0;
+    for (const el of slot.querySelectorAll('*')) {
+      if (!(el instanceof HTMLElement)) continue;
+      const overX = el.scrollWidth - el.clientWidth;
+      const overY = el.scrollHeight - el.clientHeight;
+      if (overX <= 0 && overY <= 0) continue;
+      const style = getComputedStyle(el);
+      if (overX > 0 && style.overflowX !== 'visible') clippedWidth += overX;
+      if (overY > 0 && style.overflowY !== 'visible') clippedHeight += overY;
+    }
+    const box = slot.getBoundingClientRect();
+    return {
+      id: slot.dataset['widgetId'] ?? '(unnamed)',
+      width: box.width,
+      height: box.height,
+      scrollWidth: slot.scrollWidth,
+      scrollHeight: slot.scrollHeight,
+      clippedWidth,
+      clippedHeight,
+    };
+  });
+
+  slots.forEach((slot, i) => { slot.style.alignSelf = alignSelf[i] ?? ''; });
+  extents.push(page);
+
+  // Widgets show CoinRainLoader (an <output> announcing "Loading") or a
+  // "Loading …" line while their data is in flight.
+  const loading = slots
+    .filter(slot => slot.dataset['widgetState'] !== 'mounted' || /\bLoading\b/.test(slot.textContent ?? ''))
+    .map(slot => slot.dataset['widgetId'] ?? '(unnamed)');
+  return { at, extents, loading };
+}
+
+/** Everything that keeps a window from being clean, one line per problem. */
+function windowProblems(recent: readonly Sample[]): string[] {
+  const problems = new Set<string>();
+  for (const [i, sample] of recent.entries()) {
+    const ids = new Set(sample.extents.map(e => e.id));
+    for (const id of MATRIX_IDS) if (!ids.has(id)) problems.add(`${id}: missing (sample ${String(i)})`);
+    for (const id of sample.loading) problems.add(`${id}: still loading`);
+  }
+
+  // Rate: the worst over-budget interval per widget metric.
+  const worst = new Map<string, { rate: number; line: string }>();
+  for (let i = 1; i < recent.length; i++) {
+    const prev = recent[i - 1];
+    const cur = recent[i];
     if (prev === undefined || cur === undefined) continue;
     const dt = cur.at - prev.at;
     const budget = (MAX_GROWTH_PX_PER_SEC * dt) / 1000;
@@ -287,67 +277,102 @@ function findGrowth(samples: readonly Sample[]): string[] {
       if (p === undefined) continue;
       for (const m of METRICS) {
         const growth = e[m] - p[m];
-        if (growth <= budget) continue;
-        const byMetric = worst.get(e.id) ?? new Map<string, Growth>();
-        worst.set(e.id, byMetric);
-        const seen = byMetric.get(m);
-        if (seen === undefined || growth / budget > seen.growth / seen.budget) {
-          byMetric.set(m, { growth, budget, dt, interval: i });
+        const key = `${e.id} ${m}`;
+        if (growth <= budget || (worst.get(key)?.rate ?? 0) >= growth / dt) continue;
+        worst.set(key, {
+          rate: growth / dt,
+          line: `${e.id}: ${m} +${growth.toFixed(1)}px in ${dt.toFixed(0)}ms (samples ${String(i - 1)}→${String(i)}, budget ${budget.toFixed(1)}px)`,
+        });
+      }
+    }
+  }
+  for (const { line } of worst.values()) problems.add(line);
+
+  // Net: creep under the rate budget.
+  const first = recent[0];
+  const last = recent.at(-1);
+  if (first !== undefined && last !== undefined) {
+    const start = new Map(first.extents.map(e => [e.id, e]));
+    for (const e of last.extents) {
+      const s = start.get(e.id);
+      if (s === undefined) continue;
+      for (const m of METRICS) {
+        const growth = e[m] - s[m];
+        if (growth > MAX_NET_GROWTH_PX && !worst.has(`${e.id} ${m}`)) {
+          problems.add(`${e.id}: ${m} crept +${growth.toFixed(1)}px over ${(last.at - first.at).toFixed(0)}ms`);
         }
       }
     }
   }
-  return [...worst].map(([id, byMetric]) => {
-    const details = [...byMetric].map(([m, w]) =>
-      `${m} +${w.growth.toFixed(1)}px in ${w.dt.toFixed(0)}ms (samples ${String(w.interval - 1)}→${String(w.interval)}, budget ${w.budget.toFixed(1)}px)`);
-    return `${id}: ${details.join('; ')}`;
-  });
+  return [...problems];
+}
+
+/** Each lane within one row gap of its nominal fraction of its type's
+ *  full-width lane — the packing in {@link matrixRows} relies on rows summing
+ *  to 100%, and a row that doesn't silently stretches its lanes. */
+function laneWidthProblems(sample: Sample | undefined): string[] {
+  if (sample === undefined) return ['no sample'];
+  const width = new Map(sample.extents.map(e => [e.id, e.width]));
+  const problems: string[] = [];
+  for (const t of WIDGET_TYPES) {
+    const full = width.get(matrixWidget(t, 'full').id);
+    if (full === undefined) continue;
+    for (const s of SIZES) {
+      const { id } = matrixWidget(t, s);
+      const actual = width.get(id);
+      const nominal = full * LANE_FRACTION[s];
+      if (actual !== undefined && Math.abs(actual - nominal) > LANE_GAP_PX) {
+        problems.push(`${id}: ${actual.toFixed(0)}px wide, nominal ${nominal.toFixed(0)}px`);
+      }
+    }
+  }
+  return problems;
 }
 
 /** The dashboard's rows. A slot flex-grows to fill its row, so a lane only
- *  renders at its nominal width (25/50/75/100%) when its row sums to 100% —
- *  a lone `small` would silently render full-width. Hence: each `full` alone,
- *  each `large` beside its type's `small`, and the mediums in pairs. Nine
- *  mediums leave one over, topped up by {@link PAD}. */
+ *  renders at its nominal width when its row sums to 100% — a lone `small`
+ *  would silently render full-width. Hence: each `full` alone, each `large`
+ *  beside its type's `small`, and the mediums in pairs. An odd number of
+ *  types would leave one medium alone and stretched; laneWidthProblems
+ *  reports it. */
 function matrixRows(): MatrixWidget[][] {
   const rows: MatrixWidget[][] = [];
   for (const t of WIDGET_TYPES) {
     rows.push([matrixWidget(t, 'full')], [matrixWidget(t, 'large'), matrixWidget(t, 'small')]);
   }
   const mediums = WIDGET_TYPES.map(t => matrixWidget(t, 'medium'));
-  for (let i = 0; i < mediums.length; i += 2) {
-    rows.push(mediums.slice(i, i + 2));
-  }
-  const lastRow = rows.at(-1);
-  if (lastRow !== undefined && lastRow.length === 1) lastRow.push(PAD);
+  for (let i = 0; i < mediums.length; i += 2) rows.push(mediums.slice(i, i + 2));
   return rows;
 }
 
-function widgetYaml({ id, type, size }: MatrixWidget): string {
-  const head = `          - id: ${id}\n            type: ${type}\n            size: ${size}`;
-  if (type === 'summary') return `${head}\n            metric: total`;
-  const topN = type === 'topNBar' || type === 'line' || type === 'heatmap' || type === 'table' ? '\n            topN: 10' : '';
-  const columns = type === 'table' ? '\n            columns: [entity, service, cost, percentage]' : '';
-  return `${head}\n            groupBy: service${topN}${columns}`;
+/** The smallest valid spec per type (see views-validator.ts). Tables keep the
+ *  default column set — the heaviest realistic table (resource-level rows). */
+function widgetSpec({ id, type, size }: MatrixWidget): Record<string, unknown> {
+  const base = { id, type, size };
+  switch (type) {
+    case 'summary': return { ...base, metric: 'total' };
+    case 'table':
+    case 'baseline':
+    case 'burndown': return base;
+    case 'line':
+    case 'topNBar':
+    case 'heatmap': return { ...base, groupBy: 'service', topN: 10 };
+    default: return { ...base, groupBy: 'service' };
+  }
 }
 
 function buildWidgetMatrixYaml(): string {
-  const rows = matrixRows().map(row => `      - widgets:\n${row.map(widgetYaml).join('\n')}`);
-  // Keep the seed Cost Overview so the app boots into a working state. It's
-  // also built-in so it can't be deleted by the test.
-  return `views:
-  - id: overview
-    name: Cost Overview
-    builtIn: true
-    rows:
-      - widgets:
-          - id: ov-sum
-            type: summary
-            size: small
-            metric: total
-  - id: ${VIEW_NAME}
-    name: ${VIEW_NAME}
-    rows:
-${rows.join('\n')}
-`;
+  return stringify({
+    views: [
+      // Keep the seed Cost Overview so the app boots into a working state.
+      // It's also built-in so it can't be deleted by the test.
+      {
+        id: 'overview',
+        name: 'Cost Overview',
+        builtIn: true,
+        rows: [{ widgets: [{ id: 'ov-sum', type: 'summary', size: 'small', metric: 'total' }] }],
+      },
+      { id: VIEW_NAME, name: VIEW_NAME, rows: matrixRows().map(row => ({ widgets: row.map(widgetSpec) })) },
+    ],
+  });
 }
