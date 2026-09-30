@@ -237,16 +237,15 @@ function hasErrnoCode(err: unknown, codes: readonly string[]): boolean {
 const TRANSIENT_FS_ERRORS: readonly string[] = ['EPERM', 'EACCES', 'EBUSY', 'EMFILE'];
 const TRANSIENT_RETRY_DELAYS_MS: readonly number[] = [25, 50, 100, 200, 400, 800];
 
-async function retryTransient<T>(op: () => Promise<T>): Promise<T> {
-  for (const delayMs of TRANSIENT_RETRY_DELAYS_MS) {
-    try {
-      return await op();
-    } catch (err: unknown) {
-      if (!hasErrnoCode(err, TRANSIENT_FS_ERRORS)) throw err;
-      await sleep(delayMs);
-    }
+async function retryTransient<T>(op: () => Promise<T>, attempt = 0): Promise<T> {
+  try {
+    return await op();
+  } catch (err: unknown) {
+    const delayMs = TRANSIENT_RETRY_DELAYS_MS[attempt];
+    if (delayMs === undefined || !hasErrnoCode(err, TRANSIENT_FS_ERRORS)) throw err;
+    await sleep(delayMs);
+    return retryTransient(op, attempt + 1);
   }
-  return op();
 }
 
 /**
@@ -347,14 +346,15 @@ async function sweepStaleTemps(etagPath: string): Promise<void> {
   const prefix = `${basename(etagPath)}.`;
   const names = await readdir(dir).catch((): string[] => []);
   const cutoff = Date.now() - STALE_TEMP_AGE_MS;
-  for (const name of names) {
-    if (!name.startsWith(prefix) || !name.endsWith('.tmp')) continue;
-    const tmpPath = join(dir, name);
-    const info = await stat(tmpPath).catch(() => null);
-    if (info !== null && info.mtimeMs < cutoff) {
-      await rm(tmpPath, { force: true }).catch(() => { /* best effort */ });
-    }
-  }
+  await Promise.all(names
+    .filter(name => name.startsWith(prefix) && name.endsWith('.tmp'))
+    .map(async (name) => {
+      const tmpPath = join(dir, name);
+      const info = await stat(tmpPath).catch(() => null);
+      if (info !== null && info.mtimeMs < cutoff) {
+        await rm(tmpPath, { force: true }).catch(() => { /* best effort */ });
+      }
+    }));
 }
 
 /** Times one update re-applies itself to a sidecar another thread replaced
@@ -362,56 +362,71 @@ async function sweepStaleTemps(etagPath: string): Promise<void> {
  *  thread's change with a merge onto a stale read. */
 const MAX_REMERGES = 5;
 
+/** One sidecar update in flight: where it writes, and what it has spent. */
+interface SidecarUpdate {
+  readonly etagPath: string;
+  readonly tmpPath: string;
+  readonly mutate: (etags: EtagSidecar) => EtagSidecar | null;
+  tmpWritten: boolean;
+  remerges: number;
+  renameRetries: number;
+}
+
 async function replaceEtagSidecar(
   etagPath: string,
   mutate: (etags: EtagSidecar) => EtagSidecar | null,
 ): Promise<void> {
   await sweepStaleTemps(etagPath);
-  // Beside the sidecar so the rename never crosses a filesystem; unique so two
-  // threads' updates never share one.
-  const tmpPath = `${etagPath}.${randomUUID()}.tmp`;
-  let tmpWritten = false;
+  const update: SidecarUpdate = {
+    etagPath,
+    // Beside the sidecar so the rename never crosses a filesystem; unique so
+    // two threads' updates never share one.
+    tmpPath: `${etagPath}.${randomUUID()}.tmp`,
+    mutate,
+    tmpWritten: false,
+    remerges: 0,
+    renameRetries: 0,
+  };
   try {
-    let raw = await readEtagSidecarRaw(etagPath);
-    let tmpIsCurrent = false;
-    let remerges = 0;
-    let renameRetries = 0;
-    for (;;) {
-      if (!tmpIsCurrent) {
-        const next = mutate(raw === null ? {} : parseEtagsJson(raw));
-        if (next === null) return;
-        tmpWritten = true;
-        // Flushed, so the rename can't reach the disk before the data does and
-        // leave a power cut with a renamed but empty sidecar.
-        await retryTransient(() => writeFile(tmpPath, JSON.stringify(next, null, 2), { flush: true }));
-        tmpIsCurrent = true;
-      }
-      // Re-read and merge before every rename attempt (backoff retries too): if
-      // another thread replaced the sidecar since our read, re-apply our change
-      // to its version rather than overwrite it.
-      const current = await readEtagSidecarRaw(etagPath);
-      if (current !== raw) {
-        if (remerges >= MAX_REMERGES) {
-          throw new Error(`${etagPath} kept changing during the update; gave up after ${String(MAX_REMERGES)} re-merges`);
-        }
-        raw = current;
-        tmpIsCurrent = false;
-        remerges++;
-        continue;
-      }
-      try {
-        await rename(tmpPath, etagPath);
-        tmpWritten = false;
-        return;
-      } catch (err: unknown) {
-        const delayMs = TRANSIENT_RETRY_DELAYS_MS[renameRetries];
-        if (delayMs === undefined || !hasErrnoCode(err, TRANSIENT_FS_ERRORS)) throw err;
-        renameRetries++;
-        await sleep(delayMs);
-      }
-    }
+    await applyAndCommit(update, await readEtagSidecarRaw(etagPath));
   } finally {
-    if (tmpWritten) await rm(tmpPath, { force: true }).catch(() => { /* best effort */ });
+    if (update.tmpWritten) await rm(update.tmpPath, { force: true }).catch(() => { /* best effort */ });
+  }
+}
+
+/** Applies the change to the sidecar as read (`raw`), writes the result to the
+ *  temp file, and commits it. */
+async function applyAndCommit(update: SidecarUpdate, raw: string | null): Promise<void> {
+  const next = update.mutate(raw === null ? {} : parseEtagsJson(raw));
+  if (next === null) return;
+  update.tmpWritten = true;
+  // Flushed, so the rename can't reach the disk before the data does and leave
+  // a power cut with a renamed but empty sidecar.
+  await retryTransient(() => writeFile(update.tmpPath, JSON.stringify(next, null, 2), { flush: true }));
+  await commitIfUnchanged(update, raw);
+}
+
+/** Renames the temp over the sidecar, re-reading the sidecar before every
+ *  attempt (backoff retries too): if another thread replaced it since `raw`
+ *  was read, the change is re-applied to that version rather than overwrite it. */
+async function commitIfUnchanged(update: SidecarUpdate, raw: string | null): Promise<void> {
+  const current = await readEtagSidecarRaw(update.etagPath);
+  if (current !== raw) {
+    if (update.remerges >= MAX_REMERGES) {
+      throw new Error(`${update.etagPath} kept changing during the update; gave up after ${String(MAX_REMERGES)} re-merges`);
+    }
+    update.remerges++;
+    return applyAndCommit(update, current);
+  }
+  try {
+    await rename(update.tmpPath, update.etagPath);
+    update.tmpWritten = false;
+  } catch (err: unknown) {
+    const delayMs = TRANSIENT_RETRY_DELAYS_MS[update.renameRetries];
+    if (delayMs === undefined || !hasErrnoCode(err, TRANSIENT_FS_ERRORS)) throw err;
+    update.renameRetries++;
+    await sleep(delayMs);
+    await commitIfUnchanged(update, raw);
   }
 }
 
