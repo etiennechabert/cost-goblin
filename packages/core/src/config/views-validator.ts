@@ -16,7 +16,9 @@ import {
   assertString,
 } from './validator.js';
 
-const WIDGET_TYPES: readonly WidgetType[] = [
+/** Every widget type the app renders. Exported so the e2e widget-growth
+ *  matrix (e2e/stress.test.ts) covers each one, including future ones. */
+export const WIDGET_TYPES: readonly WidgetType[] = [
   'summary', 'pie', 'stackedBar', 'line', 'topNBar', 'treemap', 'heatmap', 'bubble', 'table', 'baseline',
   'waterfall', 'priceVolume', 'burndown', 'pareto',
 ];

@@ -188,8 +188,16 @@ export function LazyWidgetSlot({
     return () => { clearTimeout(timer); };
   }, [isMounted, scheduler, id]);
 
+  // The data attributes are a stable hook for e2e measurement (stress.test.ts
+  // names the widget that grew and waits for every slot to mount).
   return (
-    <div ref={ref} className={className} style={style}>
+    <div
+      ref={ref}
+      className={className}
+      style={style}
+      data-widget-id={id}
+      data-widget-state={isMounted ? 'mounted' : 'deferred'}
+    >
       {isMounted
         ? <WidgetSlotContext.Provider value={slotHandle}>{children}</WidgetSlotContext.Provider>
         : <div aria-hidden style={{ minHeight }} />}
