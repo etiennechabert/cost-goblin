@@ -1,8 +1,10 @@
-// Installs the Sentry IPC bridge the renderer SDK uses to forward events to the
-// main process. REQUIRED with sandbox: true + contextIsolation (the renderer has
-// no Node/DSN of its own). Must run unconditionally and before any renderer init;
-// it's inert until the renderer SDK is actually initialised (i.e. after opt-in).
-import '@sentry/electron/preload';
+// The Sentry IPC bridge the renderer SDK uses to forward events to the main
+// process. REQUIRED with sandbox: true + contextIsolation (the renderer has no
+// Node/DSN of its own). Imported from the side-effect-free entry so it can go
+// through the bridge gate below like every other exposure — the default
+// '@sentry/electron/preload' entry hooks up on import, in any document. It's
+// inert until the renderer SDK is actually initialised (i.e. after opt-in).
+import { hookupIpc } from '@sentry/electron/preload-namespaced';
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   ColumnValuesPreview,
@@ -82,6 +84,9 @@ import { isTrustedNavigation, trustedRendererFromArgv } from '../main/window-sec
 // ---------------------------------------------------------------------------
 const bridgeAllowed = isTrustedNavigation(globalThis.location.href, trustedRendererFromArgv(process.argv), process.platform);
 const exposeInMainWorld = (key: string, api: unknown): void => { if (bridgeAllowed) contextBridge.exposeInMainWorld(key, api); };
+// Before any renderer init (the preload runs first), and only for the app's
+// own document: a foreign one gets no __SENTRY_IPC__ either.
+if (bridgeAllowed) hookupIpc();
 
 // ---------------------------------------------------------------------------
 // Debug query log entry — mirrors QueryLogEntry from main/query-log.ts

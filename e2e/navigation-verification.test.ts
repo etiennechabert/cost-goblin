@@ -67,6 +67,18 @@ test('location.reload() of the app itself still works and keeps the bridge', asy
   await expectStillOnRenderer();
 });
 
+// The Sentry IPC bridge now goes through the same gate as the app's own
+// bridges: the app's document still gets it (opted-in renderer telemetry
+// forwards over it), a foreign document does not (see below).
+test("the app's own document still gets the Sentry IPC bridge", async () => {
+  const hooked = await page.evaluate(() => {
+    const ipc: unknown = Reflect.get(globalThis, '__SENTRY_IPC__');
+    const channel: unknown = typeof ipc === 'object' && ipc !== null ? Reflect.get(ipc, 'sentry-ipc') : undefined;
+    return typeof channel === 'object' && channel !== null && typeof Reflect.get(channel, 'sendEnvelope') === 'function';
+  });
+  expect(hooked).toBe(true);
+});
+
 test('permissions are deny-by-default except clipboard write', async () => {
   const states = await page.evaluate(async () => {
     async function query(name: string): Promise<string> {
@@ -138,7 +150,7 @@ test('a foreign document gets no preload bridge and no permissions', async () =>
   const exposed = await page.evaluate(async () => {
     const descriptor: PermissionDescriptor = Object.assign(Object.create(null), { name: 'clipboard-write' });
     return {
-      bridges: ['costgoblin', 'costgoblinBaselines', 'costgoblinUpdate', 'costgoblinRollup', 'costgoblinDebug']
+      bridges: ['costgoblin', 'costgoblinBaselines', 'costgoblinUpdate', 'costgoblinRollup', 'costgoblinDebug', '__SENTRY_IPC__']
         .filter((key) => Reflect.get(globalThis, key) !== undefined),
       clipboardWrite: (await navigator.permissions.query(descriptor)).state,
     };
