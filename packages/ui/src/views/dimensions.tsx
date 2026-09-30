@@ -2032,7 +2032,15 @@ export function DimensionsView(): React.JSX.Element {
   function handleSaveTag(idx: number, editing: EditingTag): void {
     if (config === null) return;
     const tags = [...config.tags];
-    tags[idx] = editingToTagDimension(editing);
+    // The editor doesn't manage every field: keep the ones it doesn't
+    // (description, separator) instead of dropping them on save. Only enabled
+    // tags open in the editor, so there is no `enabled: false` to carry.
+    const existing = config.tags[idx];
+    tags[idx] = {
+      ...(existing?.description === undefined ? {} : { description: existing.description }),
+      ...(existing?.separator === undefined ? {} : { separator: existing.separator }),
+      ...editingToTagDimension(editing),
+    };
     setConfig({ ...config, tags, order: reconcileOrder({ ...config, tags }) });
     setEditingIdx(null);
   }
