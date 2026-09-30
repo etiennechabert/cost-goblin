@@ -72,7 +72,7 @@ const DEFAULT_HANDSHAKE_TIMEOUT_MS = 10_000;
  *  team while bounding descriptor use. */
 const DEFAULT_MAX_CONNECTIONS = 32;
 
-interface IdleTracker {
+export interface IdleTracker {
   readonly requestStarted: () => void;
   readonly requestEnded: () => void;
   readonly arm: () => void;
@@ -80,12 +80,19 @@ interface IdleTracker {
   readonly cancel: () => void;
 }
 
+/** How long an armed tracker waits between wall-clock checks. setTimeout runs
+ *  on a clock that stops while the machine sleeps, so one full-length timer
+ *  let the listener outlive the deadline it advertises by however long the
+ *  machine slept; checking in slices bounds that to one slice after wake. */
+const IDLE_CHECK_SLICE_MS = 30_000;
+
 /** Idle auto-stop bookkeeping, keyed on in-flight REQUESTS rather than open
  *  sockets: an idle keep-alive socket or a half-open handshake never holds
  *  the server up. Every finished request re-arms the full timeout; a timer
  *  that lands while a request is in flight re-arms instead of firing, so a
- *  long transfer is never cut. With no timeout configured it is inert. */
-function createIdleTracker(timeoutMs: number | undefined, onIdle: () => void): IdleTracker {
+ *  long transfer is never cut. The deadline is wall-clock, the one the UI
+ *  shows. With no timeout configured it is inert. */
+export function createIdleTracker(timeoutMs: number | undefined, onIdle: () => void): IdleTracker {
   let inFlight = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let deadlineMs: number | null = null;
@@ -94,17 +101,22 @@ function createIdleTracker(timeoutMs: number | undefined, onIdle: () => void): I
     if (timer !== null) clearTimeout(timer);
     timer = null;
   };
+  const schedule = (due: number): void => {
+    timer = setTimeout(() => {
+      timer = null;
+      if (Date.now() < due) { schedule(due); return; }
+      if (inFlight > 0) { arm(); return; }
+      onIdle();
+    }, Math.max(0, Math.min(due - Date.now(), IDLE_CHECK_SLICE_MS)));
+    // Never keep the process alive just to stop a server.
+    timer.unref();
+  };
   const arm = (): void => {
     if (timeoutMs === undefined || cancelled) return;
     clear();
-    deadlineMs = Date.now() + timeoutMs;
-    timer = setTimeout(() => {
-      timer = null;
-      if (inFlight > 0) { arm(); return; }
-      onIdle();
-    }, timeoutMs);
-    // Never keep the process alive just to stop a server.
-    timer.unref();
+    const due = Date.now() + timeoutMs;
+    deadlineMs = due;
+    schedule(due);
   };
   return {
     requestStarted: () => { inFlight++; },
