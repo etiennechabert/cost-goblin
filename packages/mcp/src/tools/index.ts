@@ -236,7 +236,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
     {
       description: describeTool('Run an ad-hoc SELECT query. A "costs" CTE is pre-defined with the dataset for the given date range (default: last 60 days). Write: SELECT ... FROM costs WHERE ... At most `limit` rows (default 100, max 500) are returned, even when the query has its own LIMIT; a note says when more rows exist.'),
       inputSchema: {
-        sql: z.string().describe('SQL query (SELECT/WITH only). A "costs" CTE with columns: usage_date, account_id, account_name, region, service, service_code, service_category, charge_category, pricing_category, commitment_status, operation, sku_meter, description, resource_id, usage_amount, cost, list_cost, plus tag columns.'),
+        sql: z.string().describe('SQL query: one SELECT/WITH statement. A PIVOT must list its values (PIVOT costs ON service IN (\'A\', \'B\') USING sum(cost)). A "costs" CTE with columns: usage_date, account_id, account_name, region, service, service_code, service_category, charge_category, pricing_category, commitment_status, operation, sku_meter, description, resource_id, usage_amount, cost, list_cost, plus tag columns.'),
         dateRange: dateRangeSchema,
         limit: z.number().int().min(1).optional().describe('Max rows returned (integer, default 100, values above 500 are clamped to 500). The cap always applies, even when the query has its own LIMIT; page with LIMIT/OFFSET inside the query.'),
         format: formatSchema,

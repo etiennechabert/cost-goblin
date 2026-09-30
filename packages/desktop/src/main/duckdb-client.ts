@@ -46,6 +46,9 @@ export interface DuckDBWorkerData {
   readonly sandbox: DuckDbSandboxOptions;
 }
 
+/** How long terminate() waits for interrupted queries to settle. */
+const TERMINATE_GRACE_MS = 10_000;
+
 /** Spawn a DuckDB worker. Without `workerData` it is the app's shared,
  *  unrestricted instance; with `workerData.sandbox` it is sandboxed and locked,
  *  and the promise rejects (with the worker already terminated) if the sandbox
@@ -62,6 +65,9 @@ export async function createDuckDBClient(workerPath: string, workerData?: DuckDB
     workerData,
   );
   const { worker, pending } = lifecycle;
+  /** Settles (never rejects) when each submitted query does — what terminate()
+   *  waits on after interrupting them. */
+  const inFlight = new Set<Promise<void>>();
 
   worker.on('message', (msg: unknown) => {
     if (!isWorkerResponse(msg)) return;
@@ -86,10 +92,14 @@ export async function createDuckDBClient(workerPath: string, workerData?: DuckDB
   ): Promise<RawRow[]> {
     if (lifecycle.fatalError !== null) return Promise.reject(lifecycle.fatalError);
     const id = lifecycle.nextId++;
-    return new Promise<RawRow[]>((resolve, reject) => {
+    const query = new Promise<RawRow[]>((resolve, reject) => {
       pending.set(id, { onStarted, resolve, reject });
       worker.postMessage({ kind, id, sql, ...extraPayload });
     });
+    const settled = query.then(() => undefined, () => undefined);
+    inFlight.add(settled);
+    void settled.then(() => { inFlight.delete(settled); });
+    return query;
   }
 
   return {
@@ -109,6 +119,18 @@ export async function createDuckDBClient(workerPath: string, workerData?: DuckDB
       worker.postMessage({ kind: 'configure', ...settings });
     },
     async terminate(): Promise<void> {
+      // worker.terminate() cannot stop a native DuckDB query: it blocks until
+      // the query returns, and the addon then throws into the torn-down worker
+      // and aborts the whole process. So interrupt first and let every query
+      // settle (the worker answers each with the cancellation error), bounded
+      // in case an interrupt is never acknowledged.
+      if (inFlight.size > 0) {
+        worker.postMessage({ kind: 'cancel-pending' });
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const grace = new Promise<void>((resolve) => { timer = setTimeout(resolve, TERMINATE_GRACE_MS); });
+        await Promise.race([Promise.all(inFlight), grace]);
+        clearTimeout(timer);
+      }
       await worker.terminate();
     },
   };

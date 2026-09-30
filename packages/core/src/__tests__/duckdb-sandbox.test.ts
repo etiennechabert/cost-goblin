@@ -6,6 +6,7 @@ const BASE: DuckDbSandboxOptions = {
   allowedDirectories: ['/ws/data', '/ws/tmp/mcp'],
   allowedPaths: ['/ws/state/org-account-tags.json'],
   tempDirectory: '/ws/tmp/mcp',
+  maxTempDirectorySizeGB: 10,
   memoryLimitGB: 2,
   threads: 4,
 };
@@ -16,6 +17,7 @@ describe('buildDuckDbSandboxStatements', () => {
       "SET memory_limit = '2GB'",
       'SET threads = 4',
       "SET temp_directory = '/ws/tmp/mcp'",
+      "SET max_temp_directory_size = '10GB'",
       "SET allowed_directories = ['/ws/data', '/ws/tmp/mcp']",
       "SET allowed_paths = ['/ws/state/org-account-tags.json']",
       'SET enable_external_access = false',
@@ -29,6 +31,7 @@ describe('buildDuckDbSandboxStatements', () => {
     const stmts = buildDuckDbSandboxStatements(BASE);
     const idx = (needle: string): number => stmts.findIndex(s => s.includes(needle));
     expect(idx('temp_directory')).toBeLessThan(idx('allowed_directories'));
+    expect(idx('max_temp_directory_size')).toBeLessThan(idx('lock_configuration'));
     expect(idx('allowed_directories')).toBeLessThan(idx('allowed_paths'));
     expect(idx('allowed_paths')).toBeLessThan(idx('enable_external_access'));
     expect(idx('enable_external_access')).toBeLessThan(idx('autoinstall_known_extensions'));
@@ -84,6 +87,8 @@ describe('buildDuckDbSandboxStatements', () => {
     ['zero threads', { threads: 0 }],
     ['fractional threads', { threads: 2.5 }],
     ['NaN threads', { threads: Number.NaN }],
+    ['zero spill cap', { maxTempDirectorySizeGB: 0 }],
+    ['fractional spill cap', { maxTempDirectorySizeGB: 0.5 }],
   ])('throws on %s', (_label, override) => {
     expect(() => buildDuckDbSandboxStatements({ ...BASE, ...override })).toThrow(/positive integer/);
   });
@@ -105,6 +110,7 @@ describe('isDuckDbSandboxOptions', () => {
     ['non-string tempDirectory', { ...BASE, tempDirectory: 1 }],
     ['non-number memoryLimitGB', { ...BASE, memoryLimitGB: '2' }],
     ['non-number threads', { ...BASE, threads: '4' }],
+    ['missing maxTempDirectorySizeGB', { ...BASE, maxTempDirectorySizeGB: undefined }],
   ])('rejects %s', (_label, value) => {
     expect(isDuckDbSandboxOptions(value)).toBe(false);
   });

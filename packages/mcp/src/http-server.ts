@@ -218,8 +218,19 @@ export async function createMcpHttpServer(ctx: McpContext, options: McpHttpServe
     });
   }
 
-  await listen(ipv4Server, '127.0.0.1');
-  await listen(ipv6Server, '::1');
+  try {
+    await listen(ipv4Server, '127.0.0.1');
+    await listen(ipv6Server, '::1');
+  } catch (err: unknown) {
+    // Don't leave the loopback that did bind listening (with this token)
+    // outside the caller's lifecycle, nor the reaper running: the caller only
+    // gets the rejection, so it has nothing to close.
+    clearInterval(reaper);
+    await Promise.all([ipv4Server, ipv6Server].filter((s) => s.listening).map((s) =>
+      new Promise<void>((resolve) => { s.close(() => { resolve(); }); }),
+    ));
+    throw err;
+  }
 
   return {
     port: resolvedPort,

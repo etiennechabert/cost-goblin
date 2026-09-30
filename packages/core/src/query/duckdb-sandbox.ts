@@ -22,6 +22,10 @@ export interface DuckDbSandboxOptions {
   readonly allowedPaths: readonly string[];
   /** Spill directory for out-of-core operators. */
   readonly tempDirectory: string;
+  /** Cap on what the spill directory may hold. DuckDB's default is 90% of the
+   *  free disk, and the lock below would make it uncorrectable, so one query
+   *  could otherwise fill the user's disk. */
+  readonly maxTempDirectorySizeGB: number;
   readonly memoryLimitGB: number;
   readonly threads: number;
 }
@@ -51,7 +55,8 @@ function sqlStringList(values: readonly string[]): string {
  * The ordered SET statements that sandbox and lock a fresh DuckDB instance.
  * Run them in order, on one connection, before the instance serves any query:
  *
- * 1. resource limits (memory, threads, spill dir) — they cannot change after the lock;
+ * 1. resource limits (memory, threads, spill dir and its size cap) — they cannot
+ *    change after the lock;
  * 2. `allowed_directories`, then 3. `allowed_paths` — the only file-system grants;
  * 4. `enable_external_access = false` — every other file / URL is refused;
  * 5. extension auto-install / auto-load off — no extension load from disk;
@@ -59,7 +64,7 @@ function sqlStringList(values: readonly string[]): string {
  *    a query) fails, and new connections inherit the sandbox.
  *
  * Throws on a relative/empty path, an empty directory allow-list, or a
- * non-positive-integer memory/thread count.
+ * non-positive-integer memory/thread count or spill cap.
  */
 export function buildDuckDbSandboxStatements(opts: DuckDbSandboxOptions): readonly string[] {
   if (opts.allowedDirectories.length === 0) {
@@ -70,11 +75,13 @@ export function buildDuckDbSandboxStatements(opts: DuckDbSandboxOptions): readon
   assertAbsolutePath(opts.tempDirectory, 'tempDirectory');
   assertPositiveInteger(opts.memoryLimitGB, 'memoryLimitGB');
   assertPositiveInteger(opts.threads, 'threads');
+  assertPositiveInteger(opts.maxTempDirectorySizeGB, 'maxTempDirectorySizeGB');
 
   return [
     `SET memory_limit = '${String(opts.memoryLimitGB)}GB'`,
     `SET threads = ${String(opts.threads)}`,
     `SET temp_directory = '${sqlEscapeString(opts.tempDirectory)}'`,
+    `SET max_temp_directory_size = '${String(opts.maxTempDirectorySizeGB)}GB'`,
     `SET allowed_directories = ${sqlStringList(opts.allowedDirectories)}`,
     `SET allowed_paths = ${sqlStringList(opts.allowedPaths)}`,
     'SET enable_external_access = false',
@@ -96,6 +103,7 @@ export function isDuckDbSandboxOptions(value: unknown): value is DuckDbSandboxOp
   return isStringArray(Reflect.get(value, 'allowedDirectories'))
     && isStringArray(Reflect.get(value, 'allowedPaths'))
     && typeof Reflect.get(value, 'tempDirectory') === 'string'
+    && typeof Reflect.get(value, 'maxTempDirectorySizeGB') === 'number'
     && typeof Reflect.get(value, 'memoryLimitGB') === 'number'
     && typeof Reflect.get(value, 'threads') === 'number';
 }

@@ -150,6 +150,7 @@ describe('DuckDB sandbox (real DuckDB)', () => {
       allowedDirectories: [dataDir, tempDir],
       allowedPaths: [orgAccountsPath],
       tempDirectory: tempDir,
+      maxTempDirectorySizeGB: 1,
       memoryLimitGB: 1,
       threads: 2,
     })) {
@@ -230,8 +231,13 @@ describe('DuckDB sandbox (real DuckDB)', () => {
     });
 
     it('loading an extension from disk', async () => {
-      const res = await attempt(sandbox, `LOAD '${outsideDir}/evil.duckdb_extension'`);
+      // A real file, so the only reason left to refuse is the sandbox (the
+      // control below shows an open instance gets past the permission check).
+      const extension = `${outsideDir}/evil.duckdb_extension`;
+      await writeFile(extension, 'not an extension');
+      const res = await attempt(sandbox, `LOAD '${extension}'`);
       expect(res.ok).toBe(false);
+      expect(res.text).toMatch(/Permission Error/);
     });
   });
 
@@ -240,10 +246,16 @@ describe('DuckDB sandbox (real DuckDB)', () => {
       'SET enable_external_access = true',
       'SET memory_limit = \'3GB\'',
       'SET lock_configuration = false',
+      'SET max_temp_directory_size = \'900GB\'',
     ])('%s fails', async (stmt) => {
       const res = await attempt(sandbox, stmt);
       expect(res.ok).toBe(false);
       expect(res.text).toMatch(/locked/);
+    });
+
+    it('caps the spill directory instead of DuckDB\'s 90%-of-free-disk default', async () => {
+      const rows = await queryAll(sandbox, `SELECT current_setting('max_temp_directory_size') AS v`);
+      expect(String(rows[0]?.['v'])).not.toMatch(/%/);
     });
 
     it('a new allowed_directories grant fails', async () => {
@@ -269,7 +281,7 @@ describe('DuckDB sandbox (real DuckDB)', () => {
       const latePath = `${stateDir}/late-org-account-tags.json`;
       try {
         for (const stmt of buildDuckDbSandboxStatements({
-          allowedDirectories: [dataDir], allowedPaths: [latePath], tempDirectory: tempDir, memoryLimitGB: 1, threads: 1,
+          allowedDirectories: [dataDir], allowedPaths: [latePath], tempDirectory: tempDir, maxTempDirectorySizeGB: 1, memoryLimitGB: 1, threads: 1,
         })) {
           await late.run(stmt);
         }
@@ -303,6 +315,14 @@ describe('DuckDB sandbox (real DuckDB)', () => {
       const res = await attempt(open, payload[1]);
       expect(res.ok).toBe(true);
       expect(res.text).toContain(payload[2]);
+    });
+
+    it('LOAD of a file on disk gets past the permission check', async () => {
+      const extension = `${outsideDir}/control.duckdb_extension`;
+      await writeFile(extension, 'not an extension');
+      const res = await attempt(open, `LOAD '${extension}'`);
+      expect(res.ok).toBe(false);
+      expect(res.text).not.toMatch(/Permission Error/);
     });
 
     it('the stacked COPY writes the file', async () => {

@@ -22,6 +22,8 @@ export interface DuckDBConnection {
 
 export interface DuckDBPreparedStatement {
   parameterCount: number;
+  /** DuckDB's StatementType code for the prepared statement. */
+  statementType: number;
   bindVarchar: (index: number, value: string) => void;
   bindDouble: (index: number, value: number) => void;
   bindInteger: (index: number, value: number) => void;
