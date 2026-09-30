@@ -20,6 +20,7 @@ import type {
 import { BaselineStore, type BaselineEngineDeps } from '../main/baselines-store.js';
 import { RollupStore, type ResolveSourceArgs, type RollupShape } from '../main/rollup-store.js';
 import { fetchRows, fetchRowsPrepared } from './helpers/duckdb-rows.js';
+import { rec, svcScope } from './helpers/baselines.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SYNTHETIC_DIR = join(__dirname, '..', '..', '..', 'core', 'src', '__fixtures__', 'synthetic');
@@ -79,16 +80,6 @@ function str(v: unknown): string {
   throw new Error(`expected string cell, got ${typeof v}`);
 }
 
-function rec(v: unknown): Record<string, unknown> {
-  if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new Error('expected a JSON object');
-  return { ...v };
-}
-
-function svcScope(service: string): BaselineScope {
-  const filters: Partial<Record<DimensionId, readonly TagValue[]>> = {};
-  filters[asDimensionId('service')] = [asTagValue(service)];
-  return { kind: 'filter', filters };
-}
 
 /** A two-dimension filter scope. `account_id` is inserted first so it becomes
  *  the primary group-by — the recompute must still bind BOTH columns. */

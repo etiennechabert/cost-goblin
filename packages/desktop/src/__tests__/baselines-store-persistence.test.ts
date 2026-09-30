@@ -12,10 +12,11 @@ import type {
   TagValue,
 } from '@costgoblin/core';
 import { BaselineStore, type BaselineEngineDeps } from '../main/baselines-store.js';
+import { rec, svcScope } from './helpers/baselines.js';
 
 // Pass-through fs so individual cases can inject a failure into one call; the
 // store's reads and writes go through @costgoblin/core's atomic-file helpers,
-// which import this same module.
+// which import this same module. mockReset() restores the pass-through.
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
   return {
@@ -84,6 +85,13 @@ const PERSISTED = {
 };
 const PERSISTED_TEXT = JSON.stringify(PERSISTED, null, 2);
 
+const SNAPSHOT = { date: '2026-03-01', lower: 1, upper: 2, current: 1.5, potential: 0.5, realized: 0.5, status: 'in-band' };
+const PERSISTED_DATA_TEXT = JSON.stringify({
+  version: 1,
+  history: { [MANUAL_ID]: [{ date: '2026-03-01', cost: 15 }], [REGION_ID]: [{ date: '2026-03-01', cost: 3 }] },
+  snapshots: { [MANUAL_ID]: [SNAPSHOT], [REGION_ID]: [SNAPSHOT] },
+}, null, 2);
+
 const SERVICE_ONLY: DimensionsConfig = {
   builtIn: [{ name: asDimensionId('service'), label: 'Service', field: 'service' }],
   tags: [],
@@ -94,9 +102,9 @@ const WITH_REGION: DimensionsConfig = {
 };
 const costScope: CostScopeConfig = { costMetric: 'billed', rules: [], lagDays: 2 };
 
-function svcScope(service: string): BaselineScope {
+function regionScope(region: string): BaselineScope {
   const filters: Partial<Record<DimensionId, readonly TagValue[]>> = {};
-  filters[asDimensionId('service')] = [asTagValue(service)];
+  filters[asDimensionId('region')] = [asTagValue(region)];
   return { kind: 'filter', filters };
 }
 
@@ -123,15 +131,6 @@ function errnoError(code: string): Error {
   return Object.assign(new Error(`${code}: simulated failure`), { code });
 }
 
-function rec(v: unknown): Record<string, unknown> {
-  if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new Error('expected a JSON object');
-  return { ...v };
-}
-
-function isPath(file: unknown, path: string): boolean {
-  return typeof file === 'string' && file === path;
-}
-
 describe('BaselineStore persistence', () => {
   const tmpDirs: string[] = [];
   let stateDir: string;
@@ -139,13 +138,17 @@ describe('BaselineStore persistence', () => {
   let dataPath: string;
 
   const readSpecsDoc = async (): Promise<Record<string, unknown>> => rec(JSON.parse(await fsActual.readFile(specsPath, 'utf-8')));
+  const readDataDoc = async (): Promise<Record<string, unknown>> => rec(JSON.parse(await fsActual.readFile(dataPath, 'utf-8')));
   const persistedIds = async (): Promise<string[]> => {
     const baselines = (await readSpecsDoc())['baselines'];
     return Array.isArray(baselines) ? baselines.map((b) => String(rec(b)['id'])).sort() : [];
   };
+  const setAsideFiles = async (name: string): Promise<string[]> =>
+    (await readdir(stateDir)).filter((f) => f.startsWith(`${name}.corrupt-`));
 
   beforeEach(async () => {
-    stateDir = await mkdtemp(join(tmpdir(), 'cg-baselines-persist-'));
+    // Canonical (macOS tmpdir is a symlink): writes resolve their target path.
+    stateDir = await fsActual.realpath(await mkdtemp(join(tmpdir(), 'cg-baselines-persist-')));
     tmpDirs.push(stateDir);
     specsPath = join(stateDir, 'baselines.json');
     dataPath = join(stateDir, 'baselines-data.json');
@@ -154,9 +157,7 @@ describe('BaselineStore persistence', () => {
 
   afterEach(() => {
     readFileMock.mockReset();
-    readFileMock.mockImplementation(fsActual.readFile);
     writeFileMock.mockReset();
-    writeFileMock.mockImplementation(fsActual.writeFile);
     vi.restoreAllMocks();
   });
 
@@ -167,19 +168,32 @@ describe('BaselineStore persistence', () => {
   /** Make every read of baselines.json fail with `code` until the case resets it. */
   const failSpecsReads = (code: string): void => {
     readFileMock.mockImplementation((file, options) =>
-      isPath(file, specsPath) ? Promise.reject(errnoError(code)) : fsActual.readFile(file, options));
+      file === specsPath ? Promise.reject(errnoError(code)) : fsActual.readFile(file, options));
   };
 
   describe('an unreadable baselines.json', () => {
-    it('fails the load rather than starting empty, so a post-sync recompute cannot wipe it', async () => {
+    it('fails the load, so a post-sync recompute cannot wipe it, and retries once it is readable again', async () => {
       failSpecsReads('EIO');
       const store = new BaselineStore(stateDir);
       const deps = makeDeps(stateDir);
 
       await store.recompute(deps);
-
       expect(store.getStatus()).toMatchObject({ state: 'error' });
       expect(await fsActual.readFile(specsPath, 'utf-8')).toBe(PERSISTED_TEXT);
+
+      readFileMock.mockReset();
+      await store.recompute(deps);
+      expect(store.getStatus()).toMatchObject({ state: 'idle' });
+
+      const res = await store.list(deps, {});
+      const manual = res.items.find((r) => r.spec.id === MANUAL_ID);
+      expect(manual?.triageStatus).toBe('acting');
+      expect(manual?.triage.notes.map((n) => n.text)).toEqual(['right-sizing ticket open']);
+      expect(manual?.spec.manualBand).toEqual({ mode: 'absolute', lower: 10, upper: 20 });
+      expect(store.getConfigState()).toEqual({ config: CUSTOM_CONFIG, isCustom: true });
+
+      expect(await persistedIds()).toEqual([DISCOVERED_ID, MANUAL_ID, REGION_ID]);
+      expect(rec(rec(rec((await readSpecsDoc())['meta'])[MANUAL_ID])['triage'])['notes']).toHaveLength(1);
     });
 
     it('refuses every write while the load is failing', async () => {
@@ -196,32 +210,10 @@ describe('BaselineStore persistence', () => {
       expect(await fsActual.readFile(specsPath, 'utf-8')).toBe(PERSISTED_TEXT);
     });
 
-    it('retries the load on the next access once the file is readable again, and keeps everything', async () => {
-      failSpecsReads('EIO');
-      const store = new BaselineStore(stateDir);
-      const deps = makeDeps(stateDir);
-      await store.recompute(deps);
-      expect(store.getStatus()).toMatchObject({ state: 'error' });
-
-      readFileMock.mockImplementation(fsActual.readFile);
-      await store.recompute(deps);
-      expect(store.getStatus()).toMatchObject({ state: 'idle' });
-
-      const res = await store.list(deps, {});
-      const manual = res.items.find((r) => r.spec.id === MANUAL_ID);
-      expect(manual?.triageStatus).toBe('acting');
-      expect(manual?.triage.notes.map((n) => n.text)).toEqual(['right-sizing ticket open']);
-      expect(manual?.spec.manualBand).toEqual({ mode: 'absolute', lower: 10, upper: 20 });
-      expect(store.getConfigState()).toEqual({ config: CUSTOM_CONFIG, isCustom: true });
-
-      expect(await persistedIds()).toEqual([DISCOVERED_ID, MANUAL_ID, REGION_ID]);
-      expect(rec(rec(rec((await readSpecsDoc())['meta'])[MANUAL_ID])['triage'])['notes']).toHaveLength(1);
-    });
-
-    it('retries a transient lock or descriptor error before giving up', async () => {
+    it('retries a transient lock or descriptor error instead of failing the load', async () => {
       let failures = 0;
       readFileMock.mockImplementation((file, options) => {
-        if (isPath(file, specsPath) && failures < 2) {
+        if (file === specsPath && failures < 2) {
           failures += 1;
           return Promise.reject(errnoError(failures === 1 ? 'EBUSY' : 'EMFILE'));
         }
@@ -233,6 +225,20 @@ describe('BaselineStore persistence', () => {
 
       expect(failures).toBe(2);
       expect(res.items.map((r) => r.spec.id).sort()).toEqual([DISCOVERED_ID, MANUAL_ID]);
+    });
+
+    it('fails closed on a file from a newer format, leaving it untouched', async () => {
+      const newer = JSON.stringify({ ...PERSISTED, version: 2 });
+      await fsActual.writeFile(specsPath, newer);
+      const store = new BaselineStore(stateDir);
+      const deps = makeDeps(stateDir);
+
+      await expect(store.list(deps, {})).rejects.toThrow('newer version of CostGoblin');
+      await store.recompute(deps);
+
+      expect(store.getStatus()).toMatchObject({ state: 'error' });
+      expect(await fsActual.readFile(specsPath, 'utf-8')).toBe(newer);
+      expect(await setAsideFiles('baselines.json')).toEqual([]);
     });
   });
 
@@ -250,12 +256,24 @@ describe('BaselineStore persistence', () => {
       await store.recompute(makeDeps(stateDir));
 
       expect(store.getStatus()).toMatchObject({ state: 'idle' });
-      const quarantined = (await readdir(stateDir)).filter((f) => f.startsWith('baselines.json.corrupt-'));
-      expect(quarantined).toHaveLength(1);
-      expect(await fsActual.readFile(join(stateDir, quarantined[0] ?? ''), 'utf-8')).toBe(content);
+      const setAside = await setAsideFiles('baselines.json');
+      expect(setAside).toHaveLength(1);
+      expect(await fsActual.readFile(join(stateDir, setAside[0] ?? ''), 'utf-8')).toBe(content);
       expect(errors).toHaveBeenCalledWith(expect.stringContaining('baselines'), expect.objectContaining({ movedTo: expect.stringContaining('.corrupt-') }));
       // A fresh, valid document replaced it.
       expect(await persistedIds()).toEqual([]);
+    });
+
+    it('sets the paired baselines-data.json aside with it, so a manual restore keeps the snapshot trend', async () => {
+      await fsActual.writeFile(specsPath, PERSISTED_TEXT.slice(0, 100));
+      await fsActual.writeFile(dataPath, PERSISTED_DATA_TEXT);
+      const store = new BaselineStore(stateDir);
+
+      await store.recompute(makeDeps(stateDir));
+
+      const setAsideData = await setAsideFiles('baselines-data.json');
+      expect(setAsideData).toHaveLength(1);
+      expect(await fsActual.readFile(join(stateDir, setAsideData[0] ?? ''), 'utf-8')).toBe(PERSISTED_DATA_TEXT);
     });
 
     it('moves a torn baselines-data.json aside too, keeping the specs', async () => {
@@ -265,8 +283,30 @@ describe('BaselineStore persistence', () => {
       await store.recompute(makeDeps(stateDir));
 
       expect(store.getStatus()).toMatchObject({ state: 'idle' });
-      expect((await readdir(stateDir)).filter((f) => f.startsWith('baselines-data.json.corrupt-'))).toHaveLength(1);
+      expect(await setAsideFiles('baselines-data.json')).toHaveLength(1);
       expect(await persistedIds()).toEqual([DISCOVERED_ID, MANUAL_ID, REGION_ID]);
+    });
+
+    it('reads a hand-edited file saved with a UTF-8 BOM', async () => {
+      await fsActual.writeFile(specsPath, `﻿${PERSISTED_TEXT}`);
+      const store = new BaselineStore(stateDir);
+
+      const res = await store.list(makeDeps(stateDir), {});
+
+      expect(res.items.map((r) => r.spec.id).sort()).toEqual([DISCOVERED_ID, MANUAL_ID]);
+      expect(store.getConfigState().isCustom).toBe(true);
+      expect(await setAsideFiles('baselines.json')).toEqual([]);
+    });
+
+    it('reads null fields as empty and ignores a non-object config, rather than setting the file aside', async () => {
+      await fsActual.writeFile(specsPath, JSON.stringify({ version: 1, config: 'oops', baselines: PERSISTED.baselines, meta: null }));
+      const store = new BaselineStore(stateDir);
+
+      const res = await store.list(makeDeps(stateDir), {});
+
+      expect(res.items.map((r) => r.spec.id).sort()).toEqual([DISCOVERED_ID, MANUAL_ID]);
+      expect(store.getConfigState().isCustom).toBe(false);
+      expect(await setAsideFiles('baselines.json')).toEqual([]);
     });
   });
 
@@ -289,6 +329,7 @@ describe('BaselineStore persistence', () => {
 
       expect(a.total).toBe(2);
       expect(b.total).toBe(2);
+      expect(readFileMock.mock.calls.filter(([file]) => file === specsPath)).toHaveLength(1);
     });
 
     it('setConfig on a store that has not loaded yet keeps the persisted baselines', async () => {
@@ -302,7 +343,8 @@ describe('BaselineStore persistence', () => {
   });
 
   describe('specs that fail validation', () => {
-    it('are carried through saves with their triage, and load again once their dimension is back', async () => {
+    it('are carried through saves with their triage, history and snapshots', async () => {
+      await fsActual.writeFile(dataPath, PERSISTED_DATA_TEXT);
       const warns = vi.spyOn(logger, 'warn');
       const store = new BaselineStore(stateDir);
       const deps = makeDeps(stateDir);
@@ -315,13 +357,26 @@ describe('BaselineStore persistence', () => {
       await store.update(deps, MANUAL_ID, { name: 'EC2 (renamed)' });
 
       expect(await persistedIds()).toEqual([DISCOVERED_ID, MANUAL_ID, REGION_ID]);
-      const regionMeta = rec(rec((await readSpecsDoc())['meta'])[REGION_ID]);
-      expect(regionMeta['triageStatus']).toBe('tracking');
+      expect(rec(rec((await readSpecsDoc())['meta'])[REGION_ID])['triageStatus']).toBe('tracking');
+      expect(rec((await readDataDoc())['snapshots'])[REGION_ID]).toEqual([SNAPSHOT]);
 
-      const restored = await new BaselineStore(stateDir).list(makeDeps(stateDir, WITH_REGION), {});
-      const region = restored.items.find((r) => r.spec.id === REGION_ID);
+      const restored = new BaselineStore(stateDir);
+      const withRegion = makeDeps(stateDir, WITH_REGION);
+      const region = (await restored.list(withRegion, {})).items.find((r) => r.spec.id === REGION_ID);
       expect(region?.triageStatus).toBe('tracking');
       expect(region?.triage.notes.map((n) => n.text)).toEqual(['watch eu-west-1']);
+      expect(await restored.getSnapshots(withRegion, REGION_ID)).toEqual([SNAPSHOT]);
+    });
+
+    it('rejoin in-session once their dimension is back, so their scope cannot be duplicated', async () => {
+      const store = new BaselineStore(stateDir);
+      expect((await store.list(makeDeps(stateDir), {})).total).toBe(2);
+
+      const withRegion = makeDeps(stateDir, WITH_REGION);
+      const res = await store.list(withRegion, {});
+
+      expect(res.items.find((r) => r.spec.id === REGION_ID)?.triage.notes.map((n) => n.text)).toEqual(['watch eu-west-1']);
+      await expect(store.create(withRegion, { scope: regionScope('eu-west-1') })).rejects.toThrow('already exists');
     });
 
     it('drops discovered ones on a start-fresh recompute, like every other discovered baseline', async () => {
@@ -339,6 +394,17 @@ describe('BaselineStore persistence', () => {
       await store.recompute(makeDeps(stateDir), { startFresh: true });
 
       expect(await persistedIds()).toEqual([MANUAL_ID, REGION_ID]);
+    });
+
+    it('drops entries with no id, which no build could ever load', async () => {
+      await fsActual.writeFile(specsPath, JSON.stringify({ ...PERSISTED, baselines: [...PERSISTED.baselines, { name: 'junk' }, 42] }));
+      const warns = vi.spyOn(logger, 'warn');
+      const store = new BaselineStore(stateDir);
+
+      await store.recompute(makeDeps(stateDir));
+
+      expect(warns).toHaveBeenCalledWith('baselines: dropped malformed spec entries', { count: 2 });
+      expect(await persistedIds()).toEqual([DISCOVERED_ID, MANUAL_ID, REGION_ID]);
     });
   });
 
@@ -361,9 +427,18 @@ describe('BaselineStore persistence', () => {
       expect((await readdir(stateDir)).filter((f) => f.endsWith('.tmp'))).toEqual([]);
     });
 
-    it('concurrent mutations all reach the file', async () => {
+    it('run one at a time, so a slow earlier write cannot land over a newer one', async () => {
       const store = new BaselineStore(stateDir);
       const deps = makeDeps(stateDir);
+      await store.list(deps, {});
+      let delayed = false;
+      writeFileMock.mockImplementation(async (file, data, options) => {
+        if (!delayed) {
+          delayed = true;
+          await new Promise((resolve) => { setTimeout(resolve, 50); });
+        }
+        return fsActual.writeFile(file, data, options);
+      });
 
       await Promise.all([
         store.update(deps, MANUAL_ID, { name: 'renamed' }),
@@ -377,6 +452,36 @@ describe('BaselineStore persistence', () => {
       expect(manual?.['name']).toBe('renamed');
       expect(rec(rec(rec(doc['meta'])[DISCOVERED_ID])['triage'])['notes']).toHaveLength(1);
       expect(rec(doc['config'])['windowDays']).toBe(21);
+    });
+
+    it('triage and config edits leave the larger baselines-data.json alone', async () => {
+      await fsActual.writeFile(dataPath, PERSISTED_DATA_TEXT);
+      const store = new BaselineStore(stateDir);
+      const deps = makeDeps(stateDir);
+      await store.list(deps, {});
+      writeFileMock.mockClear();
+
+      await store.update(deps, MANUAL_ID, { triageStatus: 'tracking', note: { text: 'moved on' } });
+      await store.setConfig(deps, { ...CUSTOM_CONFIG, windowDays: 7 });
+
+      const written = writeFileMock.mock.calls.map(([file]) => (typeof file === 'string' ? file : ''));
+      expect(written.filter((f) => f.startsWith(`${specsPath}.`))).toHaveLength(2);
+      expect(written.filter((f) => f.startsWith(dataPath))).toEqual([]);
+      expect(await fsActual.readFile(dataPath, 'utf-8')).toBe(PERSISTED_DATA_TEXT);
+    });
+
+    it('keeps the meta of a spec whose id is "__proto__"', async () => {
+      const spec = JSON.stringify({ ...PERSISTED.baselines[0], id: '__proto__' });
+      // Literal JSON: an object literal can't hold an own "__proto__" key.
+      await fsActual.writeFile(specsPath, `{"version":1,"config":null,"baselines":[${spec}],`
+        + `"meta":{"__proto__":{"triage":{"notes":[{"at":"${NOW}","text":"kept"}]},"bestAchieved":null}}}`);
+      const store = new BaselineStore(stateDir);
+
+      await store.setConfig(makeDeps(stateDir), CUSTOM_CONFIG);
+
+      const meta = rec((await readSpecsDoc())['meta']);
+      expect(Object.hasOwn(meta, '__proto__')).toBe(true);
+      expect(rec(rec(meta['__proto__'])['triage'])['notes']).toHaveLength(1);
     });
   });
 });

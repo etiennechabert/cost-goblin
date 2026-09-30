@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -96,6 +96,21 @@ describe('writeFileAtomic', () => {
     await expect(writeFileAtomic(path, 'new')).rejects.toThrow();
     expect(await readdir(dir)).toEqual(['state']);
     expect(await readFile(join(path, 'keep'), 'utf-8')).toBe('x');
+  });
+
+  it('writes through a symlink and keeps the file mode, like the in-place write it replaces', async () => {
+    const dir = await newDir();
+    const real = join(dir, 'real.json');
+    const link = join(dir, 'state.json');
+    await writeFile(real, 'old');
+    await chmod(real, 0o600);
+    await symlink(real, link);
+
+    await writeFileAtomic(link, 'new');
+
+    expect((await lstat(link)).isSymbolicLink()).toBe(true);
+    expect(await readFile(real, 'utf-8')).toBe('new');
+    expect((await stat(real)).mode & 0o777).toBe(0o600);
   });
 
   it('sweeps temps a crashed writer left behind, but not a recent one', async () => {
