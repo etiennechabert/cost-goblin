@@ -29,7 +29,7 @@ import {
   readTextIfExists,
   resolveDiscoveryGrain,
   runRateSeries,
-  validateBaselines,
+  tryValidateBaseline,
   writeFileAtomic,
 } from '@costgoblin/core';
 import type {
@@ -350,9 +350,8 @@ export class BaselineStore {
    *  every other baseline, including user-triaged ones with notes/bands. */
   private admitValidSpecs(dimensions: DimensionsConfig): void {
     for (const [id, hidden] of this.hiddenSpecs) {
-      let spec: BaselineSpec | undefined;
-      try { [spec] = validateBaselines({ baselines: [hidden.entry] }, dimensions); } catch { continue; }
-      if (spec === undefined) continue;
+      const spec = tryValidateBaseline(hidden.entry, dimensions);
+      if (spec === null) continue;
       this.hiddenSpecs.delete(id);
       this.specs.set(spec.id, spec);
       if (isRecord(hidden.meta)) this.ingestSpecMeta(spec.id, hidden.meta);

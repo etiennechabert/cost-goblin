@@ -105,3 +105,16 @@ export function validateBaselines(raw: unknown, dimensions: DimensionsConfig): r
   const liveDimensionIds = dimensionIdSet(dimensions);
   return raw['baselines'].map((b, i) => validateSpec(b, builtInIds, liveDimensionIds, `baselines[${String(i)}]`));
 }
+
+/** One persisted spec entry, validated as validateBaselines would, or null if
+ *  it fails — e.g. its scope names a dimension that is disabled today. The
+ *  desktop store keeps such specs hidden (and writes them back); every reader
+ *  of baselines.json decides visibility with this one check, so a spec hidden
+ *  in the app is hidden everywhere. */
+export function tryValidateBaseline(raw: unknown, dimensions: DimensionsConfig): BaselineSpec | null {
+  try {
+    return validateBaselines({ baselines: [raw] }, dimensions)[0] ?? null;
+  } catch {
+    return null;
+  }
+}

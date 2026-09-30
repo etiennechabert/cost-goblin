@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   asDateString,
@@ -8,9 +7,12 @@ import {
   computeSavings,
   deriveStatus,
   effectiveBands,
+  parseJsonObject,
+  readTextIfExists,
   runRateSeries,
+  tryValidateBaseline,
 } from '@costgoblin/core';
-import type { BaselineDailyPoint, BaselineStatus, ManualBand } from '@costgoblin/core';
+import type { BaselineDailyPoint, BaselineScope, BaselineSpec, BaselineStatus, DimensionsConfig, ManualBand } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
 import type { Cell, Column, MetaField, StructuredResult } from '../formatters/result.js';
 import { resolveFormat, structuredToolResult, toolResult } from './tool-helpers.js';
@@ -55,26 +57,13 @@ function envNum(key: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
-function scopeLabel(scope: unknown): string {
-  if (!isRecord(scope)) return 'All';
-  if (scope['kind'] === 'view') return `View: ${str(scope['viewId'])}`;
-  if (!isRecord(scope['filters'])) return 'All';
+function scopeLabel(scope: BaselineScope): string {
+  if (scope.kind === 'view') return `View: ${scope.viewId}`;
   const parts: string[] = [];
-  for (const [dim, vals] of Object.entries(scope['filters'])) {
-    if (Array.isArray(vals)) parts.push(`${dim}=${vals.map(String).join(',')}`);
+  for (const [dim, vals] of Object.entries(scope.filters)) {
+    if (vals !== undefined) parts.push(`${dim}=${vals.map(String).join(',')}`);
   }
   return parts.join(' · ') || 'All';
-}
-
-function parseManualBand(v: unknown): ManualBand | undefined {
-  if (!isRecord(v)) return undefined;
-  const mode = v['mode'];
-  if (mode !== 'absolute' && mode !== 'percentile') return undefined;
-  return {
-    mode,
-    ...(typeof v['lower'] === 'number' ? { lower: v['lower'] } : {}),
-    ...(typeof v['upper'] === 'number' ? { upper: v['upper'] } : {}),
-  };
 }
 
 /** Band config: persisted user override wins, else the same env-configurable
@@ -91,18 +80,30 @@ function parseBandConfig(config: unknown): { lowerPct: number; upperPct: number;
   return { lowerPct, upperPct, windowDays };
 }
 
-function parseSpecs(baselines: unknown): Spec[] {
+function toSpec(spec: BaselineSpec): Spec {
+  return {
+    id: spec.id,
+    name: spec.name,
+    source: spec.source,
+    scopeLabel: scopeLabel(spec.scope),
+    manualBand: spec.manualBand,
+  };
+}
+
+/** The specs the desktop app shows: entries keyed by id (a later duplicate
+ *  replaces an earlier one), then only those that validate against today's
+ *  dimensions. The rest are hidden there — kept in the file until they
+ *  validate again — so they are hidden here too. */
+function parseSpecs(baselines: unknown, dimensions: DimensionsConfig): Spec[] {
+  if (!Array.isArray(baselines)) return [];
+  const byId = new Map<string, unknown>();
+  for (const entry of baselines) {
+    if (isRecord(entry) && typeof entry['id'] === 'string') byId.set(entry['id'], entry);
+  }
   const specs: Spec[] = [];
-  if (!Array.isArray(baselines)) return specs;
-  for (const s of baselines) {
-    if (!isRecord(s)) continue;
-    specs.push({
-      id: str(s['id']),
-      name: typeof s['name'] === 'string' ? s['name'] : undefined,
-      source: str(s['source']) || 'discovered',
-      scopeLabel: scopeLabel(s['scope']),
-      manualBand: parseManualBand(s['manualBand']),
-    });
+  for (const entry of byId.values()) {
+    const spec = tryValidateBaseline(entry, dimensions);
+    if (spec !== null) specs.push(toSpec(spec));
   }
   return specs;
 }
@@ -126,19 +127,29 @@ function parseSnapshots(snapshotsRaw: unknown): Map<string, readonly Record<stri
   return snapshots;
 }
 
+/** One of the baselines state files, {} only when it doesn't exist yet. A read
+ *  failure (transient ones are retried) or a file that isn't a JSON object
+ *  throws, so the tool reports an error rather than "no baselines". */
+async function readStateFile(path: string): Promise<Readonly<Record<string, unknown>>> {
+  const text = await readTextIfExists(path);
+  if (text === null) return {};
+  // Tolerate the UTF-8 BOM some Windows editors add to a hand-edited file.
+  const doc = parseJsonObject(text.replace(/^\uFEFF/, ''));
+  if (doc === null) throw new Error(`${path} is unreadable`);
+  return doc;
+}
+
 async function load(ctx: McpContext): Promise<Loaded> {
   const base = ctx.stateDir;
-  let specsRaw: unknown;
-  let dataRaw: unknown;
-  try { specsRaw = JSON.parse(await readFile(join(base, 'baselines.json'), 'utf-8')); } catch { specsRaw = {}; }
-  try { dataRaw = JSON.parse(await readFile(join(base, 'baselines-data.json'), 'utf-8')); } catch { dataRaw = {}; }
-
   // The two state files' top-level layout is narrowed HERE, once — the parsers
   // below receive only the slice they own.
-  const specsRoot = isRecord(specsRaw) ? specsRaw : {};
-  const dataRoot = isRecord(dataRaw) ? dataRaw : {};
+  const [specsRoot, dataRoot, dimensions] = await Promise.all([
+    readStateFile(join(base, 'baselines.json')),
+    readStateFile(join(base, 'baselines-data.json')),
+    ctx.getQueryDimensions(),
+  ]);
   return {
-    specs: parseSpecs(specsRoot['baselines']),
+    specs: parseSpecs(specsRoot['baselines'], dimensions),
     history: parseHistory(dataRoot['history']),
     snapshots: parseSnapshots(dataRoot['snapshots']),
     ...parseBandConfig(specsRoot['config']),
