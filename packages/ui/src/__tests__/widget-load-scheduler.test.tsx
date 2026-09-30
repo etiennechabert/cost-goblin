@@ -42,8 +42,9 @@ async function settle(): Promise<void> {
 }
 
 // Widgets that must mount BEFORE the 5s fallback release (which would otherwise
-// mask a leaked lane) wait at most this long — well under asyncUtilTimeout (5s).
-const BEFORE_FALLBACK = { timeout: 1000 };
+// mask a leaked lane) wait at most this long: under the fallback and asyncUtilTimeout
+// (both 5s), with room for transition commits on a loaded CI runner.
+const BEFORE_FALLBACK = { timeout: 3000 };
 
 describe('WidgetSchedulerProvider + LazyWidgetSlot', () => {
   // The global test setup mocks IntersectionObserver as always-intersecting, so
@@ -168,11 +169,13 @@ describe('WidgetSchedulerProvider + LazyWidgetSlot', () => {
   it('frees the lane of a slot that unmounts mid-load, and never grants a queued slot that unmounted', async () => {
     // A dashboard switch: CustomView isn't keyed by view, so one provider
     // outlives the first dashboard's slots. `a` unmounts mid-query holding the
-    // only lane; `b` unmounts while still queued for it.
+    // only lane; `b` unmounts while still queued for it. Slots are keyed by
+    // widget id as in custom-view, so the rerender really unmounts them rather
+    // than reusing them for the new widgets.
     const { rerender } = render(
       <WidgetSchedulerProvider maxConcurrent={1}>
-        <LazyWidgetSlot id="a" priority={0} minHeight={10}><QueryWidget label="a" fetcher={hang} /></LazyWidgetSlot>
-        <LazyWidgetSlot id="b" priority={1} minHeight={10}><QueryWidget label="b" fetcher={hang} /></LazyWidgetSlot>
+        <LazyWidgetSlot key="a" id="a" priority={0} minHeight={10}><QueryWidget label="a" fetcher={hang} /></LazyWidgetSlot>
+        <LazyWidgetSlot key="b" id="b" priority={1} minHeight={10}><QueryWidget label="b" fetcher={hang} /></LazyWidgetSlot>
       </WidgetSchedulerProvider>,
     );
     expect(await screen.findByText('a-loading')).toBeDefined();
@@ -181,8 +184,8 @@ describe('WidgetSchedulerProvider + LazyWidgetSlot', () => {
     const c = deferred<string>();
     rerender(
       <WidgetSchedulerProvider maxConcurrent={1}>
-        <LazyWidgetSlot id="c" priority={0} minHeight={10}><QueryWidget label="c" fetcher={() => c.promise} /></LazyWidgetSlot>
-        <LazyWidgetSlot id="e" priority={2} minHeight={10}><QueryWidget label="e" fetcher={() => Promise.resolve('e-data')} /></LazyWidgetSlot>
+        <LazyWidgetSlot key="c" id="c" priority={0} minHeight={10}><QueryWidget label="c" fetcher={() => c.promise} /></LazyWidgetSlot>
+        <LazyWidgetSlot key="e" id="e" priority={2} minHeight={10}><QueryWidget label="e" fetcher={() => Promise.resolve('e-data')} /></LazyWidgetSlot>
       </WidgetSchedulerProvider>,
     );
     // c takes a's lane at once. a's unmount cleared its fallback timer, so
@@ -249,8 +252,9 @@ describe('WidgetSchedulerProvider + LazyWidgetSlot', () => {
   });
 
   it('neither leaks nor frees a lane early under StrictMode', async () => {
-    // The app renders under StrictMode: each slot requests, releases and
-    // re-requests its ticket, and each query tracks, untracks and re-tracks.
+    // The app renders under StrictMode, so each query tracks, untracks and
+    // re-tracks on mount. (The slot's ticket effect first fires on the
+    // inView update, not on mount, so StrictMode doesn't double it.)
     const a = deferred<string>();
     render(
       <StrictMode>
@@ -304,19 +308,19 @@ describe('WidgetSchedulerProvider + LazyWidgetSlot', () => {
         </WidgetSchedulerProvider>,
       );
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-      expect(screen.queryByText('a')).not.toBeNull();
-      expect(screen.queryByText('b')).not.toBeNull();
+      expect(screen.getByText('a')).toBeDefined();
+      expect(screen.getByText('b')).toBeDefined();
 
       // t=4s: b settles and c is granted its lane; a is still hanging.
       await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
       await act(async () => { fireEvent.click(screen.getByText('b')); await Promise.resolve(); });
-      expect(screen.queryByText('c')).not.toBeNull();
+      expect(screen.getByText('c')).toBeDefined();
       expect(screen.queryByText('d')).toBeNull();
 
       // t=5.1s: a's fallback, armed when a mounted, has freed its lane for d.
       // c's grant must not have re-armed it (which would hold d until t=9s).
       await act(async () => { await vi.advanceTimersByTimeAsync(1100); });
-      expect(screen.queryByText('d')).not.toBeNull();
+      expect(screen.getByText('d')).toBeDefined();
     } finally {
       vi.useRealTimers();
     }

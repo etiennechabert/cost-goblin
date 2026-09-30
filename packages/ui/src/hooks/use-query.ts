@@ -27,12 +27,12 @@ function handleFetchError<T>(
   cancelled: { current: boolean },
   retryCount: number,
   setState: (s: QueryState<T>) => void,
-  setRetryCount: (fn: (c: number) => number) => void,
+  retry: () => void,
 ): void {
   if (cancelled.current) return;
   const msg = err instanceof Error ? err.message : String(err);
   if (msg === QUERY_CANCELLED_MESSAGE && retryCount < MAX_CANCEL_RETRIES) {
-    setRetryCount(c => c + 1);
+    retry();
     return;
   }
   setState({
@@ -46,7 +46,6 @@ export function useQuery<T>(
   deps: unknown[],
 ): QueryState<T> {
   const [state, setState] = useState<QueryState<T>>({ status: 'idle' });
-  const [retryCount, setRetryCount] = useState(0);
 
   // Report each query to the surrounding dashboard widget slot (if any) so the
   // load scheduler frees its lane only once every query in the widget has
@@ -66,6 +65,12 @@ export function useQuery<T>(
   // rendered together (seconds under load). Releasing after commit shows each
   // wave's results before the next wave starts. A widget that never settles is
   // still released by the slot's fallback timer.
+  //
+  // Keep this effect declared BEFORE the fetch effect below. A commit can both
+  // land the previous run's result and restart the query (deps changed); in
+  // that commit this effect must run while `doneRef` still holds the previous
+  // run's (already spent) `done`, not after the new run has replaced it — or it
+  // would mark the new, still-running query done and free the lane early.
   useEffect(() => {
     if (state.status === 'success' || state.status === 'error') doneRef.current?.();
   }, [state]);
@@ -79,19 +84,26 @@ export function useQuery<T>(
     const done = slotRef.current?.trackQuery() ?? null;
     doneRef.current = done;
 
-    const delay = retryCount > 0 ? 150 : 0;
-    const timer = setTimeout(() => {
-      fetcher()
-        .then((data) => { handleFetchSuccess(data, cancelled, setState); })
-        .catch((err: unknown) => { handleFetchError(err, cancelled, retryCount, setState, setRetryCount); });
-    }, delay);
+    // Cancel-retries stay within this run, so every new set of deps starts with
+    // a fresh retry budget (and no retry delay).
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const attempt = (retryCount: number): void => {
+      timer = setTimeout(() => {
+        fetcher()
+          .then((data) => { handleFetchSuccess(data, cancelled, setState); })
+          .catch((err: unknown) => {
+            handleFetchError(err, cancelled, retryCount, setState, () => { attempt(retryCount + 1); });
+          });
+      }, retryCount > 0 ? 150 : 0);
+    };
+    attempt(0);
 
     return () => {
       cancelled.current = true;
       clearTimeout(timer);
       done?.();
     };
-  }, [...deps, retryCount]);
+  }, deps);
 
   return state;
 }

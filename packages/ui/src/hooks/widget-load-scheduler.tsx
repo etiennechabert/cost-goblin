@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 
 /**
@@ -20,8 +20,10 @@ import type { CSSProperties, ReactNode } from 'react';
 const DEFAULT_MAX_CONCURRENT = 3;
 /** Preload a bit before the slot is actually on screen so scrolling feels instant. */
 const DEFAULT_ROOT_MARGIN = '400px';
-/** Safety net: if a mounted widget never settles (no query, or one hangs),
- *  free its lane anyway so the queue can't stall. */
+/** Upper bound on how long one widget holds its lane. A widget normally frees
+ *  it once all its queries settle; one that takes longer (a slow scan, a hung
+ *  query, or no query at all) frees it at this point anyway, so the widgets
+ *  queued behind it aren't starved and the queue can't stall. */
 const SLOT_RELEASE_FALLBACK_MS = 5000;
 
 // ---------------------------------------------------------------------------
@@ -95,7 +97,7 @@ interface SchedulerApi {
   /** Queue `ticket`; granted in ascending `priority` up to the concurrency cap. */
   readonly request: (ticket: SlotTicket) => void;
   /** Drop `ticket`: withdraw it if still queued, free its lane if granted.
-   *  Idempotent, and a no-op for a ticket that holds no lane. */
+   *  Idempotent: a no-op for a ticket already dropped. */
   readonly release: (ticket: SlotTicket) => void;
 }
 
@@ -125,19 +127,19 @@ export function WidgetSchedulerProvider({
     }
   }, [version, maxConcurrent]);
 
-  const request = useCallback((ticket: SlotTicket) => {
-    pendingRef.current.add(ticket);
-    setVersion(v => v + 1);
-  }, []);
-
-  const release = useCallback((ticket: SlotTicket) => {
-    pendingRef.current.delete(ticket);
-    if (activeRef.current.delete(ticket)) setVersion(v => v + 1);
-  }, []);
-
   // Stable for the provider's lifetime: grants reach only the granted slot (via
-  // its ticket), so a grant never re-renders the other mounted widgets.
-  const value = useMemo<SchedulerApi>(() => ({ request, release }), [request, release]);
+  // its ticket), so a grant never re-renders the other mounted widgets, and
+  // slots' effects keyed on it never re-run.
+  const value = useMemo<SchedulerApi>(() => ({
+    request: (ticket) => {
+      pendingRef.current.add(ticket);
+      setVersion(v => v + 1);
+    },
+    release: (ticket) => {
+      pendingRef.current.delete(ticket);
+      if (activeRef.current.delete(ticket)) setVersion(v => v + 1);
+    },
+  }), []);
   return <SchedulerContext.Provider value={value}>{children}</SchedulerContext.Provider>;
 }
 
@@ -192,25 +194,27 @@ export function LazyWidgetSlot({
   // the first: a widget's instant no-op query (e.g. its Compare query with
   // Compare off) would otherwise free the lane while the real one still runs.
   const inFlightRef = useRef(0);
-  const slotHandle = useMemo<WidgetSlotHandle>(() => ({
-    trackQuery: () => {
-      inFlightRef.current += 1;
-      let done = false;
-      return () => {
-        if (done) return;
-        done = true;
-        inFlightRef.current -= 1;
-        if (inFlightRef.current > 0) return;
-        // A restarting query (deps change, cancel-retry) is untracked and
-        // re-tracked within one effect flush; let that flush finish so the
-        // momentary zero doesn't free the lane.
-        queueMicrotask(() => {
-          const ticket = ticketRef.current;
-          if (inFlightRef.current === 0 && ticket !== null) scheduler?.release(ticket);
-        });
-      };
-    },
-  }), [scheduler]);
+  const slotHandle = useMemo<WidgetSlotHandle>(() => {
+    const releaseIfIdle = (): void => {
+      const ticket = ticketRef.current;
+      if (inFlightRef.current === 0 && ticket !== null) scheduler?.release(ticket);
+    };
+    return {
+      trackQuery: () => {
+        inFlightRef.current += 1;
+        let done = false;
+        return () => {
+          if (done) return;
+          done = true;
+          inFlightRef.current -= 1;
+          // A restarting query (deps change, StrictMode) is untracked and
+          // re-tracked within one effect flush; let that flush finish so the
+          // momentary zero doesn't free the lane.
+          if (inFlightRef.current === 0) queueMicrotask(releaseIfIdle);
+        };
+      },
+    };
+  }, [scheduler]);
 
   // Safety net so a non-settling widget can't block the queue forever.
   useEffect(() => {
