@@ -78,17 +78,21 @@ async function sweepStaleTemps(path: string): Promise<void> {
  * so concurrent writers never share one), then renamed over it. Transient
  * Windows lock errors on either step are retried; on failure the temp is
  * removed and the previous file is left untouched. Like the in-place write it
- * replaces, it writes through a symlink and keeps the file's permissions.
+ * replaces, it writes through a symlink and keeps the file's permissions —
+ * unless `mode` is given, which sets them (a secret's 0600 on its first write,
+ * or tightening one left looser).
  */
-export async function writeFileAtomic(path: string, data: string): Promise<void> {
+export async function writeFileAtomic(path: string, data: string, options: { readonly mode?: number } = {}): Promise<void> {
   const target = await realpath(path).catch(() => path);
-  const mode = await stat(target).then((s) => s.mode & 0o7777, () => null);
+  const mode = options.mode ?? await stat(target).then((s) => s.mode & 0o7777, () => null);
   await sweepStaleTemps(target);
   const tmpPath = `${target}.${randomUUID()}.tmp`;
   try {
     // Flushed, so the rename can't reach the disk before the data does and
-    // leave a power cut with a renamed but empty file.
-    await retryTransientFs(() => writeFile(tmpPath, data, { flush: true }));
+    // leave a power cut with a renamed but empty file. Created with the mode,
+    // so the data is never readable under looser permissions; the chmod then
+    // sets it exactly (the umask may have masked bits off).
+    await retryTransientFs(() => writeFile(tmpPath, data, { flush: true, ...(mode === null ? {} : { mode }) }));
     if (mode !== null) await chmod(tmpPath, mode);
     await retryTransientFs(() => rename(tmpPath, target));
   } catch (err: unknown) {

@@ -1,7 +1,7 @@
 import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import {
   hasErrnoCode,
   quarantineFile,
@@ -9,6 +9,13 @@ import {
   retryTransientFs,
   writeFileAtomic,
 } from '../utils/atomic-file.js';
+
+// Pass-through, so a case can see how the temp file was created.
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, writeFile: vi.fn(actual.writeFile) };
+});
+const writeFileMock = vi.mocked(writeFile);
 
 const tmpDirs: string[] = [];
 async function newDir(): Promise<string> {
@@ -111,6 +118,33 @@ describe('writeFileAtomic', () => {
     expect((await lstat(link)).isSymbolicLink()).toBe(true);
     expect(await readFile(real, 'utf-8')).toBe('new');
     expect((await stat(real)).mode & 0o777).toBe(0o600);
+  });
+
+  // POSIX permission bits don't exist on Windows (chmod only toggles read-only).
+  const posixOnly = it.skipIf(process.platform === 'win32');
+
+  posixOnly('creates a new file with an explicit mode', async () => {
+    const path = join(await newDir(), 'secret.json');
+    await writeFileAtomic(path, 'secret', { mode: 0o600 });
+    expect(await readFile(path, 'utf-8')).toBe('secret');
+    expect((await stat(path)).mode & 0o777).toBe(0o600);
+  });
+
+  posixOnly('applies an explicit mode over an existing file\'s', async () => {
+    const path = join(await newDir(), 'secret.json');
+    await writeFile(path, 'old');
+    await chmod(path, 0o644);
+    await writeFileAtomic(path, 'new', { mode: 0o600 });
+    expect((await stat(path)).mode & 0o777).toBe(0o600);
+  });
+
+  it('creates the temp with the mode, so the data is never readable under looser permissions', async () => {
+    const path = join(await newDir(), 'secret.json');
+    writeFileMock.mockClear();
+    await writeFileAtomic(path, 'secret', { mode: 0o600 });
+    // A chmod only after the write would leave the secret world-readable in
+    // the temp until then; the umask can only narrow the creation mode.
+    expect(writeFileMock).toHaveBeenCalledWith(expect.stringMatching(/\.tmp$/), 'secret', expect.objectContaining({ mode: 0o600 }));
   });
 
   it('sweeps temps a crashed writer left behind, but not a recent one', async () => {
