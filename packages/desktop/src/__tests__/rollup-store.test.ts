@@ -1,13 +1,19 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
-import { mkdtemp, rm, stat, readdir } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, readdir } from 'node:fs/promises';
 import { buildRollupPartitionQuery, rollupGrainColumns, type DimensionsConfig, type CostScopeConfig, type ProviderName, type RollupStatus, asDimensionId, asProviderName } from '@costgoblin/core';
 import { RollupStore, type RollupShape } from '../main/rollup-store.js';
 import type { RawRow } from '../main/duckdb-client.js';
 import { fetchRows } from './helpers/duckdb-rows.js';
+
+// Pass-through, so one test can fail a single manifest read.
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, readFile: vi.fn(actual.readFile) };
+});
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // core synthetic fixtures live under packages/core/src/__fixtures__/synthetic
@@ -46,6 +52,7 @@ describe('RollupStore', () => {
     runQuery = (sql: string): Promise<RawRow[]> => fetchRows(conn, sql);
   });
   afterAll(async () => { await rm(dataDir, { recursive: true, force: true }); });
+  afterEach(() => { vi.mocked(readFile).mockReset(); });
 
   it('builds a partition, writes an atomic manifest (no .tmp), and routes to it', async () => {
     const store = new RollupStore({ dataDir, providerName, runQuery });
@@ -141,6 +148,48 @@ describe('RollupStore', () => {
     await expect(stat(join(dataDir, 'aws', 'rollup', 'daily-2026-01'))).rejects.toThrow();
     const reloaded = new RollupStore({ dataDir, providerName, runQuery });
     const v = await reloaded.loadAndValidate(shape, etags);
+    expect(v.validPeriods.size).toBe(0);
+  });
+
+  it('deletePeriod drops the on-disk manifest entry even before the manifest is loaded', async () => {
+    const builder = new RollupStore({ dataDir, providerName, runQuery });
+    await builder.maintainPeriods(['2026-01'], buildSql, etags, shape);
+
+    // A warmup that failed before loadAndValidate leaves the store unloaded.
+    const unloaded = new RollupStore({ dataDir, providerName, runQuery });
+    await unloaded.deletePeriod('2026-01');
+
+    // Left on disk, the entry would validate against unchanged etags and route
+    // queries to a partition file that no longer exists.
+    const reloaded = new RollupStore({ dataDir, providerName, runQuery });
+    const v = await reloaded.loadAndValidate(shape, etags);
+    expect(v.validPeriods.size).toBe(0);
+    expect(v.stalePeriods.size).toBe(0);
+  });
+
+  it('deletePeriod rejects, rather than skip the on-disk cleanup, when the manifest cannot be read', async () => {
+    const builder = new RollupStore({ dataDir, providerName, runQuery });
+    await builder.maintainPeriods(['2026-01'], buildSql, etags, shape);
+    vi.mocked(readFile).mockRejectedValueOnce(Object.assign(new Error('EIO: i/o error'), { code: 'EIO' }));
+
+    const unloaded = new RollupStore({ dataDir, providerName, runQuery });
+    await expect(unloaded.deletePeriod('2026-01')).rejects.toMatchObject({ code: 'EIO' });
+  });
+
+  it('rebuilds without etags stamped unverified: served now, never skipped, stale at the next validation', async () => {
+    const store = new RollupStore({ dataDir, providerName, runQuery });
+    await store.maintainPeriods(['2026-01'], buildSql, etags, shape);
+    let builds = 0;
+    const countingSql = (period: string, outPath: string) => { builds += 1; return buildSql(period, outPath); };
+
+    await store.maintainPeriods(['2026-01'], countingSql, null, shape);
+    await store.maintainPeriods(['2026-01'], countingSql, null, shape);
+
+    expect(builds).toBe(2);
+    expect(store.resolveSource({ requiredPeriods: ['2026-01'], tier: 'daily', neededColumns: ['service', 'cost'] })).toContain('daily-2026-01/rollup.parquet');
+    const reloaded = new RollupStore({ dataDir, providerName, runQuery });
+    const v = await reloaded.loadAndValidate(shape, etags);
+    expect([...v.stalePeriods]).toEqual(['2026-01']);
     expect(v.validPeriods.size).toBe(0);
   });
 

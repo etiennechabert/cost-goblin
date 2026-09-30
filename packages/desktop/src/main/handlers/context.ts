@@ -20,8 +20,7 @@ import {
   computeShapeSignature,
   computeOrgAccountsDigest,
   rollupGrainColumns,
-  parseEtagsJson,
-  providerEtagPath,
+  readEtags,
   listLocalMonths,
   logger,
   isStringRecord,
@@ -475,16 +474,6 @@ export function createAppContext(ctx: IpcContext): AppContext {
     return { signature, grainDimensions: rollupGrainColumns(dimensions) };
   }
 
-  async function getEtagsByPeriod(): Promise<Record<string, Record<string, string>>> {
-    const fs = await import('node:fs/promises');
-    const provider = await getFirstProviderName();
-    if (provider === null) return {};
-    try {
-      const raw = await fs.readFile(providerEtagPath(ctx.dataDir, provider, 'daily'), 'utf-8');
-      return parseEtagsJson(raw);
-    } catch { return {}; }
-  }
-
   async function buildRollupSqlFor(): Promise<BuildPartitionSql> {
     const dimensions = await getQueryDimensions();
     const orgPath = await getOrgAccountsPath();
@@ -506,7 +495,10 @@ export function createAppContext(ctx: IpcContext): AppContext {
       const provider = await getFirstProviderName();
       if (provider === null) { rollupStore.markSettled(); return; }
       const shape = await getRollupShape();
-      const etags = await getEtagsByPeriod();
+      // Rejects if the sidecar can't be read (catch below): validating against
+      // `{}` would mark every partition stale and stamp the rebuilds with that
+      // hash, so the next warmup would rebuild them all again.
+      const etags = await readEtags(ctx.dataDir, provider, 'daily');
       const validation = await rollupStore.loadAndValidate(shape, etags);
       const available = await listLocalMonths(ctx.dataDir, provider, 'daily');
       const toBuild = available.filter(p => !validation.validPeriods.has(p)).sort((a, b) => b.localeCompare(a));
@@ -535,8 +527,18 @@ export function createAppContext(ctx: IpcContext): AppContext {
       const periods = changed.filter(p => available.includes(p));
       if (periods.length === 0) return;
       const shape = await getRollupShape();
-      const etags = await getEtagsByPeriod();
-      if (!rollupStore.isReady()) await rollupStore.loadAndValidate(shape, etags);
+      // These months' raw files just changed, so they're rebuilt even when the
+      // etags can't be read (null) — stamped unverified, which the next warmup
+      // rebuilds. An unloaded store serves nothing and can't load without them.
+      const etags = await readEtags(ctx.dataDir, provider, 'daily').catch((err: unknown) => {
+        logger.warn(`rollup-maintain: ${err instanceof Error ? err.message : String(err)}`);
+        return null;
+      });
+      if (!rollupStore.isReady()) {
+        // Queries read raw, so drop the results cached from the replaced files.
+        if (etags === null) { resultCache.clear(); return; }
+        await rollupStore.loadAndValidate(shape, etags);
+      }
       const buildSql = await buildRollupSqlFor();
       await traceSpan(
         { name: 'rollup.maintain', op: SPAN_OP.rollupMaintain, forceTransaction: true, attributes: { 'rollup.periods': periods.length } },

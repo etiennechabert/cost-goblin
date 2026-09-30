@@ -2,7 +2,8 @@ import { mkdir, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { getLocalDataInventory, hasSyncedTier } from '../sync/data-inventory.js';
+import { getLocalDataInventory } from '../sync/data-inventory.js';
+import { hasSyncedTier } from '../sync/sync-utils.js';
 import { writeTierLastSync } from '../sync/sync-timestamps.js';
 import { asProviderName } from '../types/branded.js';
 

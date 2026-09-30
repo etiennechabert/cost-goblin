@@ -2,6 +2,8 @@ import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   computePartitionEtagHash,
+  ifExists,
+  UNVERIFIED_ETAG_HASH,
   logger,
   ROLLUP_SCHEMA_VERSION,
   validateManifest,
@@ -84,6 +86,15 @@ interface RollupStoreDeps {
  *    otherwise the caller queries raw Parquet. A stale partition within the
  *    requested range therefore forces raw, never silently-wrong numbers.
  */
+/** A manifest file's contents, or null when they aren't a JSON object. */
+function parseManifest(raw: string): RollupManifest | null {
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { return null; }
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  // Trust the shape loosely; validateManifest re-checks signature/version.
+  return parsed as RollupManifest;
+}
+
 export class RollupStore {
   private readonly dataDir: string;
   private readonly providerName: () => ProviderName;
@@ -196,14 +207,17 @@ export class RollupStore {
 
   private async readManifest(): Promise<RollupManifest | null> {
     try {
-      const raw = await readFile(this.manifestPath(), 'utf-8');
-      const parsed: unknown = JSON.parse(raw);
-      if (typeof parsed !== 'object' || parsed === null) return null;
-      // Trust the shape loosely; validateManifest re-checks signature/version.
-      return parsed as RollupManifest;
+      return parseManifest(await readFile(this.manifestPath(), 'utf-8'));
     } catch {
       return null;
     }
+  }
+
+  /** readManifest for a cleanup that must not be skipped: a manifest that
+   *  exists but can't be read (transient failures retried) rejects. */
+  private async readManifestStrict(): Promise<RollupManifest | null> {
+    const raw = await ifExists(() => readFile(this.manifestPath(), 'utf-8'));
+    return raw === null ? null : parseManifest(raw);
   }
 
   private async writeManifestAtomic(manifest: RollupManifest): Promise<void> {
@@ -254,11 +268,13 @@ export class RollupStore {
    *  Independent months build concurrently (bounded by `buildConcurrency`), each
    *  on a fresh connection, so a full-history rebuild is far faster than the old
    *  sequential pass. Aborts silently if a concurrent invalidate() changed the
-   *  epoch. */
+   *  epoch. `etagsByPeriod` null means the etags couldn't be read: every period
+   *  is rebuilt and stamped `UNVERIFIED_ETAG_HASH`, so it is served now and
+   *  rebuilt again by the next validation. */
   maintainPeriods(
     periods: readonly string[],
     buildSql: BuildPartitionSql,
-    etagsByPeriod: Readonly<Record<string, Readonly<Record<string, string>>>>,
+    etagsByPeriod: Readonly<Record<string, Readonly<Record<string, string>>>> | null,
     shape: RollupShape,
     opts: { readonly force?: boolean } = {},
   ): Promise<void> {
@@ -300,10 +316,12 @@ export class RollupStore {
       // Split into already-valid (skip) and to-build. Reading manifest.partitions
       // here is safe — it happens before any build starts, so the concurrent
       // commits below can't be mutating it yet.
+      const stampFor = (period: string): string =>
+        etagsByPeriod === null ? UNVERIFIED_ETAG_HASH : computePartitionEtagHash(etagsByPeriod[period]);
       const toBuild: string[] = [];
       for (const period of periods) {
-        const wantHash = computePartitionEtagHash(etagsByPeriod[period]);
-        if (opts.force !== true && manifest.partitions[period]?.rawEtagHash === wantHash) {
+        // An unverified stamp proves nothing, so nothing is skipped without etags.
+        if (opts.force !== true && etagsByPeriod !== null && manifest.partitions[period]?.rawEtagHash === stampFor(period)) {
           this.validPeriods.add(period);
           markDone(period);
         } else {
@@ -333,7 +351,7 @@ export class RollupStore {
           if (this.epoch !== startEpoch) return; // superseded before we started
           active.add(period);
           reportProgress(); // chip starts pulsing the moment this period's build begins
-          const wantHash = computePartitionEtagHash(etagsByPeriod[period]);
+          const wantHash = stampFor(period);
           try {
             const outPath = this.partitionPath(period);
             await mkdir(this.partitionDir(period), { recursive: true });
@@ -389,16 +407,21 @@ export class RollupStore {
     return { rawEtagHash, rows: typeof n === 'bigint' ? Number(n) : Number(n ?? 0), bytes };
   }
 
-  /** Drop one period's partition + manifest entry (e.g. data:delete-period). */
+  /** Drop one period's partition + manifest entry (e.g. data:delete-period).
+   *  The on-disk entry goes even when no manifest is loaded (a warmup that
+   *  failed before loadAndValidate): left behind, it would validate against
+   *  unchanged etags and route queries to a partition file that is gone. */
   deletePeriod(period: string): Promise<void> {
     return this.enqueue(async (startEpoch) => {
       if (this.epoch !== startEpoch) return;
       await rm(this.partitionDir(period), { recursive: true, force: true });
       this.validPeriods.delete(period);
-      if (this.manifest !== null && period in this.manifest.partitions) {
-        const partitions = Object.fromEntries(Object.entries(this.manifest.partitions).filter(([k]) => k !== period));
-        this.manifest = { ...this.manifest, partitions };
-        await this.writeManifestAtomic(this.manifest);
+      const manifest = this.manifest ?? await this.readManifestStrict();
+      if (manifest !== null && period in manifest.partitions) {
+        const partitions = Object.fromEntries(Object.entries(manifest.partitions).filter(([k]) => k !== period));
+        const next = { ...manifest, partitions };
+        if (this.manifest !== null) this.manifest = next;
+        await this.writeManifestAtomic(next);
       }
     });
   }

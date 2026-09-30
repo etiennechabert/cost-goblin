@@ -50,7 +50,6 @@ export {
   type DataInventory,
   getDataInventory,
   getLocalDataInventory,
-  hasSyncedTier,
 } from './data-inventory.js';
 
 export {
@@ -124,8 +123,12 @@ export {
   extractPeriod,
   extractPeriodPrefix,
   groupByPeriod,
+  hasSyncedTier,
+  ifExists,
   listLocalMonths,
-  parseEtagsJson,
+  LocalSyncStateError,
+  pruneEtagPeriod,
+  readEtags,
   resolveBucketPath,
   saveEtags,
 } from './sync-utils.js';
