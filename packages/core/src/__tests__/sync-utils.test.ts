@@ -1,14 +1,19 @@
-import { describe, expect, it } from 'vitest';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   extractDate,
   extractPeriod,
   extractPeriodPrefix,
   groupByPeriod,
+  listLocalMonths,
   parseAwsCompletedBytes,
   parseEtagsJson,
   parsePartition,
 } from '../sync/sync-utils.js';
 import type { ManifestFileEntry } from '../sync/manifest.js';
+import { asProviderName } from '../types/branded.js';
 
 const file = (key: string, hash = 'h', size = 1): ManifestFileEntry => ({ key, contentHash: hash, size });
 
@@ -211,5 +216,47 @@ describe('parsePartition', () => {
   ])('rejects daily key %s', (key) => {
     expect(parsePartition(key, 'daily')).toBeNull();
     expect(parsePartition(key, 'hourly')).toBeNull();
+  });
+});
+
+describe('listLocalMonths', () => {
+  const provider = asProviderName('aws-main');
+  let dataDir: string;
+
+  beforeEach(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), 'costgoblin-local-months-'));
+  });
+
+  afterEach(async () => {
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  async function periodDir(name: string, files: readonly string[]): Promise<void> {
+    const dir = join(dataDir, 'aws-main', 'raw', name);
+    await mkdir(dir, { recursive: true });
+    for (const file of files) await writeFile(join(dir, file), '');
+  }
+
+  it('lists sorted months whose dir holds at least one parquet file', async () => {
+    await periodDir('daily-2026-04', ['part-0.parquet']);
+    await periodDir('daily-2026-02', ['a.parquet', 'b.parquet']);
+    await periodDir('daily-2026-03', []);
+    await periodDir('daily-2026-05', ['notes.txt']);
+    await periodDir('daily-bogus', ['x.parquet']);
+    await periodDir('hourly-2026-01', ['h.parquet']);
+
+    expect(await listLocalMonths(dataDir, provider, 'daily')).toEqual(['2026-02', '2026-04']);
+    expect(await listLocalMonths(dataDir, provider, 'hourly')).toEqual(['2026-01']);
+  });
+
+  it('collapses cost-optimization date dirs to one YYYY-MM under the cost-opt prefix', async () => {
+    await periodDir('cost-opt-2026-04-08', ['c.parquet']);
+    await periodDir('cost-opt-2026-04-09', ['c.parquet']);
+
+    expect(await listLocalMonths(dataDir, provider, 'cost-optimization')).toEqual(['2026-04']);
+  });
+
+  it('returns an empty list when the provider has no raw dir', async () => {
+    expect(await listLocalMonths(dataDir, provider, 'daily')).toEqual([]);
   });
 });
