@@ -132,10 +132,14 @@ describe('applyMcpEnabled', () => {
     expect(r.calls).toStrictEqual(['persist:false', 'stop']);
   });
 
-  it('disable: does not stop a server that is already stopped', async () => {
+  // isRunning() is false while a start (or a token-rotation restart) is still
+  // in flight, so gating the stop on it would drop the Disable and leave that
+  // start listening. stop() is serialized behind any in-flight start and is a
+  // no-op when nothing runs, so it is always queued.
+  it('disable: queues a stop even when isRunning() says stopped', async () => {
     const r = recorder({ running: false });
     await applyMcpEnabled(false, r.deps);
-    expect(r.calls).toStrictEqual(['persist:false']);
+    expect(r.calls).toStrictEqual(['persist:false', 'stop']);
   });
 
   it('a failed start saves the setting as off and rethrows, never persisting true', async () => {

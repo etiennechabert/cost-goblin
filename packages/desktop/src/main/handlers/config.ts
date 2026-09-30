@@ -6,6 +6,7 @@ import type {
   OrgNode,
 } from '@costgoblin/core';
 import { removeProviderEntry, swapProviderCredentialsProfile } from '../config-upsert.js';
+import { cancelMcpQueries } from '../mcp.js';
 import type { AppContext } from './context.js';
 
 export function registerConfigHandlers(app: AppContext): void {
@@ -100,8 +101,10 @@ export function registerConfigHandlers(app: AppContext): void {
     // failure (e.g. a locked file) aborts here with the provider still fully
     // configured — no half-state where the config forgot a provider whose data
     // survives for a same-name re-add to adopt. rm's force only swallows ENOENT,
-    // so a real failure still throws and rejects the IPC.
+    // so a real failure still throws and rejects the IPC. MCP queries run on
+    // their own sandboxed instance, so that one is cancelled too.
     ctx.db.cancelPendingQueries();
+    cancelMcpQueries();
     await fs.rm(path.join(ctx.dataDir, String(safeName)), { recursive: true, force: true });
     await fs.writeFile(ctx.configPath, stringify(updated), 'utf-8');
     // Removal can change which provider is FIRST — and the RollupStore's
