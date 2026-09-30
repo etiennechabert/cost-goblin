@@ -1,4 +1,4 @@
-export { loadConfig, loadDimensions, loadOrgTree, loadViews, loadCostScope } from './loader.js';
+export { loadConfig, loadDimensions, loadOrgTree, loadViews, loadCostScope, readYamlMappingIfExists } from './loader.js';
 export { validateConfig, validateDimensions, validateOrgTree, ConfigValidationError, assertObject, assertArray, assertString, assertNumber, hasControlChar } from './validator.js';
 export type { StripPatternLimitMode, ValidateDimensionsOptions } from './validator.js';
 export { MAX_NAME_STRIP_PATTERNS, MAX_NAME_STRIP_PATTERN_LENGTH, nameStripPatternViolations } from './strip-pattern-limits.js';

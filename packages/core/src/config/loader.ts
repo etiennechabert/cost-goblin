@@ -6,7 +6,8 @@ import type { CostScopeConfig } from '../types/cost-scope.js';
 import { validateConfig, validateDimensions, validateOrgTree } from './validator.js';
 import { validateViews } from './views-validator.js';
 import { validateCostScope } from './cost-scope-validator.js';
-import { retryTransientFs } from '../utils/atomic-file.js';
+import { readTextIfExists, retryTransientFs } from '../utils/atomic-file.js';
+import { isStringRecord } from '../utils/json.js';
 
 export async function loadConfig(path: string): Promise<CostGoblinConfig> {
   const content = await readFile(path, 'utf-8');
@@ -44,4 +45,19 @@ export async function loadCostScope(path: string, liveDimensionIds?: ReadonlySet
   const content = await readFile(path, 'utf-8');
   const raw: unknown = parse(content);
   return validateCostScope(raw, liveDimensionIds);
+}
+
+/** A YAML config file's top-level mapping, read to be rewritten; null only
+ *  when the file doesn't exist. Any other read failure (transient ones are
+ *  retried) throws, and so does a file that isn't a YAML mapping — a syntax
+ *  error, a list, a scalar — leaving it for the user to fix: rewriting from
+ *  an empty mapping would drop everything it held. A blank document (an empty
+ *  file, only comments) reads as {}: it holds nothing to lose. */
+export async function readYamlMappingIfExists(path: string): Promise<Readonly<Record<string, unknown>> | null> {
+  const text = await readTextIfExists(path);
+  if (text === null) return null;
+  const doc: unknown = parse(text);
+  if (doc === null || doc === undefined) return {};
+  if (!isStringRecord(doc)) throw new Error(`${path} is not a YAML mapping; refusing to rewrite it`);
+  return doc;
 }

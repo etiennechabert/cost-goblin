@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { chmod, lstat, readdir, readFile, readlink, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { access, chmod, lstat, readdir, readFile, readlink, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -40,6 +40,19 @@ export async function readTextIfExists(path: string): Promise<string | null> {
     return await retryTransientFs(() => readFile(path, 'utf-8'));
   } catch (err: unknown) {
     if (hasErrnoCode(err, ['ENOENT'])) return null;
+    throw err;
+  }
+}
+
+/** Whether `path` exists. Only ENOENT means no; anything that merely hides
+ *  the file (transient errors are retried first) throws, so a caller never
+ *  takes a file it couldn't check for one it may create or overwrite. */
+export async function pathExists(path: string): Promise<boolean> {
+  try {
+    await retryTransientFs(() => access(path));
+    return true;
+  } catch (err: unknown) {
+    if (hasErrnoCode(err, ['ENOENT'])) return false;
     throw err;
   }
 }

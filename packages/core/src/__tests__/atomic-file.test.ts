@@ -1,9 +1,10 @@
-import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { access, chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import {
   hasErrnoCode,
+  pathExists,
   quarantineFile,
   readTextIfExists,
   retryTransientFs,
@@ -13,10 +14,11 @@ import {
 // Pass-through, so a case can see how the temp file was created.
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
-  return { ...actual, writeFile: vi.fn(actual.writeFile), chmod: vi.fn(actual.chmod) };
+  return { ...actual, writeFile: vi.fn(actual.writeFile), chmod: vi.fn(actual.chmod), access: vi.fn(actual.access) };
 });
 const writeFileMock = vi.mocked(writeFile);
 const chmodMock = vi.mocked(chmod);
+const accessMock = vi.mocked(access);
 
 const tmpDirs: string[] = [];
 async function newDir(): Promise<string> {
@@ -81,6 +83,29 @@ describe('readTextIfExists', () => {
     const path = join(await newDir(), 'state.json');
     await mkdir(path); // a directory at the path: EISDIR, not ENOENT
     await expect(readTextIfExists(path)).rejects.toThrow();
+  });
+});
+
+describe('pathExists', () => {
+  it('is true for an existing file and false only for a missing one', async () => {
+    const dir = await newDir();
+    await writeFile(join(dir, 'a.yaml'), 'x');
+    expect(await pathExists(join(dir, 'a.yaml'))).toBe(true);
+    expect(await pathExists(join(dir, 'b.yaml'))).toBe(false);
+  });
+
+  it('throws when the file merely cannot be checked, rather than report it missing', async () => {
+    const path = join(await newDir(), 'a.yaml');
+    await writeFile(path, 'x');
+    accessMock.mockImplementationOnce(() => Promise.reject(errnoError('EIO')));
+    await expect(pathExists(path)).rejects.toThrow('EIO');
+  });
+
+  it('retries a transient lock', async () => {
+    const path = join(await newDir(), 'a.yaml');
+    await writeFile(path, 'x');
+    accessMock.mockImplementationOnce(() => Promise.reject(errnoError('EBUSY')));
+    expect(await pathExists(path)).toBe(true);
   });
 });
 
