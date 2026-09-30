@@ -1,4 +1,4 @@
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createObjectStoreHandle, parseObjectPath } from './object-store.js';
 import type { ObjectStoreHandle, ProviderAuth } from './object-store.js';
@@ -6,8 +6,8 @@ import type { ManifestFileEntry } from './manifest.js';
 import { logger } from '../logger/logger.js';
 import type { DataTier } from '../types/api.js';
 import type { ProviderName } from '../types/branded.js';
-import { providerEtagPath, providerRawDir } from './provider-paths.js';
-import { parseEtagsJson, parsePartition, partitionFolderLabel } from './sync-utils.js';
+import { providerRawDir } from './provider-paths.js';
+import { ifExists, LocalSyncStateError, parsePartition, partitionFolderLabel, readEtags } from './sync-utils.js';
 import { getRawDirPrefix } from './tiers.js';
 import { readTierLastSync } from './sync-timestamps.js';
 
@@ -55,17 +55,21 @@ async function getDirSize(dirPath: string): Promise<number> {
   }
 }
 
-async function listRawPeriods(rawDir: string, tierPrefix: string): Promise<string[]> {
+/** The periods downloaded for a tier. A raw dir that doesn't exist yet has
+ *  none; one that can't be listed rejects — reading it as empty would report
+ *  every remote period 'missing'. */
+async function listRawPeriods(rawDir: string, tier: DataTier): Promise<string[]> {
+  let entries: string[] | null;
   try {
-    const entries = await readdir(rawDir);
-    const raw = entries
-      .filter(e => e.startsWith(`${tierPrefix}-`))
-      .map(e => e.slice(tierPrefix.length + 1).slice(0, 7));
-    return [...new Set(raw)].sort((a, b) => a.localeCompare(b));
-  } catch {
-    // raw dir may not exist yet
-    return [];
+    entries = await ifExists(() => readdir(rawDir));
+  } catch (err: unknown) {
+    throw new LocalSyncStateError(`the downloaded ${tier} data`, err);
   }
+  const tierPrefix = getRawDirPrefix(tier);
+  const raw = (entries ?? [])
+    .filter(e => e.startsWith(`${tierPrefix}-`))
+    .map(e => e.slice(tierPrefix.length + 1).slice(0, 7));
+  return [...new Set(raw)].sort((a, b) => a.localeCompare(b));
 }
 
 async function getRawTierSize(rawDir: string, tierPrefix: string): Promise<number> {
@@ -102,19 +106,6 @@ async function getRawPeriodSizes(rawDir: string, tierPrefix: string): Promise<Ma
     return sizes;
   } catch {
     return new Map();
-  }
-}
-
-/** Whether this tier has ever been synced from S3 (its etag file exists). An
- *  imported snapshot has raw Parquet on disk but no etag file, so this cleanly
- *  separates "AWS configured and synced before" from "imported, no AWS" — the
- *  former should surface credential errors, the latter falls back silently. */
-export async function hasSyncedTier(dataDir: string, provider: ProviderName, tier: DataTier = 'daily'): Promise<boolean> {
-  try {
-    await stat(providerEtagPath(dataDir, provider, tier));
-    return true;
-  } catch {
-    return false;
   }
 }
 
@@ -191,18 +182,11 @@ export async function getDataInventory(
 
   const rawDir = providerRawDir(dataDir, provider);
   const tierPrefix = getRawDirPrefix(tier);
-  const localPeriodList = await listRawPeriods(rawDir, tierPrefix);
+  const localPeriodList = await listRawPeriods(rawDir, tier);
   const diskBytes = await getRawTierSize(rawDir, tierPrefix);
   const lastSync = await readTierLastSync(dataDir, provider, tier);
   const localPeriods = new Set(localPeriodList);
-
-  let savedEtags: Record<string, Record<string, string>> = {};
-  try {
-    const raw = await readFile(providerEtagPath(dataDir, provider, tier), 'utf-8');
-    savedEtags = parseEtagsJson(raw);
-  } catch {
-    // no saved etags yet
-  }
+  const savedEtags = await readEtags(dataDir, provider, tier);
 
   function getPeriodStatus(period: string, files: ManifestFileEntry[]): PeriodStatus {
     if (!localPeriods.has(period)) return 'missing';

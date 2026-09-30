@@ -3,6 +3,7 @@ import {
   getDataInventory,
   getLocalDataInventory,
   hasSyncedTier,
+  LocalSyncStateError,
   getRawDirPrefix,
   extractPeriod,
   listLocalMonths,
@@ -179,6 +180,12 @@ export function registerSyncHandlers(app: AppContext): void {
       const inv = await getDataInventory(bucket, providerAuth(provider), ctx.dataDir, provider.name, t);
       return { ...inv, provider: provider.name };
     } catch (err: unknown) {
+      // Our own sync state is unreadable: surface it. The local-only fallback
+      // below would show every local month as up to date and hide new ones.
+      if (err instanceof LocalSyncStateError) {
+        logger.warn(err.message, { tier: t, provider: provider.name, cause: String(err.cause) });
+        throw err;
+      }
       // Expired/invalid credentials on an install that has synced this tier from
       // S3 before (its etag file exists) is a real auth failure, not the
       // imported-snapshot case — surface it so the user re-authenticates instead
