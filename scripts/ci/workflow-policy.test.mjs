@@ -376,6 +376,22 @@ describe('workflow policy (.github/workflows)', () => {
     expect(scan?.['continue-on-error']).toBeUndefined();
   });
 
+  it('ci.yml fails the sonarcloud job on new SonarCloud issues for pull requests', () => {
+    // The gate never fails on code smells, so without this step a PR's new
+    // issues only show up as a count in the Sonar comment beside a green gate.
+    const steps = stepsOf(ci.jobs.sonarcloud);
+    const scanAt = steps.findIndex((s) => usesAction(s, 'SonarSource/sonarqube-scan-action'));
+    const checkAt = steps.findIndex((s) => runBody(s).includes('node scripts/ci/sonar-new-issues.mjs'));
+    expect(scanAt).toBeGreaterThanOrEqual(0);
+    // After the scan, whose PR-only gate wait is what makes the analysis current.
+    expect(checkAt).toBeGreaterThan(scanAt);
+    const check = steps[checkAt];
+    expect(String(check?.if)).toContain("github.event_name == 'pull_request'");
+    expect(check?.['continue-on-error']).toBeUndefined();
+    // The PR number reaches the shell through env, not an interpolated expression.
+    expect(runBody(check)).not.toContain('${{');
+  });
+
   it('ci.yml security-audit asserts the npm guards before npm ci', () => {
     const steps = stepsOf(ci.jobs['security-audit']);
     const assertAt = steps.findIndex((s) => runBody(s).includes(ASSERT_SCRIPT));

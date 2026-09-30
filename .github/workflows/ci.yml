@@ -331,3 +331,13 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
           args: ${{ github.event_name == 'pull_request' && '-Dsonar.qualitygate.wait=true' || '' }}
+      # The gate only checks ratings, coverage, duplication and hotspot review,
+      # so new code smells pass it: the PR comment says "N New issues" beside a
+      # green gate. Annotate each on its line and fail until it's fixed or
+      # marked accepted / false positive in SonarCloud. S3776 up to the
+      # project's limit of 25 is a notice (see the script's header).
+      - name: Fail on new SonarCloud issues
+        if: github.event_name == 'pull_request'
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node scripts/ci/sonar-new-issues.mjs "$PR_NUMBER"

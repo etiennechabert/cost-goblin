@@ -64,6 +64,7 @@ Follow this sequence for EVERY feature:
 10. After pushing & opening the PR — close the review loop (see "After pushing"):
     - Run `/code-review max --fix` yourself (via the `Skill` tool), review the fixes it applies, and re-run npm run check
     - Address every sentry[bot] review comment on the PR
+    - Fix every new SonarCloud issue (the `sonarcloud` check fails on them)
 ```
 
 ## TypeScript Rules — STRICTLY ENFORCED
@@ -219,7 +220,7 @@ So the lifecycle is: tag `v0.2.6` released → first PR bumps both to `0.2.7` �
 
 ## After pushing — close the review loop
 
-A development cycle isn't done when the code is pushed. Once the changes are pushed and the PR is open, run BOTH of the following before considering the work finished.
+A development cycle isn't done when the code is pushed. Once the changes are pushed and the PR is open, run ALL of the following before considering the work finished.
 
 ### 1. `/code-review max --fix`
 
@@ -247,6 +248,16 @@ gh api -X POST repos/etiennechabert/cost-goblin/pulls/<pr>/comments/<id>/replies
 gh api -X POST repos/etiennechabert/cost-goblin/pulls/comments/<id>/reactions -f content='+1'   # or -1
 ```
 Keep replies professional and free of any AI attribution (see global git rules).
+
+### 3. SonarCloud issues
+
+The `sonarcloud` check fails a PR that introduces SonarCloud issues, **even when the quality gate itself passes**. The gate only checks ratings, coverage, duplication and hotspot review, so new code smells never fail it; they would otherwise surface only as "N New issues" in the `sonarqubecloud[bot]` comment. The job's `Fail on new SonarCloud issues` step annotates each issue on its line and lists them in the job summary. The same check runs locally against the PR's latest analysis (public API, no token needed):
+```bash
+node scripts/ci/sonar-new-issues.mjs <pr>
+```
+- **Fix every blocking issue.** For a genuine false positive, mark it *False positive* (or *Accept* it, with a reason) in SonarCloud; that removes it from the check. Don't contort the code to dodge the rule.
+- **`typescript:S3776` (cognitive complexity):** the project threshold is **25**, not Sonar's default 15, and the SonarCloud profile still reports "…to the 15 allowed". The check shows findings from 16 to 25 as notices, not failures. Don't refactor a function only to get it below 25.
+- **Red `sonarcloud` job but no new issues listed:** the quality gate itself failed, most often on new-code coverage below 80%. Read its conditions: `curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=etiennechabert_cost-goblin&pullRequest=<pr>"`.
 
 ## Key Architecture Decisions
 
@@ -277,7 +288,7 @@ Keep replies professional and free of any AI attribution (see global git rules).
 ## What NOT To Do
 
 - Do NOT skip `npm run check`. Every change must pass before moving on.
-- Do NOT consider a pushed change "done" until `/code-review max --fix` has been run on it and every `sentry[bot]` comment is addressed.
+- Do NOT consider a pushed change "done" until `/code-review max --fix` has been run on it, every `sentry[bot]` comment is addressed, and the `sonarcloud` check is green.
 - Do NOT add `any`, `@ts-ignore`, or `eslint-disable` to make code compile.
 - Do NOT write tests after implementation. Write them before or alongside.
 - Do NOT import from `core` into `ui` for anything except types.
