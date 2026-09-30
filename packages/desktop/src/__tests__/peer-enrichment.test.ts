@@ -148,6 +148,28 @@ describe('decodePeerOrgAccounts', () => {
     expect(decodePeerOrgAccounts(orgPayload([atCaps], { orgId: 'o'.repeat(128), syncedAt: 's'.repeat(128) })).ok).toBe(true);
   });
 
+  // The flat tags file derived from these accounts is LEFT JOINed onto every
+  // cost row by id, so a repeated id would repeat that account's costs.
+  it('rejects a payload that repeats an account id', () => {
+    const result = decodePeerOrgAccounts(orgPayload([account('111122223333'), account('222222222222'), account('111122223333')]));
+    expect(result).toEqual({ ok: false, reason: 'duplicate account id 111122223333' });
+  });
+
+  // DuckDB's read_json refuses an unpaired surrogate in the flat tags file,
+  // which would fail every query that joins it.
+  it.each([
+    ['a tag value', { tags: { team: 'x\ud800y' } }],
+    ['a tag key', { tags: { 'k\udc00': 'v' } }],
+    ['the ouPath', { ouPath: 'Root/\ud83d' }],
+    ['the name', { name: 'Acme \udfff' }],
+  ])('rejects an unpaired surrogate in %s', (_label, overrides) => {
+    expect(decodePeerOrgAccounts(orgPayload([account('333333333333', overrides)])).ok).toBe(false);
+  });
+
+  it('accepts a correctly paired surrogate (an emoji) in a tag value', () => {
+    expect(decodePeerOrgAccounts(orgPayload([account('333333333333', { tags: { team: 'infra \ud83d\ude80' } })])).ok).toBe(true);
+  });
+
   it('rejects an orgId or syncedAt over 128 chars, or with a control char', () => {
     expect(decodePeerOrgAccounts(orgPayload([account('1')], { orgId: 'o'.repeat(129) })).ok).toBe(false);
     expect(decodePeerOrgAccounts(orgPayload([account('1')], { syncedAt: 's'.repeat(129) })).ok).toBe(false);
