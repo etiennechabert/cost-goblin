@@ -543,6 +543,71 @@ describe('syncGcpSelectedFiles', () => {
     expect(last?.bytesDone).toBe(4096);
   });
 
+  it('never rsyncs a key that is not under the configured bucket path', async () => {
+    // The file list reaches this arm from the renderer (data:sync-periods)
+    // unvalidated, and a period's first key picks the rsync source. As on the
+    // AWS arm, a key outside the provider's bucket path is dropped.
+    nextProcess(dest => writeBqShard(dest, 2));
+
+    const result = await syncGcpSelectedFiles({
+      bucketPath: 'gs://focus-export/focus/daily', providerName, dataDir, expectedDataType: 'daily',
+      files: [
+        file('other-team/export/billing_period=2026-01/shard-000000000000.parquet', 'crc-outside'),
+        file('focus/daily/billing_period=2026-01/shard-000000000000.parquet', 'crc-inside'),
+      ],
+    });
+
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    const argv: unknown = mockSpawn.mock.calls[0]?.[1];
+    expect(Array.isArray(argv) ? String(argv[2]) : '').toBe('gs://focus-export/focus/daily/billing_period=2026-01/');
+    expect(result.filesDownloaded).toBe(1);
+    const etags: unknown = JSON.parse(await readFile(etagPath(), 'utf-8'));
+    expect(etags).toEqual({
+      '2026-01': { 'focus/daily/billing_period=2026-01/shard-000000000000.parquet': 'crc-inside' },
+    });
+  });
+
+  it('fails loudly, instead of reporting a sync of nothing, when no requested key is under the bucket path', async () => {
+    await expect(syncGcpSelectedFiles({
+      bucketPath: 'gs://focus-export/focus/daily', providerName, dataDir, expectedDataType: 'daily',
+      files: [file('other-team/export/billing_period=2026-01/shard-000000000000.parquet', 'crc-outside')],
+    })).rejects.toThrow(/None of the 1 requested GCP file\(s\) is under gs:\/\/focus-export\/focus\/daily/);
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it('takes the period from the partition folder, not an ancestor folder that contains the token', async () => {
+    // An unanchored match read `old_billing_period=2025-12` off the ancestor
+    // and filed every month under 2025-12, while the inventory (parsePartition)
+    // listed 2026-01 and 2026-02 — so they read "missing" forever.
+    nextProcess(dest => writeBqShard(dest, 1));
+    nextProcess(dest => writeBqShard(dest, 1));
+
+    await syncGcpSelectedFiles({
+      bucketPath: 'gs://focus-export/old_billing_period=2025-12/daily', providerName, dataDir, expectedDataType: 'daily',
+      files: [
+        file('old_billing_period=2025-12/daily/billing_period=2026-01/shard-000000000000.parquet', 'crc-jan'),
+        file('old_billing_period=2025-12/daily/billing_period=2026-02/shard-000000000000.parquet', 'crc-feb'),
+      ],
+    });
+
+    expect(await readdir(rawPeriodDir('2026-01'))).toEqual(['part-0.parquet']);
+    expect(await readdir(rawPeriodDir('2026-02'))).toEqual(['part-0.parquet']);
+    await expect(readdir(rawPeriodDir('2025-12'))).rejects.toThrow();
+    const etags: unknown = JSON.parse(await readFile(etagPath(), 'utf-8'));
+    expect(Object.keys(etags !== null && typeof etags === 'object' ? etags : {}).sort()).toEqual(['2026-01', '2026-02']);
+  });
+
+  it.each([
+    ['!', 'team!x'],
+    ['NUL', 'team\u0000x'],
+  ])('skips a period whose prefix holds %s (cmd.exe cannot quote it) instead of failing the whole sync', async (_label, folder) => {
+    await expect(syncGcpSelectedFiles({
+      bucketPath: `gs://focus-export/${folder}/daily`, providerName, dataDir, expectedDataType: 'daily',
+      files: [file(`${folder}/daily/billing_period=2026-01/shard-000000000000.parquet`, 'crc-1')],
+    })).rejects.toThrow(/No GCP period could be synced/);
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
   it('skips keys with no recognizable billing period rather than syncing them somewhere odd', async () => {
     const result = await syncGcpSelectedFiles({
       bucketPath: 'gs://focus-export/focus', providerName, dataDir, expectedDataType: 'daily',

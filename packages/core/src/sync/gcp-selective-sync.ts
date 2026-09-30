@@ -10,7 +10,7 @@ import { parseGcsPath } from './gcs-client.js';
 import type { ManifestFileEntry } from './manifest.js';
 import { providerMetaDir, providerRawDir } from './provider-paths.js';
 import type { ProgressCallback } from './s3-client.js';
-import { extractPeriodPrefix, groupByPeriod, saveEtags } from './sync-utils.js';
+import { extractPeriod, extractPeriodPrefix, parsePartition, saveEtags } from './sync-utils.js';
 import { getRawDirPrefix } from './tiers.js';
 import { findGcloudCli, gcloudChildPath, gcloudSpawnShape } from './trusted-binaries.js';
 
@@ -281,10 +281,31 @@ export interface GcpSelectiveSyncOptions {
  *     rejected too.
  *   - the prefix comes from a listed object key, and on Windows it reaches
  *     cmd.exe; a key carrying shell metacharacters is rejected rather than
- *     escaped. */
+ *     escaped. The class covers every character `gcloudSpawnShape` refuses
+ *     (`!` and NUL included), so such a period is skipped here, with the
+ *     layout message, instead of failing the whole sync at the spawn. */
 function isSafePeriodPrefix(prefix: string): boolean {
   if (!/(?:^|\/)billing_period=\d{4}-\d{2}\/$/.test(prefix)) return false;
-  return !/["'`$%&|<>^\\\r\n]/.test(prefix);
+  return !/["'`$%&|<>^!\\\r\n\0]/.test(prefix);
+}
+
+/** Groups by the period of each key's own partition folder (`parsePartition`,
+ *  the parser the inventory uses), so an ancestor folder that merely contains
+ *  the token (`old_billing_period=2025-12/…`) cannot file every month under
+ *  that one period. A key with no partition folder keeps its substring period
+ *  so `isSafePeriodPrefix` still rejects, and reports, its layout. */
+function groupByPartitionPeriod(files: readonly ManifestFileEntry[], tier: 'daily' | 'hourly'): Map<string, ManifestFileEntry[]> {
+  const groups = new Map<string, ManifestFileEntry[]>();
+  for (const file of files) {
+    const period = parsePartition(file.key, tier)?.period ?? extractPeriod(file.key);
+    const existing = groups.get(period);
+    if (existing === undefined) {
+      groups.set(period, [file]);
+    } else {
+      existing.push(file);
+    }
+  }
+  return groups;
 }
 
 /** Staging lives under `meta/`, never under `raw/`. The query layer globs
@@ -321,16 +342,30 @@ export async function syncGcpSelectedFiles(
   // every period shares the bucket, so none of them could sync.
   assertValidGcsBucketName(gcsPath.bucket);
 
-  const periods = groupByPeriod(files);
+  // The keys can arrive from the renderer over `data:sync-periods` unvalidated,
+  // and a period's first key picks the rsync source. As on the AWS arm
+  // (planSyncGroups), only keys under the configured prefix are usable — the
+  // same string-prefix test a listing of the bucket path applies.
+  const inScope = files.filter(f => f.key.startsWith(gcsPath.prefix));
+  // Nothing usable: fail loudly rather than return a sync of zero files that
+  // the caller would stamp 'completed' (the trap `skipped` below guards too).
+  if (inScope.length === 0 && files.length > 0 && options.signal?.aborted !== true) {
+    throw new Error(`None of the ${String(files.length)} requested GCP file(s) is under ${bucketPath}; nothing was synced.`);
+  }
+  if (inScope.length < files.length) {
+    logger.warn(`Skipping ${String(files.length - inScope.length)} GCP file(s) that are not under ${bucketPath}`);
+  }
+
+  const periods = groupByPartitionPeriod(inScope, tier);
   const periodList = [...periods.entries()]
     .filter(([period]) => period !== 'unknown')
     .sort((a, b) => a[0].localeCompare(b[0]));
 
-  const totalFiles = files.length;
+  const totalFiles = inScope.length;
   // Unlike `aws s3 sync`, the byte total is known up front: it comes from the
   // listing, so the progress bar is exact from the first tick instead of
   // waiting for the CLI's first "Completed" line.
-  const bytesTotal = files.reduce((sum, f) => sum + f.size, 0);
+  const bytesTotal = inScope.reduce((sum, f) => sum + f.size, 0);
   /** Files and bytes completed by periods that already finished — the running
    *  per-period counters below are offsets from these. */
   let filesBefore = 0;
@@ -352,8 +387,8 @@ export async function syncGcpSelectedFiles(
     const firstFile = periodFiles[0];
     if (firstFile === undefined) continue;
 
-    const periodPrefix = extractPeriodPrefix(firstFile.key);
-    if (!isSafePeriodPrefix(periodPrefix)) {
+    const periodPrefix = parsePartition(firstFile.key, tier)?.prefix ?? extractPeriodPrefix(firstFile.key);
+    if (!isSafePeriodPrefix(periodPrefix) || !periodPrefix.startsWith(gcsPath.prefix)) {
       logger.warn(`Skipping GCP period ${period}: ${firstFile.key} is not under a billing_period=YYYY-MM/ folder`);
       skipped.push(period);
       continue;
