@@ -12,8 +12,11 @@ export function hasErrnoCode(err: unknown, codes: readonly string[]): boolean {
 // just-written temp file (EPERM/EACCES/EBUSY on open or rename), and a busy
 // process can momentarily run out of descriptors (EMFILE). Those are retried
 // with backoff; anything else, or one that outlasts the backoff, propagates.
-const TRANSIENT_FS_ERRORS: readonly string[] = ['EPERM', 'EACCES', 'EBUSY', 'EMFILE'];
-const TRANSIENT_RETRY_DELAYS_MS: readonly number[] = [25, 50, 100, 200, 400, 800];
+export const TRANSIENT_RETRY_DELAYS_MS: readonly number[] = [25, 50, 100, 200, 400, 800];
+
+export function isTransientFsError(err: unknown): boolean {
+  return hasErrnoCode(err, ['EPERM', 'EACCES', 'EBUSY', 'EMFILE']);
+}
 
 /** Run `op`, retrying transient lock/descriptor errors once per entry of
  *  `delaysMs` (waiting that long first); the final attempt's error propagates. */
@@ -21,27 +24,34 @@ export async function retryTransientFs<T>(
   op: () => Promise<T>,
   delaysMs: readonly number[] = TRANSIENT_RETRY_DELAYS_MS,
 ): Promise<T> {
-  for (const delayMs of delaysMs) {
-    try {
-      return await op();
-    } catch (err: unknown) {
-      if (!hasErrnoCode(err, TRANSIENT_FS_ERRORS)) throw err;
-      await sleep(delayMs);
-    }
+  try {
+    return await op();
+  } catch (err: unknown) {
+    const [delayMs, ...rest] = delaysMs;
+    if (delayMs === undefined || !isTransientFsError(err)) throw err;
+    await sleep(delayMs);
+    return retryTransientFs(op, rest);
   }
-  return op();
 }
 
-/** A file's text, or null when it does not exist. Only ENOENT means that:
- *  a caller that read any other failure as "no file yet" would go on to
- *  rewrite the file from an empty state. Transient errors are retried first. */
-export async function readTextIfExists(path: string): Promise<string | null> {
+/**
+ * Run a local read, retrying transient failures. Resolves null when the path
+ * doesn't exist (ENOENT) — the only failure that means "nothing there yet";
+ * anything else rejects. A caller that read any other failure as "nothing
+ * there" would go on to rebuild or rewrite it from an empty state.
+ */
+export async function ifExists<T>(read: () => Promise<T>): Promise<T | null> {
   try {
-    return await retryTransientFs(() => readFile(path, 'utf-8'));
+    return await retryTransientFs(read);
   } catch (err: unknown) {
     if (hasErrnoCode(err, ['ENOENT'])) return null;
     throw err;
   }
+}
+
+/** A file's text, or null when it does not exist (see `ifExists`). */
+export function readTextIfExists(path: string): Promise<string | null> {
+  return ifExists(() => readFile(path, 'utf-8'));
 }
 
 // A writer that dies between writing its temp file and renaming it (a crash,
@@ -49,25 +59,22 @@ export async function readTextIfExists(path: string): Promise<string | null> {
 // never reused, so sweep them. A live write's temp is milliseconds old: an
 // hour is far past anything still in flight.
 const STALE_TEMP_AGE_MS = 60 * 60 * 1000;
-// Leftovers only come from an earlier process, so one sweep per file per
-// process finds them all.
-const sweptPaths = new Set<string>();
 
-async function sweepStaleTemps(path: string): Promise<void> {
-  if (sweptPaths.has(path)) return;
-  sweptPaths.add(path);
+/** Remove `<path>.<id>.tmp` files older than an hour. */
+export async function sweepStaleTemps(path: string): Promise<void> {
   const dir = dirname(path);
   const prefix = `${basename(path)}.`;
   const names = await readdir(dir).catch((): string[] => []);
   const cutoff = Date.now() - STALE_TEMP_AGE_MS;
-  for (const name of names) {
-    if (!name.startsWith(prefix) || !name.endsWith('.tmp')) continue;
-    const tmpPath = join(dir, name);
-    const info = await stat(tmpPath).catch(() => null);
-    if (info !== null && info.mtimeMs < cutoff) {
-      await rm(tmpPath, { force: true }).catch(() => { /* best effort */ });
-    }
-  }
+  await Promise.all(names
+    .filter((name) => name.startsWith(prefix) && name.endsWith('.tmp'))
+    .map(async (name) => {
+      const tmpPath = join(dir, name);
+      const info = await stat(tmpPath).catch(() => null);
+      if (info !== null && info.mtimeMs < cutoff) {
+        await rm(tmpPath, { force: true }).catch(() => { /* best effort */ });
+      }
+    }));
 }
 
 /**

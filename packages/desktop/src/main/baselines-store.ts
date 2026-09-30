@@ -712,15 +712,18 @@ export class BaselineStore {
     }
   }
 
+  /** Start fresh: wipe ALL discovered baselines (incl. user-edited and hidden
+   *  ones) so the new grain rediscovers from a clean slate. Manual baselines
+   *  are kept. */
+  private forgetDiscovered(): void {
+    for (const s of this.specs.values()) if (s.source === 'discovered') this.forget(s.id);
+    for (const [id, hidden] of this.hiddenSpecs) if (hidden.entry['source'] === 'discovered') this.hiddenSpecs.delete(id);
+  }
+
   /** Full recompute: rediscover the baseline set, then refresh every spec's
    *  history and derived stats, broadcasting throttled progress. */
   private async recomputeAll(deps: BaselineEngineDeps, startFresh: boolean): Promise<void> {
-    // Start fresh: wipe ALL discovered baselines (incl. user-edited) so the
-    // new grain rediscovers from a clean slate. Manual baselines are kept.
-    if (startFresh) {
-      for (const s of this.specs.values()) if (s.source === 'discovered') this.forget(s.id);
-      for (const [id, hidden] of this.hiddenSpecs) if (hidden.entry['source'] === 'discovered') this.hiddenSpecs.delete(id);
-    }
+    if (startFresh) this.forgetDiscovered();
     this.setStatus({ state: 'running', phase: 'discovering', done: 0, total: 0 });
     await this.discover(deps);
     const specs = [...this.specs.values()];
