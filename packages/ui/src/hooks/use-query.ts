@@ -41,6 +41,27 @@ function handleFetchError<T>(
   });
 }
 
+/** Run `fetcher` (after a short delay when retrying), retrying a cancelled
+ *  query up to MAX_CANCEL_RETRIES times. The retries belong to one effect run,
+ *  so every new set of deps starts with a fresh budget and no delay. */
+function scheduleFetch<T>(
+  fetcher: () => Promise<T>,
+  cancelled: { current: boolean },
+  timer: { current: ReturnType<typeof setTimeout> | undefined },
+  retryCount: number,
+  setState: (s: QueryState<T>) => void,
+): void {
+  timer.current = setTimeout(() => {
+    fetcher()
+      .then((data) => { handleFetchSuccess(data, cancelled, setState); })
+      .catch((err: unknown) => {
+        handleFetchError(err, cancelled, retryCount, setState, () => {
+          scheduleFetch(fetcher, cancelled, timer, retryCount + 1, setState);
+        });
+      });
+  }, retryCount > 0 ? 150 : 0);
+}
+
 export function useQuery<T>(
   fetcher: () => Promise<T>,
   deps: unknown[],
@@ -84,23 +105,12 @@ export function useQuery<T>(
     const done = slotRef.current?.trackQuery() ?? null;
     doneRef.current = done;
 
-    // Cancel-retries stay within this run, so every new set of deps starts with
-    // a fresh retry budget (and no retry delay).
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const attempt = (retryCount: number): void => {
-      timer = setTimeout(() => {
-        fetcher()
-          .then((data) => { handleFetchSuccess(data, cancelled, setState); })
-          .catch((err: unknown) => {
-            handleFetchError(err, cancelled, retryCount, setState, () => { attempt(retryCount + 1); });
-          });
-      }, retryCount > 0 ? 150 : 0);
-    };
-    attempt(0);
+    const timer: { current: ReturnType<typeof setTimeout> | undefined } = { current: undefined };
+    scheduleFetch(fetcher, cancelled, timer, 0, setState);
 
     return () => {
       cancelled.current = true;
-      clearTimeout(timer);
+      clearTimeout(timer.current);
       done?.();
     };
   }, deps);
