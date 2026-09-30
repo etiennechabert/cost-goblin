@@ -133,7 +133,7 @@ export function registerAutoSyncHandlers(app: AppContext): void {
           // daily only; everything else just refreshes caches.
           if (result.filesDownloaded > 0) {
             if (t === 'daily' && await isFirstProvider(app, provider)) {
-              app.maintainRollup(changedRollupMonths(files.map(f => extractPeriod(f.key))));
+              void app.maintainRollup(changedRollupMonths(files.map(f => extractPeriod(f.key))));
             } else {
               app.warmupBase();
             }
