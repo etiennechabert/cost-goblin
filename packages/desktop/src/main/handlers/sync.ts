@@ -4,13 +4,12 @@ import {
   getLocalDataInventory,
   hasSyncedTier,
   getRawDirPrefix,
-  parseEtagsJson,
   extractPeriod,
   listLocalMonths,
   configuredTierRetentions,
   periodsOutsideRetention,
-  providerEtagPath,
   providerRawDir,
+  pruneEtagPeriod,
   readTierLastSync,
   writeTierLastSync,
   resolveBucketPath,
@@ -90,31 +89,6 @@ async function removeMatchingDirs(
   return removedAny;
 }
 
-async function pruneEtagFile(
-  etagPath: string,
-  period: string,
-  fs: typeof import('node:fs/promises'),
-): Promise<void> {
-  try {
-    const raw = await fs.readFile(etagPath, 'utf-8');
-    const etags = parseEtagsJson(raw);
-    const kept: Record<string, Record<string, string>> = {};
-    let changed = false;
-    for (const [key, value] of Object.entries(etags)) {
-      if (key === period || key.startsWith(`${period}-`)) {
-        changed = true;
-        continue;
-      }
-      kept[key] = value;
-    }
-    if (changed) {
-      await fs.writeFile(etagPath, JSON.stringify(kept, null, 2));
-    }
-  } catch {
-    // etag file may not exist
-  }
-}
-
 const PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?$/;
 
 /** Remove a single local billing period (raw dirs + etag entries) for a tier.
@@ -141,7 +115,13 @@ export async function deleteLocalPeriodFiles(
     recordSyncLog('info', `Deleted local data (${tier}): ${prefix}-${period}`);
   }
 
-  await pruneEtagFile(providerEtagPath(dataDir, provider, tier), period, fs);
+  // Best-effort, as before: the raw dirs are already gone, and a failed prune
+  // only leaves etags behind for a deleted period, which inventory still
+  // reports missing (it checks for the local files first). A failed read
+  // writes nothing.
+  await pruneEtagPeriod(dataDir, provider, tier, period).catch((err: unknown) => {
+    logger.warn(`Could not prune ${tier} etags for ${period}: ${err instanceof Error ? err.message : String(err)}`);
+  });
 
   if (!removedAny) {
     logger.info(`Delete (${tier}) for ${period}: nothing matched ${prefix}-${period}*`);
