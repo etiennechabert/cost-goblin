@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { tryValidateBaseline, validateBaselines } from '../config/baselines-validator.js';
+import { createBaselineValidator, validateBaselines } from '../config/baselines-validator.js';
 import { BUILTIN_EXCLUSION_RULES } from '../config/cost-scope-seed.js';
 import { asDimensionId } from '../types/branded.js';
 import type { DimensionsConfig } from '../types/config.js';
@@ -119,7 +119,8 @@ describe('validateBaselines: CUR-era basis repair', () => {
 
 // Every reader of baselines.json (the desktop store, the MCP tools) decides
 // which persisted specs are visible with this one check, entry by entry.
-describe('tryValidateBaseline', () => {
+describe('createBaselineValidator', () => {
+  const tryValidateBaseline = (raw: unknown, dims: DimensionsConfig) => createBaselineValidator(dims)(raw);
   const entry = (overrides: Record<string, unknown>): unknown => ({
     id: 'bl-1',
     source: 'manual',

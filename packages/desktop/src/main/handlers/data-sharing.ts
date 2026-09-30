@@ -279,8 +279,7 @@ export function registerDataSharingHandlers(app: AppContext): void {
   }
 
   async function currentStatus(): Promise<DataSharingStatus> {
-    const identity = await loadOrCreateIdentity(ctx.configPath);
-    const secret = await loadOrCreateSharingSecret(ctx.configPath);
+    const [identity, secret] = await Promise.all([loadOrCreateIdentity(ctx.configPath), loadOrCreateSharingSecret(ctx.configPath)]);
     const fingerprint = publicKeyFingerprint(identity.publicKey);
     if (server === null) {
       return { enabled: false, sharingKey: null, label: secret.label, port: null, hosts: [], fingerprint, lastServedAt: null, filesServed: 0, lastPeer: null, bytesServed: 0, connectedClients: 0, bytesPerSecond: 0, autoStopsAt: null };
@@ -304,8 +303,7 @@ export function registerDataSharingHandlers(app: AppContext): void {
 
   async function enable(): Promise<DataSharingStatus> {
     if (server !== null) return currentStatus();
-    const identity = await loadOrCreateIdentity(ctx.configPath);
-    const secret = await loadOrCreateSharingSecret(ctx.configPath);
+    const [identity, secret] = await Promise.all([loadOrCreateIdentity(ctx.configPath), loadOrCreateSharingSecret(ctx.configPath)]);
     lastServedAt = null;
     filesServed = 0;
     lastPeer = null;

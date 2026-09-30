@@ -7,6 +7,7 @@ import {
   asDollars,
   asTagValue,
   BASELINE_TRIAGE_STATUSES,
+  BASELINES_STATE_VERSION,
   OPEN_TRIAGE_STATUSES,
   buildBaselineDiscoveryQuery,
   buildBaselineTotalsQuery,
@@ -18,18 +19,18 @@ import {
   computeOrgAccountsDigest,
   computeSavings,
   computeShapeSignature,
+  createBaselineValidator,
   deriveStatus,
   effectiveBands,
   estimateBytesPerRow,
   getAncestorPath,
   hasErrnoCode,
   logger,
-  parseJsonObject,
+  parseJsonObjectFile,
   quarantineFile,
   readTextIfExists,
   resolveDiscoveryGrain,
   runRateSeries,
-  tryValidateBaseline,
   writeFileAtomic,
 } from '@costgoblin/core';
 import type {
@@ -120,7 +121,7 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 type StateDoc = Readonly<Record<string, unknown>>;
 
 /** The `version` both state files are written with. */
-const STATE_VERSION = 1;
+const STATE_VERSION = BASELINES_STATE_VERSION;
 
 interface SpecsDoc {
   readonly baselines: readonly unknown[];
@@ -167,8 +168,7 @@ async function setAside(path: string, reason: string): Promise<void> {
 async function readStateDoc<T>(path: string, parse: (doc: StateDoc) => T | null): Promise<StateRead<T>> {
   const text = await readTextIfExists(path);
   if (text === null) return { status: 'missing' };
-  // Tolerate the UTF-8 BOM some Windows editors add to a hand-edited file.
-  const raw = parseJsonObject(text.replace(/^﻿/, ''));
+  const raw = parseJsonObjectFile(text);
   const version = raw?.['version'];
   if (typeof version === 'number' && version > STATE_VERSION) {
     throw new Error(`${path} was written by a newer version of CostGoblin (format ${String(version)}); refusing to load or overwrite it`);
@@ -349,8 +349,9 @@ export class BaselineStore {
    *  (e.g. its scope references a since-renamed dimension) must not discard
    *  every other baseline, including user-triaged ones with notes/bands. */
   private admitValidSpecs(dimensions: DimensionsConfig): void {
+    const validate = createBaselineValidator(dimensions);
     for (const [id, hidden] of this.hiddenSpecs) {
-      const spec = tryValidateBaseline(hidden.entry, dimensions);
+      const spec = validate(hidden.entry);
       if (spec === null) continue;
       this.hiddenSpecs.delete(id);
       this.specs.set(spec.id, spec);

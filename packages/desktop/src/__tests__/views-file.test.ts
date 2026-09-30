@@ -69,10 +69,25 @@ describe('loadViewsOrSeed', () => {
   it('rejects, leaving the file alone, on a read failure other than a missing file', async () => {
     await writeFile(viewsPath, USER_TEXT);
     readFileMock.mockImplementation((file, options) =>
-      file === viewsPath ? Promise.reject(errnoError('EBUSY')) : fsActual.readFile(file, options));
+      file === viewsPath ? Promise.reject(errnoError('EIO')) : fsActual.readFile(file, options));
 
-    await expect(loadViewsOrSeed(viewsFile())).rejects.toThrow('EBUSY');
+    await expect(loadViewsOrSeed(viewsFile())).rejects.toThrow('EIO');
     expect(await fsActual.readFile(viewsPath, 'utf-8')).toBe(USER_TEXT);
+  });
+
+  it('retries a transient lock instead of failing the load', async () => {
+    await writeFile(viewsPath, USER_TEXT);
+    let failures = 0;
+    readFileMock.mockImplementation((file, options) => {
+      if (file === viewsPath && failures < 2) {
+        failures += 1;
+        return Promise.reject(errnoError(failures === 1 ? 'EBUSY' : 'EMFILE'));
+      }
+      return fsActual.readFile(file, options);
+    });
+
+    expect(await loadViewsOrSeed(viewsFile())).toEqual(USER_VIEWS);
+    expect(failures).toBe(2);
   });
 
   it('rejects, leaving the file alone, on a hand-edit typo that breaks the YAML', async () => {

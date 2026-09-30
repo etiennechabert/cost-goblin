@@ -81,12 +81,15 @@ async function doStart(app: AppContext): Promise<void> {
     stateDir: app.ctx.stateDir,
     tempDir: app.ctx.workspaceEnv.tempDir,
   });
+  // Before the worker: an unreadable token file fails the start without
+  // spawning (and tearing down) a DuckDB instance for nothing.
+  const authToken = await getMcpToken();
   const db = await createDuckDBClient(app.ctx.duckdbWorkerPath, { sandbox });
   let server: McpHttpServer;
   try {
     const envPort = process.env['COSTGOBLIN_MCP_PORT'];
     const port = envPort !== undefined && envPort.length > 0 ? Number(envPort) : undefined;
-    server = await createMcpHttpServer(adaptAppContext(app, db), { port, authToken: await getMcpToken() });
+    server = await createMcpHttpServer(adaptAppContext(app, db), { port, authToken });
   } catch (err: unknown) {
     await db.terminate().catch(() => undefined);
     throw err;

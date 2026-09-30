@@ -12,6 +12,12 @@ export function parseJsonObject(raw: string): Readonly<Record<string, unknown>> 
   return isStringRecord(parsed) ? parsed : null;
 }
 
+/** parseJsonObject for a state file's contents: tolerates the UTF-8 BOM some
+ *  Windows editors add to a hand-edited file (JSON.parse rejects it). */
+export function parseJsonObjectFile(text: string): Readonly<Record<string, unknown>> | null {
+  return parseJsonObject(text.replace(/^\uFEFF/, ''));
+}
+
 /** Sister of `parseJsonObject` for the top-level-array payloads a CLI emits —
  *  `gcloud projects list --format=json` is one. Elements stay `unknown`: the
  *  caller narrows each with `isStringRecord`, so nothing reaches a typed shape

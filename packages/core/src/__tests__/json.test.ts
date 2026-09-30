@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isStringRecord, parseJsonObject } from '../utils/json.js';
+import { isStringRecord, parseJsonObject, parseJsonObjectFile } from '../utils/json.js';
 
 describe('isStringRecord', () => {
   it('accepts plain objects', () => {
@@ -42,5 +42,18 @@ describe('parseJsonObject', () => {
     expect(parseJsonObject('null')).toBeNull();
     expect(parseJsonObject('"string"')).toBeNull();
     expect(parseJsonObject('42')).toBeNull();
+  });
+});
+
+describe('parseJsonObjectFile', () => {
+  it('reads a file saved with a UTF-8 BOM, which JSON.parse alone rejects', () => {
+    expect(parseJsonObject('\uFEFF{"a":1}')).toBeNull();
+    expect(parseJsonObjectFile('\uFEFF{"a":1}')).toEqual({ a: 1 });
+  });
+
+  it('otherwise behaves as parseJsonObject', () => {
+    expect(parseJsonObjectFile('{"a":1}')).toEqual({ a: 1 });
+    expect(parseJsonObjectFile('[1]')).toBeNull();
+    expect(parseJsonObjectFile('{"torn":')).toBeNull();
   });
 });

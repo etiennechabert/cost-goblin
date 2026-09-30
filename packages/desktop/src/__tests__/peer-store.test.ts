@@ -152,6 +152,11 @@ describe('loadOrCreateSharingSecret', () => {
     expect(failures()).toBe(2);
   });
 
+  it('reads a hand-edited file saved with a UTF-8 BOM', async () => {
+    await writeFile(sharingFile, `\uFEFF${JSON.stringify({ psk: 'kept', label: 'Finance laptop' })}`);
+    expect(await loadOrCreateSharingSecret(configPath)).toEqual({ psk: 'kept', label: 'Finance laptop' });
+  });
+
   it('rejects on an unparseable file, leaving it for recovery', async () => {
     const torn = '{"psk":"abc","lab';
     await writeFile(sharingFile, torn);
@@ -168,6 +173,11 @@ describe('rotateSharingSecret', () => {
     expect(rotated.psk).not.toBe('old');
     expect(rotated.label).toBe('Finance laptop');
     expect(await loadOrCreateSharingSecret(configPath)).toEqual(rotated);
+  });
+
+  it('keeps the label of a hand-edited file saved with a UTF-8 BOM', async () => {
+    await writeFile(sharingFile, `\uFEFF${JSON.stringify({ psk: 'old', label: 'Finance laptop' })}`);
+    expect((await rotateSharingSecret(configPath)).label).toBe('Finance laptop');
   });
 
   it('recovers an unparseable file: it replaces the secret anyway, under the default label', async () => {

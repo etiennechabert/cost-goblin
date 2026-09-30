@@ -13,9 +13,10 @@ import {
 // Pass-through, so a case can see how the temp file was created.
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
-  return { ...actual, writeFile: vi.fn(actual.writeFile) };
+  return { ...actual, writeFile: vi.fn(actual.writeFile), chmod: vi.fn(actual.chmod) };
 });
 const writeFileMock = vi.mocked(writeFile);
+const chmodMock = vi.mocked(chmod);
 
 const tmpDirs: string[] = [];
 async function newDir(): Promise<string> {
@@ -147,6 +148,49 @@ describe('writeFileAtomic', () => {
     expect(writeFileMock).toHaveBeenCalledWith(expect.stringMatching(/\.tmp$/), 'secret', expect.objectContaining({ mode: 0o600 }));
   });
 
+  posixOnly('creates the temp owner-writable even for a read-only file, so a retry can reopen it', async () => {
+    const path = join(await newDir(), 'state.json');
+    await writeFile(path, 'old');
+    await chmod(path, 0o444);
+    writeFileMock.mockClear();
+    await writeFileAtomic(path, 'new');
+    expect(writeFileMock).toHaveBeenCalledWith(expect.stringMatching(/\.tmp$/), 'new', expect.objectContaining({ mode: 0o644 }));
+    expect((await stat(path)).mode & 0o777).toBe(0o444);
+    expect(await readFile(path, 'utf-8')).toBe('new');
+  });
+
+  posixOnly('retries a transient lock on the temp\'s chmod', async () => {
+    const path = join(await newDir(), 'secret.json');
+    chmodMock.mockImplementationOnce(() => Promise.reject(Object.assign(new Error('EBUSY: simulated'), { code: 'EBUSY' })));
+    await writeFileAtomic(path, 'secret', { mode: 0o600 });
+    expect(await readFile(path, 'utf-8')).toBe('secret');
+    expect((await stat(path)).mode & 0o777).toBe(0o600);
+  });
+
+  it('writes through a dangling symlink, creating its target, rather than replacing the link', async () => {
+    const dir = await newDir();
+    const real = join(dir, 'real.json');
+    const link = join(dir, 'state.json');
+    await symlink(real, link);
+
+    await writeFileAtomic(link, 'new');
+
+    expect((await lstat(link)).isSymbolicLink()).toBe(true);
+    expect(await readFile(real, 'utf-8')).toBe('new');
+  });
+
+  it('fails, leaving the link, when a dangling symlink points into a missing folder', async () => {
+    const dir = await newDir();
+    const link = join(dir, 'state.json');
+    // Say, a synced folder that isn't mounted yet.
+    await symlink(join(dir, 'unmounted', 'real.json'), link);
+
+    await expect(writeFileAtomic(link, 'new')).rejects.toThrow();
+
+    expect((await lstat(link)).isSymbolicLink()).toBe(true);
+    expect(await readdir(dir)).toEqual(['state.json']);
+  });
+
   it('sweeps temps a crashed writer left behind, but not a recent one', async () => {
     const dir = await newDir();
     const path = join(dir, 'state.json');
@@ -177,6 +221,21 @@ describe('quarantineFile', () => {
     expect(moved.slice(dir.length + 1)).not.toContain(':');
     expect(await readFile(moved, 'utf-8')).toBe('{"torn":');
     expect(await readTextIfExists(path)).toBeNull();
+  });
+
+  it('moves a symlink\'s target aside, not the link, so the next write lands where the link points', async () => {
+    const dir = await newDir();
+    const real = join(dir, 'real.json');
+    const link = join(dir, 'state.json');
+    await writeFile(real, '{"torn":');
+    await symlink(real, link);
+
+    const moved = await quarantineFile(link);
+
+    expect(await readFile(moved, 'utf-8')).toBe('{"torn":');
+    expect((await lstat(link)).isSymbolicLink()).toBe(true);
+    await writeFileAtomic(link, '{}');
+    expect(await readFile(real, 'utf-8')).toBe('{}');
   });
 
   it('never overwrites an earlier quarantined file', async () => {

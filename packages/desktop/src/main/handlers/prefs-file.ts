@@ -1,4 +1,4 @@
-import { logger, parseJsonObject, quarantineFile, readTextIfExists, writeFileAtomic } from '@costgoblin/core';
+import { logger, parseJsonObjectFile, quarantineFile, readTextIfExists, writeFileAtomic } from '@costgoblin/core';
 
 /**
  * Serializes read-modify-write cycles on a shared preferences JSON file.
@@ -21,8 +21,7 @@ const chains = new Map<string, Promise<unknown>>();
 async function readPrefs(filePath: string): Promise<Readonly<Record<string, unknown>>> {
   const text = await readTextIfExists(filePath);
   if (text === null) return {};
-  // Tolerate the UTF-8 BOM some Windows editors add to a hand-edited file.
-  const parsed = parseJsonObject(text.replace(/^\uFEFF/, ''));
+  const parsed = parseJsonObjectFile(text);
   if (parsed !== null) return parsed;
   const movedTo = await quarantineFile(filePath);
   logger.error('prefs: unreadable preferences file; moved it aside and started afresh', { file: filePath, movedTo });

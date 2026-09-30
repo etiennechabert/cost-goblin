@@ -34,7 +34,9 @@ export interface ApplyMcpEnabledDeps {
  * Apply the renderer's Enable/Disable choice (the `mcp:set-running` payload).
  *
  * The saved setting must never say "on" while the server is stopped, so:
- * - disable saves OFF first, then stops the server;
+ * - disable saves OFF first, then stops the server — even when the save fails
+ *   (and rethrows): a server the user just turned off must not keep serving
+ *   their billing data because a preferences file was unreadable;
  * - enable starts the server first and saves ON only once it listens. A failed
  *   start saves OFF (best effort) and rethrows; a failed save stops the server
  *   if this call started it, and rethrows.
@@ -48,8 +50,11 @@ export async function applyMcpEnabled(value: unknown, deps: ApplyMcpEnabledDeps)
   }
 
   if (!value) {
-    await deps.persist(false);
-    if (deps.isRunning()) await deps.stop();
+    try {
+      await deps.persist(false);
+    } finally {
+      if (deps.isRunning()) await deps.stop();
+    }
     return;
   }
 

@@ -57,6 +57,7 @@ const PERSISTED = {
 let stateDir: string;
 let specsPath: string;
 let dimensions: DimensionsConfig = SERVICE_ONLY;
+let dimensionsError: Error | null = null;
 
 function unused(): Promise<never> {
   return Promise.reject(new Error('not used by the baselines tools'));
@@ -70,7 +71,7 @@ function makeCtx(): McpContext {
     runPreparedQuery: unused,
     getConfig: unused,
     getDimensions: () => Promise.resolve(dimensions),
-    getQueryDimensions: () => Promise.resolve(dimensions),
+    getQueryDimensions: () => (dimensionsError === null ? Promise.resolve(dimensions) : Promise.reject(dimensionsError)),
     getCostScope: unused,
     getAccountMap: unused,
     getAccountReverseMap: unused,
@@ -97,7 +98,14 @@ beforeAll(async () => {
 afterEach(() => {
   readFileMock.mockReset();
   dimensions = SERVICE_ONLY;
+  dimensionsError = null;
 });
+
+/** Serve `text` for `path` instead of its bytes on disk. */
+function serveFile(path: string, text: string): void {
+  readFileMock.mockImplementation((file, options) =>
+    file === path ? Promise.resolve(text) : fsActual.readFile(file, options));
+}
 
 afterAll(async () => {
   await rm(stateDir, { recursive: true, force: true });
@@ -125,10 +133,21 @@ describe('list_baselines', () => {
     await expect(listBaselines(makeCtx(), {})).rejects.toThrow('EIO');
   });
 
-  it('reports no baselines when the file does not exist yet', async () => {
+  it('reports no baselines when the file does not exist yet, even with a broken dimensions config', async () => {
     readFileMock.mockImplementation((file, options) =>
       file === specsPath ? Promise.reject(errnoError('ENOENT')) : fsActual.readFile(file, options));
+    dimensionsError = new Error('dimensions.yaml: invalid');
     expect((await listBaselines(makeCtx(), {})).content[0].text).toContain('No baselines found');
+  });
+
+  it('rejects a baselines.json from a newer format, as the desktop does', async () => {
+    serveFile(specsPath, JSON.stringify({ ...PERSISTED, version: 2 }));
+    await expect(listBaselines(makeCtx(), {})).rejects.toThrow('newer version');
+  });
+
+  it('still lists the specs when only the history file is torn, as the desktop does', async () => {
+    serveFile(join(stateDir, 'baselines-data.json'), '{"history":{"ec2":[{"da');
+    expect(await listedIds()).toEqual(['ec2', 's3']);
   });
 });
 

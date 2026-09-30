@@ -106,15 +106,26 @@ export function validateBaselines(raw: unknown, dimensions: DimensionsConfig): r
   return raw['baselines'].map((b, i) => validateSpec(b, builtInIds, liveDimensionIds, `baselines[${String(i)}]`));
 }
 
-/** One persisted spec entry, validated as validateBaselines would, or null if
- *  it fails — e.g. its scope names a dimension that is disabled today. The
- *  desktop store keeps such specs hidden (and writes them back); every reader
- *  of baselines.json decides visibility with this one check, so a spec hidden
- *  in the app is hidden everywhere. */
-export function tryValidateBaseline(raw: unknown, dimensions: DimensionsConfig): BaselineSpec | null {
-  try {
-    return validateBaselines({ baselines: [raw] }, dimensions)[0] ?? null;
-  } catch {
-    return null;
-  }
+/** The `version` baselines.json and baselines-data.json are written with. A
+ *  reader must refuse a file from a newer format rather than half-read it. */
+export const BASELINES_STATE_VERSION = 1;
+
+/** A validator for persisted spec entries, one at a time: an entry comes back
+ *  as validateBaselines would return it, or null if it fails validation —
+ *  e.g. its scope names a dimension that is disabled today. The desktop store
+ *  keeps such specs hidden (and writes them back); every reader of
+ *  baselines.json decides visibility with this one check, so a spec hidden in
+ *  the app is hidden everywhere. */
+export function createBaselineValidator(dimensions: DimensionsConfig): (raw: unknown) => BaselineSpec | null {
+  const builtInIds = new Set<string>(dimensions.builtIn.map((d) => String(d.name)));
+  const liveDimensionIds = dimensionIdSet(dimensions);
+  return (raw) => {
+    try {
+      return validateSpec(raw, builtInIds, liveDimensionIds, 'baseline');
+    } catch (err: unknown) {
+      // Only a validation failure hides a spec; anything else is a bug.
+      if (err instanceof ConfigValidationError) return null;
+      throw err;
+    }
+  };
 }

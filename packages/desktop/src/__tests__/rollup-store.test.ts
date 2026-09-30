@@ -223,7 +223,9 @@ describe('RollupStore', () => {
 
     await store.maintainPeriods(['2026-01'], buildSql, etags, shape);
 
-    expect(captured?.state).toBe('failed');
+    // The build succeeded and the manifest rename is what failed.
+    await expect(stat(join(failDir, 'aws', 'rollup', 'daily-2026-01', 'rollup.parquet'))).resolves.toBeDefined();
+    expect(captured).toMatchObject({ state: 'failed', reason: expect.stringMatching(/manifest\.json/) });
     const dir = await readdir(join(failDir, 'aws', 'rollup'));
     expect(dir.filter(f => f.endsWith('.tmp'))).toEqual([]);
     await rm(failDir, { recursive: true, force: true });

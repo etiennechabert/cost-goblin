@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import {
   generateIdentityKeyPair,
   isStringRecord,
-  parseJsonObject,
+  parseJsonObjectFile,
   readTextIfExists,
   writeFileAtomic,
   type IdentityKeyPair,
@@ -53,32 +53,42 @@ async function writeSecret(path: string, value: object): Promise<void> {
   await writeFileAtomic(path, JSON.stringify(value, null, 2), { mode: 0o600 });
 }
 
-/** A secret file's JSON object, or null only when the file doesn't exist.
- *  Anything else throws, leaving the file alone: minting a replacement over
- *  one that was merely locked (EBUSY, EMFILE — transient errors are retried
- *  first) or torn would silently change this machine's identity or break every
- *  sharing key handed out. */
-async function readSecretFile(path: string): Promise<Readonly<Record<string, unknown>> | null> {
-  const text = await readTextIfExists(path);
-  if (text === null) return null;
-  const parsed = parseJsonObject(text);
-  if (parsed === null) throw unusableSecretFile(path);
-  return parsed;
-}
-
-function unusableSecretFile(path: string): Error {
-  return new Error(`${path} is unreadable; refusing to replace it (move it aside to have a new one created)`);
-}
-
 // Load-or-create is a read-then-write: two first uses at once would each mint
 // a secret, and the one whose write lands second would silently replace the
 // other's. Each file's operations run one at a time.
-const secretChains = new Map<string, Promise<unknown>>();
+const secretChains = new Map<string, Promise<void>>();
 
 function serializedOn<T>(path: string, op: () => Promise<T>): Promise<T> {
   const run = (secretChains.get(path) ?? Promise.resolve()).then(op);
-  secretChains.set(path, run.catch(() => undefined));
+  // Settles with nothing: the chain must not hold on to the secret it read.
+  secretChains.set(path, run.then(() => undefined, () => undefined));
   return run;
+}
+
+/** The secret in `file`, created on first use. Only a missing file means first
+ *  use. Anything else throws, leaving the file alone: minting a replacement
+ *  over one that was merely locked (EBUSY, EMFILE — transient errors are
+ *  retried first), torn or hand-damaged would silently change this machine's
+ *  identity or break every sharing key handed out. */
+function loadOrCreateSecret<T extends object>(
+  file: string,
+  parse: (doc: Readonly<Record<string, unknown>>) => T | null,
+  create: () => T,
+): Promise<T> {
+  return serializedOn(file, async () => {
+    const text = await readTextIfExists(file);
+    if (text === null) {
+      const secret = create();
+      await writeSecret(file, secret);
+      return secret;
+    }
+    const doc = parseJsonObjectFile(text);
+    const secret = doc === null ? null : parse(doc);
+    if (secret === null) {
+      throw new Error(`${file} is unreadable; refusing to replace it (move it aside to have a new one created)`);
+    }
+    return secret;
+  });
 }
 
 function defaultLabel(): string {
@@ -89,17 +99,13 @@ function defaultLabel(): string {
 /** This machine's persistent Ed25519 identity, created on first use. The
  *  private key never leaves disk; the public key is what peers pin. */
 export function loadOrCreateIdentity(configPath: string): Promise<IdentityKeyPair> {
-  const file = join(configDir(configPath), 'peer-identity.json');
-  return serializedOn(file, async () => {
-    const existing = await readSecretFile(file);
-    if (existing === null) {
-      const identity = generateIdentityKeyPair();
-      await writeSecret(file, identity);
-      return identity;
-    }
-    if (typeof existing['publicKey'] !== 'string' || typeof existing['privateKey'] !== 'string') throw unusableSecretFile(file);
-    return { publicKey: existing['publicKey'], privateKey: existing['privateKey'] };
-  });
+  return loadOrCreateSecret(
+    join(configDir(configPath), 'peer-identity.json'),
+    (doc) => typeof doc['publicKey'] === 'string' && typeof doc['privateKey'] === 'string'
+      ? { publicKey: doc['publicKey'], privateKey: doc['privateKey'] }
+      : null,
+    generateIdentityKeyPair,
+  );
 }
 
 export interface SharingSecret {
@@ -110,28 +116,24 @@ export interface SharingSecret {
 /** The access secret + friendly label advertised to peers. Stable across
  *  restarts so a handed-out sharing key keeps working until rotation. */
 export function loadOrCreateSharingSecret(configPath: string): Promise<SharingSecret> {
-  const file = join(configDir(configPath), 'peer-sharing.json');
-  return serializedOn(file, async () => {
-    const existing = await readSecretFile(file);
-    if (existing === null) {
-      const secret: SharingSecret = { psk: randomBytes(32).toString('base64url'), label: defaultLabel() };
-      await writeSecret(file, secret);
-      return secret;
-    }
-    if (typeof existing['psk'] !== 'string' || typeof existing['label'] !== 'string') throw unusableSecretFile(file);
-    return { psk: existing['psk'], label: existing['label'] };
-  });
+  return loadOrCreateSecret(
+    join(configDir(configPath), 'peer-sharing.json'),
+    (doc) => typeof doc['psk'] === 'string' && typeof doc['label'] === 'string'
+      ? { psk: doc['psk'], label: doc['label'] }
+      : null,
+    () => ({ psk: randomBytes(32).toString('base64url'), label: defaultLabel() }),
+  );
 }
 
-/** Replace the access secret — any outstanding sharing key stops working. It
- *  is also the way out of an unparseable secret file: the old secret is being
- *  replaced anyway, so only its label is lost. A read failure still throws,
- *  rather than drop a label that is intact on disk. */
+/** Replace the access secret — any outstanding sharing key stops working.
+ *  Rotation doesn't need the old secret, so it also replaces an unparseable
+ *  file (only its label is lost). A read failure still throws, rather than
+ *  drop a label that is intact on disk. */
 export function rotateSharingSecret(configPath: string): Promise<SharingSecret> {
   const file = join(configDir(configPath), 'peer-sharing.json');
   return serializedOn(file, async () => {
     const text = await readTextIfExists(file);
-    const existing = text === null ? null : parseJsonObject(text);
+    const existing = text === null ? null : parseJsonObjectFile(text);
     const label = existing !== null && typeof existing['label'] === 'string' ? existing['label'] : defaultLabel();
     const secret: SharingSecret = { psk: randomBytes(32).toString('base64url'), label };
     await writeSecret(file, secret);

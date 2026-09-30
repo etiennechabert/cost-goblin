@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { chmod, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { chmod, lstat, readdir, readFile, readlink, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { basename, dirname, join, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 /** True when `err` is a Node system error carrying one of `codes`. */
@@ -70,6 +70,16 @@ async function sweepStaleTemps(path: string): Promise<void> {
   }
 }
 
+/** The file a write to `path` lands in: through a symlink — even a dangling
+ *  one, as an in-place write would, rather than replacing the link itself
+ *  (say one into a folder that isn't mounted yet: the write then fails). */
+async function resolveTarget(path: string): Promise<string> {
+  const real = await realpath(path).catch(() => null);
+  if (real !== null) return real;
+  const link = await readlink(path).catch(() => null);
+  return link === null ? path : resolve(dirname(path), link);
+}
+
 /**
  * Replace `path` with `data` so that a reader — or the next launch after a
  * crash, a quit mid-write or a power cut — sees either the old contents or the
@@ -83,17 +93,18 @@ async function sweepStaleTemps(path: string): Promise<void> {
  * or tightening one left looser).
  */
 export async function writeFileAtomic(path: string, data: string, options: { readonly mode?: number } = {}): Promise<void> {
-  const target = await realpath(path).catch(() => path);
+  const target = await resolveTarget(path);
   const mode = options.mode ?? await stat(target).then((s) => s.mode & 0o7777, () => null);
   await sweepStaleTemps(target);
   const tmpPath = `${target}.${randomUUID()}.tmp`;
   try {
     // Flushed, so the rename can't reach the disk before the data does and
     // leave a power cut with a renamed but empty file. Created with the mode,
-    // so the data is never readable under looser permissions; the chmod then
-    // sets it exactly (the umask may have masked bits off).
-    await retryTransientFs(() => writeFile(tmpPath, data, { flush: true, ...(mode === null ? {} : { mode }) }));
-    if (mode !== null) await chmod(tmpPath, mode);
+    // so the data is never readable under looser permissions — plus owner
+    // write, so a retry can reopen it; the chmod then sets it exactly (that
+    // bit, and any the umask masked off).
+    await retryTransientFs(() => writeFile(tmpPath, data, { flush: true, ...(mode === null ? {} : { mode: mode | 0o200 }) }));
+    if (mode !== null) await retryTransientFs(() => chmod(tmpPath, mode));
     await retryTransientFs(() => rename(tmpPath, target));
   } catch (err: unknown) {
     await rm(tmpPath, { force: true }).catch(() => { /* best effort */ });
@@ -102,14 +113,18 @@ export async function writeFileAtomic(path: string, data: string, options: { rea
 }
 
 /**
- * Move an unreadable file aside to `<path>.corrupt-<timestamp>-<id>` so its
+ * Move an unreadable file aside to `<file>.corrupt-<timestamp>-<id>` so its
  * bytes survive for manual recovery while the caller starts afresh. Returns
  * the new path. Throws (leaving the file in place) if it can't be moved.
  */
 export async function quarantineFile(path: string): Promise<string> {
+  // The file itself, not a symlink to it: moving the link would leave the bad
+  // bytes where it pointed and a fresh file where the link was.
+  const isLink = await lstat(path).then((info) => info.isSymbolicLink(), () => false);
+  const source = isLink ? await resolveTarget(path) : path;
   // No colons: they are not legal in Windows filenames.
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const target = `${path}.corrupt-${stamp}-${randomUUID().slice(0, 8)}`;
-  await retryTransientFs(() => rename(path, target));
+  const target = `${source}.corrupt-${stamp}-${randomUUID().slice(0, 8)}`;
+  await retryTransientFs(() => rename(source, target));
   return target;
 }
