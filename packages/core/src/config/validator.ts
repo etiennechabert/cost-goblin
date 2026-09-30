@@ -302,6 +302,18 @@ export function validateConfig(raw: unknown): CostGoblinConfig {
   return { providers, defaults };
 }
 
+/** Dimension strings that end up inside a DuckDB SQL literal (alias keys and
+ *  values, tagName, accountTagFallback, missingValueTemplate,
+ *  pathSegment.separator) must not carry a NUL: DuckDB ends the SQL text
+ *  there, so the literal is left unterminated and — since buildSource maps
+ *  every tag — every cost query fails. Other control characters are harmless
+ *  in a literal and stay allowed. */
+function assertNoNul(value: string, context: string): void {
+  if (value.includes('\u0000')) {
+    throw new ConfigValidationError(`${context} contains a NUL character, which a SQL string literal cannot carry`);
+  }
+}
+
 function validateNormalize(value: unknown, ctx: string): NormalizationRule | undefined {
   if (value === undefined) return undefined;
   assertString(value, `${ctx}.normalize`);
@@ -316,14 +328,17 @@ function validateAliases(value: unknown, ctx: string): Record<string, string[]> 
   assertObject(value, `${ctx}.aliases`);
   const result: Record<string, string[]> = {};
   for (const [key, arr] of Object.entries(value)) {
+    assertNoNul(key, `${ctx}.aliases key`);
     assertArray(arr, `${ctx}.aliases.${key}`);
     // Drop empty entries rather than reject: they're semantic no-ops the UI
     // editor already discards on save, but hand-edited YAML and shared
     // bundles can contain them — and downstream SQL generation must never
     // see an alias entry with no values (invalid `IN ()`).
     if (arr.length === 0) continue;
-    result[key] = arr.map((v, j) => {
+    // Array.from, not .map: map skips holes, so a sparse list would pass.
+    result[key] = Array.from(arr, (v: unknown, j) => {
       assertString(v, `${ctx}.aliases.${key}[${String(j)}]`);
+      assertNoNul(v, `${ctx}.aliases.${key}[${String(j)}]`);
       return v;
     });
   }
@@ -332,7 +347,8 @@ function validateAliases(value: unknown, ctx: string): Record<string, string[]> 
 
 function validateStringArray(value: unknown, ctx: string): string[] {
   assertArray(value, ctx);
-  return value.map((v, j) => {
+  // Array.from, not .map: map skips holes, so a sparse array would pass.
+  return Array.from(value, (v: unknown, j) => {
     assertString(v, `${ctx}[${String(j)}]`);
     return v;
   });
@@ -468,6 +484,7 @@ function validatePathSegment(value: unknown, ctx: string): { separator: string; 
   if (value === undefined) return undefined;
   assertObject(value, `${ctx}.pathSegment`);
   assertString(value['separator'], `${ctx}.pathSegment.separator`);
+  assertNoNul(value['separator'], `${ctx}.pathSegment.separator`);
   assertNumber(value['index'], `${ctx}.pathSegment.index`);
   if (value['separator'].length === 0) {
     throw new ConfigValidationError(`${ctx}.pathSegment.separator must be non-empty`);
@@ -501,6 +518,7 @@ function validateTagDimension(tag: unknown, i: number) {
   // tagName is interpolated into DuckDB SQL by the alias-suggestions handler.
   // Reject it at load time so a shared/imported config cannot smuggle a
   // string-literal breakout even if a call site forgets to escape.
+  if (tagName !== undefined) assertNoNul(tagName, `${ctx}.tagName`);
   if (tagName?.includes("'")) {
     throw new ConfigValidationError(
       `${ctx}.tagName "${tagName}" contains a single quote, which is not a valid tag key. ` +
@@ -510,6 +528,7 @@ function validateTagDimension(tag: unknown, i: number) {
   assertString(tag['label'], `${ctx}.label`);
 
   const accountTagFallback = optionalNonEmptyString(tag['accountTagFallback']);
+  if (accountTagFallback !== undefined) assertNoNul(accountTagFallback, `${ctx}.accountTagFallback`);
 
   if (tagName === undefined && accountTagFallback === undefined) {
     throw new ConfigValidationError(`${ctx} must set either tagName or accountTagFallback`);
@@ -518,10 +537,14 @@ function validateTagDimension(tag: unknown, i: number) {
   const concept = validateConcept(tag['concept'], ctx);
   const normalize = validateNormalize(tag['normalize'], ctx);
   const separator = optionalString(tag['separator'], `${ctx}.separator`);
+  const missingValueTemplate = typeof tag['missingValueTemplate'] === 'string' ? tag['missingValueTemplate'] : undefined;
+  if (missingValueTemplate !== undefined) assertNoNul(missingValueTemplate, `${ctx}.missingValueTemplate`);
   const aliases = validateAliases(tag['aliases'], ctx);
   const enabled = tag['enabled'] === false ? false : undefined;
   const pathSegment = validatePathSegment(tag['pathSegment'], ctx);
-  const description = optionalString(tag['description'], `${ctx}.description`);
+  // Lenient, like `enabled`: a cosmetic field must not make an otherwise
+  // valid config unloadable (an empty `description:` in YAML parses to null).
+  const description = typeof tag['description'] === 'string' ? tag['description'] : undefined;
   const defaultFilterValues = optionalStringArray(tag['defaultFilterValues'], `${ctx}.defaultFilterValues`);
 
   return {
@@ -532,7 +555,7 @@ function validateTagDimension(tag: unknown, i: number) {
     ...(separator === undefined ? {} : { separator }),
     ...(aliases === undefined ? {} : { aliases }),
     ...(accountTagFallback === undefined ? {} : { accountTagFallback }),
-    ...(typeof tag['missingValueTemplate'] === 'string' ? { missingValueTemplate: tag['missingValueTemplate'] } : {}),
+    ...(missingValueTemplate === undefined ? {} : { missingValueTemplate }),
     ...(pathSegment === undefined ? {} : { pathSegment }),
     ...(enabled === false ? { enabled } : {}),
     ...(description === undefined ? {} : { description }),
@@ -546,8 +569,10 @@ export function validateDimensions(raw: unknown, options: ValidateDimensionsOpti
   assertArray(raw['tags'], 'tags');
 
   const stripPatternLimits = options.stripPatternLimits ?? 'drop';
-  const builtIn = raw['builtIn'].map((dim, i) => validateBuiltInDimension(dim, i, stripPatternLimits));
-  const tags = raw['tags'].map((tag, i) => validateTagDimension(tag, i));
+  // Array.from, not .map: map skips holes, and a sparse array survives the
+  // renderer's structured clone — it would validate, then save as `- null`.
+  const builtIn = Array.from(raw['builtIn'], (dim: unknown, i) => validateBuiltInDimension(dim, i, stripPatternLimits));
+  const tags = Array.from(raw['tags'], (tag: unknown, i) => validateTagDimension(tag, i));
 
   let order: string[] | undefined;
   if (raw['order'] !== undefined) {
