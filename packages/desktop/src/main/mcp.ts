@@ -36,13 +36,18 @@ function tokenPath(): string {
   return join(electronApp.getPath('userData'), 'mcp-auth-token');
 }
 
-let currentToken: string | null = null;
+/** The token, once loaded (or loading). Shared so concurrent first uses read —
+ *  or create — the file once; a failed load isn't kept, so the next call retries. */
+let currentToken: Promise<string> | null = null;
 
 /** The shared secret an AI client must present to reach the MCP server. Loaded
  *  (and created on first use) lazily so the view can show it before the server
  *  is even started. */
-export function getMcpToken(): string {
-  currentToken ??= loadOrCreateMcpToken(tokenPath());
+export function getMcpToken(): Promise<string> {
+  currentToken ??= loadOrCreateMcpToken(tokenPath()).catch((err: unknown) => {
+    currentToken = null;
+    throw err;
+  });
   return currentToken;
 }
 
@@ -76,12 +81,15 @@ async function doStart(app: AppContext): Promise<void> {
     stateDir: app.ctx.stateDir,
     tempDir: app.ctx.workspaceEnv.tempDir,
   });
+  // Before the worker: an unreadable token file fails the start without
+  // spawning (and tearing down) a DuckDB instance for nothing.
+  const authToken = await getMcpToken();
   const db = await createDuckDBClient(app.ctx.duckdbWorkerPath, { sandbox });
   let server: McpHttpServer;
   try {
     const envPort = process.env['COSTGOBLIN_MCP_PORT'];
     const port = envPort !== undefined && envPort.length > 0 ? Number(envPort) : undefined;
-    server = await createMcpHttpServer(adaptAppContext(app, db), { port, authToken: getMcpToken() });
+    server = await createMcpHttpServer(adaptAppContext(app, db), { port, authToken });
   } catch (err: unknown) {
     await db.terminate().catch(() => undefined);
     throw err;
@@ -118,8 +126,17 @@ export function isMcpServerRunning(): boolean {
  *  token for the UI to display. */
 export function regenerateMcpToken(): Promise<string> {
   return serialized(async () => {
-    const token = rotateTokenFile(tokenPath());
-    currentToken = token;
+    // A first-use load still writing its token must land before the rotation,
+    // not over it.
+    await currentToken?.catch(() => undefined);
+    // Published before it settles, so a token read meanwhile waits for the new
+    // one instead of starting a load of the file mid-rotation.
+    const rotating = rotateTokenFile(tokenPath()).catch((err: unknown) => {
+      currentToken = null;
+      throw err;
+    });
+    currentToken = rotating;
+    const token = await rotating;
     if (running !== null && lastApp !== null) {
       await doStop();
       await doStart(lastApp);

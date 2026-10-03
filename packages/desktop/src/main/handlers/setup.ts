@@ -8,12 +8,13 @@ import {
   gcloudSpawnShape,
   logger,
   parseS3Path,
-  isStringRecord,
+  pathExists,
+  writeFileAtomic,
 } from '@costgoblin/core';
 import type { GcpProject, GcsBrowseResult } from '@costgoblin/core';
 import { loadSharedConfigFiles } from '@smithy/shared-ini-file-loader';
 import { awsProfileNames } from '../aws-profiles.js';
-import { upsertWizardProvider } from '../config-upsert.js';
+import { upsertWizardProviderFile } from '../config-file.js';
 import { buildConfigTemplate, buildDimensionsTemplate, PROVIDER_ABSENT_DIMENSIONS } from '../config-templates.js';
 import { classifyManifestColumns, parseManifestColumnNames, selectManifestKey } from '../setup-manifest.js';
 import { collectGcsPrefixes, gcsNextPageToken, parseGcloudProjects } from '../setup-gcp.js';
@@ -57,15 +58,14 @@ export function registerSetupHandlers(app: AppContext): void {
   const { ctx, invalidateConfig, invalidateDimensions } = app;
 
   ipcMain.handle('setup:status', async (): Promise<{ configured: boolean; postSetup: boolean }> => {
-    const fs = await import('node:fs/promises');
     const postSetup = !postSetupConsumed && process.argv.includes(POST_SETUP_FLAG);
     if (postSetup) postSetupConsumed = true;
-    try {
-      await fs.access(ctx.configPath);
-      return { configured: true, postSetup };
-    } catch {
-      return { configured: false, postSetup };
-    }
+    // Only a missing config means first run. One that merely can't be checked
+    // (a lock outlasting the retries, a permission error) is a configured
+    // workspace whose config load reports the problem — never a cue to open
+    // the setup wizard, which rewrites it.
+    const configured = await pathExists(ctx.configPath).catch(() => true);
+    return { configured, postSetup };
   });
 
   ipcMain.handle('setup:test-connection', async (_event, params: { profile: string; bucket: string }): Promise<{ ok: boolean; error?: string | undefined }> => {
@@ -378,29 +378,17 @@ export function registerSetupHandlers(app: AppContext): void {
   }): Promise<void> => {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
-    const { stringify, parse: parseYaml } = await import('yaml');
+    const { stringify } = await import('yaml');
 
     const configDir = path.dirname(ctx.configPath);
     await fs.mkdir(configDir, { recursive: true });
 
-    let existing: Readonly<Record<string, unknown>> = {};
-    try {
-      const raw = await fs.readFile(ctx.configPath, 'utf-8');
-      const parsed: unknown = parseYaml(raw);
-      if (isStringRecord(parsed)) {
-        existing = parsed;
-      }
-    } catch {
-      // no existing config
-    }
-
     // UPSERT by provider name: replace the matching entry in place, append a
     // new one otherwise; other providers and unknown top-level keys are
     // preserved verbatim. Throws ProviderNameError (friendly message,
-    // surfaced to the wizard) on an invalid name.
-    const costgoblinYaml = upsertWizardProvider(existing, wizardConfig);
-
-    await fs.writeFile(ctx.configPath, stringify(costgoblinYaml), 'utf-8');
+    // surfaced to the wizard) on an invalid name, and — leaving the file as
+    // it is — on an existing config that can't be read or parsed.
+    await upsertWizardProviderFile(ctx.configPath, wizardConfig);
 
     const builtInDimensions = [
       {
@@ -472,9 +460,10 @@ export function registerSetupHandlers(app: AppContext): void {
     // choices or no file exists yet (true first run). A re-run that skipped
     // the tag step — per-tier Configure, Add Provider — must not wipe the
     // user's curated dimensions with the defaults.
-    const dimensionsExist = await fs.access(ctx.dimensionsPath).then(() => true, () => false);
-    if (!dimensionsExist || wizardConfig.tags !== undefined) {
-      await fs.writeFile(ctx.dimensionsPath, stringify(dimensionsYaml), 'utf-8');
+    // Only a missing file counts as absent: one that merely can't be checked
+    // throws (pathExists) rather than be overwritten with the defaults.
+    if (wizardConfig.tags !== undefined || !(await pathExists(ctx.dimensionsPath))) {
+      await writeFileAtomic(ctx.dimensionsPath, stringify(dimensionsYaml));
     }
 
     invalidateConfig();
@@ -495,12 +484,10 @@ export function registerSetupHandlers(app: AppContext): void {
     const configTemplate = buildConfigTemplate(templateType);
     const dimensionsTemplate = buildDimensionsTemplate(templateType);
 
-    try { await fs.access(ctx.configPath); } catch {
-      await fs.writeFile(ctx.configPath, configTemplate, 'utf-8');
-    }
-    try { await fs.access(ctx.dimensionsPath); } catch {
-      await fs.writeFile(ctx.dimensionsPath, dimensionsTemplate, 'utf-8');
-    }
+    // Templates only where no file exists: one that merely can't be checked
+    // throws (pathExists) rather than be overwritten.
+    if (!(await pathExists(ctx.configPath))) await writeFileAtomic(ctx.configPath, configTemplate);
+    if (!(await pathExists(ctx.dimensionsPath))) await writeFileAtomic(ctx.dimensionsPath, dimensionsTemplate);
 
     await shell.openPath(configDir);
     logger.info('Scaffolded template config files');

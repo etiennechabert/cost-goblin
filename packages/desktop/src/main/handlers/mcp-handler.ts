@@ -21,7 +21,7 @@ export function registerMcpHandlers(app: AppContext): void {
     });
   });
 
-  ipcMain.handle('mcp:get-token', (): string => {
+  ipcMain.handle('mcp:get-token', (): Promise<string> => {
     return getMcpToken();
   });
 

@@ -68,6 +68,11 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
     dirty: false,
   });
   const [saving, setSaving] = useState(false);
+  // Until views.yaml has loaded, `state.config` is a placeholder, not the
+  // user's views: saving, resetting or importing then would write it over
+  // every dashboard in a file that only failed to read (or hasn't yet).
+  const [loadStatus, setLoadStatus] = useState<'loading' | 'loaded' | 'failed'>('loading');
+  const canWrite = loadStatus === 'loaded';
   useUnsavedChanges(state.dirty, 'Views');
   const [error, setError] = useState<string | null>(null);
   const [modal, setModal] = useState<{ mode: 'export' | 'import' } | null>(null);
@@ -85,8 +90,10 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
         selectedViewId: cfg.views[0]?.id ?? null,
         dirty: false,
       });
+      setLoadStatus('loaded');
     }).catch((err: unknown) => {
       if (cancelled) return;
+      setLoadStatus('failed');
       setError(err instanceof Error ? err.message : String(err));
     });
     return () => { cancelled = true; };
@@ -199,6 +206,7 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
   }
 
   async function handleSave(): Promise<void> {
+    if (!canWrite) return;
     setSaving(true);
     setError(null);
     try {
@@ -213,6 +221,7 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
   }
 
   async function handleReset(): Promise<void> {
+    if (!canWrite) return;
     if (!globalThis.confirm('Reset built-in views to defaults? Your custom views will be kept (delete them manually to fully reset).')) return;
     // Client-side merge: built-ins from seed replace any current same-id built-in,
     // custom (non-builtIn) views in the editor are preserved in place. Missing
@@ -265,7 +274,7 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
           <button
             type="button"
             onClick={() => { setModal({ mode: 'import' }); }}
-            disabled={saving}
+            disabled={saving || !canWrite}
             className="px-3 py-1.5 text-sm rounded-md border border-border text-text-secondary hover:text-text-primary disabled:opacity-50"
           >
             Import
@@ -281,7 +290,7 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
           <button
             type="button"
             onClick={() => { handleReset().catch(() => undefined); }}
-            disabled={saving}
+            disabled={saving || !canWrite}
             className="px-3 py-1.5 text-sm rounded-md border border-border text-text-secondary hover:text-text-primary disabled:opacity-50"
           >
             Reset built-ins
@@ -289,7 +298,7 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
           <button
             type="button"
             onClick={() => { handleSave().catch(() => undefined); }}
-            disabled={saving || !state.dirty}
+            disabled={saving || !state.dirty || !canWrite}
             className="px-4 py-1.5 text-sm rounded-md bg-accent text-bg-primary font-medium hover:opacity-90 disabled:opacity-40"
           >
             {(() => { if (saving) { return 'Saving…'; } return state.dirty ? 'Save changes' : 'Saved'; })()}

@@ -1,10 +1,11 @@
 import { ipcMain } from 'electron';
-import { asDimensionId, isStringRecord, logger, parseProviderName } from '@costgoblin/core';
+import { asDimensionId, logger, parseProviderName, writeFileAtomic } from '@costgoblin/core';
 import type {
   CostGoblinConfig,
   Dimension,
   OrgNode,
 } from '@costgoblin/core';
+import { readConfigMapping } from '../config-file.js';
 import { removeProviderEntry, swapProviderCredentialsProfile } from '../config-upsert.js';
 import type { AppContext } from './context.js';
 
@@ -62,13 +63,10 @@ export function registerConfigHandlers(app: AppContext): void {
   // `credentials` key on the targeted entry only, so the file converges on
   // the current shape.
   ipcMain.handle('config:update-aws-profile', async (_event, profile: string, providerName?: string): Promise<void> => {
-    const fs = await import('node:fs/promises');
-    const { stringify, parse: parseYaml } = await import('yaml');
-    const raw = await fs.readFile(ctx.configPath, 'utf-8');
-    const parsed: unknown = parseYaml(raw);
-    if (!isStringRecord(parsed)) throw new Error('Config file is not a YAML object');
+    const { stringify } = await import('yaml');
+    const parsed = await readConfigMapping(ctx.configPath);
     const updated = swapProviderCredentialsProfile(parsed, profile, providerName);
-    await fs.writeFile(ctx.configPath, stringify(updated), 'utf-8');
+    await writeFileAtomic(ctx.configPath, stringify(updated));
     invalidateConfig();
     const providerSuffix = providerName === undefined ? '' : ` for provider ${providerName}`;
     logger.info(`Updated AWS profile to ${profile}${providerSuffix}`);
@@ -82,10 +80,8 @@ export function registerConfigHandlers(app: AppContext): void {
   ipcMain.handle('config:remove-provider', async (_event, providerName: string): Promise<void> => {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
-    const { stringify, parse: parseYaml } = await import('yaml');
-    const raw = await fs.readFile(ctx.configPath, 'utf-8');
-    const parsed: unknown = parseYaml(raw);
-    if (!isStringRecord(parsed)) throw new Error('Config file is not a YAML object');
+    const { stringify } = await import('yaml');
+    const parsed = await readConfigMapping(ctx.configPath);
     // Compute (don't yet persist) the config without this provider. Throws on an
     // unknown name (so we never delete data for a provider that isn't configured)
     // or on removing the last provider.
@@ -103,7 +99,7 @@ export function registerConfigHandlers(app: AppContext): void {
     // so a real failure still throws and rejects the IPC.
     ctx.db.cancelPendingQueries();
     await fs.rm(path.join(ctx.dataDir, String(safeName)), { recursive: true, force: true });
-    await fs.writeFile(ctx.configPath, stringify(updated), 'utf-8');
+    await writeFileAtomic(ctx.configPath, stringify(updated));
     // Removal can change which provider is FIRST — and the RollupStore's
     // paths and in-memory manifest are bound to the first provider's tree.
     // A full cache clear invalidates the store and re-warms it against the

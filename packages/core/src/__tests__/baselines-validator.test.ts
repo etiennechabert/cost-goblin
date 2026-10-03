@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { validateBaselines } from '../config/baselines-validator.js';
+import { createBaselineValidator, validateBaselines } from '../config/baselines-validator.js';
 import { BUILTIN_EXCLUSION_RULES } from '../config/cost-scope-seed.js';
 import { asDimensionId } from '../types/branded.js';
 import type { DimensionsConfig } from '../types/config.js';
@@ -114,5 +114,36 @@ describe('validateBaselines: CUR-era basis repair', () => {
     }), dimensions);
     const rule = spec?.basis.rules.find(r => r.id === 'user:cc');
     expect(rule?.conditions[0]?.dimensionId).toBe('tag_user_CostCenter');
+  });
+});
+
+// Every reader of baselines.json (the desktop store, the MCP tools) decides
+// which persisted specs are visible with this one check, entry by entry.
+describe('createBaselineValidator', () => {
+  const tryValidateBaseline = (raw: unknown, dims: DimensionsConfig) => createBaselineValidator(dims)(raw);
+  const entry = (overrides: Record<string, unknown>): unknown => ({
+    id: 'bl-1',
+    source: 'manual',
+    scope: { kind: 'filter', filters: { service: ['Amazon Relational Database Service'] } },
+    basis: { costMetric: 'billed', rules: [] },
+    basisSnapshotAt: '2026-06-01T00:00:00.000Z',
+    createdAt: '2026-06-01T00:00:00.000Z',
+    updatedAt: '2026-06-01T00:00:00.000Z',
+    ...overrides,
+  });
+
+  it('returns the spec validateBaselines would for a valid entry', () => {
+    const raw = entry({});
+    expect(tryValidateBaseline(raw, dimensions)).toEqual(validateBaselines({ baselines: [raw] }, dimensions)[0]);
+  });
+
+  it('returns null for an entry whose scope names a dimension that is not built in today', () => {
+    expect(tryValidateBaseline(entry({ scope: { kind: 'filter', filters: { region: ['eu-west-1'] } } }), dimensions)).toBeNull();
+  });
+
+  it('returns null for an entry missing required fields', () => {
+    expect(tryValidateBaseline(entry({ basis: undefined }), dimensions)).toBeNull();
+    expect(tryValidateBaseline(entry({ id: 7 }), dimensions)).toBeNull();
+    expect(tryValidateBaseline('not a spec', dimensions)).toBeNull();
   });
 });
