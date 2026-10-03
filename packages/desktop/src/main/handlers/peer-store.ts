@@ -1,8 +1,18 @@
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
-import { generateIdentityKeyPair, isStringRecord, type IdentityKeyPair, type SharedPullSelection, type SharedSourceTier } from '@costgoblin/core';
+import {
+  generateIdentityKeyPair,
+  isStringRecord,
+  parseJsonObjectFile,
+  readTextIfExists,
+  writeFileAtomic,
+  type IdentityKeyPair,
+  type SharedPullSelection,
+  type SharedSourceTier,
+} from '@costgoblin/core';
 
 const SHARED_SOURCE_TIERS: readonly SharedSourceTier[] = ['config', 'daily', 'hourly', 'cost-optimization'];
 
@@ -37,10 +47,48 @@ function readJson(path: string): Readonly<Record<string, unknown>> | null {
   }
 }
 
-function writeSecret(path: string, value: object): void {
-  mkdirSync(dirname(path), { recursive: true });
+async function writeSecret(path: string, value: object): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
   // 0o600: only the current user can read the private key / access secret.
-  writeFileSync(path, JSON.stringify(value, null, 2), { mode: 0o600 });
+  await writeFileAtomic(path, JSON.stringify(value, null, 2), { mode: 0o600 });
+}
+
+// Load-or-create is a read-then-write: two first uses at once would each mint
+// a secret, and the one whose write lands second would silently replace the
+// other's. Each file's operations run one at a time.
+const secretChains = new Map<string, Promise<void>>();
+
+function serializedOn<T>(path: string, op: () => Promise<T>): Promise<T> {
+  const run = (secretChains.get(path) ?? Promise.resolve()).then(op);
+  // Settles with nothing: the chain must not hold on to the secret it read.
+  secretChains.set(path, run.then(() => undefined, () => undefined));
+  return run;
+}
+
+/** The secret in `file`, created on first use. Only a missing file means first
+ *  use. Anything else throws, leaving the file alone: minting a replacement
+ *  over one that was merely locked (EBUSY, EMFILE — transient errors are
+ *  retried first), torn or hand-damaged would silently change this machine's
+ *  identity or break every sharing key handed out. */
+function loadOrCreateSecret<T extends object>(
+  file: string,
+  parse: (doc: Readonly<Record<string, unknown>>) => T | null,
+  create: () => T,
+): Promise<T> {
+  return serializedOn(file, async () => {
+    const text = await readTextIfExists(file);
+    if (text === null) {
+      const secret = create();
+      await writeSecret(file, secret);
+      return secret;
+    }
+    const doc = parseJsonObjectFile(text);
+    const secret = doc === null ? null : parse(doc);
+    if (secret === null) {
+      throw new Error(`${file} is unreadable; refusing to replace it (move it aside to have a new one created)`);
+    }
+    return secret;
+  });
 }
 
 function defaultLabel(): string {
@@ -50,15 +98,14 @@ function defaultLabel(): string {
 
 /** This machine's persistent Ed25519 identity, created on first use. The
  *  private key never leaves disk; the public key is what peers pin. */
-export function loadOrCreateIdentity(configPath: string): IdentityKeyPair {
-  const file = join(configDir(configPath), 'peer-identity.json');
-  const existing = readJson(file);
-  if (existing !== null && typeof existing['publicKey'] === 'string' && typeof existing['privateKey'] === 'string') {
-    return { publicKey: existing['publicKey'], privateKey: existing['privateKey'] };
-  }
-  const identity = generateIdentityKeyPair();
-  writeSecret(file, identity);
-  return identity;
+export function loadOrCreateIdentity(configPath: string): Promise<IdentityKeyPair> {
+  return loadOrCreateSecret(
+    join(configDir(configPath), 'peer-identity.json'),
+    (doc) => typeof doc['publicKey'] === 'string' && typeof doc['privateKey'] === 'string'
+      ? { publicKey: doc['publicKey'], privateKey: doc['privateKey'] }
+      : null,
+    generateIdentityKeyPair,
+  );
 }
 
 export interface SharingSecret {
@@ -68,25 +115,30 @@ export interface SharingSecret {
 
 /** The access secret + friendly label advertised to peers. Stable across
  *  restarts so a handed-out sharing key keeps working until rotation. */
-export function loadOrCreateSharingSecret(configPath: string): SharingSecret {
-  const file = join(configDir(configPath), 'peer-sharing.json');
-  const existing = readJson(file);
-  if (existing !== null && typeof existing['psk'] === 'string' && typeof existing['label'] === 'string') {
-    return { psk: existing['psk'], label: existing['label'] };
-  }
-  const secret: SharingSecret = { psk: randomBytes(32).toString('base64url'), label: defaultLabel() };
-  writeSecret(file, secret);
-  return secret;
+export function loadOrCreateSharingSecret(configPath: string): Promise<SharingSecret> {
+  return loadOrCreateSecret(
+    join(configDir(configPath), 'peer-sharing.json'),
+    (doc) => typeof doc['psk'] === 'string' && typeof doc['label'] === 'string'
+      ? { psk: doc['psk'], label: doc['label'] }
+      : null,
+    () => ({ psk: randomBytes(32).toString('base64url'), label: defaultLabel() }),
+  );
 }
 
-/** Replace the access secret — any outstanding sharing key stops working. */
-export function rotateSharingSecret(configPath: string): SharingSecret {
+/** Replace the access secret — any outstanding sharing key stops working.
+ *  Rotation doesn't need the old secret, so it also replaces an unparseable
+ *  file (only its label is lost). A read failure still throws, rather than
+ *  drop a label that is intact on disk. */
+export function rotateSharingSecret(configPath: string): Promise<SharingSecret> {
   const file = join(configDir(configPath), 'peer-sharing.json');
-  const existing = readJson(file);
-  const label = existing !== null && typeof existing['label'] === 'string' ? existing['label'] : defaultLabel();
-  const secret: SharingSecret = { psk: randomBytes(32).toString('base64url'), label };
-  writeSecret(file, secret);
-  return secret;
+  return serializedOn(file, async () => {
+    const text = await readTextIfExists(file);
+    const existing = text === null ? null : parseJsonObjectFile(text);
+    const label = existing !== null && typeof existing['label'] === 'string' ? existing['label'] : defaultLabel();
+    const secret: SharingSecret = { psk: randomBytes(32).toString('base64url'), label };
+    await writeSecret(file, secret);
+    return secret;
+  });
 }
 
 /** The single shared source a consumer pulls from. The full sharing key is
@@ -124,8 +176,8 @@ export function loadSharedSource(configPath: string): StoredSharedSource | null 
   };
 }
 
-export function saveSharedSource(configPath: string, source: StoredSharedSource): void {
-  writeSecret(join(configDir(configPath), 'peer-source.json'), source);
+export async function saveSharedSource(configPath: string, source: StoredSharedSource): Promise<void> {
+  await writeSecret(join(configDir(configPath), 'peer-source.json'), source);
 }
 
 export function clearSharedSource(configPath: string): void {

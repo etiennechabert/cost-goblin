@@ -278,9 +278,8 @@ export function registerDataSharingHandlers(app: AppContext): void {
     };
   }
 
-  function currentStatus(): DataSharingStatus {
-    const identity = loadOrCreateIdentity(ctx.configPath);
-    const secret = loadOrCreateSharingSecret(ctx.configPath);
+  async function currentStatus(): Promise<DataSharingStatus> {
+    const [identity, secret] = await Promise.all([loadOrCreateIdentity(ctx.configPath), loadOrCreateSharingSecret(ctx.configPath)]);
     const fingerprint = publicKeyFingerprint(identity.publicKey);
     if (server === null) {
       return { enabled: false, sharingKey: null, label: secret.label, port: null, hosts: [], fingerprint, lastServedAt: null, filesServed: 0, lastPeer: null, bytesServed: 0, connectedClients: 0, bytesPerSecond: 0, autoStopsAt: null };
@@ -304,8 +303,7 @@ export function registerDataSharingHandlers(app: AppContext): void {
 
   async function enable(): Promise<DataSharingStatus> {
     if (server !== null) return currentStatus();
-    const identity = loadOrCreateIdentity(ctx.configPath);
-    const secret = loadOrCreateSharingSecret(ctx.configPath);
+    const [identity, secret] = await Promise.all([loadOrCreateIdentity(ctx.configPath), loadOrCreateSharingSecret(ctx.configPath)]);
     lastServedAt = null;
     filesServed = 0;
     lastPeer = null;
@@ -506,7 +504,7 @@ export function registerDataSharingHandlers(app: AppContext): void {
     }
   }
 
-  ipcMain.handle('data-sharing:status', (): DataSharingStatus => currentStatus());
+  ipcMain.handle('data-sharing:status', (): Promise<DataSharingStatus> => currentStatus());
 
   ipcMain.handle('data-sharing:enable', async (): Promise<DataSharingResult> => {
     try {
@@ -526,13 +524,13 @@ export function registerDataSharingHandlers(app: AppContext): void {
 
   ipcMain.handle('data-sharing:rotate', async (): Promise<DataSharingResult> => {
     try {
-      rotateSharingSecret(ctx.configPath);
+      await rotateSharingSecret(ctx.configPath);
       if (server !== null) {
         await server.close();
         server = null;
         await enable();
       }
-      return { status: 'ok', sharing: currentStatus() };
+      return { status: 'ok', sharing: await currentStatus() };
     } catch (err: unknown) {
       return { status: 'error', message: errorMessage(err) };
     }
@@ -575,7 +573,7 @@ export function registerDataSharingHandlers(app: AppContext): void {
         periods: result.periods,
         ...(selection === undefined ? {} : { selection }),
       };
-      saveSharedSource(ctx.configPath, source);
+      await saveSharedSource(ctx.configPath, source);
       return { status: 'ok', source: toInfo(source), filesDownloaded: result.filesDownloaded };
     } catch (err: unknown) {
       return { status: 'error', message: errorMessage(err) };
@@ -604,7 +602,7 @@ export function registerDataSharingHandlers(app: AppContext): void {
         periods: result.periods,
         ...(selection === undefined ? {} : { selection }),
       };
-      saveSharedSource(ctx.configPath, updated);
+      await saveSharedSource(ctx.configPath, updated);
       return { status: 'ok', source: toInfo(updated), filesDownloaded: result.filesDownloaded };
     } catch (err: unknown) {
       return { status: 'error', message: errorMessage(err) };

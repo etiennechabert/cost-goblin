@@ -132,6 +132,13 @@ describe('applyMcpEnabled', () => {
     expect(r.calls).toStrictEqual(['persist:false', 'stop']);
   });
 
+  it('disable: a failed persist(false) still stops the server, then rethrows', async () => {
+    const persistError = new Error('EIO: preferences unreadable');
+    const r = recorder({ running: true, persistError: (enabled) => (enabled ? undefined : persistError) });
+    await expect(applyMcpEnabled(false, r.deps)).rejects.toBe(persistError);
+    expect(r.calls).toStrictEqual(['persist:false', 'stop']);
+  });
+
   it('disable: does not stop a server that is already stopped', async () => {
     const r = recorder({ running: false });
     await applyMcpEnabled(false, r.deps);

@@ -6,6 +6,7 @@ import type { CostScopeConfig } from '../types/cost-scope.js';
 import { validateConfig, validateDimensions, validateOrgTree } from './validator.js';
 import { validateViews } from './views-validator.js';
 import { validateCostScope } from './cost-scope-validator.js';
+import { retryTransientFs } from '../utils/atomic-file.js';
 
 export async function loadConfig(path: string): Promise<CostGoblinConfig> {
   const content = await readFile(path, 'utf-8');
@@ -31,7 +32,10 @@ export async function loadOrgTree(path: string): Promise<OrgTreeConfig> {
 }
 
 export async function loadViews(path: string, liveDimensionIds?: ReadonlySet<string>): Promise<ViewsConfig> {
-  const content = await readFile(path, 'utf-8');
+  // A transient lock (AV, indexer) is retried: its caller seeds only a missing
+  // file and surfaces anything else, so an un-retried EBUSY would hide the
+  // user's dashboards for the session.
+  const content = await retryTransientFs(() => readFile(path, 'utf-8'));
   const raw: unknown = parse(content);
   return validateViews(raw, liveDimensionIds);
 }
