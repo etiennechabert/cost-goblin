@@ -1,8 +1,8 @@
-import { render, screen, waitFor, cleanup } from '@testing-library/react';
+import { render, screen, waitFor, within, cleanup } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
-import { MOCK_MULTI_PROVIDER_CONFIG, MockCostApi } from '../__fixtures__/mock-api.js';
+import { MOCK_GCP_PROVIDER, MOCK_MIXED_PROVIDER_CONFIG, MOCK_MULTI_PROVIDER_CONFIG, MockCostApi } from '../__fixtures__/mock-api.js';
 import { DataManagement } from '../views/data-management.js';
 
 function renderDataManagement(api?: MockCostApi) {
@@ -259,5 +259,55 @@ describe('DataManagement', () => {
     await waitFor(() => {
       expect(screen.getByLabelText('Set up from AWS')).toBeDefined();
     });
+  });
+});
+
+describe('DataManagement — GCP "Signed in as" panel', () => {
+  it('shows one panel per GCP provider, asked for by that provider s name', async () => {
+    const api = new MockCostApi();
+    vi.spyOn(api, 'getConfig').mockResolvedValue(MOCK_MIXED_PROVIDER_CONFIG);
+    renderDataManagement(api);
+    const section = await screen.findByRole('region', { name: 'Provider gcp-main' });
+    await waitFor(() => { expect(within(section).getByRole('region', { name: 'Signed in as' })).toBeDefined(); });
+    // AWS has one credential path, already named by its profile.
+    const aws = screen.getByRole('region', { name: 'Provider aws-main' });
+    expect(within(aws).queryByRole('region', { name: 'Signed in as' })).toBeNull();
+    await waitFor(() => { expect(api.gcpIdentitiesRequestedFor).toContain('gcp-main'); });
+    expect(api.gcpIdentitiesRequestedFor).not.toContain('aws-main');
+  });
+
+  it('surfaces the provider s warnings', async () => {
+    const api = new MockCostApi();
+    vi.spyOn(api, 'getConfig').mockResolvedValue(MOCK_MIXED_PROVIDER_CONFIG);
+    const sa = 'costgoblin-reader@acme-billing.iam.gserviceaccount.com';
+    const other = 'company-reader@corp.iam.gserviceaccount.com';
+    api.gcpIdentitiesResult = {
+      status: 'ok',
+      identities: {
+        listing: { kind: 'impersonated', credentialsPath: '/adc.json', target: other, source: { kind: 'user', account: { status: 'known', email: 'alice@acme.com' } } },
+        download: { kind: 'gcloud', account: 'admin@acme.com', configuration: 'default', impersonate: sa },
+        warnings: [
+          { kind: 'adc-target-mismatch', adcTarget: other, providerTarget: sa },
+          { kind: 'split-accounts', listingAccount: 'alice@acme.com', downloadAccount: 'admin@acme.com' },
+        ],
+        notes: [],
+      },
+    };
+    renderDataManagement(api);
+    const warnings = await screen.findByRole('list', { name: 'Credential warnings' });
+    expect(warnings.textContent).toContain(`Bucket listing uses ${other}, but this provider downloads as ${sa}`);
+    expect(warnings.textContent).toContain('Downloads run as admin@acme.com, but bucket listing runs as alice@acme.com');
+  });
+
+  it('re-reads the identities when the inventory is retried', async () => {
+    const api = new MockCostApi();
+    vi.spyOn(api, 'getConfig').mockResolvedValue({ ...MOCK_MIXED_PROVIDER_CONFIG, providers: [MOCK_GCP_PROVIDER] });
+    vi.spyOn(api, 'getDataInventory').mockRejectedValue(new Error('Cloud Storage request failed: 503'));
+    const { user } = renderDataManagement(api);
+    await waitFor(() => { expect(screen.getByText('Retry')).toBeDefined(); });
+    await waitFor(() => { expect(api.gcpIdentitiesRequestedFor.length).toBeGreaterThan(0); });
+    const before = api.gcpIdentitiesRequestedFor.length;
+    await user.click(screen.getByText('Retry'));
+    await waitFor(() => { expect(api.gcpIdentitiesRequestedFor.length).toBe(before + 1); });
   });
 });

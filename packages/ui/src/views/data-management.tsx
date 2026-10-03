@@ -10,6 +10,7 @@ import { OrgAccountsSection } from './data-management-org.js';
 import { SsmParameterSection } from './data-management-ssm.js';
 import { TierPanel, type SyncState } from './data-management-tier.js';
 import { SyncLogPanel } from './data-management-logs.js';
+import { GcpIdentityPanel } from '../components/gcp-identity-panel.js';
 import { GcloudLoginButton, RetryButton, SsoLoginButton } from '../components/sso-login-button.js';
 import { SchedulerControls } from '../components/scheduler-controls.js';
 
@@ -459,10 +460,16 @@ function ProviderSection({ provider, soleProvider, refreshSignal, onCounts, onCo
   // credentials fail every query, but only daily's error is rendered, so
   // refreshing daily alone healed the panel while the hourly and cost-opt
   // tiers stayed stuck and drew themselves as "0 periods".
+  //
+  // It also re-reads the "Signed in as" panel, which is deliberately NOT on
+  // the 5s poll: each read runs gcloud twice and may call Google, and a Retry
+  // or sign-in is exactly when the identities are likely to have changed.
+  const [identityRefreshKey, setIdentityRefreshKey] = useState(0);
   const retryInventory = (): void => {
     setDailyRefreshKey(k => k + 1);
     setHourlyRefreshKey(k => k + 1);
     setCostOptRefreshKey(k => k + 1);
+    setIdentityRefreshKey(k => k + 1);
   };
 
   // Which sign-in, if any, this error has a one-click remedy for. Hoisted out
@@ -701,6 +708,13 @@ function ProviderSection({ provider, soleProvider, refreshSignal, onCounts, onCo
           )}
         </div>
       </div>
+
+      {/* Which Google identities this provider's listing and downloads run
+          as — and whether they disagree. GCP-only: an AWS provider has one
+          credential path, named by its profile in the header. */}
+      {provider.type === 'gcp' && (
+        <GcpIdentityPanel context="provider" providerName={name} refreshKey={identityRefreshKey + refreshSignal} />
+      )}
 
       {/* Account mapping — per provider: each payer account syncs its own AWS
           Organization; the lookups are merged across providers, so a change

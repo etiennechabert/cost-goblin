@@ -446,6 +446,50 @@ A `keyFile: /path/to/key.json` is also accepted for environments that require a
 service-account key, but impersonation is the better default — there is no
 secret to leak or rotate.
 
+#### Checking which identities are in play
+
+Because the two halves read two different credential stores, CostGoblin shows
+both in a **Signed in as** panel — on the Google Cloud steps of the setup
+wizard, and on each GCP provider under **Data Management**:
+
+- **Bucket listing** — the Application Default Credentials the Cloud Storage
+  SDK reads: the account you signed in with, and the service account it
+  impersonates, if any. The file it was read from is shown too
+  (`GOOGLE_APPLICATION_CREDENTIALS` when set, otherwise gcloud's
+  `application_default_credentials.json`).
+- **Downloads** (and, in the wizard, the project list) — gcloud's active
+  account and configuration, plus the provider's `impersonateServiceAccount`.
+
+The panel is read-only — it reads the ADC file and runs
+`gcloud config get-value account` and `gcloud config configurations list`,
+and makes one call to Google to name the account behind ADC. No token is
+displayed or stored. It warns, in plain words, when:
+
+- ADC impersonates a **different service account** than the provider's
+  `impersonateServiceAccount` — usually because ADC is machine-wide and was
+  last set up for another provider. Re-running the login fixes this provider
+  and switches the other one, so a workspace with two GCP providers that use
+  different readers needs a `keyFile` on one of them.
+- the provider sets `impersonateServiceAccount` but **ADC does not
+  impersonate** anything, so listing runs as you directly;
+- gcloud's **active account is not the account behind ADC**, so downloads and
+  listing run as two different people. The common cause is switching gcloud to
+  an admin account to make the wizard's project list work: downloads then run
+  as that admin too, and fail if it lacks Token Creator on the reader. Switch
+  back with `gcloud config set account <you>` before syncing.
+
+One limit: an **impersonated** ADC file does not record which account signed
+it in. `gcloud auth application-default login --impersonate-service-account`
+mints its source credential with the `cloud-platform` scope only and writes
+`"account": ""`, so Google will not name it either. The panel then shows the
+listing as "your Google account" and, instead of the last warning above, a
+note naming gcloud's active account: that account should be the one you
+signed in with, and it needs Token Creator on the reader too. A plain
+(non-impersonated) `application-default login` carries the email scope, so
+the check runs automatically there.
+
+Press **Re-check** after changing either sign-in.
+
 ### What GCP does not fill in
 
 Two dimensions are empty for GCP rows, because the FOCUS export has no such

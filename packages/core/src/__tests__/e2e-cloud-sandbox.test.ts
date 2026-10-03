@@ -9,6 +9,7 @@ import {
   cloudSandboxViolations,
   isCloudEnvVar,
 } from '../e2e-harness/cloud-sandbox.js';
+import { adcCredentialsLocation } from '../sync/gcp-identity.js';
 
 const SANDBOX = join('/tmp', 'costgoblin-e2e-run-abc123', 'cloud-sandbox');
 const HOME = join('/Users', 'dev');
@@ -123,6 +124,18 @@ describe('cloudSandboxEnv', () => {
     // app's keyFile override (CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE).
     expect(env['CLOUDSDK_AUTH_ACCESS_TOKEN_FILE']).toBe(join(SANDBOX, 'gcloud', 'access_token'));
     expect(env['CLOUDSDK_AUTH_DISABLE_CREDENTIALS']).toBe('false');
+  });
+
+  it('points the "Signed in as" panel at the sandbox ADC file, never the developer s', () => {
+    // The panel resolves ADC the way google-auth-library does; if that ever
+    // stopped honouring the pinned variable it would read — and call Google
+    // with — the refresh token under the developer's $HOME.
+    const platforms: readonly NodeJS.Platform[] = ['darwin', 'linux', 'win32'];
+    for (const platform of platforms) {
+      const location = adcCredentialsLocation(env, platform);
+      expect(location, platform).toEqual({ path: env['GOOGLE_APPLICATION_CREDENTIALS'], origin: 'env' });
+      expect(isInside(SANDBOX, location?.path ?? ''), platform).toBe(true);
+    }
   });
 
   it('produces an env with no violations', () => {

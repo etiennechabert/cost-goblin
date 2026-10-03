@@ -6,6 +6,7 @@ import { Card, CardContent } from '../components/ui/card.js';
 import { Button } from '../components/ui/button.js';
 import { BundleSummaryCard, ImportConfigDialog } from '../components/config-sharing.js';
 import { ProfilePicker } from '../components/profile-picker.js';
+import { GcpIdentityPanel } from '../components/gcp-identity-panel.js';
 import { GcloudLoginButton, RetryButton, SsoLoginButton } from '../components/sso-login-button.js';
 
 type DataSource = 'daily' | 'hourly' | 'costOptimization';
@@ -34,6 +35,12 @@ type WizardStep =
   | { step: 'browse'; profile: string; source: DataSource; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[]; path: string[]; error: string }
   | { step: 'confirm'; cloud: 'aws'; profile: string; s3Path: string; hourlyPath: string; costOptPath: string; retentionDays: number }
   | { step: 'confirm'; cloud: 'gcp'; project: string; s3Path: string; hourlyPath: string; costOptPath: string; retentionDays: number };
+
+/** The steps that touch Google credentials, where the "Signed in as" panel
+ *  shows. */
+function isGcpStep(wizard: WizardStep): boolean {
+  return wizard.step === 'gcp' || wizard.step === 'gcp-project' || wizard.step === 'gcp-bucket' || wizard.step === 'gcp-browse';
+}
 
 interface SetupWizardProps {
   /** Called when setup finishes. Carries the workspace name the user chose on
@@ -1508,6 +1515,8 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   // one-way `setProviderName('gcp-main')` survived backing out of the GCP
   // chain and named an AWS provider "gcp-main".
   const [providerNameEdited, setProviderNameEdited] = useState(false);
+  // Re-reads the "Signed in as" panel when a GCP step's Retry runs.
+  const [gcpIdentityRefresh, setGcpIdentityRefresh] = useState(0);
   useEffect(() => {
     api.getConfig().then(config => {
       const names = config.providers.map(p => String(p.name));
@@ -1964,7 +1973,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
               onSelect={(projectId) => { startGcpBucketStep(projectId, 'daily'); }}
               onManual={() => { setWizard({ step: 'gcp', scaffolded: false, error: '' }); }}
               onBack={handleBack}
-              onRetry={reloadGcpProjects}
+              onRetry={() => { setGcpIdentityRefresh(n => n + 1); reloadGcpProjects(); }}
             />
           )}
           {wizard.step === 'gcp-bucket' && (
@@ -1973,7 +1982,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
               onSelect={(bucket) => { gcpBrowseTo(wizard.project, wizard.source, bucket, ''); }}
               onSkip={wizard.source === 'daily' ? undefined : handleGcpSkip}
               onBack={handleBack}
-              onRetry={() => { startGcpBucketStep(wizard.project, wizard.source); }}
+              onRetry={() => { setGcpIdentityRefresh(n => n + 1); startGcpBucketStep(wizard.project, wizard.source); }}
             />
           )}
           {wizard.step === 'gcp-browse' && (
@@ -2033,6 +2042,19 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
               onComplete={finish}
               onBack={handleBack}
             />
+          )}
+          {/* One panel for the whole GCP chain, in a fixed slot so it survives
+              step changes instead of re-running gcloud on every click. The
+              steps' Retry buttons bump it: the usual reason to retry is a
+              sign-in that just changed who these identities are. */}
+          {isGcpStep(wizard) && (
+            <div className="mt-5">
+              <GcpIdentityPanel
+                context="wizard"
+                providerName={providerNameFixed && existingProviders.includes(providerName) ? providerName : undefined}
+                refreshKey={gcpIdentityRefresh}
+              />
+            </div>
           )}
         </CardContent>
       </Card>

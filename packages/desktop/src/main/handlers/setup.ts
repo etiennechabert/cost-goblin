@@ -10,12 +10,13 @@ import {
   parseS3Path,
   isStringRecord,
 } from '@costgoblin/core';
-import type { GcpProject, GcsBrowseResult } from '@costgoblin/core';
+import type { GcpIdentityResult, GcpProject, GcsBrowseResult } from '@costgoblin/core';
 import { loadSharedConfigFiles } from '@smithy/shared-ini-file-loader';
 import { awsProfileNames } from '../aws-profiles.js';
 import { upsertWizardProvider } from '../config-upsert.js';
 import { buildConfigTemplate, buildDimensionsTemplate, PROVIDER_ABSENT_DIMENSIONS } from '../config-templates.js';
 import { classifyManifestColumns, parseManifestColumnNames, selectManifestKey } from '../setup-manifest.js';
+import { defaultIdentityDeps, resolveGcpIdentities } from '../gcp-identity.js';
 import { collectGcsPrefixes, gcsNextPageToken, parseGcloudProjects } from '../setup-gcp.js';
 import type { DetectedReportType } from '../setup-manifest.js';
 import type { AppContext } from './context.js';
@@ -273,6 +274,30 @@ export function registerSetupHandlers(app: AppContext): void {
         finish({ projects: [], error: message });
       });
     });
+  });
+
+  // Read-only: who the listing SDK (ADC) and the gcloud CLI run as, for the
+  // "Signed in as" panel. Lives with the wizard's GCP handlers because the
+  // wizard is its first caller; Data Management passes a provider name so
+  // that provider's `impersonateServiceAccount` / `keyFile` apply.
+  ipcMain.handle('data:gcp-identities', async (_event, rawProvider: unknown): Promise<GcpIdentityResult> => {
+    let options: { keyFile?: string | undefined; impersonateServiceAccount?: string | undefined } = {};
+    if (typeof rawProvider === 'string') {
+      // The wizard runs before a config exists, so a load failure is only an
+      // error when a provider was actually named.
+      const config = await app.getConfig().catch(() => null);
+      const provider = config?.providers.find(p => String(p.name) === rawProvider);
+      if (provider === undefined) return { status: 'unavailable', reason: `No provider named "${rawProvider}" is configured.` };
+      if (provider.type !== 'gcp') return { status: 'unavailable', reason: `"${rawProvider}" is not a Google Cloud provider.` };
+      options = { keyFile: provider.keyFile, impersonateServiceAccount: provider.impersonateServiceAccount };
+    }
+    try {
+      return { status: 'ok', identities: await resolveGcpIdentities(options, await defaultIdentityDeps()) };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.info('data:gcp-identities failed', { error: message });
+      return { status: 'unavailable', reason: message };
+    }
   });
 
   ipcMain.handle('setup:list-gcs-buckets', async (_event, projectId: string): Promise<{ buckets: readonly { name: string }[]; error?: string | undefined }> => {
