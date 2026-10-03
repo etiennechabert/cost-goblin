@@ -105,13 +105,15 @@ function runAwsS3Sync(options: {
       return;
     }
 
-    // Parquet only. Filters apply in order and the later one wins, so this
-    // excludes everything and then re-includes `*.parquet`: a stray object in
-    // the partition folder (a manifest, a CSV, someone else's dump) is never
-    // copied onto the laptop. No shell is involved, so `*` needs no quoting.
+    // Parquet sitting directly in the partition folder, and nothing else.
+    // Filters apply in order and the later one wins: exclude everything,
+    // re-include `*.parquet`, then exclude `*/*` again — aws-cli matches with
+    // fnmatch, whose `*` spans `/`, so without it a `.parquet` in a subfolder
+    // (someone else's dump) would still be copied, and pruneStaleFiles only
+    // reads the top level. No shell is involved, so `*` needs no quoting.
     const args = [
       's3', 'sync', options.source, options.dest,
-      '--exclude', '*', '--include', '*.parquet',
+      '--exclude', '*', '--include', '*.parquet', '--exclude', '*/*',
       '--profile', options.profile,
     ];
     const proc = spawn(awsBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });

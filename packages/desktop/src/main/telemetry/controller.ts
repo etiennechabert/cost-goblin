@@ -17,6 +17,7 @@ import type { TelemetryPreferences, TelemetryStatus } from '@costgoblin/core';
 import { redactEventInPlace } from './scrub-event.js';
 import { readDevTagsSync } from './dev-tags.js';
 import { TelemetryOutbox } from './outbox.js';
+import { selectSentryIntegrations } from './sentry-integrations.js';
 
 /** DSN for the Sentry project. Without it, no channel can actually send — the
  *  app stays dark even if the user opts in. Kept in env (not hard-coded) so the
@@ -156,11 +157,11 @@ class TelemetryController {
         // shared constant keeps this filter in lockstep with the emit site.
         ignoreErrors: [new RegExp(`^${QUERY_CANCELLED_MESSAGE}$`)],
         // Native crash capture (Crashpad minidumps = raw, unscrubbed memory) is a
-        // separate opt-in: keep every default integration only when the native
-        // channel is on; otherwise drop SentryMinidump — the first default, which
-        // arms the native crash handler. Scrubbed JS error capture flows either way.
-        integrations: (defaults) =>
-          this.prefs.nativeCrashReports ? defaults : defaults.filter((i) => i.name !== 'SentryMinidump'),
+        // separate opt-in: SentryMinidump — the default that arms the native
+        // crash handler — runs only when the native channel is on. Scrubbed JS
+        // error capture flows either way. PreloadInjection never runs: it would
+        // put the SDK's preload in every frame, outside the bridge gate.
+        integrations: (defaults) => selectSentryIntegrations(defaults, this.prefs.nativeCrashReports),
         // Tracing only when the performance channel is on. Dev (unpackaged, with
         // a DSN set) samples everything; packaged releases sample at the prod rate.
         tracesSampleRate: this.prefs.performance ? this.tracesSampleRate() : 0,
@@ -169,6 +170,11 @@ class TelemetryController {
         sendDefaultPii: false,
         beforeSend: (event) => this.scrubAndRecord(event),
         beforeSendTransaction: (event) => this.scrubAndRecord(event),
+        // IPC only. The SDK's default (Both) also registers a privileged
+        // `sentry-ipc://` protocol whose handler accepts a POST from any
+        // document, bypassing the preload's bridge gate; the app's renderer
+        // reaches main through the preload's IPC bridge.
+        ipcMode: Sentry.IPCMode.Classic,
       });
       this.active = true;
       this.initSnapshot = this.prefs;

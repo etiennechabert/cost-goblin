@@ -3,17 +3,23 @@ import { parentPort, workerData } from 'node:worker_threads';
 // modules' graph into the worker — never the node-only sync/aws code that
 // the full `@costgoblin/core` barrel would pull in (it isn't externalized here).
 import { QUERY_CANCELLED_MESSAGE, buildDuckDbSandboxStatements, isDuckDbSandboxOptions } from '@costgoblin/core/browser';
-import type { DuckDBConnection, DuckDBInstance } from './duckdb-loader.js';
+import type { DuckDBConnection, DuckDBInstance, DuckDBPreparedStatement } from './duckdb-loader.js';
 import { createResourcePool } from './connection-pool.js';
 import type { ResourcePool } from './connection-pool.js';
 import { computeDefaultMemoryGB, computeDefaultThreads, computeQueryPoolSize } from './duckdb-tuning.js';
 
 interface DuckDBModule {
   DuckDBInstance: { create: () => Promise<DuckDBInstance> };
+  StatementType: { readonly SELECT: number };
 }
+
+/** The `statementType` a prepared SELECT (WITH … SELECT included) reports.
+ *  Set when the module loads; only the sandboxed mode reads it. */
+let selectStatementType: number | null = null;
 
 async function createDuckDB(): Promise<DuckDBInstance> {
   const duckdb = (await import('@duckdb/node-api')) as unknown as DuckDBModule;
+  selectStatementType = duckdb.StatementType.SELECT;
   return duckdb.DuckDBInstance.create();
 }
 
@@ -113,11 +119,45 @@ const queuedIds = new Set<number>();  // waiting for pool.acquire()
 const runningIds = new Set<number>(); // executing in DuckDB
 const runningConns = new Map<number, DuckDBConnection>(); // id → connection for interrupt()
 
+/** The sandboxed instance runs SQL an MCP client controls, and `conn.run`
+ *  executes EVERY statement in its string (duckdb_query): a stacked COPY could
+ *  write inside allowed_directories — the workspace's own billing Parquet and
+ *  org-account-tags.json — a stacked CREATE MACRO could redefine a built-in for
+ *  every later query, and a stacked query hands back its first, un-LIMITed
+ *  result. So sandboxed requests are always prepared (DuckDB refuses to prepare
+ *  more than one statement) and only a SELECT may run: an allow-list checked by
+ *  DuckDB's own parser, not by run_sql's regex guard. */
+const SANDBOX_SELECT_ONLY_MESSAGE = 'Only a single SELECT statement can run on this DuckDB instance.';
+/** DuckDB expands a PIVOT whose values are not listed into two statements (a
+ *  CREATE TYPE for the value enum, then the SELECT), so it lands here too. */
+const SANDBOX_MULTI_STATEMENT_MESSAGE =
+  `${SANDBOX_SELECT_ONLY_MESSAGE} A PIVOT has to list its values to run as one: PIVOT ... ON col IN ('a', 'b') USING ...`;
+
+function assertSandboxedSelect(stmt: DuckDBPreparedStatement): void {
+  if (selectStatementType === null || stmt.statementType !== selectStatementType) {
+    throw new Error(SANDBOX_SELECT_ONLY_MESSAGE);
+  }
+}
+
+/** Prepare `sql`; on the sandboxed instance, DuckDB's refusal to prepare more
+ *  than one statement becomes the sandbox's own message. */
+async function prepareStatement(conn: DuckDBConnection, sql: string): Promise<DuckDBPreparedStatement> {
+  try {
+    return await conn.prepare(sql);
+  } catch (err: unknown) {
+    if (mode.kind === 'sandboxed' && err instanceof Error && err.message.includes('Cannot prepare multiple statements')) {
+      throw new Error(SANDBOX_MULTI_STATEMENT_MESSAGE);
+    }
+    throw err;
+  }
+}
+
 async function fetchAllRows(
   conn: DuckDBConnection,
   sql: string,
   isCancelled: () => boolean,
 ): Promise<Readonly<Record<string, unknown>>[]> {
+  if (mode.kind === 'sandboxed') return fetchAllRowsPrepared(conn, sql, [], isCancelled);
   const result = await conn.run(sql);
   const cols = result.columnCount;
   const names: string[] = [];
@@ -170,8 +210,9 @@ async function fetchAllRowsPrepared(
   params: unknown[],
   isCancelled: () => boolean,
 ): Promise<Readonly<Record<string, unknown>>[]> {
-  const stmt = await conn.prepare(sql);
+  const stmt = await prepareStatement(conn, sql);
   try {
+    if (mode.kind === 'sandboxed') assertSandboxedSelect(stmt);
     bindParams(stmt, params);
     const result = await stmt.run();
     const cols = result.columnCount;

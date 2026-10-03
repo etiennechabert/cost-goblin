@@ -337,6 +337,7 @@ describe('DuckDB Worker (sandboxed)', () => {
       allowedDirectories: [dataDir, `${root}/tmp`],
       allowedPaths: [],
       tempDirectory: `${root}/tmp`,
+      maxTempDirectorySizeGB: 1,
       memoryLimitGB: 1,
       threads: 2,
     };
@@ -404,10 +405,72 @@ describe('DuckDB Worker (sandboxed)', () => {
       expectDenied(await query(`SELECT content FROM read_text('${outsideDir}/creds.txt')`));
     });
 
-    it('stays locked against a SET smuggled into a query', async () => {
-      const result = await query('SET enable_external_access = true');
+    function preparedQuery(sql: string, params: unknown[]): Promise<ResultMsg> {
+      const id = nextId++;
+      return new Promise<ResultMsg>((resolve) => {
+        const handler = (msg: unknown): void => {
+          if (isResultMsg(msg) && msg.id === id) {
+            worker.off('message', handler);
+            resolve(msg);
+          }
+        };
+        worker.on('message', handler);
+        worker.postMessage({ kind: 'prepared-query', id, sql, params });
+      });
+    }
+
+    function expectRefused(result: ResultMsg, message: RegExp): void {
       expect(result.kind).toBe('error');
-      if (result.kind === 'error') expect(result.message).toMatch(/locked/);
+      if (result.kind === 'error') expect(result.message).toMatch(message);
+    }
+
+    const SELECT_ONLY = /^Only a single SELECT statement can run on this DuckDB instance\.$/;
+    const MULTI = /^Only a single SELECT statement can run on this DuckDB instance\. A PIVOT has to list its values/;
+
+    it('refuses a SET smuggled into a query, and the configuration stays locked', async () => {
+      expectRefused(await query('SET enable_external_access = true'), SELECT_ONLY);
+      expectDenied(await query(`SELECT content FROM read_text('${outsideDir}/creds.txt')`));
+      // The SELECT gate answers first now, so observe the lock directly.
+      const { rows } = expectRows(await query(`SELECT current_setting('lock_configuration') AS locked`));
+      expect(rows[0]).toHaveProperty('locked', true);
+    });
+
+    // allowed_directories grants WRITE as well as read, so the data dir itself
+    // is only protected by refusing every statement that is not one SELECT.
+    it('refuses a COPY into the granted data dir, alone or stacked behind a SELECT', async () => {
+      const planted = `${dataDir}/aws/raw/daily-2026-01/planted.parquet`;
+      expectRefused(await query(`COPY (SELECT 1e9 AS EffectiveCost) TO '${planted}' (FORMAT PARQUET)`), SELECT_ONLY);
+      expectRefused(await query(`SELECT 1; COPY (SELECT 1e9 AS EffectiveCost) TO '${planted}' (FORMAT PARQUET); SELECT 2`), MULTI);
+      expectRefused(await query(`SELECT 1; COPY (SELECT 1e9 AS EffectiveCost) TO '${planted}' (FORMAT PARQUET)`, true), MULTI);
+      expectRefused(await preparedQuery(`COPY (SELECT $1 AS EffectiveCost) TO '${planted}' (FORMAT PARQUET)`, [1e9]), SELECT_ONLY);
+      expect(existsSync(planted)).toBe(false);
+    });
+
+    it('refuses a stacked CREATE MACRO, so no built-in is redefined for later queries', async () => {
+      expectRefused(await query('SELECT 1; CREATE OR REPLACE MACRO sum(x) AS 0'), MULTI);
+      expectRefused(await query('CREATE OR REPLACE MACRO sum(x) AS 0'), SELECT_ONLY);
+      const { rows } = expectRows(await query('SELECT sum(i)::INTEGER AS s FROM range(4) t(i)'));
+      expect(rows[0]).toHaveProperty('s', 6);
+    });
+
+    it('never returns the first, un-LIMITed result of a stacked query', async () => {
+      expectRefused(await query('SELECT * FROM range(1000); SELECT * FROM range(1) LIMIT 1'), MULTI);
+    });
+
+    it('still runs a single WITH … SELECT', async () => {
+      const { rows } = expectRows(await query('WITH x AS (SELECT 41 AS v) SELECT v + 1 AS v FROM x'));
+      expect(rows[0]).toHaveProperty('v', 42);
+    });
+
+    // A PIVOT without an IN list expands into CREATE TYPE + SELECT, so the
+    // refusal says how to write it as one statement — and that form runs.
+    it('refuses a PIVOT that does not list its values, and runs one that does', async () => {
+      const source = `(SELECT 's' AS svc, 'a' AS team, 1 AS c UNION ALL SELECT 's', 'b', 2)`;
+      expectRefused(await query(`SELECT * FROM (PIVOT ${source} ON team USING sum(c) GROUP BY svc)`), MULTI);
+      const { rows } = expectRows(await query(
+        `SELECT * FROM (PIVOT ${source} ON team IN ('a', 'b') USING sum(c)::INTEGER GROUP BY svc)`,
+      ));
+      expect(rows[0]).toEqual({ svc: 's', a: 1, b: 2 });
     });
   });
 
@@ -415,9 +478,9 @@ describe('DuckDB Worker (sandboxed)', () => {
     ['a string', 'sandbox'],
     ['a missing sandbox key', { notSandbox: true }],
     ['a non-object sandbox', { sandbox: 42 }],
-    ['a relative directory', { sandbox: { allowedDirectories: ['data'], allowedPaths: [], tempDirectory: '/tmp', memoryLimitGB: 1, threads: 1 } }],
-    ['an empty directory list', { sandbox: { allowedDirectories: [], allowedPaths: [], tempDirectory: '/tmp', memoryLimitGB: 1, threads: 1 } }],
-    ['zero threads', { sandbox: { allowedDirectories: ['/tmp'], allowedPaths: [], tempDirectory: '/tmp', memoryLimitGB: 1, threads: 0 } }],
+    ['a relative directory', { sandbox: { allowedDirectories: ['data'], allowedPaths: [], tempDirectory: '/tmp', maxTempDirectorySizeGB: 1, memoryLimitGB: 1, threads: 1 } }],
+    ['an empty directory list', { sandbox: { allowedDirectories: [], allowedPaths: [], tempDirectory: '/tmp', maxTempDirectorySizeGB: 1, memoryLimitGB: 1, threads: 1 } }],
+    ['zero threads', { sandbox: { allowedDirectories: ['/tmp'], allowedPaths: [], tempDirectory: '/tmp', maxTempDirectorySizeGB: 1, memoryLimitGB: 1, threads: 0 } }],
   ])('malformed workerData (%s) yields the init error instead of ready', async (_label, data) => {
     const { worker: w, first } = await spawnWithData(data);
     try {
@@ -442,6 +505,25 @@ describe('DuckDB Worker (sandboxed)', () => {
       await expect(client.runQuery(`SELECT content FROM read_text('${outsideDir}/creds.txt')`)).rejects.toThrow(/Permission Error/);
       await expect(client.runPreparedQuery('SELECT content FROM read_text($1)', [`${outsideDir}/creds.txt`])).rejects.toThrow(/Permission Error/);
     });
+
+    // worker.terminate() cannot stop a native DuckDB query: it blocks until the
+    // query returns, and the addon then throws into the torn-down worker and
+    // aborts the whole process. MCP disable, token rotation and quit all
+    // terminate this worker, possibly mid-query.
+    it('terminates mid-query without hanging or taking the process down', async () => {
+      const busy = await createDuckDBClient(workerPath, { sandbox });
+      const startedSignal = { resolve: (): void => undefined };
+      const hasStarted = new Promise<void>((resolve) => { startedSignal.resolve = resolve; });
+      const slow = busy.runQuery('SELECT sum(a.range * b.range) AS s FROM range(60000) a, range(60000) b', () => { startedSignal.resolve(); });
+      const outcome = slow.then(() => 'resolved', (err: unknown) => (err instanceof Error ? err.message : String(err)));
+      await hasStarted;
+      await new Promise((resolve) => { setTimeout(resolve, 200); });
+
+      const terminated = busy.terminate().then(() => 'terminated');
+      const timeout = new Promise((resolve) => { setTimeout(() => { resolve('hung'); }, 8000); });
+      expect(await Promise.race([terminated, timeout])).toBe('terminated');
+      expect(await outcome).toMatch(/cancel/i);
+    }, 20000);
 
     it('rejects (fail closed) when the sandbox cannot be applied', async () => {
       await expect(createDuckDBClient(workerPath, {

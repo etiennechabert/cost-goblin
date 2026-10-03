@@ -23,6 +23,8 @@ export const MCP_SANDBOX_REFUSAL = 'Query tried to read outside the CostGoblin w
  *  so it gets a small, fixed slice rather than the user's performance overrides. */
 const MCP_MAX_MEMORY_GB = 2;
 const MCP_MAX_THREADS = 4;
+/** Spill cap: without it DuckDB may fill 90% of the free disk. */
+const MCP_MAX_TEMP_DIRECTORY_GB = 10;
 
 export interface McpSandboxPaths {
   readonly dataDir: string;
@@ -50,6 +52,7 @@ export function prepareMcpSandbox(paths: McpSandboxPaths): DuckDbSandboxOptions 
     // the file is created is still readable once it is.
     allowedPaths: [join(realpathSync(paths.stateDir), 'org-account-tags.json')],
     tempDirectory,
+    maxTempDirectorySizeGB: MCP_MAX_TEMP_DIRECTORY_GB,
     memoryLimitGB: Math.max(1, Math.min(MCP_MAX_MEMORY_GB, computeDefaultMemoryGB())),
     threads: Math.max(1, Math.min(MCP_MAX_THREADS, computeDefaultThreads())),
   };
