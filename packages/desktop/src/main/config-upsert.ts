@@ -1,4 +1,5 @@
-import { DEFAULT_RETENTION_DAYS, isStringRecord, parseProviderName } from '@costgoblin/core';
+import type { CostApi } from '@costgoblin/core';
+import { DEFAULT_RETENTION_DAYS, SERVICE_ACCOUNT_EMAIL_HINT, isServiceAccountEmail, isStringRecord, parseProviderName, validateConfig } from '@costgoblin/core';
 
 /** Pure YAML-object transforms behind the two config-writing IPC handlers
  *  (`setup:write-config`, `config:update-aws-profile`). They operate on the
@@ -6,28 +7,11 @@ import { DEFAULT_RETENTION_DAYS, isStringRecord, parseProviderName } from '@cost
  *  upsert/targeting rules are unit-testable without touching the filesystem. */
 
 /** The subset of the setup wizard's payload that shapes the provider entry
- *  written to `costgoblin.yaml`. `type` defaults to `'aws'` so every
- *  pre-#517 call site keeps its meaning; `profile` (AWS) and `keyFile`
- *  (GCP) are each read only by their own arm. */
-export interface WizardProviderConfig {
-  readonly providerName: string;
-  readonly type?: 'aws' | 'gcp' | undefined;
-  readonly profile: string;
-  readonly keyFile?: string | undefined;
-  readonly dailyBucket: string;
-  /** Retention for the DAILY tier (the wizard's picker in daily mode). */
-  readonly retentionDays?: number | undefined;
-  /** Retention for the HOURLY tier (the wizard's picker in hourly-only mode).
-   *  Previously the hourly tier was hardcoded to 30 days regardless of what the
-   *  picker showed, so a user's choice was silently discarded and any
-   *  hand-configured hourly retention was reset on every re-run. */
-  readonly hourlyRetentionDays?: number | undefined;
-  /** Retention for the COST-OPTIMIZATION tier (the wizard's picker in a
-   *  cost-opt-only run). Same fix as hourly — it was hardcoded before. */
-  readonly costOptRetentionDays?: number | undefined;
-  readonly hourlyBucket?: string | undefined;
-  readonly costOptBucket?: string | undefined;
-}
+ *  written to `costgoblin.yaml` — derived from `CostApi['writeConfig']` so the
+ *  copies cannot drift (field docs live there). `type` defaults to `'aws'` so
+ *  every pre-#517 call site keeps its meaning; `profile` (AWS) and `keyFile` /
+ *  `impersonateServiceAccount` (GCP) are each read only by their own arm. */
+export type WizardProviderConfig = Readonly<Omit<Parameters<CostApi['writeConfig']>[0], 'tags'>>;
 
 function providerEntryName(entry: unknown): string | undefined {
   if (!isStringRecord(entry)) return undefined;
@@ -42,6 +26,22 @@ function existingTierRetention(existingSync: Readonly<Record<string, unknown>>, 
   const t: unknown = existingSync[tier];
   if (isStringRecord(t) && typeof t['retentionDays'] === 'number') return t['retentionDays'];
   return undefined;
+}
+
+/** The config the wizard upserts into: `{}` when there is no file (`raw`
+ *  undefined) or it holds no mapping. A file that does not parse throws
+ *  instead of reading as empty — the upsert would otherwise rewrite it with
+ *  just the wizard's provider, silently dropping every other entry. `parse`
+ *  is injected so this stays free of the YAML import (and of I/O). */
+export function parseExistingConfig(raw: string | undefined, parse: (text: string) => unknown): Readonly<Record<string, unknown>> {
+  if (raw === undefined) return {};
+  let parsed: unknown;
+  try {
+    parsed = parse(raw);
+  } catch (err) {
+    throw new Error(`costgoblin.yaml could not be parsed, so setup won't overwrite it: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
+  }
+  return isStringRecord(parsed) ? parsed : {};
 }
 
 /** Upsert the wizard's provider into the parsed config by exact name match:
@@ -111,28 +111,11 @@ export function upsertWizardProvider(
     sync['costOptimization'] = { bucket: wizard.costOptBucket, retentionDays };
   }
 
-  // A string field carried over from the entry being replaced (empty when the
-  // old entry has none): the wizard payload has no field for these, so building
-  // the entry from the payload alone would silently delete a hand-written one.
-  const carriedString = (key: string): Record<string, unknown> =>
-    isStringRecord(target) && typeof target[key] === 'string' ? { [key]: target[key] } : {};
-
   const entry: Record<string, unknown> = type === 'gcp'
     ? {
         name: wizard.providerName,
         type: 'gcp',
-        // Omitted rather than null when blank: absent means Application
-        // Default Credentials, which is the documented default.
-        // Carried from the entry being replaced when the payload has none,
-        // exactly like `impersonateServiceAccount` below. The wizard never
-        // sends a keyFile, so without this a re-run silently deleted a
-        // hand-written one and the sync fell back to ADC — 403ing on a bucket
-        // granted only to the service account.
-        ...(wizard.keyFile !== undefined && wizard.keyFile.length > 0 ? { keyFile: wizard.keyFile } : carriedString('keyFile')),
-        // Carried unconditionally: without this the download half ran as the
-        // signed-in user and 403'd on a bucket granted only to the service
-        // account.
-        ...carriedString('impersonateServiceAccount'),
+        ...gcpCredential(wizard, target),
         sync,
       }
     : {
@@ -146,12 +129,58 @@ export function upsertWizardProvider(
     ? [...providersRaw, entry]
     : providersRaw.map((p, i) => (i === targetIndex ? entry : p));
 
-  return {
+  const result = {
     ...existing,
     providers,
     defaults: typeof existing['defaults'] === 'object' && existing['defaults'] !== null
       ? existing['defaults']
       : { periodDays: 30, costMetric: 'effective', lagDays: 2 },
+  };
+  // The loader is `parse` + `validateConfig`, so running it here is exactly
+  // "will the app open this file". Checking field by field missed rules that
+  // span fields (keyFile vs impersonation, tier overlap, case-insensitive
+  // duplicate names) and saved a config the app then refused to load.
+  try {
+    validateConfig(result);
+  } catch (err) {
+    throw new Error(`Setup would write a costgoblin.yaml the app can't load: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
+  }
+  return result;
+}
+
+/** The GCP arm's credential fields. Each is carried from the entry being
+ *  replaced unless the wizard says otherwise — the wizard never sends a
+ *  `keyFile`, so rebuilding the entry from the payload alone silently deleted
+ *  a hand-written one and the sync fell back to ADC, 403ing on a bucket
+ *  granted only to the service account. `keyFile` and
+ *  `impersonateServiceAccount` are exclusive (the loader refuses both), so a
+ *  wizard-supplied one replaces the other instead of landing beside it.
+ *  `impersonateServiceAccount: ''` removes it: blank in the wizard means
+ *  "use my own sign-in", not "keep whatever was there". Absent leaves it. */
+function gcpCredential(wizard: WizardProviderConfig, target: unknown): Record<string, unknown> {
+  const carried = (key: string): string | undefined =>
+    isStringRecord(target) && typeof target[key] === 'string' ? target[key] : undefined;
+  const keyFile = wizard.keyFile !== undefined && wizard.keyFile.length > 0 ? wizard.keyFile : undefined;
+  const impersonate: unknown = wizard.impersonateServiceAccount;
+  const clearImpersonate = impersonate === '';
+  // Checked before validateConfig so the message names the field the user
+  // typed into rather than a `providers[i]` path. `unknown` because this is
+  // an IPC payload: a non-string must not slip past as "set".
+  let setImpersonate: string | undefined;
+  if (impersonate !== undefined && !clearImpersonate) {
+    if (!isServiceAccountEmail(impersonate)) {
+      throw new Error(`The impersonated account must be ${SERVICE_ACCOUNT_EMAIL_HINT}.`);
+    }
+    setImpersonate = impersonate;
+  }
+  const nextImpersonate = setImpersonate
+    ?? (clearImpersonate || keyFile !== undefined ? undefined : carried('impersonateServiceAccount'));
+  const nextKeyFile = keyFile ?? (setImpersonate === undefined ? carried('keyFile') : undefined);
+  return {
+    // Omitted rather than null when absent: no credential field means
+    // Application Default Credentials, the documented default.
+    ...(nextKeyFile === undefined ? {} : { keyFile: nextKeyFile }),
+    ...(nextImpersonate === undefined ? {} : { impersonateServiceAccount: nextImpersonate }),
   };
 }
 

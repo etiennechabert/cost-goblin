@@ -410,14 +410,17 @@ export interface CostApi {
     profile: string;
     keyFile?: string | undefined;
     dailyBucket: string;
-    /** Daily-tier retention (the wizard's picker in daily mode). */
+    /** Per-tier retention, each from that tier's own picker on the Confirm
+     *  step. Omitted keeps the replaced entry's value, else the core default. */
     retentionDays?: number | undefined;
-    /** Hourly-tier retention (the wizard's picker in hourly-only mode). */
     hourlyRetentionDays?: number | undefined;
-    /** Cost-optimization-tier retention (the wizard's picker in a cost-opt-only run). */
     costOptRetentionDays?: number | undefined;
     hourlyBucket?: string | undefined;
     costOptBucket?: string | undefined;
+    /** GCP only: the read-only service account the provider impersonates.
+     *  Omitted keeps whatever the existing entry has; `''` removes it; an
+     *  address sets it and replaces any `keyFile` (the two are exclusive). */
+    impersonateServiceAccount?: string | undefined;
     tags?: { tagName: string; label: string; concept?: string | undefined }[] | undefined;
   }): Promise<void>;
   /** Swap the AWS credentials profile of one provider (default: the first),

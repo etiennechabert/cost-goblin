@@ -1,4 +1,7 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
+import { parse as parseYaml } from 'yaml';
 import {
   launchAppWithCoverage,
   finishCoverage,
@@ -109,4 +112,72 @@ test.describe('mixed AWS + GCP workspace', () => {
     await assertNoReactCrash(page);
     await screenshot(page, 'gcp-mixed-explorer');
   });
+
+  // Last on purpose: Complete Setup rewrites this launch's costgoblin.yaml.
+  test('re-running setup keeps the tuned hourly retention and writes the impersonation target', async () => {
+    // The wizard's GCS discovery needs credentials, and this launch has none
+    // by design (see expectCloudSandboxed). Stub just the two discovery
+    // channels in the main process; everything after them — the Confirm step,
+    // the real setup:write-config handler and the YAML it writes — runs as is.
+    await app.evaluate(({ ipcMain }) => {
+      ipcMain.removeHandler('setup:list-gcs-buckets');
+      ipcMain.handle('setup:list-gcs-buckets', () => ({ buckets: [{ name: 'test-focus-export' }] }));
+      ipcMain.removeHandler('setup:browse-gcs');
+      ipcMain.handle('setup:browse-gcs', (_event, params: { prefix: string }) => {
+        const prefix = params.prefix.replace(/\/+$/, '');
+        if (prefix === 'focus') {
+          return { prefixes: ['daily', 'hourly'], folder: { kind: 'tier-parent', tiers: ['daily', 'hourly'] }, hasParquet: false, truncated: false };
+        }
+        if (prefix === '') return { prefixes: ['focus'], folder: { kind: 'unknown' }, hasParquet: false, truncated: false };
+        return { prefixes: ['billing_period=2026-01'], folder: { kind: 'export', periods: ['2026-01'] }, hasParquet: true, truncated: false };
+      });
+    });
+
+    await clickNavButton(page, 'General');
+    await page.getByRole('button', { name: 'Run setup again' }).click();
+    await page.getByLabel('Set up from Google Cloud').click();
+    await page.getByLabel('Already know the project ID? Skip the project list').fill('test-project');
+    await page.getByLabel('Already know the project ID? Skip the project list').press('Enter');
+
+    // Daily, then hourly, each from the bucket root down to its tier folder.
+    for (const tier of ['daily', 'hourly']) {
+      await page.getByText('test-focus-export', { exact: true }).click();
+      await page.getByLabel(/^Open folder focus\/?$/).click();
+      await page.getByLabel(new RegExp(`^Open folder ${tier}\\/?$`)).click();
+      await page.getByRole('button', { name: 'Use this location' }).click();
+    }
+    await expect(page.getByRole('heading', { name: 'Confirm Setup' })).toBeVisible();
+
+    // The fixture's gcp-main keeps 14 days of hourly. The pickers used to
+    // start on the 30-day default, so this re-run silently cut it.
+    const hourly = page.getByRole('group', { name: 'Hourly FOCUS export retention' });
+    await expect(hourly.getByRole('button', { name: '14 days' })).toHaveAttribute('aria-pressed', 'true');
+
+    const field = page.getByLabel('Impersonate service account');
+    await field.fill('not-an-address');
+    await expect(page.getByRole('button', { name: 'Complete Setup' })).toBeDisabled();
+    await field.fill('costgoblin-reader@test-project.iam.gserviceaccount.com');
+    await screenshot(page, 'gcp-rerun-confirm');
+    await page.getByRole('button', { name: 'Complete Setup' }).click();
+    await expect(page.getByRole('heading', { name: 'Confirm Setup' })).toBeHidden();
+
+    const configDir = await app.evaluate(() => process.env['COSTGOBLIN_CONFIG_DIR'] ?? '');
+    const written: unknown = parseYaml(readFileSync(join(configDir, 'costgoblin.yaml'), 'utf-8'));
+    expect(written).toMatchObject({
+      providers: [
+        { name: 'aws-main', type: 'aws' },
+        {
+          name: 'gcp-main',
+          type: 'gcp',
+          impersonateServiceAccount: 'costgoblin-reader@test-project.iam.gserviceaccount.com',
+          sync: {
+            daily: { bucket: 'gs://test-focus-export/focus/daily/', retentionDays: 365 },
+            hourly: { bucket: 'gs://test-focus-export/focus/hourly/', retentionDays: 14 },
+          },
+        },
+      ],
+    });
+    await assertNoReactCrash(page);
+  });
 });
+

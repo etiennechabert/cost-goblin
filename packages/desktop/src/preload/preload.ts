@@ -230,10 +230,10 @@ const api: CostApi = {
   scaffoldConfig(providerType?: 'aws' | 'gcp'): Promise<void> {
     return invoke<undefined>('setup:scaffold-config', providerType).then(() => undefined);
   },
-  // `type` was missing here while the handler and `upsertWizardProvider` both
-  // already read it, so this bridge's own signature was the only thing
-  // stopping the wizard from writing a gcp provider.
-  writeConfig(config: { providerName: string; type?: 'aws' | 'gcp' | undefined; profile: string; keyFile?: string | undefined; dailyBucket: string; retentionDays?: number | undefined; hourlyBucket?: string | undefined; costOptBucket?: string | undefined; tags?: { tagName: string; label: string; concept?: string | undefined }[] | undefined }): Promise<void> {
+  // Typed from CostApi rather than hand-copied: a copy here once lacked `type`
+  // (blocking gcp writes) and later the per-tier retentions and the
+  // impersonation target, with no compiler error either time.
+  writeConfig(config: Parameters<CostApi['writeConfig']>[0]): Promise<void> {
     return invoke<undefined>('setup:write-config', config).then(() => undefined);
   },
   updateAwsProfile(profile: string, providerName?: string): Promise<void> {
