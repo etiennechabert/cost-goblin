@@ -290,6 +290,17 @@ function section(record: Readonly<Record<string, unknown>>, name: string): Reado
   return isStringRecord(value) ? value : {};
 }
 
+/** The last non-empty entry of a comma-separated list. A loop because the
+ *  ES2022 lib this repo targets has no `findLast`. */
+function lastListEntry(list: string): string | null {
+  let last: string | null = null;
+  for (const part of list.split(',')) {
+    const trimmed = part.trim();
+    if (trimmed.length > 0) last = trimmed;
+  }
+  return last;
+}
+
 /** Parse `gcloud config list --format=json`. Null when stdout is not a JSON
  *  object (an update nag, say) — not the same as "nothing set". */
 export function parseGcloudConfigList(stdout: string): GcloudConfigValues | null {
@@ -298,7 +309,7 @@ export function parseGcloudConfigList(stdout: string): GcloudConfigValues | null
   const core = section(parsed, 'core');
   const auth = section(parsed, 'auth');
   const chain = nonEmptyString(auth['impersonate_service_account']);
-  const target = chain === null ? null : (chain.split(',').map(part => part.trim()).filter(part => part.length > 0).at(-1) ?? null);
+  const target = chain === null ? null : lastListEntry(chain);
   return {
     account: nonEmptyString(core['account']),
     impersonateServiceAccount: target,
