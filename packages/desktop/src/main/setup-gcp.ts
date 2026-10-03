@@ -4,9 +4,10 @@ import {
   SERVICE_ACCOUNT_EMAIL_RULE,
   isServiceAccountEmail,
   isStringRecord,
+  logger,
   parseJsonArray,
 } from '@costgoblin/core';
-import type { GcpProject } from '@costgoblin/core';
+import type { GcpProject, GcsStorageOptions } from '@costgoblin/core';
 
 /** Pure parsers behind the GCP setup handlers, kept out of `handlers/setup.ts`
  *  so they can be tested without spawning gcloud or reaching Cloud Storage —
@@ -152,4 +153,42 @@ export function wizardGcsErrorMessage(err: unknown, reader: string | undefined):
     return isGcpImpersonationError(err) ? describeGcpImpersonationFailure(reader, err.message) : err.message;
   }
   return String(err);
+}
+
+/** The `setup:write-config` reader: absent stays `undefined` (the upsert
+ *  carries the replaced entry's reader), blank becomes '' (the wizard browsed
+ *  as the ADC login, which clears it). Throws on anything the next launch's
+ *  validator would reject — written to disk, it would stop the app starting. */
+export function wizardWriteReader(raw: unknown): string | undefined {
+  const parsed = parseWizardReader(raw);
+  if (!parsed.ok) throw new Error(parsed.error);
+  return raw === undefined ? undefined : parsed.reader ?? '';
+}
+
+/** The slice of `Storage` bucket discovery uses — narrow so tests can inject it. */
+export interface GcsBucketLister {
+  getBuckets(): Promise<readonly [readonly { readonly name: string }[], ...unknown[]]>;
+}
+
+/** `setup:list-gcs-buckets`: the project's buckets, listed as the reader the
+ *  wizard names (or the ADC login). `build` is `createGcsStorage` in the app —
+ *  the sync's own constructor, so the wizard sees the identity the sync uses.
+ *  Failures come back as text: the wizard classifies it to choose between a
+ *  sign-in button and the bucket-list-denied explainer. */
+export async function listGcsBucketsAs(
+  projectId: string,
+  rawReader: unknown,
+  build: (options: GcsStorageOptions) => Promise<GcsBucketLister>,
+): Promise<{ buckets: readonly { name: string }[]; error?: string | undefined }> {
+  const parsed = parseWizardReader(rawReader);
+  if (!parsed.ok) return { buckets: [], error: parsed.error };
+  try {
+    const storage = await build({ projectId, impersonateServiceAccount: parsed.reader });
+    const [buckets] = await storage.getBuckets();
+    return { buckets: buckets.map(b => ({ name: b.name })) };
+  } catch (err: unknown) {
+    const message = wizardGcsErrorMessage(err, parsed.reader);
+    logger.info('setup:list-gcs-buckets failed', { error: message });
+    return { buckets: [], error: message };
+  }
 }

@@ -16,7 +16,7 @@ import { awsProfileNames } from '../aws-profiles.js';
 import { upsertWizardProvider } from '../config-upsert.js';
 import { buildConfigTemplate, buildDimensionsTemplate, PROVIDER_ABSENT_DIMENSIONS } from '../config-templates.js';
 import { classifyManifestColumns, parseManifestColumnNames, selectManifestKey } from '../setup-manifest.js';
-import { collectGcsPrefixes, gcsNextPageToken, parseGcloudProjects, parseWizardReader, wizardGcsErrorMessage } from '../setup-gcp.js';
+import { collectGcsPrefixes, gcsNextPageToken, listGcsBucketsAs, parseGcloudProjects, parseWizardReader, wizardGcsErrorMessage, wizardWriteReader } from '../setup-gcp.js';
 import type { DetectedReportType } from '../setup-manifest.js';
 import type { AppContext } from './context.js';
 
@@ -282,19 +282,8 @@ export function registerSetupHandlers(app: AppContext): void {
   // Both GCS handlers build their client through `createGcsStorage` — the
   // sync's own constructor — so the wizard browses as exactly the identity the
   // provider will sync as: the user's ADC login, or the reader it names.
-  ipcMain.handle('setup:list-gcs-buckets', async (_event, projectId: string, rawReader?: unknown): Promise<{ buckets: readonly { name: string }[]; error?: string | undefined }> => {
-    const parsed = parseWizardReader(rawReader);
-    if (!parsed.ok) return { buckets: [], error: parsed.error };
-    try {
-      const storage = await createGcsStorage({ projectId, impersonateServiceAccount: parsed.reader });
-      const [buckets] = await storage.getBuckets();
-      return { buckets: buckets.map(b => ({ name: b.name })) };
-    } catch (err: unknown) {
-      const message = wizardGcsErrorMessage(err, parsed.reader);
-      logger.info('setup:list-gcs-buckets failed', { error: message });
-      return { buckets: [], error: message };
-    }
-  });
+  ipcMain.handle('setup:list-gcs-buckets', (_event, projectId: string, rawReader?: unknown) =>
+    listGcsBucketsAs(projectId, rawReader, createGcsStorage));
 
   ipcMain.handle('setup:browse-gcs', async (_event, params: { projectId: string; bucket: string; prefix: string; impersonateServiceAccount?: unknown }): Promise<GcsBrowseResult> => {
     const prefix = normalizeGcsPrefix(params.prefix);
@@ -408,13 +397,7 @@ export function registerSetupHandlers(app: AppContext): void {
     // new one otherwise; other providers and unknown top-level keys are
     // preserved verbatim. Throws ProviderNameError (friendly message,
     // surfaced to the wizard) on an invalid name.
-    // Re-checked here, not left to the next launch's validator: a value that
-    // only failed THERE would be written to disk and stop the app starting.
-    const reader = parseWizardReader(wizardConfig.impersonateServiceAccount);
-    if (!reader.ok) throw new Error(reader.error);
-    // Absent stays absent (carry the entry's own); present-but-blank is the
-    // wizard saying it browsed as the ADC login, which clears it.
-    const impersonateServiceAccount = wizardConfig.impersonateServiceAccount === undefined ? undefined : reader.reader ?? '';
+    const impersonateServiceAccount = wizardWriteReader(wizardConfig.impersonateServiceAccount);
     const costgoblinYaml = upsertWizardProvider(existing, { ...wizardConfig, impersonateServiceAccount });
 
     await fs.writeFile(ctx.configPath, stringify(costgoblinYaml), 'utf-8');
