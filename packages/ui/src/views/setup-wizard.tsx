@@ -1466,14 +1466,21 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onImpersonateCh
               id="impersonate-sa"
               value={state.impersonate}
               onChange={(e) => { onImpersonateChange(e.target.value); }}
-              placeholder="costgoblin-reader@project.iam.gserviceaccount.com (optional)"
+              // "Optional" leads so the field's width truncates the address,
+              // not the hint that it can be left blank.
+              placeholder="Optional · sa@project.iam.gserviceaccount.com"
               spellCheck={false}
-              className="mt-1 w-full rounded-md border border-border bg-bg-primary px-3 py-1.5 text-sm font-mono text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              aria-invalid={impersonateError !== null}
+              aria-describedby="impersonate-sa-hint"
+              className={[
+                'mt-1 w-full rounded-md border bg-bg-primary px-3 py-1.5 text-sm font-mono text-text-primary focus:outline-none focus-visible:ring-2',
+                impersonateError === null ? 'border-border focus-visible:ring-accent' : 'border-negative focus-visible:ring-negative',
+              ].join(' ')}
             />
             {impersonateError === null ? (
-              <p className="text-xs text-text-muted mt-1">The read-only reader to act as for downloads. Leave blank to use your own sign-in.</p>
+              <p id="impersonate-sa-hint" className="text-xs text-text-muted mt-1">The read-only reader to act as for downloads. Leave blank to use your own sign-in.</p>
             ) : (
-              <p className="text-xs text-negative mt-1">{impersonateError}</p>
+              <p id="impersonate-sa-hint" className="text-xs text-negative mt-1">{impersonateError}</p>
             )}
           </div>
         )}

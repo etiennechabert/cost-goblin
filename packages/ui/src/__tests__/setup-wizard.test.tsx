@@ -684,8 +684,11 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     gcpExportLayout(api);
     await walkGcpBothTiersToConfirm(user);
 
-    await user.type(screen.getByLabelText('Impersonate service account'), 'me@gmail.com');
+    const field = screen.getByLabelText('Impersonate service account');
+    await user.type(field, 'me@gmail.com');
     expect(screen.getByText(/Must be a service-account address/)).toBeDefined();
+    expect(field.getAttribute('aria-invalid')).toBe('true');
+    expect(field.getAttribute('aria-describedby')).toBe('impersonate-sa-hint');
     const complete = screen.getByText('Complete Setup').closest('button');
     expect(complete?.disabled).toBe(true);
     expect(api.writtenConfigs).toHaveLength(0);
