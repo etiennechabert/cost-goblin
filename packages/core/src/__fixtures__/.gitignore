@@ -14,3 +14,6 @@ org-accounts.json
 org-account-tags.json
 region-names.json
 dismissed-suggestions.json
+# Atomic-write temps and set-aside unreadable state files
+*.tmp
+*.corrupt-*
