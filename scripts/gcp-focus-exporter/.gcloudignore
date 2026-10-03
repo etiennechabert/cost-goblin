@@ -1,0 +1,6 @@
+# What `gcloud builds submit .` uploads as the build context. The Dockerfile
+# copies only package.json, package-lock.json and export-focus.mjs, so a local
+# `npm install` (for the dry run) must not ride along in every upload.
+.gcloudignore
+node_modules/
+*.test.mjs

@@ -90,6 +90,44 @@ CostGoblin reads the **FOCUS 1.2** table via AWS Data Exports. To create one:
 | Compression | Snappy |
 | Overwrite | Overwrite existing data export file |
 
+#### Keep the bucket from growing forever
+
+The export never deletes anything: every month adds a billing period that stays in S3 indefinitely. Add an S3 **lifecycle rule** per export prefix (**S3 → your bucket → Management → Create lifecycle rule**, scope *Limit the scope of this rule using one or more filters*, prefix filter). The prefixes below assume exports delivered to `focus_daily/`, `focus_hourly/` and `cost_optimization/` at the bucket root; use your exports' own S3 path prefixes, or the rules match nothing:
+
+| Prefix | Expire current versions after | Why |
+|--------|-------------------------------|-----|
+| `focus_daily/` | **400 days** | Daily `retentionDays` defaults to 365. A month's files are rewritten until its billing finalises, early the next month, so expiring at exactly 365 would drop the oldest month before it is a year old. |
+| `focus_hourly/` | **60 days** | Hourly `retentionDays` defaults to 30, and hourly is the large export, so this is where the rule actually saves money. |
+| `cost_optimization/` | **100 days** | One snapshot folder per day; `retentionDays` defaults to 90. |
+
+On each rule also tick **Delete incomplete multipart uploads** (7 days), and, if the bucket has versioning enabled, **Permanently delete noncurrent versions** (1 day): every overwrite turns the previous file into a noncurrent version that expiry never touches.
+
+**Keep each expiry at or above that tier's `retentionDays`** (raise both together). Expiry never deletes anything CostGoblin has already downloaded — a period that disappears from the bucket stays on disk until it ages out of retention — but a fresh install or a teammate can only download what the bucket still holds.
+
+<details>
+<summary>Same rules from the CLI</summary>
+
+`put-bucket-lifecycle-configuration` **replaces** the bucket's whole lifecycle configuration — merge in any rules you already have.
+
+```bash
+cat > lifecycle.json <<'JSON'
+{"Rules": [
+  {"ID": "focus-daily", "Filter": {"Prefix": "focus_daily/"}, "Status": "Enabled",
+   "Expiration": {"Days": 400}, "NoncurrentVersionExpiration": {"NoncurrentDays": 1},
+   "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 7}},
+  {"ID": "focus-hourly", "Filter": {"Prefix": "focus_hourly/"}, "Status": "Enabled",
+   "Expiration": {"Days": 60}, "NoncurrentVersionExpiration": {"NoncurrentDays": 1},
+   "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 7}},
+  {"ID": "cost-optimization", "Filter": {"Prefix": "cost_optimization/"}, "Status": "Enabled",
+   "Expiration": {"Days": 100}, "NoncurrentVersionExpiration": {"NoncurrentDays": 1},
+   "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 7}}
+]}
+JSON
+aws s3api put-bucket-lifecycle-configuration --bucket your-company-billing --lifecycle-configuration file://lifecycle.json
+```
+
+</details>
+
 #### Columns CostGoblin requires
 
 Keeping **all columns** enabled is the simplest way to stay valid — the extras cost little in Parquet, and narrowing the export later leaves holes you can't backfill. For reference, these are the columns the app actually reads (a candidate export missing any of them is rejected by the setup wizard):
