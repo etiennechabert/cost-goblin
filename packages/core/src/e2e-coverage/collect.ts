@@ -1,6 +1,7 @@
 import { isStringRecord } from '../utils/json.js';
 import type {
   CoverageReport,
+  ExecutableLines,
   IstanbulBranch,
   IstanbulFileCoverage,
   IstanbulFunction,
@@ -42,7 +43,7 @@ function isUnknownArray(value: unknown): value is readonly unknown[] {
 }
 
 /** Reads `<node>.start.line` out of an istanbul location node. */
-function startLineOf(node: unknown): number | null {
+export function startLineOf(node: unknown): number | null {
   if (!isStringRecord(node)) return null;
   const start = node['start'];
   if (!isStringRecord(start)) return null;
@@ -162,34 +163,41 @@ function parseBranches(
 }
 
 /**
- * Drops each file's line records that are not in its `executable` set (see
- * `executableLines`). The result is the report Sonar should read: v8-to-istanbul
- * lists every source line, the unit report only statement lines, and Sonar
- * counts a line listed by either.
+ * Restricts each file's line records to what the unit report could list for
+ * it (see `executableLines`). Counts are never changed and records are only
+ * removed, so no line can come out covered that went in uncovered.
  *
- * This only ever REMOVES records and never touches a count, so it cannot mark
- * anything covered that was not. It also strips a known source of inflation:
- * v8-to-istanbul credits a line count 1 until a V8 range zeroes it, so the
- * annotation-only lines of a type module came out as "covered".
+ * - A statement line keeps its record whatever the count.
+ * - A branch-only line — one the unit report lists through a `BRDA`, or that
+ *   carries one of this file's own branch records — keeps it only when the
+ *   count is above 0. SonarJS scores a line with branch records as its `DA`
+ *   hits plus its covered branches, but only when no `DA` was written first
+ *   (the first value wins). Such a line stays "to cover" through its branch
+ *   records either way; a positive `DA` adds e2e's execution evidence, while a
+ *   zero one would only block the branch credit.
+ * - Every other line is dropped.
  *
- * A file absent from `executable` is passed through unchanged; that is the
- * caller's decision to make, file by file. Functions and branches are left
- * alone: V8 reports both at real code positions, and dropping a branch that
- * starts on a non-statement line would hide an uncovered condition.
+ * A file absent from `executable` passes through unchanged. Functions and
+ * branches are never dropped: dropping a branch would hide an uncovered
+ * condition.
  */
 export function restrictToExecutableLines(
   report: CoverageReport,
-  executable: ReadonlyMap<string, ReadonlySet<number>>,
+  executable: ReadonlyMap<string, ExecutableLines>,
 ): CoverageReport {
   const restricted = createCoverageReport();
   for (const [filePath, coverage] of report) {
-    const allowed = executable.get(filePath);
-    if (allowed === undefined) {
+    const lines = executable.get(filePath);
+    if (lines === undefined) {
       restricted.set(filePath, coverage);
       continue;
     }
+    const ownBranchLines = new Set(coverage.branches.map(branch => branch.line));
+    const keep = (line: number, count: number): boolean =>
+      lines.statements.has(line) ||
+      (count > 0 && (lines.branches.has(line) || ownBranchLines.has(line)));
     restricted.set(filePath, {
-      lines: new Map([...coverage.lines].filter(([line]) => allowed.has(line))),
+      lines: new Map([...coverage.lines].filter(([line, count]) => keep(line, count))),
       functions: coverage.functions,
       branches: coverage.branches,
     });

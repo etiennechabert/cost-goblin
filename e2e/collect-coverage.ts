@@ -10,19 +10,19 @@
 import { readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { join, resolve, relative } from 'node:path';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import v8ToIstanbul from 'v8-to-istanbul';
 import {
   auditCoverageReport,
   createCoverageReport,
   describeCoverageFailure,
-  executableLines,
   generateLcov,
   isCoverageShardFile,
   isProjectSourcePath,
   isRendererBundleUrl,
   mergeIstanbulFile,
   parseIstanbulFileCoverage,
-  restrictToExecutableLines,
+  restrictToStatementLines,
 } from '../packages/core/src/e2e-coverage/index.js';
 
 const ROOT = resolve(import.meta.dirname, '..');
@@ -79,7 +79,9 @@ async function main(): Promise<void> {
   const withoutSourceMap: string[] = [];
 
   for (const entry of relevant) {
-    const urlPath = entry.url.replace(/^file:\/\//, '');
+    // fileURLToPath, not a prefix strip: the URL percent-encodes spaces and
+    // non-ASCII characters in the checkout path.
+    const urlPath = entry.url.startsWith('file:') ? fileURLToPath(entry.url) : entry.url;
     const sourceMapPath = `${urlPath}.map`;
 
     let sourceMap: string;
@@ -131,9 +133,8 @@ async function main(): Promise<void> {
     );
   }
 
-  // The audit reads the report exactly as v8-to-istanbul produced it, every
-  // source line included: its thresholds were measured on that shape, and the
-  // statement-line restriction below would shrink the files it looks at.
+  // The audit reads the raw report, every source line included: its thresholds
+  // were measured on that shape, before the statement-line restriction below.
   const verdict = auditCoverageReport(merged);
   const outputPath = join(OUTPUT_DIR, 'lcov.info');
 
@@ -149,29 +150,15 @@ async function main(): Promise<void> {
     fail(describeCoverageFailure(verdict));
   }
 
-  const executable = new Map<string, ReadonlySet<number>>();
-  const unrestricted: string[] = [];
-  for (const filePath of merged.keys()) {
-    try {
-      const lines = await executableLines(readFileSync(filePath, 'utf-8'), filePath);
-      if (lines === null) unrestricted.push(`${filePath} (unsupported file type)`);
-      else executable.set(filePath, lines);
-    } catch (error) {
-      unrestricted.push(`${filePath} (${error instanceof Error ? error.message : String(error)})`);
-    }
-  }
-  // A file that falls back keeps every source line, exactly as the report did
-  // before this restriction existed. That undercounts it wherever the unit
-  // report is the one covering it; it does not credit any new line, so this
-  // warns rather than fails.
-  if (unrestricted.length > 0) {
+  const published = await restrictToStatementLines(merged, filePath => readFileSync(filePath, 'utf-8'));
+  if (published.unrestricted.length > 0) {
     process.stderr.write(
-      `::warning::Could not compute statement lines for ${String(unrestricted.length)} file(s); ` +
-        `their every source line stays in the report: ${unrestricted.join(', ')}\n`,
+      `::warning::Kept every source line of ${String(published.unrestricted.length)} file(s) whose ` +
+        `statement lines could not be computed: ${published.unrestricted.join(', ')}\n`,
     );
   }
 
-  writeFileSync(outputPath, generateLcov(restrictToExecutableLines(merged, executable)));
+  writeFileSync(outputPath, generateLcov(published.report));
   process.stdout.write(`E2E coverage written to ${outputPath}\n`);
   process.stdout.write(`  ${String(merged.size)} source files covered\n`);
 }

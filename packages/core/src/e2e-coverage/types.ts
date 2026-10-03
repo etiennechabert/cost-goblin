@@ -19,6 +19,17 @@ export interface FileCoverage {
   readonly branches: { line: number; blockId: number; branchId: number; count: number }[];
 }
 
+/**
+ * The lines of one source file that the unit report (vitest's AST remapper)
+ * can list — see `executableLines`.
+ */
+export interface ExecutableLines {
+  /** Start line of every statement: the lines the unit report gives a `DA`. */
+  readonly statements: ReadonlySet<number>;
+  /** Start line of every branch: the lines the unit report gives a `BRDA`. */
+  readonly branches: ReadonlySet<number>;
+}
+
 /** Absolute source-file path → its merged coverage. */
 export type CoverageReport = Map<string, FileCoverage>;
 
