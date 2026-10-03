@@ -15,7 +15,7 @@
 #
 set -euo pipefail
 
-# `--source=.` uploads the build context from the working directory, and every
+# `gcloud builds submit .` uploads the build context from the working directory, and every
 # IAM and dataset mutation below happens BEFORE that step — so a run from the
 # repo root would grant all the permissions and only then fail with the wrong
 # build context. Anchor to this script's own directory instead.
@@ -53,6 +53,12 @@ LOCATION="${LOCATION:-EU}"
 
 # Cloud Run jobs are regional; pick a region inside ${LOCATION}.
 REGION="${REGION:-europe-west1}"
+
+# Artifact Registry repository (in ${REGION}) that holds the exporter's image.
+# Created if missing, with a cleanup policy keeping the 5 most recent images.
+# A dedicated repository rather than `gcloud run deploy --source`'s shared
+# `cloud-run-source-deploy`, which keeps every build forever.
+REPO="${REPO:-costgoblin}"
 
 # How often to check for changed periods.
 #
@@ -160,13 +166,37 @@ grant_dataset_access "${PROJECT_ID}" "${STATE_DATASET}" WRITER
 gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" \
   --member="serviceAccount:${SA_EMAIL}" --role="roles/storage.objectAdmin" >/dev/null
 
-echo "==> Building and deploying the job"
+IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${JOB_NAME}"
+
+echo "==> Image repository ${REPO} (in ${REGION})"
+if ! gcloud artifacts repositories describe "${REPO}" --location="${REGION}" >/dev/null 2>&1; then
+  gcloud artifacts repositories create "${REPO}" \
+    --repository-format=docker --location="${REGION}" \
+    --description="CostGoblin FOCUS exporter images" >/dev/null
+fi
+# Keep policies win over Delete policies, so this deletes every image but the
+# five newest. The job pins the newest by digest, so it is never collected.
+cleanup="$(mktemp)"
+trap 'rm -f "${cleanup}"' EXIT
+cat > "${cleanup}" <<'JSON'
+[
+  {"name": "keep-recent", "action": {"type": "Keep"}, "mostRecentVersions": {"keepCount": 5}},
+  {"name": "delete-older", "action": {"type": "Delete"}, "condition": {"tagState": "any"}}
+]
+JSON
+gcloud artifacts repositories set-cleanup-policies "${REPO}" \
+  --location="${REGION}" --policy="${cleanup}" --no-dry-run >/dev/null
+
+echo "==> Building the image"
+gcloud builds submit --region="${REGION}" --tag="${IMAGE}" .
+
+echo "==> Deploying the job"
 # `^;^` switches --set-env-vars to a semicolon delimiter. TIERS=daily,hourly
 # contains a comma, which is gcloud's DEFAULT delimiter — with it, the value
 # would be split and the job would deploy with a bare `hourly=` variable and
 # TIERS truncated to `daily`.
 gcloud run jobs deploy "${JOB_NAME}" \
-  --source=. \
+  --image="${IMAGE}" \
   --region="${REGION}" \
   --service-account="${SA_EMAIL}" \
   --tasks=1 \

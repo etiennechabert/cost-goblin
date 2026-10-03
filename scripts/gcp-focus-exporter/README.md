@@ -196,7 +196,11 @@ gcloud storage buckets add-iam-policy-binding gs://${BUCKET} \
 ENV_VARS=FOCUS_TABLE=${FOCUS_TABLE};BUCKET=${BUCKET};PREFIX=focus;TIERS=daily
 ENV_VARS=${ENV_VARS};STATE_TABLE=${PROJECT_ID}.costgoblin_exporter.export_state
 ENV_VARS=${ENV_VARS};BQ_LOCATION=${LOCATION}
-gcloud run jobs deploy ${JOB} --source=. --region=${REGION} \
+IMAGE=${REGION}-docker.pkg.dev/${PROJECT_ID}/costgoblin/${JOB}
+gcloud artifacts repositories create costgoblin --repository-format=docker \
+  --location=${REGION} --description="CostGoblin FOCUS exporter images"
+gcloud builds submit --region=${REGION} --tag=${IMAGE} .
+gcloud run jobs deploy ${JOB} --image=${IMAGE} --region=${REGION} \
   --service-account=${SA} --tasks=1 --max-retries=1 --task-timeout=30m \
   --set-env-vars="^;^${ENV_VARS}"
 gcloud scheduler jobs create http ${JOB}-trigger --location=${REGION} \
