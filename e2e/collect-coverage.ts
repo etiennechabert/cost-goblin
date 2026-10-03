@@ -20,9 +20,11 @@ import {
   isCoverageShardFile,
   isProjectSourcePath,
   isRendererBundleUrl,
+  mappedSourceLines,
   mergeIstanbulFile,
   parseIstanbulFileCoverage,
   restrictToStatementLines,
+  zeroUnmappedLines,
 } from '../packages/core/src/e2e-coverage/index.js';
 
 const ROOT = resolve(import.meta.dirname, '..');
@@ -74,8 +76,11 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // Merged coverage per source file (across multiple test groups)
+  // Merged coverage per source file (across multiple test groups): `merged` as
+  // v8-to-istanbul reports it, for the audit; `mapped` with the lines the
+  // bundle has no code for zeroed, for the report Sonar reads.
   const merged = createCoverageReport();
+  const mapped = createCoverageReport();
   const withoutSourceMap: string[] = [];
 
   for (const entry of relevant) {
@@ -97,9 +102,18 @@ async function main(): Promise<void> {
       continue;
     }
 
+    const parsedSourceMap: unknown = JSON.parse(sourceMap);
+    const lineMaps = mappedSourceLines(parsedSourceMap, urlPath);
+    if (lineMaps === null) {
+      fail(
+        `${sourceMapPath} is not a version-3 source map with string sources — the collector ` +
+          'cannot tell which source lines the bundle has code for and refuses to guess.',
+      );
+    }
+
     const converter = v8ToIstanbul(urlPath, 0, {
       source: entry.source ?? readFileSync(urlPath, 'utf-8'),
-      sourceMap: { sourcemap: JSON.parse(sourceMap) as object },
+      sourceMap: { sourcemap: parsedSourceMap as object },
     });
 
     await converter.load();
@@ -121,6 +135,18 @@ async function main(): Promise<void> {
         );
       }
       mergeIstanbulFile(merged, filePath, fileData);
+      // Every entry v8-to-istanbul returns is a source of this map, filed
+      // under the path `mappedSourceLines` mirrors. A miss means the two have
+      // diverged: zeroing the file would hide its coverage and keeping it
+      // whole would credit its dead code, so neither is safe.
+      const mappedLines = lineMaps.get(filePath);
+      if (mappedLines === undefined) {
+        fail(
+          `${filePath} is not a source of ${sourceMapPath} as mappedSourceLines resolves it — ` +
+            'check whether v8-to-istanbul changed how it resolves source map paths.',
+        );
+      }
+      mergeIstanbulFile(mapped, filePath, zeroUnmappedLines(fileData, mappedLines));
     }
   }
 
@@ -134,7 +160,8 @@ async function main(): Promise<void> {
   }
 
   // The audit reads the raw report, every source line included: its thresholds
-  // were measured on that shape, before the statement-line restriction below.
+  // were measured on that shape, before the unmapped-line zeroing above and the
+  // statement-line restriction below.
   const verdict = auditCoverageReport(merged);
   const outputPath = join(OUTPUT_DIR, 'lcov.info');
 
@@ -150,7 +177,10 @@ async function main(): Promise<void> {
     fail(describeCoverageFailure(verdict));
   }
 
-  const published = await restrictToStatementLines(merged, filePath => readFileSync(filePath, 'utf-8'));
+  // Zeroed first, restricted second: the restriction drops a branch-only line
+  // whose count is 0, so an unmapped one goes rather than blocking its branch
+  // credit with a DA of 0.
+  const published = await restrictToStatementLines(mapped, filePath => readFileSync(filePath, 'utf-8'));
   if (published.unrestricted.length > 0) {
     process.stderr.write(
       `::warning::Kept every source line of ${String(published.unrestricted.length)} file(s) whose ` +

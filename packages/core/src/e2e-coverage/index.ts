@@ -30,6 +30,9 @@ export {
 export { executableLines, restrictToStatementLines } from './executable-lines.js';
 export type { StatementLineReport } from './executable-lines.js';
 
+export { mappedSourceLines, zeroUnmappedLines } from './source-map-lines.js';
+export type { MappedSourceLines } from './source-map-lines.js';
+
 export { generateLcov } from './lcov.js';
 
 export {
