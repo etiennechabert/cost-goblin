@@ -1,5 +1,5 @@
 import type { ConfigBundleSummary, GcpProject, GcsFolderKind } from '@costgoblin/core/browser';
-import { gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isValidWorkspaceName, parseProviderName } from '@costgoblin/core/browser';
+import { gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isValidGcpProjectId, isValidWorkspaceName, parseProviderName } from '@costgoblin/core/browser';
 import { useState, useEffect, useRef } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { Card, CardContent } from '../components/ui/card.js';
@@ -321,9 +321,9 @@ const GCP_EXPORTER_DOCS = 'https://github.com/etiennechabert/cost-goblin/tree/ma
  * own exporter has run — but it is an ORDERING constraint, not a reason to
  * hand-edit YAML. Once the exporter has run, a GCS bucket browses exactly like
  * an S3 one, so this states the prerequisite and then offers the same
- * pick-from-a-list flow AWS gets. Hand-editing survives as the escape hatch
- * for anyone whose credentials can't list projects (a bare service-account
- * key, say).
+ * pick-from-a-list flow AWS gets. An account that can't list projects types
+ * the project ID on the next step; hand-editing survives as the escape hatch
+ * for setups the wizard can't browse at all.
  */
 function GcpIntroStep({ state, onBrowse, onScaffold, onDone, onBack }: Readonly<{
   state: { scaffolded: boolean; error: string };
@@ -531,6 +531,66 @@ function GcpBucketListDenied({ project, message, detailsOpen, onToggleDetails, o
   );
 }
 
+/** Typed project ID — the way past the project step for the documented
+ *  least-privilege account, which holds only Token Creator on the read-only
+ *  reader and so is never shown its project by `gcloud projects list`.
+ *
+ *  `prominent` when nothing was listed: then it is the only way forward short
+ *  of hand-writing the config, so it gets the primary button and the
+ *  explanation. Beside a populated list it is a quiet secondary option, the
+ *  same shape as the bucket step's manual entry. */
+function GcpProjectIdEntry({ prominent, onSubmit }: Readonly<{
+  prominent: boolean;
+  onSubmit: (projectId: string) => void;
+}>) {
+  const [value, setValue] = useState('');
+  const valid = isValidGcpProjectId(value);
+  // An empty field is unfinished, not wrong — no red before the first keystroke.
+  const invalid = value.length > 0 && !valid;
+  const submit = (): void => { if (valid) onSubmit(value); };
+
+  return (
+    <div className={prominent ? 'flex flex-col gap-1.5' : 'flex flex-col gap-1.5 border-t border-border pt-4'}>
+      <label
+        htmlFor="gcp-project-manual"
+        className={prominent ? 'text-sm text-text-secondary' : 'text-xs text-text-muted'}
+      >
+        Project not listed? Enter its ID
+      </label>
+      <div className="flex gap-2">
+        <input
+          id="gcp-project-manual"
+          value={value}
+          // Trimmed as typed, like the bucket entry: a project ID copied from
+          // the console routinely arrives with a trailing space or newline.
+          onChange={(e) => { setValue(e.target.value.trim()); }}
+          onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+          placeholder="my-billing-project"
+          spellCheck={false}
+          autoComplete="off"
+          aria-invalid={invalid}
+          aria-describedby={invalid ? 'gcp-project-manual-error' : undefined}
+          className="h-9 flex-1 rounded-md border border-border bg-bg-primary px-3 font-mono text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent aria-invalid:border-negative"
+        />
+        <Button
+          variant={prominent ? 'default' : 'outline'}
+          disabled={!valid}
+          onClick={submit}
+          className={prominent ? 'bg-accent hover:bg-accent-hover text-white' : undefined}
+        >
+          Continue
+        </Button>
+      </div>
+      {invalid && (
+        <p id="gcp-project-manual-error" className="text-xs text-negative">
+          A project ID is 6–30 lowercase letters, digits or hyphens, starts with a letter and
+          doesn&apos;t end with a hyphen — the ID, not the project&apos;s display name.
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** Step 2b-i — which project's buckets to list.
  *
  *  Has no AWS counterpart: S3's ListBuckets is account-wide and takes no
@@ -568,9 +628,14 @@ function GcpProjectStep({ state, onSelect, onManual, onBack, onRetry }: Readonly
         </div>
       )}
       {!state.loading && state.projects.length === 0 && state.error === '' && (
-        <div className="rounded-lg border border-border bg-bg-tertiary/30 px-4 py-6 text-center">
+        <div className="rounded-lg border border-border bg-bg-tertiary/30 px-4 py-4">
           <p className="text-sm text-text-secondary">No Google Cloud projects found</p>
-          <p className="text-xs text-text-muted mt-1">The signed-in account can&apos;t see any active projects.</p>
+          <p className="text-xs text-text-muted mt-1">
+            Expected for a least-privilege account: one that only impersonates the read-only reader
+            can&apos;t list the project, but can still read the bucket in it — type the project ID below.
+            Granting it <code className="text-text-secondary">roles/browser</code> on the project would
+            list it here instead.
+          </p>
         </div>
       )}
       {!state.loading && state.projects.length > 0 && (
@@ -606,6 +671,13 @@ function GcpProjectStep({ state, onSelect, onManual, onBack, onRetry }: Readonly
             )}
           </div>
         </>
+      )}
+
+      {/* Offered after a FAILED listing too: projects are listed with the
+          gcloud CLI and buckets with ADC, so a CLI that is missing or signed
+          out says nothing about whether the bucket is reachable. */}
+      {!state.loading && (
+        <GcpProjectIdEntry prominent={state.projects.length === 0} onSubmit={onSelect} />
       )}
 
       <div className="flex items-center justify-between pt-2">

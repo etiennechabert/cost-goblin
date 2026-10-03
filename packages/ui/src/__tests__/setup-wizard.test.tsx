@@ -970,3 +970,122 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     expect(onComplete).not.toHaveBeenCalled();
   });
 });
+
+/** Hub → GCP intro → project step, waiting until the listing has settled. */
+async function enterGcpProjectStep(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.click(screen.getByLabelText('Set up from Google Cloud'));
+  await user.click(screen.getByText('Find my export'));
+  await waitFor(() => { expect(screen.queryByText('Loading projects...')).toBeNull(); });
+}
+
+describe('SetupWizard — GCP project typed by ID', () => {
+  // The documented least-privilege user holds only Token Creator on the
+  // read-only reader, so `gcloud projects list` returns nothing — typing the
+  // ID is the only way past this step without an admin granting roles/browser.
+  it('offers the ID entry prominently when no project is listed', async () => {
+    const { api, user } = renderWizard();
+    api.gcpProjectsResult = { projects: [] };
+    await enterGcpProjectStep(user);
+
+    expect(screen.getByText('No Google Cloud projects found')).toBeDefined();
+    expect(screen.getByText(/can.t list the project/)).toBeDefined();
+    await user.type(screen.getByLabelText('Project not listed? Enter its ID'), 'billing-504501');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    expect(api.gcsBucketsListedFor).toEqual(['billing-504501']);
+  });
+
+  it('keeps the ID entry as a secondary option beside a populated list', async () => {
+    const { api, user } = renderWizard();
+    await enterGcpProjectStep(user);
+
+    expect(screen.getByText('Acme Production')).toBeDefined();
+    // The empty-list explanation belongs to the empty list only.
+    expect(screen.queryByText(/can.t list the project/)).toBeNull();
+    await user.type(screen.getByLabelText('Project not listed? Enter its ID'), 'unlisted-project');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    expect(api.gcsBucketsListedFor).toEqual(['unlisted-project']);
+  });
+
+  it('submits on Enter', async () => {
+    const { api, user } = renderWizard();
+    api.gcpProjectsResult = { projects: [] };
+    await enterGcpProjectStep(user);
+
+    await user.type(screen.getByLabelText('Project not listed? Enter its ID'), 'acme-billing{Enter}');
+    await waitFor(() => { expect(api.gcsBucketsListedFor).toEqual(['acme-billing']); });
+  });
+
+  it('trims surrounding whitespace from a pasted ID', async () => {
+    const { api, user } = renderWizard();
+    api.gcpProjectsResult = { projects: [] };
+    await enterGcpProjectStep(user);
+
+    await user.click(screen.getByLabelText('Project not listed? Enter its ID'));
+    await user.paste('  acme-billing \n');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await waitFor(() => { expect(api.gcsBucketsListedFor).toEqual(['acme-billing']); });
+  });
+
+  it.each([
+    ['too short', 'acme'],
+    ['too long', `a${'b'.repeat(30)}`],
+    ['a leading digit', '1acme-prod'],
+    ['a trailing hyphen', 'acme-prod-'],
+    ['uppercase', 'Acme-Prod'],
+    ['an underscore', 'acme_prod'],
+    ['a project name rather than its ID', 'Acme Production'],
+  ])('refuses an ID with %s', async (_why, id) => {
+    const { api, user } = renderWizard();
+    api.gcpProjectsResult = { projects: [] };
+    await enterGcpProjectStep(user);
+
+    const input = screen.getByLabelText('Project not listed? Enter its ID');
+    await user.type(input, `${id}{Enter}`);
+
+    const continueButton = screen.getByRole('button', { name: 'Continue' });
+    expect(continueButton.hasAttribute('disabled')).toBe(true);
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    expect(screen.getByText(/6–30 lowercase letters, digits or hyphens/)).toBeDefined();
+    // Neither the button nor Enter may reach the bucket step.
+    expect(api.gcsBucketsListedFor).toEqual([]);
+    expect(screen.getByText('Google Cloud project')).toBeDefined();
+  });
+
+  it('does not flag an empty field as invalid', async () => {
+    const { api, user } = renderWizard();
+    api.gcpProjectsResult = { projects: [] };
+    await enterGcpProjectStep(user);
+
+    const input = screen.getByLabelText('Project not listed? Enter its ID');
+    expect(input.getAttribute('aria-invalid')).toBe('false');
+    expect(screen.queryByText(/6–30 lowercase letters, digits or hyphens/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Continue' }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it('still offers the ID entry when listing projects failed', async () => {
+    // Projects are listed with the gcloud CLI, buckets with ADC — a CLI
+    // failure says nothing about whether the bucket is reachable.
+    const { api, user } = renderWizard();
+    api.gcpProjectsResult = { projects: [], error: 'GCLOUD_CLI_NOT_FOUND' };
+    await enterGcpProjectStep(user);
+
+    await waitFor(() => { expect(screen.getByText(/Google Cloud CLI \(gcloud\) is not installed/)).toBeDefined(); });
+    await user.type(screen.getByLabelText('Project not listed? Enter its ID'), 'acme-billing{Enter}');
+    await waitFor(() => { expect(api.gcsBucketsListedFor).toEqual(['acme-billing']); });
+  });
+
+  it('walks back from a typed project to the project step', async () => {
+    const { api, user } = renderWizard();
+    api.gcpProjectsResult = { projects: [] };
+    await enterGcpProjectStep(user);
+
+    await user.type(screen.getByLabelText('Project not listed? Enter its ID'), 'acme-billing{Enter}');
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    await user.click(screen.getByText('← Back'));
+    await waitFor(() => { expect(screen.getByLabelText('Project not listed? Enter its ID')).toBeDefined(); });
+  });
+});
