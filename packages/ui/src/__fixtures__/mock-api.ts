@@ -352,15 +352,15 @@ export class MockCostApi implements CostApi {
   deleteLocalPeriod(): Promise<void> { return Promise.resolve(); }
   openDataFolder(): Promise<void> { return Promise.resolve(); }
   ssoLogin(): Promise<void> { return Promise.resolve(); }
-  gcloudLogin(mode?: 'adc' | 'cli', providerName?: string): Promise<void> {
-    this.gcloudLogins.push({ mode: mode ?? 'adc', providerName });
+  gcloudLogin(mode?: 'adc' | 'cli'): Promise<void> {
+    this.gcloudLogins.push({ mode: mode ?? 'adc' });
     return Promise.resolve();
   }
 
   /** Every gcloud sign-in the UI asked for. The two modes are not
    *  interchangeable — re-running ADC cannot fix a stale CLI account — so a
    *  test has to be able to see which one a given error produced. */
-  readonly gcloudLogins: { mode: 'adc' | 'cli'; providerName: string | undefined }[] = [];
+  readonly gcloudLogins: { mode: 'adc' | 'cli' }[] = [];
   getAccountMapping(): Promise<AccountMappingStatus> { return Promise.resolve({ status: 'missing' }); }
   getSetupStatus(): Promise<{ configured: boolean; postSetup: boolean }> { return Promise.resolve({ configured: true, postSetup: false }); }
   testConnection(): Promise<{ ok: boolean; error?: string | undefined }> { return Promise.resolve({ ok: true }); }
@@ -374,12 +374,13 @@ export class MockCostApi implements CostApi {
     return Promise.resolve(this.gcpProjectsResult);
   }
 
-  listGcsBuckets(projectId: string): Promise<{ buckets: readonly { name: string }[]; error?: string | undefined }> {
+  listGcsBuckets(projectId: string, impersonateServiceAccount?: string): Promise<{ buckets: readonly { name: string }[]; error?: string | undefined }> {
     this.gcsBucketsListedFor.push(projectId);
+    this.gcsBucketsListedAs.push(impersonateServiceAccount);
     return Promise.resolve(this.gcsBucketsResult);
   }
 
-  browseGcs(params: { projectId: string; bucket: string; prefix: string }): Promise<GcsBrowseResult> {
+  browseGcs(params: { projectId: string; bucket: string; prefix: string; impersonateServiceAccount?: string | undefined }): Promise<GcsBrowseResult> {
     this.gcsBrowsed.push(params);
     // Keyed by prefix so a test can walk `focus/` (the tier parent) into
     // `focus/daily/` (the export) and assert the wizard reacts to each.
@@ -409,7 +410,10 @@ export class MockCostApi implements CostApi {
   gcsBrowseByPrefix: Record<string, GcsBrowseResult> = {};
 
   readonly gcsBucketsListedFor: string[] = [];
-  readonly gcsBrowsed: { projectId: string; bucket: string; prefix: string }[] = [];
+  /** The reader each bucket listing ran as (undefined = the ADC login), in
+   *  the same order as `gcsBucketsListedFor`. */
+  readonly gcsBucketsListedAs: (string | undefined)[] = [];
+  readonly gcsBrowsed: { projectId: string; bucket: string; prefix: string; impersonateServiceAccount?: string | undefined }[] = [];
 
   scaffoldConfig(providerType?: 'aws' | 'gcp'): Promise<void> {
     this.scaffoldedFor.push(providerType ?? 'aws');

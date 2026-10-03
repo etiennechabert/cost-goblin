@@ -1,4 +1,10 @@
-import { isStringRecord, parseJsonArray } from '@costgoblin/core';
+import {
+  describeGcpImpersonationDenied,
+  isGcpImpersonationDeniedMessage,
+  isServiceAccountEmail,
+  isStringRecord,
+  parseJsonArray,
+} from '@costgoblin/core';
 import type { GcpProject } from '@costgoblin/core';
 
 /** Pure parsers behind the GCP setup handlers, kept out of `handlers/setup.ts`
@@ -114,4 +120,33 @@ export async function collectGcsPrefixes(
     }
   } while (pageToken !== undefined);
   return { prefixes, truncated: false };
+}
+
+/** The service account the wizard browses AS, read off the IPC boundary.
+ *
+ *  Optional: blank means the user's own ADC login. When set it reaches an
+ *  impersonation request and, written to the config, a gcloud argv array — so
+ *  it is held to the validator's own address grammar here, before any SDK
+ *  call, rather than trusted because the renderer already checked it. */
+export function parseWizardReader(raw: unknown):
+  | { readonly ok: true; readonly reader: string | undefined }
+  | { readonly ok: false; readonly error: string } {
+  if (raw === undefined) return { ok: true, reader: undefined };
+  if (typeof raw !== 'string') return { ok: false, error: 'The reader must be a service-account address like name@project.iam.gserviceaccount.com' };
+  const reader = raw.trim();
+  if (reader.length === 0) return { ok: true, reader: undefined };
+  if (!isServiceAccountEmail(reader)) {
+    return { ok: false, error: `"${reader}" is not a service-account address like name@project.iam.gserviceaccount.com` };
+  }
+  return { ok: true, reader };
+}
+
+/** The wizard's copy for a failed bucket listing or browse. Only the
+ *  impersonation denial is rewritten — into the Token Creator remedy, which
+ *  the raw IAM sentence never names. Everything else passes through verbatim,
+ *  because the wizard classifies the raw text to decide between a sign-in
+ *  button and the bucket-list-denied explainer. */
+export function wizardGcsErrorMessage(err: unknown, reader: string | undefined): string {
+  const message = err instanceof Error ? err.message : String(err);
+  return isGcpImpersonationDeniedMessage(message) ? describeGcpImpersonationDenied(reader, message) : message;
 }

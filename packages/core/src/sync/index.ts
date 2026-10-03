@@ -31,12 +31,19 @@ export {
 export {
   GCS_READ_ONLY_SCOPE,
   createGcsHandle,
+  describeGcpImpersonationDenied,
   isGcloudCliAccountError,
   isGcloudDownloadFailure,
   isGcpBucketListDeniedMessage,
   isGcpCredentialError,
+  isGcpImpersonationDeniedMessage,
   parseGcsPath,
 } from './gcs-client.js';
+
+export {
+  type GcsStorageOptions,
+  createGcsStorage,
+} from './gcs-storage.js';
 
 export {
   GCS_BUCKET_NAME_RULES,

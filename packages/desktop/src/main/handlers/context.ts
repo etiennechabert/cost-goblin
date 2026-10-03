@@ -27,9 +27,11 @@ import {
   GCLOUD_ADC_LOGIN_COMMAND,
   GCLOUD_CLI_LOGIN_COMMAND,
   isCredentialError,
+  describeGcpImpersonationDenied,
   isGcloudDownloadFailure,
   isGcloudCliAccountError,
   isGcpCredentialError,
+  isGcpImpersonationDeniedMessage,
   isS3SyncDownloadFailure,
 } from '@costgoblin/core';
 import { buildAccountReverseMap } from './query-utils.js';
@@ -712,6 +714,11 @@ export function toUserFriendlyError(err: unknown, auth: ProviderAuth): Error {
     // have looped forever.
     if (isGcloudCliAccountError(err)) {
       return new Error(`The gcloud CLI is signed in as a different account than CostGoblin's credentials, or its session expired. Run: ${GCLOUD_CLI_LOGIN_COMMAND}`);
+    }
+    // Before the credential check too: an impersonation the IAM API refuses
+    // is a missing grant, and a sign-in button would loop on it.
+    if (err instanceof Error && isGcpImpersonationDeniedMessage(err.message)) {
+      return new Error(describeGcpImpersonationDenied(auth.impersonateServiceAccount, err.message));
     }
     if (isGcpCredentialError(err)) {
       return new Error(`GCP credentials are missing or expired. Run: ${GCLOUD_ADC_LOGIN_COMMAND}`);

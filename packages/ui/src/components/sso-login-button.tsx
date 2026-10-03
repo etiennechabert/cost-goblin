@@ -242,11 +242,10 @@ export function SsoLoginButton({ profile, onRetry }: Readonly<{
  *
  *  Takes no profile: both are machine-wide, unlike an AWS profile — which is
  *  why this goes through its own API method rather than `ssoLogin(profile)`.
- *  `providerName` names the provider whose failure raised the button, so ADC
- *  is minted with that provider's impersonation rather than another's. */
-export function GcloudLoginButton({ mode = 'adc', providerName, onRetry }: Readonly<{
+ *  No provider is named: ADC is the user's own login, and each provider's
+ *  service account is impersonated on top of it per client. */
+export function GcloudLoginButton({ mode = 'adc', onRetry }: Readonly<{
   mode?: 'adc' | 'cli';
-  providerName?: string;
   onRetry: () => void | Promise<void>;
 }>) {
   const api = useCostApi();
@@ -256,7 +255,7 @@ export function GcloudLoginButton({ mode = 'adc', providerName, onRetry }: Reado
       // Machine-wide credentials, so the lock is shared across providers: two
       // panels for two GCP providers must not each spawn a consent tab.
       lockKey={`gcloud:${mode}`}
-      start={() => api.gcloudLogin(mode, providerName)}
+      start={() => api.gcloudLogin(mode)}
       onRetry={onRetry}
     />
   );

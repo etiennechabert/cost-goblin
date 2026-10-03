@@ -419,8 +419,8 @@ describe('SetupWizard — GCP', () => {
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
     await waitFor(() => { expect(screen.getByText('scripts/gcp-focus-exporter')).toBeDefined(); });
     expect(screen.queryByText(/credentials that can reach BigQuery/i)).toBeNull();
-    expect(screen.getByText(/never calls BigQuery/i)).toBeDefined();
-    expect(screen.getByText(/read-only service account/i)).toBeDefined();
+    const blurb = screen.getByText(/never calls BigQuery/i);
+    expect(blurb.textContent).toMatch(/read-only service account/i);
   });
 
   it('scaffolds the GCP arm, not the AWS one', async () => {
@@ -579,6 +579,71 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     // GCP has no Cost Optimization Hub analogue and validateGcpSync rejects
     // the key — the wizard must never send one.
     expect(written?.costOptBucket).toBeUndefined();
+  });
+
+  it('browses and writes as the read-only service account named on the intro step', async () => {
+    // ADC is one machine-wide login; the reader is per provider. Naming it
+    // here makes the wizard browse as exactly the identity the sync will use.
+    const reader = 'costgoblin-reader@acme-prod.iam.gserviceaccount.com';
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.type(screen.getByLabelText('Read-only service account (optional)'), reader);
+    await user.click(screen.getByText('Find my export'));
+    await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
+    await userClickText(user, 'Acme Production');
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    expect(api.gcsBucketsListedAs).toEqual([reader]);
+
+    await userClickText(user, 'acme-focus-export');
+    await waitFor(() => { expect(screen.getByLabelText('Open folder focus')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder focus'));
+    await waitFor(() => { expect(screen.getByLabelText('Open folder daily')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder daily'));
+    await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
+    expect(api.gcsBrowsed.map(b => b.impersonateServiceAccount)).toEqual([reader, reader, reader]);
+
+    await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('Skip')).toBeDefined(); });
+    await userClickText(user, 'Skip');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+    expect(screen.getByText('Reads as')).toBeDefined();
+    expect(screen.getByText(reader)).toBeDefined();
+
+    await userClickText(user, 'Complete Setup');
+    await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
+    expect(api.writtenConfigs[0]?.impersonateServiceAccount).toBe(reader);
+  });
+
+  it('browses as the ADC login and names no reader when the field is left blank', async () => {
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    await enterGcpBrowse(user);
+    expect(api.gcsBucketsListedAs).toEqual([undefined]);
+    expect(api.gcsBrowsed.every(b => b.impersonateServiceAccount === undefined)).toBe(true);
+    await user.click(screen.getByLabelText('Open folder focus'));
+    await waitFor(() => { expect(screen.getByLabelText('Open folder daily')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder daily'));
+    await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
+    await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('Skip')).toBeDefined(); });
+    await userClickText(user, 'Skip');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+    expect(screen.queryByText('Reads as')).toBeNull();
+    await userClickText(user, 'Complete Setup');
+    await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
+    expect(api.writtenConfigs[0]?.impersonateServiceAccount).toBeUndefined();
+  });
+
+  it('holds the browse back on an address that is not a service account', async () => {
+    const { api, user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.type(screen.getByLabelText('Read-only service account (optional)'), 'me@gmail.com');
+    expect(screen.getByText(/name@project\.iam\.gserviceaccount\.com/)).toBeDefined();
+    const find = screen.getByRole('button', { name: 'Find my export' });
+    expect(find.hasAttribute('disabled')).toBe(true);
+    await user.click(find);
+    expect(api.gcsBucketsListedFor).toEqual([]);
   });
 
   it('collects the hourly tier when the exporter publishes one', async () => {

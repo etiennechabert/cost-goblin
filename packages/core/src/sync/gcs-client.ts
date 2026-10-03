@@ -6,6 +6,8 @@ import { dirname } from 'node:path';
 import type { ManifestFileEntry } from './manifest.js';
 import type { DownloadOptions, ObjectStoreHandle } from './object-store.js';
 import { assertValidGcsBucketName, splitGcsLocation } from './gcs-bucket-name.js';
+import { createGcsStorage } from './gcs-storage.js';
+import type { GcsStorageOptions } from './gcs-storage.js';
 
 /** Splits a `gs://bucket/prefix` location (scheme optional, mirroring how
  *  `parseS3Path` tolerates a bare `bucket/prefix`) into its two parts. The
@@ -20,22 +22,17 @@ export function parseGcsPath(gcsPath: string): { bucket: string; prefix: string 
 // the renderer without dragging node built-ins in. Re-exported here because
 // this is where every existing importer expects to find them.
 export {
+  describeGcpImpersonationDenied,
   isGcloudCliAccountError,
   isGcloudDownloadFailure,
   isGcpBucketListDeniedMessage,
   isGcpCredentialError,
+  isGcpImpersonationDeniedMessage,
 } from './gcp-credential-errors.js';
 
-async function getStorageModule(): Promise<typeof import('@google-cloud/storage')> {
-  return import('@google-cloud/storage');
-}
-
-/** Listing and reading billing exports never needs write access, so the
- *  handle asks for the narrowest Cloud Storage scope. With a service-account
- *  key this is what the token is minted for; under Application Default
- *  Credentials the user-account token already carries cloud-platform, and
- *  the scope is simply not narrowed further. */
-export const GCS_READ_ONLY_SCOPE = 'https://www.googleapis.com/auth/devstorage.read_only';
+// The scope moved with the client construction to `gcs-storage.ts`; kept
+// exported here for existing importers.
+export { GCS_READ_ONLY_SCOPE } from './gcs-storage.js';
 
 /** GCS object size arrives as a string on the REST metadata (JSON numbers
  *  can't hold a 64-bit size), and the SDK types it as `string | number`.
@@ -57,15 +54,21 @@ function toSize(value: string | number | undefined): number {
  *  is deliberately NOT mixed in: the exporter rewrites a period's folder
  *  wholesale, so a generation-based hash would report every re-export as
  *  changed even when the bytes are identical. */
-export async function createGcsHandle(keyFile?: string): Promise<ObjectStoreHandle> {
-  const { Storage } = await getStorageModule();
+export function createGcsHandle(auth: GcsStorageOptions = {}): Promise<ObjectStoreHandle> {
+  // Built on first use, not here: resolving an impersonating client reads ADC,
+  // and a missing login must fail the listing call — where the sync's error
+  // classification and sign-in buttons live — not the handle's construction.
+  // A rejected build is forgotten so the next call retries after a sign-in.
+  let pending: ReturnType<typeof createGcsStorage> | undefined;
+  const getStorage = (): ReturnType<typeof createGcsStorage> => {
+    pending ??= createGcsStorage(auth).catch((err: unknown) => {
+      pending = undefined;
+      throw err;
+    });
+    return pending;
+  };
 
-  const storage = new Storage({
-    scopes: [GCS_READ_ONLY_SCOPE],
-    ...(keyFile === undefined ? {} : { keyFilename: keyFile }),
-  });
-
-  return {
+  return Promise.resolve({
     async listFiles(bucket: string, prefix: string): Promise<ManifestFileEntry[]> {
       // The SDK puts the bucket in its request URL unencoded, so a name with
       // `\`, `#`, `?` or `%` would list a different bucket than the one the
@@ -74,6 +77,7 @@ export async function createGcsHandle(keyFile?: string): Promise<ObjectStoreHand
       assertValidGcsBucketName(bucket);
       // autoPaginate walks nextPageToken internally and resolves with the
       // full set — the pagination loop `createS3Handle` writes by hand.
+      const storage = await getStorage();
       const [files] = await storage.bucket(bucket).getFiles({ prefix, autoPaginate: true });
 
       const entries: ManifestFileEntry[] = [];
@@ -90,6 +94,7 @@ export async function createGcsHandle(keyFile?: string): Promise<ObjectStoreHand
 
     async downloadFile(bucket: string, key: string, localPath: string, options?: DownloadOptions): Promise<void> {
       assertValidGcsBucketName(bucket);
+      const storage = await getStorage();
       await mkdir(dirname(localPath), { recursive: true });
 
       const sourceStream = storage.bucket(bucket).file(key).createReadStream();
@@ -112,5 +117,5 @@ export async function createGcsHandle(keyFile?: string): Promise<ObjectStoreHand
 
       await pipeline(sourceStream, progressStream, writeStream, { signal: options.signal });
     },
-  };
+  });
 }

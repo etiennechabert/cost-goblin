@@ -14,6 +14,9 @@ export interface WizardProviderConfig {
   readonly type?: 'aws' | 'gcp' | undefined;
   readonly profile: string;
   readonly keyFile?: string | undefined;
+  /** The service account the wizard browsed as (GCP). Blank means none was
+   *  named this run — an existing entry's value is then carried over. */
+  readonly impersonateServiceAccount?: string | undefined;
   readonly dailyBucket: string;
   /** Retention for the DAILY tier (the wizard's picker in daily mode). */
   readonly retentionDays?: number | undefined;
@@ -42,6 +45,24 @@ function existingTierRetention(existingSync: Readonly<Record<string, unknown>>, 
   const t: unknown = existingSync[tier];
   if (isStringRecord(t) && typeof t['retentionDays'] === 'number') return t['retentionDays'];
   return undefined;
+}
+
+/** The credential fields of a gcp entry. The payload's own credential wins;
+ *  the replaced entry's is carried only when this run named neither.
+ *  Carrying one beside a newly named other would write `keyFile` +
+ *  `impersonateServiceAccount` together, which the validator rejects — the
+ *  next launch would refuse to start. */
+function gcpCredentialFields(
+  wizard: WizardProviderConfig,
+  carriedString: (key: string) => Record<string, unknown>,
+): Record<string, unknown> {
+  if (wizard.keyFile !== undefined && wizard.keyFile.length > 0) return { keyFile: wizard.keyFile };
+  const reader = wizard.impersonateServiceAccount;
+  if (reader !== undefined && reader.length > 0) return { impersonateServiceAccount: reader };
+  // The wizard usually sends neither, so building the entry from the payload
+  // alone silently deleted a hand-written one — and the sync fell back to
+  // plain ADC, 403ing on a bucket granted only to the service account.
+  return { ...carriedString('keyFile'), ...carriedString('impersonateServiceAccount') };
 }
 
 /** Upsert the wizard's provider into the parsed config by exact name match:
@@ -117,22 +138,15 @@ export function upsertWizardProvider(
   const carriedString = (key: string): Record<string, unknown> =>
     isStringRecord(target) && typeof target[key] === 'string' ? { [key]: target[key] } : {};
 
+  const gcpCredential = gcpCredentialFields(wizard, carriedString);
+
   const entry: Record<string, unknown> = type === 'gcp'
     ? {
         name: wizard.providerName,
         type: 'gcp',
         // Omitted rather than null when blank: absent means Application
         // Default Credentials, which is the documented default.
-        // Carried from the entry being replaced when the payload has none,
-        // exactly like `impersonateServiceAccount` below. The wizard never
-        // sends a keyFile, so without this a re-run silently deleted a
-        // hand-written one and the sync fell back to ADC — 403ing on a bucket
-        // granted only to the service account.
-        ...(wizard.keyFile !== undefined && wizard.keyFile.length > 0 ? { keyFile: wizard.keyFile } : carriedString('keyFile')),
-        // Carried unconditionally: without this the download half ran as the
-        // signed-in user and 403'd on a bucket granted only to the service
-        // account.
-        ...carriedString('impersonateServiceAccount'),
+        ...gcpCredential,
         sync,
       }
     : {

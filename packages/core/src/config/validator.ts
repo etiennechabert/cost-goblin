@@ -2,6 +2,7 @@ import { asBucketPath, asDimensionId } from '../types/branded.js';
 import type { BucketPath } from '../types/branded.js';
 import { isSafeColumnIdentifier } from '../query/identifier-validator.js';
 import { parseProviderName } from './provider-name.js';
+import { isServiceAccountEmail } from './service-account.js';
 import { gcsTiersOverlap } from '../sync/gcs-export-layout.js';
 import { GCS_BUCKET_NAME_RULES, isValidGcsBucketName, splitGcsLocation } from '../sync/gcs-bucket-name.js';
 import { logger } from '../logger/logger.js';
@@ -211,7 +212,7 @@ function resolveCredentialsProfile(raw: Record<string, unknown>, ctx: string): s
 function validateServiceAccountEmail(raw: unknown, ctx: string): string | undefined {
   if (raw === undefined || raw === null) return undefined;
   assertString(raw, `${ctx}.impersonateServiceAccount`);
-  if (!/^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z0-9-]+\.iam\.gserviceaccount\.com$/.test(raw)) {
+  if (!isServiceAccountEmail(raw)) {
     throw new ConfigValidationError(
       `${ctx}.impersonateServiceAccount must be a service-account address like name@project.iam.gserviceaccount.com`,
     );
@@ -234,16 +235,14 @@ function validateProvider(raw: unknown, index: number): ProviderConfig {
   if (raw['type'] === 'gcp') {
     const keyFile = validateGcpKeyFile(raw['keyFile'], ctx);
     const impersonate = validateServiceAccountEmail(raw['impersonateServiceAccount'], ctx);
-    // Rejected rather than silently half-applied. Impersonation reaches the
-    // listing SDK only because ADC itself was established with
-    // `--impersonate-service-account`; a key file replaces ADC for that half
-    // while the download half still passes `--impersonate-service-account` to
-    // gcloud. The two halves would then authenticate as different identities,
-    // and the listing would fail with a bare 403 on a bucket the impersonated
-    // account can read.
+    // Rejected rather than silently half-applied: they are two answers to the
+    // same question. Impersonation mints the reader's token from the user's
+    // own credentials (ADC for the listing, gcloud's account for the
+    // download), so it needs no key file — and a key file is already the
+    // reader's identity, with nothing left to impersonate.
     if (keyFile !== undefined && impersonate !== undefined) {
       throw new ConfigValidationError(
-        `${ctx} sets both keyFile and impersonateServiceAccount — pick one. Impersonation is established once with 'gcloud auth application-default login --impersonate-service-account=<sa>' and needs no key file.`,
+        `${ctx} sets both keyFile and impersonateServiceAccount — pick one. Impersonation reads as the service account from your own 'gcloud auth application-default login' and needs no key file.`,
       );
     }
     const sync = validateGcpSync(raw['sync']);

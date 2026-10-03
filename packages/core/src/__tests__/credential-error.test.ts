@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { isCredentialError, isS3SyncDownloadFailure } from '../sync/s3-client.js';
-import { isGcloudCliAccountError, isGcloudDownloadFailure, isGcpBucketListDeniedMessage, isGcpCredentialError } from '../sync/gcs-client.js';
+import { isGcloudCliAccountError, isGcloudDownloadFailure, isGcpBucketListDeniedMessage, isGcpCredentialError, isGcpImpersonationDeniedMessage } from '../sync/gcs-client.js';
+import { describeGcpImpersonationDenied } from '../sync/gcp-credential-errors.js';
 
 /** The verbatim denial a live least-privilege reader produces on the wizard's
  *  bucket step — `roles/storage.objectViewer` on the bucket, nothing at the
@@ -145,6 +146,54 @@ describe('isGcpBucketListDeniedMessage', () => {
 
   it('is not classified as a credential error', () => {
     expect(isGcpCredentialError(new Error(BUCKET_LIST_DENIED))).toBe(false);
+  });
+});
+
+describe('isGcpImpersonationDeniedMessage', () => {
+  // Verbatim shape google-auth-library's `Impersonated.refreshToken` throws
+  // when the IAM Credentials API refuses `generateAccessToken`.
+  const TOKEN_CREATOR_MISSING = "PERMISSION_DENIED: unable to impersonate: Permission 'iam.serviceAccounts.getAccessToken' denied on resource (or it may not exist).";
+  const API_DISABLED = 'PERMISSION_DENIED: unable to impersonate: IAM Service Account Credentials API has not been used in project 123 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/iamcredentials.googleapis.com/overview?project=123';
+
+  it('detects the missing Token Creator grant and the disabled IAM Credentials API', () => {
+    expect(isGcpImpersonationDeniedMessage(TOKEN_CREATOR_MISSING)).toBe(true);
+    expect(isGcpImpersonationDeniedMessage(API_DISABLED)).toBe(true);
+  });
+
+  it('leaves an expired source login to the credential branch', () => {
+    // The source credential failing to refresh is wrapped in the same
+    // "unable to impersonate" prefix — but a sign-in DOES fix that one.
+    const expired = 'unable to impersonate: Error: invalid_grant: reauth related error (invalid_rapt)';
+    expect(isGcpImpersonationDeniedMessage(expired)).toBe(false);
+    expect(isGcpCredentialError(new Error(expired))).toBe(true);
+  });
+
+  it('is disjoint from the credential and bucket-list branches', () => {
+    // A sign-in cannot grant an IAM role, so this must never raise one.
+    expect(isGcpCredentialError(new Error(TOKEN_CREATOR_MISSING))).toBe(false);
+    expect(isGcpBucketListDeniedMessage(TOKEN_CREATOR_MISSING)).toBe(false);
+    expect(isGcpImpersonationDeniedMessage(BUCKET_LIST_DENIED)).toBe(false);
+    expect(isGcpImpersonationDeniedMessage('')).toBe(false);
+  });
+});
+
+describe('describeGcpImpersonationDenied', () => {
+  it('names the reader, the grant, and the API, and keeps the raw denial', () => {
+    const raw = "PERMISSION_DENIED: unable to impersonate: Permission 'iam.serviceAccounts.getAccessToken' denied on resource (or it may not exist).";
+    const text = describeGcpImpersonationDenied('reader@proj.iam.gserviceaccount.com', raw);
+    expect(text).toContain('reader@proj.iam.gserviceaccount.com');
+    expect(text).toContain('roles/iam.serviceAccountTokenCreator');
+    expect(text).toContain('iamcredentials.googleapis.com');
+    expect(text).toContain(raw);
+    // No sign-in can fix an IAM grant: the toolbar raises its sign-in button
+    // on these markers, so they must stay out.
+    expect(text).not.toContain('GCP credentials');
+    expect(text).not.toContain('Run: ');
+  });
+
+  it('still reads correctly when the reader is unknown', () => {
+    const text = describeGcpImpersonationDenied(undefined, 'unable to impersonate: x');
+    expect(text).toContain('the configured service account');
   });
 });
 

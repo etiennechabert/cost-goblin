@@ -1,8 +1,8 @@
 import { ipcMain, shell } from 'electron';
 import {
-  GCS_READ_ONLY_SCOPE,
   assertValidGcsBucketName,
   classifyGcsFolder,
+  createGcsStorage,
   findGcloudCli,
   gcloudChildPath,
   gcloudSpawnShape,
@@ -16,7 +16,7 @@ import { awsProfileNames } from '../aws-profiles.js';
 import { upsertWizardProvider } from '../config-upsert.js';
 import { buildConfigTemplate, buildDimensionsTemplate, PROVIDER_ABSENT_DIMENSIONS } from '../config-templates.js';
 import { classifyManifestColumns, parseManifestColumnNames, selectManifestKey } from '../setup-manifest.js';
-import { collectGcsPrefixes, gcsNextPageToken, parseGcloudProjects } from '../setup-gcp.js';
+import { collectGcsPrefixes, gcsNextPageToken, parseGcloudProjects, parseWizardReader, wizardGcsErrorMessage } from '../setup-gcp.js';
 import type { DetectedReportType } from '../setup-manifest.js';
 import type { AppContext } from './context.js';
 
@@ -275,27 +275,32 @@ export function registerSetupHandlers(app: AppContext): void {
     });
   });
 
-  ipcMain.handle('setup:list-gcs-buckets', async (_event, projectId: string): Promise<{ buckets: readonly { name: string }[]; error?: string | undefined }> => {
+  // Both GCS handlers build their client through `createGcsStorage` — the
+  // sync's own constructor — so the wizard browses as exactly the identity the
+  // provider will sync as: the user's ADC login, or the reader it names.
+  ipcMain.handle('setup:list-gcs-buckets', async (_event, projectId: string, rawReader?: unknown): Promise<{ buckets: readonly { name: string }[]; error?: string | undefined }> => {
+    const parsed = parseWizardReader(rawReader);
+    if (!parsed.ok) return { buckets: [], error: parsed.error };
     try {
-      const { Storage } = await import('@google-cloud/storage');
-      const storage = new Storage({ projectId, scopes: [GCS_READ_ONLY_SCOPE] });
+      const storage = await createGcsStorage({ projectId, impersonateServiceAccount: parsed.reader });
       const [buckets] = await storage.getBuckets();
       return { buckets: buckets.map(b => ({ name: b.name })) };
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = wizardGcsErrorMessage(err, parsed.reader);
       logger.info('setup:list-gcs-buckets failed', { error: message });
       return { buckets: [], error: message };
     }
   });
 
-  ipcMain.handle('setup:browse-gcs', async (_event, params: { projectId: string; bucket: string; prefix: string }): Promise<GcsBrowseResult> => {
+  ipcMain.handle('setup:browse-gcs', async (_event, params: { projectId: string; bucket: string; prefix: string; impersonateServiceAccount?: unknown }): Promise<GcsBrowseResult> => {
     const prefix = normalizeGcsPrefix(params.prefix);
+    const parsed = parseWizardReader(params.impersonateServiceAccount);
+    if (!parsed.ok) return { prefixes: [], folder: { kind: 'unknown' }, hasParquet: false, truncated: false, error: parsed.error };
     try {
       // Before storage.bucket(): the SDK puts the name in its request URL
       // unencoded. Thrown inside the try so the wizard shows it inline.
       assertValidGcsBucketName(params.bucket);
-      const { Storage } = await import('@google-cloud/storage');
-      const storage = new Storage({ projectId: params.projectId, scopes: [GCS_READ_ONLY_SCOPE] });
+      const storage = await createGcsStorage({ projectId: params.projectId, impersonateServiceAccount: parsed.reader });
       const bucket = storage.bucket(params.bucket);
 
       // PAGINATED, because `maxResults` bounds `items[] + prefixes[]`
@@ -354,7 +359,7 @@ export function registerSetupHandlers(app: AppContext): void {
 
       return { prefixes, folder, hasParquet, truncated };
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = wizardGcsErrorMessage(err, parsed.reader);
       logger.info('setup:browse-gcs failed', { error: message });
       // Unlike `setup:browse-s3`, which swallows the error into an empty
       // listing, the message is carried back: a GCP browse fails mostly on
@@ -368,6 +373,7 @@ export function registerSetupHandlers(app: AppContext): void {
     type?: 'aws' | 'gcp' | undefined;
     profile: string;
     keyFile?: string | undefined;
+    impersonateServiceAccount?: unknown;
     dailyBucket: string;
     retentionDays?: number | undefined;
     hourlyRetentionDays?: number | undefined;
@@ -398,7 +404,11 @@ export function registerSetupHandlers(app: AppContext): void {
     // new one otherwise; other providers and unknown top-level keys are
     // preserved verbatim. Throws ProviderNameError (friendly message,
     // surfaced to the wizard) on an invalid name.
-    const costgoblinYaml = upsertWizardProvider(existing, wizardConfig);
+    // Re-checked here, not left to the next launch's validator: a value that
+    // only failed THERE would be written to disk and stop the app starting.
+    const reader = parseWizardReader(wizardConfig.impersonateServiceAccount);
+    if (!reader.ok) throw new Error(reader.error);
+    const costgoblinYaml = upsertWizardProvider(existing, { ...wizardConfig, impersonateServiceAccount: reader.reader });
 
     await fs.writeFile(ctx.configPath, stringify(costgoblinYaml), 'utf-8');
 

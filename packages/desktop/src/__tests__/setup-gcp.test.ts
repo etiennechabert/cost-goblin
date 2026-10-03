@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { GcsPrefixPage } from '../main/setup-gcp.js';
-import { collectGcsPrefixes, extractGcsPrefixNames, gcsNextPageToken, parseGcloudProjects } from '../main/setup-gcp.js';
+import { collectGcsPrefixes, extractGcsPrefixNames, gcsNextPageToken, parseGcloudProjects, parseWizardReader, wizardGcsErrorMessage } from '../main/setup-gcp.js';
 
 describe('parseGcloudProjects', () => {
   it('reads the shape `gcloud projects list --format=json` emits', () => {
@@ -185,5 +185,39 @@ describe('collectGcsPrefixes', () => {
     ]);
     const result = await collectGcsPrefixes('focus/', 12, fetchPage);
     expect(result).toEqual({ prefixes: ['a'], truncated: false });
+  });
+});
+
+describe('parseWizardReader', () => {
+  it('treats an absent or blank reader as "browse as the ADC login"', () => {
+    expect(parseWizardReader(undefined)).toEqual({ ok: true, reader: undefined });
+    expect(parseWizardReader('')).toEqual({ ok: true, reader: undefined });
+    expect(parseWizardReader('   ')).toEqual({ ok: true, reader: undefined });
+  });
+
+  it('accepts a service-account address, trimmed', () => {
+    expect(parseWizardReader(' reader@proj.iam.gserviceaccount.com ')).toEqual({ ok: true, reader: 'reader@proj.iam.gserviceaccount.com' });
+  });
+
+  it('rejects anything else crossing the IPC boundary, before any SDK call', () => {
+    for (const bad of [42, {}, 'someone@gmail.com', '--impersonate-service-account=x', 'Reader@proj.iam.gserviceaccount.com']) {
+      const result = parseWizardReader(bad);
+      expect(result.ok, JSON.stringify(bad)).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/service-account address/);
+    }
+  });
+});
+
+describe('wizardGcsErrorMessage', () => {
+  it('rewrites an impersonation denial into the Token Creator remedy, naming the reader', () => {
+    const raw = "PERMISSION_DENIED: unable to impersonate: Permission 'iam.serviceAccounts.getAccessToken' denied on resource (or it may not exist).";
+    const message = wizardGcsErrorMessage(new Error(raw), 'reader@proj.iam.gserviceaccount.com');
+    expect(message).toContain('roles/iam.serviceAccountTokenCreator');
+    expect(message).toContain('reader@proj.iam.gserviceaccount.com');
+  });
+
+  it('passes every other failure through verbatim, so sign-in and bucket-list classification still see it', () => {
+    expect(wizardGcsErrorMessage(new Error('Could not load the default credentials.'), undefined)).toBe('Could not load the default credentials.');
+    expect(wizardGcsErrorMessage('plain string', undefined)).toBe('plain string');
   });
 });

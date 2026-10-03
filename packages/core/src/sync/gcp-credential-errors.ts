@@ -76,6 +76,35 @@ export function isGcpBucketListDeniedMessage(message: string): boolean {
   return message.includes('storage.buckets.list');
 }
 
+/** The user's credentials work, but may not read AS the provider's
+ *  `impersonateServiceAccount`.
+ *
+ *  google-auth-library wraps every impersonation failure in
+ *  `unable to impersonate: …`. Two of them are IAM configuration the user
+ *  fixes in the console, never by signing in again: the missing
+ *  `roles/iam.serviceAccountTokenCreator` grant on the reader
+ *  (`iam.serviceAccounts.getAccessToken` denied), and the IAM Service Account
+ *  Credentials API being disabled in the quota project. An expired source
+ *  login arrives under the same prefix but names `invalid_grant` /
+ *  `invalid_rapt` instead, and stays with `isGcpCredentialError`.
+ *
+ *  Takes the message, like `isGcpBucketListDeniedMessage`, so the wizard can
+ *  call it on the string it holds. */
+export function isGcpImpersonationDeniedMessage(message: string): boolean {
+  if (!message.includes('unable to impersonate')) return false;
+  return message.includes('iam.serviceAccounts.getAccessToken')
+    || message.includes('IAM Service Account Credentials API');
+}
+
+/** The remedy for `isGcpImpersonationDeniedMessage`, in words. Deliberately
+ *  free of the `GCP credentials` marker and the `Run: ` clause the sync
+ *  toolbar keys its sign-in button on: signing in again cannot grant a role.
+ *  The raw denial is kept — it says which of the two causes applies. */
+export function describeGcpImpersonationDenied(serviceAccount: string | undefined, rawMessage: string): string {
+  const reader = serviceAccount ?? 'the configured service account';
+  return `CostGoblin could not read as ${reader}. Your Google account needs roles/iam.serviceAccountTokenCreator on that service account, and the IAM Service Account Credentials API (iamcredentials.googleapis.com) must be enabled. Grant the role with: gcloud iam service-accounts add-iam-policy-binding ${reader} --member=user:<your-email> --role=roles/iam.serviceAccountTokenCreator — Details: ${rawMessage}`;
+}
+
 /** The gcloud CLI's OWN sign-in is the problem, not Application Default
  *  Credentials.
  *

@@ -369,6 +369,46 @@ describe('upsertWizardProvider — gcp arm', () => {
     expect(entry).not.toHaveProperty('keyFile');
   });
 
+  it('writes the reader the wizard browsed with as impersonateServiceAccount', () => {
+    const result = upsertWizardProvider({}, {
+      providerName: 'gcp-main', type: 'gcp', profile: '',
+      dailyBucket: 'gs://b/focus', impersonateServiceAccount: 'reader@proj.iam.gserviceaccount.com',
+    });
+    expect(providers(result)[0]).toMatchObject({ impersonateServiceAccount: 'reader@proj.iam.gserviceaccount.com' });
+
+    const blank = upsertWizardProvider({}, {
+      providerName: 'gcp-main', type: 'gcp', profile: '',
+      dailyBucket: 'gs://b/focus', impersonateServiceAccount: '',
+    });
+    expect(providers(blank)[0]).not.toHaveProperty('impersonateServiceAccount');
+  });
+
+  it('lets a re-run name a different reader, and carries the old one when it names none', () => {
+    const existing = { providers: [{ name: 'gcp-main', type: 'gcp', impersonateServiceAccount: 'old@proj.iam.gserviceaccount.com', sync: { daily: { bucket: 'gs://b/focus', retentionDays: 365 } } }] };
+    const replaced = upsertWizardProvider(existing, {
+      providerName: 'gcp-main', type: 'gcp', profile: '',
+      dailyBucket: 'gs://b/focus', impersonateServiceAccount: 'new@proj.iam.gserviceaccount.com',
+    });
+    expect(providers(replaced)[0]).toMatchObject({ impersonateServiceAccount: 'new@proj.iam.gserviceaccount.com' });
+
+    const carried = upsertWizardProvider(existing, {
+      providerName: 'gcp-main', type: 'gcp', profile: '', dailyBucket: 'gs://b/focus',
+    });
+    expect(providers(carried)[0]).toMatchObject({ impersonateServiceAccount: 'old@proj.iam.gserviceaccount.com' });
+  });
+
+  it('never combines a newly named reader with a carried key file, which the validator rejects', () => {
+    const existing = { providers: [{ name: 'gcp-main', type: 'gcp', keyFile: '/home/me/sa.json', sync: { daily: { bucket: 'gs://billing-export/focus/daily/', retentionDays: 365 } } }] };
+    const result = upsertWizardProvider(existing, {
+      providerName: 'gcp-main', type: 'gcp', profile: '',
+      dailyBucket: 'gs://billing-export/focus/daily/', impersonateServiceAccount: 'reader@proj.iam.gserviceaccount.com',
+    });
+    const entry = providers(result)[0];
+    expect(entry).toMatchObject({ impersonateServiceAccount: 'reader@proj.iam.gserviceaccount.com' });
+    expect(entry).not.toHaveProperty('keyFile');
+    expect(() => validateConfig(result)).not.toThrow();
+  });
+
   it('refuses to rewrite an aws entry as gcp under the same name', () => {
     // The mirror image of the aws-over-gcp guard above. Before this guard
     // covered both directions, a `type: 'gcp'` payload landing on an existing
