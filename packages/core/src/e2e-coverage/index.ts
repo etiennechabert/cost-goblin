@@ -24,7 +24,11 @@ export {
   isRendererBundleUrl,
   mergeIstanbulFile,
   parseIstanbulFileCoverage,
+  restrictToExecutableLines,
 } from './collect.js';
+
+export { executableLines, restrictToStatementLines } from './executable-lines.js';
+export type { StatementLineReport } from './executable-lines.js';
 
 export { generateLcov } from './lcov.js';
 
@@ -38,6 +42,7 @@ export type {
   CoverageFailure,
   CoverageReport,
   CoverageVerdict,
+  ExecutableLines,
   FileCoverage,
   IstanbulBranch,
   IstanbulFileCoverage,

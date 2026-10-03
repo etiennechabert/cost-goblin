@@ -360,11 +360,19 @@ gcloud storage rm --recursive gs://<BUCKET>/<PREFIX>/<TIER>/billing_period=YYYY-
 ## Point CostGoblin at it
 
 Easiest route: pick **Google Cloud** on the setup screen and choose **Find my
-export**. The wizard lists your projects (via `gcloud projects list`), then the
-buckets in the one you pick, then walks the bucket so you can select the tier
-folder — and writes the config itself. It won't let you select the `<PREFIX>`
+export**. The wizard lists your projects (via `gcloud projects list`) — or, when
+your account can't list the project, takes its ID typed into **Project not
+listed? Enter its ID** — then the buckets in that project, then walks the bucket
+so you can select the tier folder — and writes the config itself. It won't let you select the `<PREFIX>`
 folder above the tiers, which is the mistake that makes the daily tier read the
 hourly shards too.
+
+Already know the project ID? Type it into **Already know the project ID? Skip
+the project list**, just under **Find my export**, and the wizard goes straight
+to the bucket step without running `gcloud projects list` at all — the faster
+route in an organisation with thousands of projects, where that listing is slow
+and the list too long to scan. The project step has a similar field, **Project
+not listed? Enter its ID**, usable while the list is still loading.
 
 > **"Couldn't list the buckets in …" is expected with the read-only reader, not
 > a misconfiguration.** Listing the buckets in a project is a *project-level*
@@ -393,25 +401,34 @@ hourly shards too.
 > `storage.buckets.list` — it adds no object access, so the reader stays unable
 > to read anything it could not already read.
 >
-> An empty list on the *project* step one screen earlier is a different problem
-> with a different fix, and no IAM grant to the reader will touch it: the wizard
-> runs `gcloud projects list`, which authenticates as gcloud's **active
-> account** — never ADC, never the impersonated service account. So the account
-> that lists your projects and the one that reads the bucket are independent,
-> and anyone signed into both a work and a personal account routinely has the
-> wrong one active. Fix it with `gcloud auth login` or:
+> The *project* step one screen earlier has the same least-privilege quirk.
+> The wizard runs `gcloud projects list`, which authenticates as gcloud's
+> **active account** — never ADC, never the impersonated service account — and
+> an account whose only grant is `roles/iam.serviceAccountTokenCreator` on the
+> reader — set up for you by an admin — holds nothing at the project level, so
+> the project is not listed. That is expected: type the project ID into **Project not listed? Enter its ID** (or
+> into the field under **Find my export**, which skips the list) and press
+> **Continue**. The project is only used to list its buckets, which the
+> reader can't do anyway, so the bucket step then asks for the bucket name as
+> described above. If you would rather pick the project from the list, granting
+> your account `roles/browser` on the project lists it — optional, not required.
+>
+> If the list is empty when you expected it to be populated, check which account
+> is active — anyone signed into both a work and a personal account routinely
+> has the wrong one active. Fix it with `gcloud auth login` or:
 >
 > ```bash
 > gcloud config set account you@example.com
 > ```
->
-> There is no manual project field to fall back to, so if that list stays empty,
-> take **Write the config by hand instead** on that screen and use the YAML
-> below — the wizard's remaining steps only exist to produce it.
 
-To write the entry by hand instead — a bare service-account key can't list
-projects, for example — take the **Write the config by hand instead** link on
-that same screen, or open the config folder from **Data Management → Generate
+The wizard writes neither `keyFile` nor `impersonateServiceAccount`. If you use
+either (see [Credentials](#credentials)), add it to the provider the wizard
+wrote — without `impersonateServiceAccount` the download runs as your own
+gcloud account and is refused on a bucket granted only to the reader.
+
+To write the entry by hand instead — a bare service-account key the wizard
+can't browse with, for example — take the **Write the config by hand
+instead** link on the GCP setup screen, or open the config folder from **Data Management → Generate
 config templates & open folder**. Replace the `providers` entry (or add a
 second one alongside your AWS provider):
 
@@ -528,7 +545,8 @@ confined to the bucket:
   gcloud's signed-in account**, not as the reader — whatever that account can
   reach, the `gcloud storage rsync` process can too. And the wizard's project
   list (`gcloud projects list`) *always* runs as gcloud's active account, with
-  or without impersonation.
+  or without impersonation — which is why a least-privilege account is not
+  shown its project and types the ID instead.
 - **Impersonation confines the identity used, not what is stored.** The ADC
   file written by `gcloud auth application-default login
   --impersonate-service-account=…` still holds *your own* refresh token as the

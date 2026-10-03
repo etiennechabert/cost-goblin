@@ -188,7 +188,7 @@ GCP's billing data reaches CostGoblin through its native **FOCUS BigQuery export
 
 [**scripts/gcp-focus-exporter**](scripts/gcp-focus-exporter/README.md) covers the whole path: enabling the export, deploying the job (Cloud Shell, local, or copy-paste), and the `costgoblin.yaml` entry that points the app at the result.
 
-> On first run, pick **Google Cloud** on the setup screen. Once the exporter has run, the wizard browses your buckets the same way the AWS path browses S3 — pick the project, the bucket, then the tier folder, and it writes the config for you. It refuses the exporter's parent prefix (pointing a tier there would read every tier's shards) and an `hourly` folder that overlaps `daily`. Hand-editing `costgoblin.yaml` stays available from the same screen for credentials that can't list projects, such as a bare service-account key.
+> On first run, pick **Google Cloud** on the setup screen. Once the exporter has run, the wizard browses your buckets the same way the AWS path browses S3 — pick the project (or type its ID, when your account can't list it or your organisation has too many to scan), the bucket, then the tier folder, and it writes the config for you. It refuses the exporter's parent prefix (pointing a tier there would read every tier's shards) and an `hourly` folder that overlaps `daily`. The wizard does not set `keyFile` or `impersonateServiceAccount`, so add those to the provider it wrote; hand-editing `costgoblin.yaml` stays available from the same screen.
 
 ## Features
 
