@@ -6,6 +6,7 @@ import {
   assembleDownloadIdentity,
   credentialEmail,
   emailFromIdToken,
+  logger,
   gcpIdentityNotes,
   gcpIdentityWarnings,
   grantsEmailScope,
@@ -14,14 +15,17 @@ import {
   parseJsonObject,
   resolveListingIdentity,
 } from '@costgoblin/core';
+import { readFile } from 'node:fs/promises';
 import type {
   AccountLookupFn,
   AuthorizedUserSecret,
+  CostGoblinConfig,
   GcloudConfigValues,
   GcpAccountLookup,
   GcpCredentialFile,
   GcpDownloadIdentity,
   GcpIdentities,
+  GcpIdentityResult,
   GcpListingIdentity,
 } from '@costgoblin/core';
 import type { GcloudCaptureResult } from './gcloud-capture.js';
@@ -236,9 +240,10 @@ export async function lookupAuthorizedUserEmail(secret: AuthorizedUserSecret): P
     : { status: 'unknown', reason: 'not-recorded' };
 }
 
-/** The real I/O, for the IPC handler. */
-export async function defaultIdentityDeps(): Promise<IdentityDeps> {
-  const { readFile } = await import('node:fs/promises');
+/** The real I/O, for the IPC handler. Synchronous on purpose: the handler
+ *  creates its one resolver on first use, and an `await` there would let the
+ *  first burst of panels each create their own — defeating the coalescing. */
+export function defaultIdentityDeps(): IdentityDeps {
   return {
     env: process.env,
     platform: process.platform,
@@ -246,4 +251,33 @@ export async function defaultIdentityDeps(): Promise<IdentityDeps> {
     runGcloud: (args) => runGcloudCapture(args, GCLOUD_CONFIG_TIMEOUT_MS),
     lookupEmail: lookupAuthorizedUserEmail,
   };
+}
+
+/** The `data:gcp-identities` handler's body, kept out of `handlers/setup.ts`
+ *  so it can be tested without Electron. `rawProvider` arrives over IPC, so
+ *  it is narrowed here: a string names a provider whose `keyFile` /
+ *  `impersonateServiceAccount` apply; anything else is the wizard's "no
+ *  provider yet". */
+export async function gcpIdentitiesFor(
+  rawProvider: unknown,
+  loadConfig: () => Promise<CostGoblinConfig | null>,
+  resolver: () => GcpIdentityResolver,
+): Promise<GcpIdentityResult> {
+  let provider: IdentityProviderOptions = {};
+  if (typeof rawProvider === 'string') {
+    // The wizard runs before a config exists, so a load failure is only an
+    // error when a provider was actually named.
+    const config = await loadConfig();
+    const named = config?.providers.find(p => String(p.name) === rawProvider);
+    if (named === undefined) return { status: 'unavailable', reason: `No provider named "${rawProvider}" is configured.` };
+    if (named.type !== 'gcp') return { status: 'unavailable', reason: `"${rawProvider}" is not a Google Cloud provider.` };
+    provider = named;
+  }
+  try {
+    return { status: 'ok', identities: await resolver().resolve(provider) };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.info('data:gcp-identities failed', { error: message });
+    return { status: 'unavailable', reason: message };
+  }
 }

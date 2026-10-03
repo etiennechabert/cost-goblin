@@ -1,5 +1,6 @@
 import { isStringRecord, parseJsonArray } from '@costgoblin/core';
 import type { GcpProject } from '@costgoblin/core';
+import type { GcloudCaptureResult } from './gcloud-capture.js';
 
 /** Pure parsers behind the GCP setup handlers, kept out of `handlers/setup.ts`
  *  so they can be tested without spawning gcloud or reaching Cloud Storage —
@@ -114,4 +115,35 @@ export async function collectGcsPrefixes(
     }
   } while (pageToken !== undefined);
   return { prefixes, truncated: false };
+}
+
+/** What `setup:list-gcp-projects` answers for one `gcloud projects list` run.
+ *  `GCLOUD_CLI_NOT_FOUND` is the sentinel the wizard renders as "install the
+ *  gcloud CLI". */
+export function gcloudProjectsOutcome(result: GcloudCaptureResult): { projects: readonly GcpProject[]; error?: string | undefined } {
+  switch (result.kind) {
+    case 'missing':
+      return { projects: [], error: 'GCLOUD_CLI_NOT_FOUND' };
+    case 'timeout':
+      // A gcloud waiting on a re-auth prompt it will never get input for.
+      return { projects: [], error: 'Timed out listing projects. Check that `gcloud auth login` has been run.' };
+    case 'failed':
+      return { projects: [], error: result.message };
+    case 'exited':
+      break;
+  }
+  if (result.code === 0) {
+    const projects = parseGcloudProjects(result.stdout);
+    // Exit 0 but unreadable stdout. Reporting [] here would render as "the
+    // signed-in account can't see any active projects" — a false statement
+    // about their account, with no remedy offered.
+    return projects === null
+      ? { projects: [], error: 'Could not read the project list from gcloud. Run `gcloud projects list` in a terminal to see what it printed.' }
+      : { projects };
+  }
+  // gcloud's own stderr is the most useful thing to show: it names the exact
+  // remedy ("You do not currently have an active account") that the wizard's
+  // sign-in button then performs.
+  const stderr = result.stderr.trim();
+  return { projects: [], error: stderr.length > 0 ? stderr : `gcloud projects list failed (exit ${String(result.code)})` };
 }

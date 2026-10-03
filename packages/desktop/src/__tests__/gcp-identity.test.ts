@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { GcpAccountLookup } from '@costgoblin/core';
+import { asBucketPath, asProviderName } from '@costgoblin/core';
+import type { CostGoblinConfig, GcpAccountLookup } from '@costgoblin/core';
 import type { GcloudCaptureResult } from '../main/gcloud-capture.js';
 import type { IdentityDeps, IdentityProviderOptions } from '../main/gcp-identity.js';
-import { createGcpIdentityResolver } from '../main/gcp-identity.js';
+import { createGcpIdentityResolver, gcpIdentitiesFor } from '../main/gcp-identity.js';
+import type { GcpIdentityResolver } from '../main/gcp-identity.js';
 
 const HOME = '/Users/a';
 const ADC_PATH = `${HOME}/.config/gcloud/application_default_credentials.json`;
@@ -217,5 +219,55 @@ describe('createGcpIdentityResolver', () => {
     const serialized = JSON.stringify(await resolve({ impersonateServiceAccount: SA }));
     expect(serialized).not.toContain('FAKE-SECRET');
     expect(serialized).not.toContain('FAKE-REFRESH');
+  });
+});
+
+describe('gcpIdentitiesFor', () => {
+  const sync = { daily: { bucket: asBucketPath('gs://b/focus/daily'), retentionDays: 365 }, intervalMinutes: 60 };
+  const CONFIG: CostGoblinConfig = {
+    providers: [
+      { name: asProviderName('aws-main'), type: 'aws', credentialsProfile: 'default', sync: { ...sync, daily: { bucket: asBucketPath('s3-bucket/x'), retentionDays: 90 } } },
+      { name: asProviderName('gcp-main'), type: 'gcp', impersonateServiceAccount: SA, sync },
+      { name: asProviderName('gcp-key'), type: 'gcp', keyFile: '/keys/ci.json', sync },
+    ],
+    defaults: { periodDays: 30, costMetric: 'effective', lagDays: 2 },
+  };
+
+  function recordingResolver(): { resolver: () => GcpIdentityResolver; seen: IdentityProviderOptions[] } {
+    const seen: IdentityProviderOptions[] = [];
+    const real = createGcpIdentityResolver(deps({}));
+    return { seen, resolver: () => ({ resolve: (provider) => { seen.push(provider); return real.resolve(provider); } }) };
+  }
+
+  it('applies the named GCP provider s impersonation and key file', async () => {
+    const { resolver, seen } = recordingResolver();
+    const result = await gcpIdentitiesFor('gcp-main', () => Promise.resolve(CONFIG), resolver);
+    expect(result.status).toBe('ok');
+    expect(seen[0]).toMatchObject({ impersonateServiceAccount: SA });
+    await gcpIdentitiesFor('gcp-key', () => Promise.resolve(CONFIG), resolver);
+    expect(seen[1]).toMatchObject({ keyFile: '/keys/ci.json' });
+  });
+
+  it('treats anything but a string as the wizard s "no provider yet", without loading the config', async () => {
+    const { resolver, seen } = recordingResolver();
+    const loadConfig = vi.fn(() => Promise.resolve(CONFIG));
+    expect((await gcpIdentitiesFor(undefined, loadConfig, resolver)).status).toBe('ok');
+    expect((await gcpIdentitiesFor(42, loadConfig, resolver)).status).toBe('ok');
+    expect(seen).toEqual([{}, {}]);
+    expect(loadConfig).not.toHaveBeenCalled();
+  });
+
+  it('refuses an unknown or non-GCP provider, and a named provider when no config loads', async () => {
+    const { resolver } = recordingResolver();
+    expect(await gcpIdentitiesFor('nope', () => Promise.resolve(CONFIG), resolver))
+      .toEqual({ status: 'unavailable', reason: 'No provider named "nope" is configured.' });
+    expect(await gcpIdentitiesFor('aws-main', () => Promise.resolve(CONFIG), resolver))
+      .toEqual({ status: 'unavailable', reason: '"aws-main" is not a Google Cloud provider.' });
+    expect((await gcpIdentitiesFor('gcp-main', () => Promise.resolve(null), resolver)).status).toBe('unavailable');
+  });
+
+  it('reports a resolver failure as unavailable rather than rejecting the IPC call', async () => {
+    const failing = (): GcpIdentityResolver => ({ resolve: () => Promise.reject(new Error('boom')) });
+    expect(await gcpIdentitiesFor(undefined, () => Promise.resolve(null), failing)).toEqual({ status: 'unavailable', reason: 'boom' });
   });
 });

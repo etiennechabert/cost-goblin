@@ -14,9 +14,9 @@ import { upsertWizardProvider } from '../config-upsert.js';
 import { buildConfigTemplate, buildDimensionsTemplate, PROVIDER_ABSENT_DIMENSIONS } from '../config-templates.js';
 import { classifyManifestColumns, parseManifestColumnNames, selectManifestKey } from '../setup-manifest.js';
 import { runGcloudCapture } from '../gcloud-capture.js';
-import { createGcpIdentityResolver, defaultIdentityDeps } from '../gcp-identity.js';
-import type { GcpIdentityResolver, IdentityProviderOptions } from '../gcp-identity.js';
-import { collectGcsPrefixes, gcsNextPageToken, parseGcloudProjects } from '../setup-gcp.js';
+import { createGcpIdentityResolver, defaultIdentityDeps, gcpIdentitiesFor } from '../gcp-identity.js';
+import type { GcpIdentityResolver } from '../gcp-identity.js';
+import { collectGcsPrefixes, gcloudProjectsOutcome, gcsNextPageToken } from '../setup-gcp.js';
 import type { DetectedReportType } from '../setup-manifest.js';
 import type { AppContext } from './context.js';
 
@@ -200,33 +200,11 @@ export function registerSetupHandlers(app: AppContext): void {
     // Shared capture helper: trusted binary, gcloudSpawnShape, trusted-first
     // child PATH, stdin ignored so a re-auth prompt fails on the timeout.
     const result = await runGcloudCapture(['projects', 'list', '--format=json'], GCLOUD_PROJECTS_TIMEOUT_MS);
-    switch (result.kind) {
-      case 'missing':
-        return { projects: [], error: 'GCLOUD_CLI_NOT_FOUND' };
-      case 'timeout':
-        return { projects: [], error: 'Timed out listing projects. Check that `gcloud auth login` has been run.' };
-      case 'failed':
-        return { projects: [], error: result.message };
-      case 'exited':
-        break;
+    const outcome = gcloudProjectsOutcome(result);
+    if (result.kind === 'exited' && outcome.error !== undefined) {
+      logger.info('setup:list-gcp-projects failed', { error: outcome.error });
     }
-    if (result.code === 0) {
-      const projects = parseGcloudProjects(result.stdout);
-      // Exit 0 but unreadable stdout. Reporting [] here would render as "the
-      // signed-in account can't see any active projects" — a false statement
-      // about their account, with no remedy offered.
-      if (projects === null) {
-        return { projects: [], error: 'Could not read the project list from gcloud. Run `gcloud projects list` in a terminal to see what it printed.' };
-      }
-      return { projects };
-    }
-    // gcloud's own stderr is the most useful thing to show: it names the exact
-    // remedy ("You do not currently have an active account") that the
-    // wizard's sign-in button then performs.
-    const stderr = result.stderr.trim();
-    const message = stderr.length > 0 ? stderr : `gcloud projects list failed (exit ${String(result.code)})`;
-    logger.info('setup:list-gcp-projects failed', { error: message });
-    return { projects: [], error: message };
+    return outcome;
   });
 
   // Read-only: who the listing SDK and the gcloud CLI run as, for the
@@ -236,26 +214,11 @@ export function registerSetupHandlers(app: AppContext): void {
   // resolver for the process, created on first use, so the panels Data
   // Management mounts together share a single gcloud read.
   let identityResolver: GcpIdentityResolver | null = null;
-  ipcMain.handle('data:gcp-identities', async (_event, rawProvider: unknown): Promise<GcpIdentityResult> => {
-    let provider: IdentityProviderOptions = {};
-    if (typeof rawProvider === 'string') {
-      // The wizard runs before a config exists, so a load failure is only an
-      // error when a provider was actually named.
-      const config = await app.getConfig().catch(() => null);
-      const named = config?.providers.find(p => String(p.name) === rawProvider);
-      if (named === undefined) return { status: 'unavailable', reason: `No provider named "${rawProvider}" is configured.` };
-      if (named.type !== 'gcp') return { status: 'unavailable', reason: `"${rawProvider}" is not a Google Cloud provider.` };
-      provider = named;
-    }
-    try {
-      identityResolver ??= createGcpIdentityResolver(await defaultIdentityDeps());
-      return { status: 'ok', identities: await identityResolver.resolve(provider) };
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      logger.info('data:gcp-identities failed', { error: message });
-      return { status: 'unavailable', reason: message };
-    }
-  });
+  ipcMain.handle('data:gcp-identities', (_event, rawProvider: unknown): Promise<GcpIdentityResult> => gcpIdentitiesFor(
+    rawProvider,
+    () => app.getConfig().catch(() => null),
+    () => (identityResolver ??= createGcpIdentityResolver(defaultIdentityDeps())),
+  ));
 
   ipcMain.handle('setup:list-gcs-buckets', async (_event, projectId: string): Promise<{ buckets: readonly { name: string }[]; error?: string | undefined }> => {
     try {
