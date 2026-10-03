@@ -374,8 +374,6 @@ export function registerSetupHandlers(app: AppContext): void {
     costOptRetentionDays?: number | undefined;
     hourlyBucket?: string | undefined;
     costOptBucket?: string | undefined;
-    // Validated by upsertWizardProvider before anything is written.
-    impersonateServiceAccount?: string | undefined;
     tags?: { tagName: string; label: string; concept?: string | undefined }[] | undefined;
   }): Promise<void> => {
     const fs = await import('node:fs/promises');

@@ -369,63 +369,6 @@ describe('upsertWizardProvider — gcp arm', () => {
     expect(entry).not.toHaveProperty('keyFile');
   });
 
-  it('writes the impersonation target the wizard supplies, and the result loads', () => {
-    // Without this the least-privilege setup needed a hand edit after the
-    // wizard: the download half ran as the signed-in user and 403'd on a
-    // bucket granted only to the read-only service account.
-    const written = upsertWizardProvider({}, {
-      providerName: 'gcp-main', type: 'gcp', profile: '',
-      dailyBucket: 'gs://acme-focus-export/focus/daily/',
-      impersonateServiceAccount: 'costgoblin-reader@acme-prod.iam.gserviceaccount.com',
-    });
-    expect(providers(written)[0]).toMatchObject({
-      impersonateServiceAccount: 'costgoblin-reader@acme-prod.iam.gserviceaccount.com',
-    });
-    expect(validateConfig(written).providers[0]).toMatchObject({
-      impersonateServiceAccount: 'costgoblin-reader@acme-prod.iam.gserviceaccount.com',
-    });
-  });
-
-  it('replaces an existing impersonation target with the wizard one, and keeps it when none is sent', () => {
-    const existing = {
-      providers: [{ ...providerGcp(), impersonateServiceAccount: 'old-reader@acme-prod.iam.gserviceaccount.com' }],
-    };
-    const name = String(providerGcp()['name']);
-    const replaced = upsertWizardProvider(existing, {
-      providerName: name, type: 'gcp', profile: '', dailyBucket: 'gs://b/focus/daily/',
-      impersonateServiceAccount: 'new-reader@acme-prod.iam.gserviceaccount.com',
-    });
-    expect(providers(replaced)[0]).toMatchObject({ impersonateServiceAccount: 'new-reader@acme-prod.iam.gserviceaccount.com' });
-
-    const kept = upsertWizardProvider(existing, {
-      providerName: name, type: 'gcp', profile: '', dailyBucket: 'gs://b/focus/daily/',
-    });
-    expect(providers(kept)[0]).toMatchObject({ impersonateServiceAccount: 'old-reader@acme-prod.iam.gserviceaccount.com' });
-
-    const blank = upsertWizardProvider(existing, {
-      providerName: name, type: 'gcp', profile: '', dailyBucket: 'gs://b/focus/daily/',
-      impersonateServiceAccount: '',
-    });
-    expect(providers(blank)[0]).toMatchObject({ impersonateServiceAccount: 'old-reader@acme-prod.iam.gserviceaccount.com' });
-  });
-
-  it('refuses a malformed impersonation target before writing anything', () => {
-    // The value lands in a gcloud argv; the loader would reject it too, but
-    // only after the wizard had already written an unloadable file.
-    expect(() => upsertWizardProvider({}, {
-      providerName: 'gcp-main', type: 'gcp', profile: '', dailyBucket: 'gs://b/focus/daily/',
-      impersonateServiceAccount: 'me@gmail.com',
-    })).toThrow(/service-account address/);
-  });
-
-  it('never writes an impersonation target onto an aws provider', () => {
-    const written = upsertWizardProvider({}, {
-      providerName: 'aws-main', profile: 'prod', dailyBucket: 's3://b/focus_daily/',
-      impersonateServiceAccount: 'costgoblin-reader@acme-prod.iam.gserviceaccount.com',
-    });
-    expect(providers(written)[0]).not.toHaveProperty('impersonateServiceAccount');
-  });
-
   it('refuses to rewrite an aws entry as gcp under the same name', () => {
     // The mirror image of the aws-over-gcp guard above. Before this guard
     // covered both directions, a `type: 'gcp'` payload landing on an existing

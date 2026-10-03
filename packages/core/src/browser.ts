@@ -14,7 +14,6 @@ export type { DuckDbSandboxOptions } from './query/duckdb-sandbox.js';
 export { validateViews } from './config/views-validator.js';
 export { widgetToYaml, viewToYaml, viewsConfigToYaml } from './config/views-serialize.js';
 export { ConfigValidationError } from './config/validator.js';
-export { SERVICE_ACCOUNT_EMAIL_HINT, isServiceAccountEmail } from './config/service-account.js';
 // The editor validates strip patterns against the same caps the save handler
 // enforces. Pure leaf module: the bounded executor that RUNS the patterns
 // (normalize/strip-bounded.ts, node:vm) must never be exported from here.

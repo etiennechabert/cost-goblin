@@ -1,4 +1,3 @@
-import { SERVICE_ACCOUNT_EMAIL_HINT, isServiceAccountEmail } from './service-account.js';
 import { asBucketPath, asDimensionId } from '../types/branded.js';
 import type { BucketPath } from '../types/branded.js';
 import { isSafeColumnIdentifier } from '../query/identifier-validator.js';
@@ -212,9 +211,9 @@ function resolveCredentialsProfile(raw: Record<string, unknown>, ctx: string): s
 function validateServiceAccountEmail(raw: unknown, ctx: string): string | undefined {
   if (raw === undefined || raw === null) return undefined;
   assertString(raw, `${ctx}.impersonateServiceAccount`);
-  if (!isServiceAccountEmail(raw)) {
+  if (!/^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z0-9-]+\.iam\.gserviceaccount\.com$/.test(raw)) {
     throw new ConfigValidationError(
-      `${ctx}.impersonateServiceAccount must be ${SERVICE_ACCOUNT_EMAIL_HINT}`,
+      `${ctx}.impersonateServiceAccount must be a service-account address like name@project.iam.gserviceaccount.com`,
     );
   }
   return raw;
