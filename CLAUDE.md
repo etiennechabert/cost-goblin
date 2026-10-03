@@ -64,6 +64,7 @@ Follow this sequence for EVERY feature:
 10. After pushing & opening the PR — close the review loop (see "After pushing"):
     - Run `/code-review max --fix` yourself (via the `Skill` tool), review the fixes it applies, and re-run npm run check
     - Address every sentry[bot] review comment on the PR
+    - Fix or explain every open SonarCloud issue on the PR — a green quality gate is not enough
 ```
 
 ## TypeScript Rules — STRICTLY ENFORCED
@@ -219,7 +220,7 @@ So the lifecycle is: tag `v0.2.6` released → first PR bumps both to `0.2.7` �
 
 ## After pushing — close the review loop
 
-A development cycle isn't done when the code is pushed. Once the changes are pushed and the PR is open, run BOTH of the following before considering the work finished.
+A development cycle isn't done when the code is pushed. Once the changes are pushed and the PR is open, run ALL of the following before considering the work finished.
 
 ### 1. `/code-review max --fix`
 
@@ -247,6 +248,28 @@ gh api -X POST repos/etiennechabert/cost-goblin/pulls/<pr>/comments/<id>/replies
 gh api -X POST repos/etiennechabert/cost-goblin/pulls/comments/<id>/reactions -f content='+1'   # or -1
 ```
 Keep replies professional and free of any AI attribution (see global git rules).
+
+### 3. SonarCloud findings
+
+Every PR is scanned by SonarCloud: the `sonarcloud` CI job, the "SonarCloud Code Analysis" check, and a `sonarqubecloud[bot]` summary comment. **A green gate does not mean a clean PR.** The gate only fails on its conditions:
+- new-code coverage below 80%;
+- a reliability, security or maintainability rating worse than A;
+- duplication above 3%;
+- unreviewed security hotspots.
+
+Individual code smells, bugs and vulnerabilities on new code can therefore sit on a PR whose checks are all green.
+
+Once the scan of the latest push has finished (the `sonarcloud` job is done), read the gate conditions, the open issues and the hotspots. The API is public, so no token is needed:
+```bash
+curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=etiennechabert_cost-goblin&pullRequest=<pr>" | jq -r '.projectStatus | .status, (.conditions[] | "  \(.metricKey) \(.status) \(.actualValue)")'
+curl -s "https://sonarcloud.io/api/issues/search?componentKeys=etiennechabert_cost-goblin&pullRequest=<pr>&resolved=false&ps=100" | jq -r '.total, (.issues[] | "  \(.severity) \(.rule) \(.component | sub("^[^:]*:"; "")):\(.line) — \(.message)")'
+curl -s "https://sonarcloud.io/api/hotspots/search?projectKey=etiennechabert_cost-goblin&pullRequest=<pr>" | jq -r '.paging.total, (.hotspots[] | "  \(.vulnerabilityProbability) \(.component | sub("^[^:]*:"; "")):\(.line) — \(.message)")'
+```
+
+Then handle every open issue and hotspot:
+1. **Verify it against the code**, as with Sentry: Sonar raises real problems and false positives.
+2. **If valid, fix it** like any other change: `npm run check`, commit, push. When the new scan lands, re-run the queries above to confirm the issue closed and nothing new appeared.
+3. **If it's a false positive or a deliberate trade-off**, say so in the PR description with the reason. Don't silence it in code (`// NOSONAR`, or restructuring purely to dodge the rule). Marking it "Accepted" / "False positive" in SonarCloud needs the maintainer's login, so leave that step to them.
 
 ## Key Architecture Decisions
 
@@ -277,7 +300,7 @@ Keep replies professional and free of any AI attribution (see global git rules).
 ## What NOT To Do
 
 - Do NOT skip `npm run check`. Every change must pass before moving on.
-- Do NOT consider a pushed change "done" until `/code-review max --fix` has been run on it and every `sentry[bot]` comment is addressed.
+- Do NOT consider a pushed change "done" until `/code-review max --fix` has been run on it, every `sentry[bot]` comment is addressed, and every open SonarCloud issue on the PR is fixed or explained.
 - Do NOT add `any`, `@ts-ignore`, or `eslint-disable` to make code compile.
 - Do NOT write tests after implementation. Write them before or alongside.
 - Do NOT import from `core` into `ui` for anything except types.

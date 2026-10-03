@@ -27,12 +27,12 @@ function handleFetchError<T>(
   cancelled: { current: boolean },
   retryCount: number,
   setState: (s: QueryState<T>) => void,
-  setRetryCount: (fn: (c: number) => number) => void,
+  retry: () => void,
 ): void {
   if (cancelled.current) return;
   const msg = err instanceof Error ? err.message : String(err);
   if (msg === QUERY_CANCELLED_MESSAGE && retryCount < MAX_CANCEL_RETRIES) {
-    setRetryCount(c => c + 1);
+    retry();
     return;
   }
   setState({
@@ -41,50 +41,79 @@ function handleFetchError<T>(
   });
 }
 
+/** Run `fetcher` (after a short delay when retrying), retrying a cancelled
+ *  query up to MAX_CANCEL_RETRIES times. The retries belong to one effect run,
+ *  so every new set of deps starts with a fresh budget and no delay. */
+function scheduleFetch<T>(
+  fetcher: () => Promise<T>,
+  cancelled: { current: boolean },
+  timer: { current: ReturnType<typeof setTimeout> | undefined },
+  retryCount: number,
+  setState: (s: QueryState<T>) => void,
+): void {
+  timer.current = setTimeout(() => {
+    fetcher()
+      .then((data) => { handleFetchSuccess(data, cancelled, setState); })
+      .catch((err: unknown) => {
+        handleFetchError(err, cancelled, retryCount, setState, () => {
+          scheduleFetch(fetcher, cancelled, timer, retryCount + 1, setState);
+        });
+      });
+  }, retryCount > 0 ? 150 : 0);
+}
+
 export function useQuery<T>(
   fetcher: () => Promise<T>,
   deps: unknown[],
 ): QueryState<T> {
   const [state, setState] = useState<QueryState<T>>({ status: 'idle' });
-  const [retryCount, setRetryCount] = useState(0);
 
-  // Report completion to the surrounding dashboard widget slot (if any) so the
-  // load scheduler can free a concurrency slot for the next widget. Null
-  // outside a LazyWidgetSlot, so this is a no-op for non-widget queries.
+  // Report each query to the surrounding dashboard widget slot (if any) so the
+  // load scheduler frees its lane only once every query in the widget has
+  // settled. Null outside a LazyWidgetSlot, so this is a no-op for non-widget
+  // queries.
   const slot = useWidgetSlot();
   const slotRef = useRef(slot);
   slotRef.current = slot;
+  const doneRef = useRef<(() => void) | null>(null);
 
-  // Release only once the settled state has COMMITTED, not when the promise
-  // settles. Results are applied in a transition, transitions render as one
-  // batch, and the scheduler mounting the next widget is an urgent update that
-  // restarts that batch. Releasing on promise settle therefore mounted the next
-  // wave before this widget's result painted, and its data only appeared once
-  // every widget on the page had loaded and rendered together (seconds under
-  // load). Releasing after commit shows each wave's results before the next
-  // wave starts. A widget that never settles is still released by the
-  // slot's fallback timer.
+  // Mark the query done only once the settled state has COMMITTED, not when
+  // the promise settles. Results are applied in a transition, transitions
+  // render as one batch, and the scheduler mounting the next widget is an
+  // urgent update that restarts that batch. Releasing on promise settle
+  // therefore mounted the next wave before this widget's result painted, and
+  // its data only appeared once every widget on the page had loaded and
+  // rendered together (seconds under load). Releasing after commit shows each
+  // wave's results before the next wave starts. A widget that never settles is
+  // still released by the slot's fallback timer.
+  //
+  // Keep this effect declared BEFORE the fetch effect below. A commit can both
+  // land the previous run's result and restart the query (deps changed); in
+  // that commit this effect must run while `doneRef` still holds the previous
+  // run's (already spent) `done`, not after the new run has replaced it — or it
+  // would mark the new, still-running query done and free the lane early.
   useEffect(() => {
-    if (state.status === 'success' || state.status === 'error') slotRef.current?.onSettled();
+    if (state.status === 'success' || state.status === 'error') doneRef.current?.();
   }, [state]);
 
   useEffect(() => {
     const cancelled = { current: false };
 
     setState({ status: 'loading' });
+    // Idempotent: called on commit of the settled state (above), or here in the
+    // cleanup when the query is superseded or the widget unmounts mid-load.
+    const done = slotRef.current?.trackQuery() ?? null;
+    doneRef.current = done;
 
-    const delay = retryCount > 0 ? 150 : 0;
-    const timer = setTimeout(() => {
-      fetcher()
-        .then((data) => { handleFetchSuccess(data, cancelled, setState); })
-        .catch((err: unknown) => { handleFetchError(err, cancelled, retryCount, setState, setRetryCount); });
-    }, delay);
+    const timer: { current: ReturnType<typeof setTimeout> | undefined } = { current: undefined };
+    scheduleFetch(fetcher, cancelled, timer, 0, setState);
 
     return () => {
       cancelled.current = true;
-      clearTimeout(timer);
+      clearTimeout(timer.current);
+      done?.();
     };
-  }, [...deps, retryCount]);
+  }, deps);
 
   return state;
 }
