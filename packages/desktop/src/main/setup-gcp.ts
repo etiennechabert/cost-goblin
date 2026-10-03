@@ -20,9 +20,9 @@ function isUsableLifecycle(entry: Readonly<Record<string, unknown>>): boolean {
  *
  *  Returns `null` — NOT an empty array — when the payload isn't a JSON array.
  *  gcloud writes update nags and auth prose to stdout in some configurations
- *  while still exiting 0, and collapsing that into `[]` told the user
- *  "the signed-in account can't see any active projects", which is a claim
- *  about their account rather than the truth (we couldn't read the answer).
+ *  while still exiting 0, and collapsing that into `[]` shows the wizard's
+ *  "No Google Cloud projects found" panel — a claim about their account
+ *  rather than the truth (we couldn't read the answer).
  *  An empty array still means genuinely zero projects. */
 export function parseGcloudProjects(stdout: string): GcpProject[] | null {
   const parsed = parseJsonArray(stdout);
@@ -125,8 +125,11 @@ export function gcloudProjectsOutcome(result: GcloudCaptureResult): { projects: 
     case 'missing':
       return { projects: [], error: 'GCLOUD_CLI_NOT_FOUND' };
     case 'timeout':
-      // A gcloud waiting on a re-auth prompt it will never get input for.
-      return { projects: [], error: 'Timed out listing projects. Check that `gcloud auth login` has been run.' };
+      // A sentinel, not prose: the old message carried `gcloud auth login`,
+      // which the wizard's credential check matched — so an organisation
+      // whose thousands of projects simply outlast the ceiling was offered a
+      // sign-in that could not help. The wizard words both causes.
+      return { projects: [], error: 'GCLOUD_PROJECTS_TIMEOUT' };
     case 'failed':
       return { projects: [], error: result.message };
     case 'exited':
@@ -134,9 +137,9 @@ export function gcloudProjectsOutcome(result: GcloudCaptureResult): { projects: 
   }
   if (result.code === 0) {
     const projects = parseGcloudProjects(result.stdout);
-    // Exit 0 but unreadable stdout. Reporting [] here would render as "the
-    // signed-in account can't see any active projects" — a false statement
-    // about their account, with no remedy offered.
+    // Exit 0 but unreadable stdout. Reporting [] here would render the "No
+    // Google Cloud projects found" panel — a false statement about their
+    // account, with no remedy offered.
     return projects === null
       ? { projects: [], error: 'Could not read the project list from gcloud. Run `gcloud projects list` in a terminal to see what it printed.' }
       : { projects };

@@ -48,8 +48,8 @@ describe('parseGcloudProjects', () => {
   it('reports unreadable stdout as null, distinct from an empty list', () => {
     // gcloud prints update nags and auth prompts to stdout in some configs
     // while still exiting 0. Collapsing that into [] made the wizard claim
-    // "the signed-in account can't see any active projects" — a statement
-    // about the user's account rather than about our failure to read it.
+    // "No Google Cloud projects found" — a statement about the user's account
+    // rather than about our failure to read it.
     expect(parseGcloudProjects('You do not currently have an active account')).toBeNull();
     expect(parseGcloudProjects('')).toBeNull();
   });
@@ -208,7 +208,7 @@ describe('gcloudProjectsOutcome', () => {
 
   it('maps a missing CLI to the sentinel the wizard renders, and reports timeouts and spawn failures', () => {
     expect(gcloudProjectsOutcome({ kind: 'missing' })).toEqual({ projects: [], error: 'GCLOUD_CLI_NOT_FOUND' });
-    expect(gcloudProjectsOutcome({ kind: 'timeout' }).error).toMatch(/^Timed out listing projects/);
+    expect(gcloudProjectsOutcome({ kind: 'timeout' })).toEqual({ projects: [], error: 'GCLOUD_PROJECTS_TIMEOUT' });
     expect(gcloudProjectsOutcome({ kind: 'failed', message: 'EACCES' })).toEqual({ projects: [], error: 'EACCES' });
   });
 });

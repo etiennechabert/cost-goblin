@@ -29,6 +29,7 @@ export { gcsTiersOverlap } from './sync/gcs-export-layout.js';
 // sign-in. Same leaf-module reasoning: never re-export this from
 // `gcs-client.ts`, which imports node:fs and the Cloud Storage SDK.
 export { isGcpBucketListDeniedMessage, isGcpCredentialError } from './sync/gcp-credential-errors.js';
+export { GCP_PROJECT_ID_RULES, isValidGcpProjectId } from './config/gcp-project-id.js';
 export { isDiscoverableBeaconLocation, splitS3Location, suggestedConfigBeaconLocation } from './config/sharing-location.js';
 export { DEFAULT_COST_SCOPE, DEFAULT_MARKETPLACE_ATTRIBUTION, BUILTIN_EXCLUSION_RULES } from './config/cost-scope-seed.js';
 export {

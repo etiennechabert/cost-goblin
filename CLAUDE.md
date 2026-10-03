@@ -142,6 +142,8 @@ The window is hidden by default (`COSTGOBLIN_HEADLESS=1`, set by `launchApp`) so
 
 **Coverage-attach ordering:** suites that *collect coverage* must open the app with `launchAppWithCoverage()`, or `attachCoverage(await app.firstWindow())` when they build their own launch. (`csp-verification` and `sandbox-verification` deliberately collect none and just call `launchApp`.) Never await anything between `firstWindow()` and the attach — a late attach silently inflates the shard toward 100% rather than failing. See the `attachCoverage` doc comment in `e2e/helpers.ts`. The run fails on *gross* inflation (>25 function-less files holding >30% of hits — `auditCoverageReport` in `packages/core/src/e2e-coverage/audit.ts`, which `e2e/collect-coverage.ts` calls); a partial late attach still slips through, so the ordering is a rule to follow, not one the tooling can fully police.
 
+**Statement lines only:** after the audit (which reads the raw report its thresholds were measured on), the collector restricts every e2e file to the lines the unit report can list — `restrictToStatementLines` in `packages/core/src/e2e-coverage/executable-lines.ts`, whose doc comments explain why Sonar needs it. It reproduces vitest's own pipeline, so `vite` and `ast-v8-to-istanbul` are root devDependencies that the `overrides` force vitest and @vitest/coverage-v8 to share (`$vite`, `$ast-v8-to-istanbul`) — bump them at the root; Dependabot holds back their majors.
+
 ### Fixture Data
 - Real company data is in `data/raw/` — NEVER committed (gitignored + pre-commit guard)
 - `profile.json` extracted from real data — committed (statistical shape, no PII)
