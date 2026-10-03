@@ -46,13 +46,33 @@ Enable the FOCUS export first, and do it today:
   month; a single region starts completely empty. The location is **immutable**
   afterwards, and your bucket has to match it.
 
-Then create the bucket in the same location, Standard class, uniform access,
-and **object versioning off** — the exporter rewrites period folders, so
-versioning would retain every superseded shard forever:
+Then create the bucket in **exactly the same location as the export
+dataset** — BigQuery refuses to export across locations. Find the dataset's in
+**BigQuery → Explorer → your billing export dataset → Details → Data
+location** (the dataset name usually ends in `_eu` or `_us`).
 
 ```bash
-gcloud storage buckets create gs://cost-goblin --location=EU --uniform-bucket-level-access
+gcloud storage buckets create gs://cost-goblin \
+  --location=EU --default-storage-class=STANDARD \
+  --uniform-bucket-level-access --public-access-prevention \
+  --soft-delete-duration=0
 ```
+
+Creating it in the Console instead (**Cloud Storage → Buckets → Create**)? This is
+what to pick on each screen:
+
+| Screen | Choose |
+|---|---|
+| Get started | Any name. *Hierarchical namespace* off. |
+| Choose where to store your data | The dataset's location: `EU` → **Multi-region** `eu`; `US` → **Multi-region** `us`; a single region such as `europe-west1` → **Region**, that same region. Never *Dual-region* or *Zone*; leave cross-bucket replication unchecked. |
+| Choose how to store your data | **Standard**, Autoclass off. |
+| Choose how to control access to objects | Keep *Enforce public access prevention* checked; access control **Uniform**. |
+| Choose how to protect object data | **Untick *Soft delete policy*** (on by default). Object versioning, bucket retention and object retention off. Google-managed encryption key. |
+
+**No soft delete, versioning or retention.** The exporter deletes and rewrites
+the current month's folder on every run. Soft delete would bill you for a week
+of superseded shards, versioning would keep them forever, and a retention
+policy blocks the delete outright, so every run fails.
 
 ## Deploy it
 
@@ -541,3 +561,6 @@ gcloud storage rm --recursive gs://<BUCKET>/<PREFIX>/<TIER>/billing_period=YYYY-
 
 **Permission denied deleting objects.** The service account needs
 `roles/storage.objectAdmin`, not `objectCreator` — deletion is the point.
+If it already has that role, check the bucket for a retention policy or
+retained objects (`gcloud storage buckets describe gs://<BUCKET>`): retention
+blocks the delete for every principal.

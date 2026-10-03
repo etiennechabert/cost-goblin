@@ -1247,6 +1247,20 @@
       border-color: var(--emerald);
     }
 
+    .step-checklist {
+      list-style: none;
+      padding-left: 46px;
+      margin-bottom: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      font-size: 14px;
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+
+    .step-checklist strong { color: var(--text); }
+
     .step-callout {
       margin-top: 16px;
       margin-left: 46px;
@@ -1930,7 +1944,7 @@
       .terminal-line { flex-direction: column; gap: 2px; }
       .t-tool { min-width: auto; }
       .terminal-line + .terminal-line { margin-top: 8px; }
-      .step p, .step .code-block, .step-note { margin-left: 0; padding-left: 0; }
+      .step p, .step .code-block, .step-note, .step-checklist { margin-left: 0; padding-left: 0; }
       .step .code-block { font-size: 11px; padding: 16px; }
     }
 
@@ -2595,12 +2609,22 @@ Format:   <span class="code-file">Parquet</span>
             <span class="step-num">1</span>
             <h4>Create the bucket</h4>
           </div>
-          <p>The bucket must be in the same location as the export dataset &mdash; BigQuery refuses to export across locations:</p>
+          <p>The bucket must be in <strong>exactly the same location as the export dataset</strong> &mdash; BigQuery refuses to export across locations, and neither location can be changed later. Find the dataset's in <strong>BigQuery</strong> &rarr; <strong>Explorer</strong> &rarr; your billing export dataset &rarr; <strong>Details</strong> &rarr; <strong>Data location</strong> (the dataset name usually ends in <em>_eu</em> or <em>_us</em>). Then:</p>
           <div class="code-block">
 gcloud storage buckets create <span class="code-dir">gs://your-company-billing</span> \
-  --location=<span class="code-file">EU</span> --uniform-bucket-level-access
+  --location=<span class="code-file">EU</span> --default-storage-class=STANDARD \
+  --uniform-bucket-level-access --public-access-prevention \
+  --soft-delete-duration=0
           </div>
-          <div class="step-note">Standard storage class, and leave <strong>object versioning off</strong>: the exporter rewrites a period's folder whenever that month changes, so versioning would silently retain every superseded file forever.</div>
+          <p>Creating it in the Console instead (<strong>Cloud Storage</strong> &rarr; <strong>Buckets</strong> &rarr; <strong>Create</strong>)? This is what to pick on each screen:</p>
+          <ul class="step-checklist">
+            <li><strong>Get started</strong> &mdash; any name. Leave <em>Hierarchical namespace</em> off.</li>
+            <li><strong>Choose where to store your data</strong> &mdash; the dataset's location. An <em>EU</em> dataset &rarr; <em>Multi-region</em>, <em>eu</em>; a <em>US</em> dataset &rarr; <em>Multi-region</em>, <em>us</em>; a single-region dataset such as <em>europe-west1</em> &rarr; <em>Region</em>, that same region. Never <em>Dual-region</em> or <em>Zone</em>, and leave cross-bucket replication unchecked.</li>
+            <li><strong>Choose how to store your data</strong> &mdash; <em>Standard</em>, Autoclass off.</li>
+            <li><strong>Choose how to control access to objects</strong> &mdash; keep <em>Enforce public access prevention</em> checked; access control <em>Uniform</em>.</li>
+            <li><strong>Choose how to protect object data</strong> &mdash; <strong>untick <em>Soft delete policy</em></strong> (it is on by default), leave object versioning, bucket retention and object retention off, and keep the Google-managed encryption key.</li>
+          </ul>
+          <div class="step-callout"><strong>No soft delete, versioning or retention:</strong> the exporter deletes and rewrites the current month's folder on every run. Soft delete would bill you for a week of superseded files, versioning would keep them forever, and a retention policy blocks the delete outright, so every run fails.</div>
         </div>
 
         <div class="step">
