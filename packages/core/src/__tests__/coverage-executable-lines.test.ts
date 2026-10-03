@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { createCoverageReport, restrictToExecutableLines } from '../e2e-coverage/collect.js';
+import { createCoverageReport, padStatementLines, restrictToExecutableLines } from '../e2e-coverage/collect.js';
 import { executableLines, restrictToStatementLines } from '../e2e-coverage/executable-lines.js';
 import { generateLcov } from '../e2e-coverage/lcov.js';
 import type { ExecutableLines, FileCoverage } from '../e2e-coverage/types.js';
@@ -199,17 +199,51 @@ describe('restrictToExecutableLines', () => {
   });
 });
 
-describe('restrictToStatementLines', () => {
-  it('turns an every-line e2e record into the statement-only shape the unit report uses', async () => {
-    // What v8-to-istanbul emits for a component no e2e suite renders: every
-    // line of the file, all at 0, and no branches (V8 reports none for a
-    // function that never ran).
-    const everyLine = COMPONENT.split('\n').map((_, index): [number, number] => [index + 1, 0]);
+describe('padStatementLines', () => {
+  it('gives every statement line with no record a 0 and leaves the rest alone', () => {
     const report = createCoverageReport();
-    report.set(UI_FILE, { lines: new Map(everyLine), functions: new Map(), branches: [] });
+    report.set('/repo/a.tsx', fileCoverage([[12, 3], [30, 2]]));
 
-    const { report: restricted, unrestricted } = await restrictToStatementLines(report, () => COMPONENT);
-    const lcov = generateLcov(restricted);
+    const padded = padStatementLines(report, new Map([['/repo/a.tsx', executable([12, 13, 19], [30, 31])]]));
+
+    // 13 and 19 are statements the bundle has no code for; 31 is branch-only,
+    // where a 0 would only block the line's branch credit.
+    expect(padded.get('/repo/a.tsx')?.lines).toEqual(new Map([[12, 3], [30, 2], [13, 0], [19, 0]]));
+  });
+
+  it('never raises a count', () => {
+    const report = createCoverageReport();
+    report.set('/repo/a.tsx', fileCoverage([[12, 0]]));
+
+    const padded = padStatementLines(report, new Map([['/repo/a.tsx', executable([12])]]));
+
+    expect(padded.get('/repo/a.tsx')?.lines).toEqual(new Map([[12, 0]]));
+  });
+
+  it('passes through a file it has no executable lines for, and does not mutate its input', () => {
+    const report = createCoverageReport();
+    const untouched = fileCoverage([[1, 1]]);
+    report.set('/repo/b.tsx', untouched);
+    report.set('/repo/a.tsx', fileCoverage([[12, 1]]));
+
+    const padded = padStatementLines(report, new Map([['/repo/a.tsx', executable([12, 13])]]));
+
+    expect(padded.get('/repo/b.tsx')).toBe(untouched);
+    expect(report.get('/repo/a.tsx')?.lines).toEqual(new Map([[12, 1]]));
+  });
+});
+
+describe('restrictToStatementLines', () => {
+  it('aligns an e2e record with the statement lines the unit report uses', async () => {
+    // A component no e2e suite rendered, as ast-v8-to-istanbul reports it from
+    // a bundle that kept only part of it: the `if` (13) and its `return null`
+    // (14) at 0, plus a statement on a line vitest's transform does not start
+    // one on (11).
+    const report = createCoverageReport();
+    report.set(UI_FILE, fileCoverage([[11, 0], [13, 0], [14, 0]]));
+
+    const { report: aligned, unrestricted } = await restrictToStatementLines(report, () => COMPONENT);
+    const lcov = generateLcov(aligned);
 
     expect(unrestricted).toEqual([]);
     expect(lcov.split('\n').filter(line => line.startsWith('DA:'))).toEqual([
@@ -222,7 +256,7 @@ describe('restrictToStatementLines', () => {
     expect(lcov).toContain('LF:5\n');
   });
 
-  it('keeps a file it cannot read whole and names it with the first line of the reason', async () => {
+  it('keeps a file it cannot read as reported and names it with the first line of the reason', async () => {
     const report = createCoverageReport();
     const whole = fileCoverage([[1, 0], [2, 1], [3, 0]]);
     report.set('/repo/gone.tsx', whole);
@@ -234,11 +268,11 @@ describe('restrictToStatementLines', () => {
     });
 
     expect(result.report.get('/repo/gone.tsx')).toBe(whole);
-    expect(result.report.get(UI_FILE)?.lines).toEqual(new Map([[12, 1]]));
+    expect(result.report.get(UI_FILE)?.lines).toEqual(new Map([[12, 1], [13, 0], [14, 0], [16, 0], [19, 0]]));
     expect(result.unrestricted).toEqual(['/repo/gone.tsx (ENOENT: no such file)']);
   });
 
-  it('keeps a file whose source does not parse whole', async () => {
+  it('keeps a file whose source does not parse as reported', async () => {
     const report = createCoverageReport();
     const whole = fileCoverage([[1, 0]]);
     report.set(CORE_FILE, whole);
@@ -248,20 +282,5 @@ describe('restrictToStatementLines', () => {
     expect(result.report.get(CORE_FILE)).toBe(whole);
     expect(result.unrestricted).toHaveLength(1);
     expect(result.unrestricted[0]).not.toContain('\n');
-  });
-
-  it('restricts a file it cannot compute statements for to its fallback lines', async () => {
-    const report = createCoverageReport();
-    // A zeroed report: 2 and 4 are lines the bundle has no code for.
-    report.set(CORE_FILE, fileCoverage([[1, 1], [2, 0], [3, 0], [4, 0]]));
-
-    const result = await restrictToStatementLines(
-      report,
-      () => 'export const = ;',
-      new Map([[CORE_FILE, new Set([1, 3])]]),
-    );
-
-    expect(result.report.get(CORE_FILE)?.lines).toEqual(new Map([[1, 1], [3, 0]]));
-    expect(result.unrestricted).toHaveLength(1);
   });
 });

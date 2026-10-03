@@ -226,7 +226,7 @@ const COVERAGE = new WeakMap<Page, CoverageSession>();
  *
  * **Call this immediately after `app.firstWindow()`, before any other await.**
  * That ordering is load-bearing, and getting it wrong fails loudly nowhere —
- * it silently inflates the shard instead:
+ * it silently skews the shard instead:
  *
  * CDP's `Profiler.startPreciseCoverage` only counts execution after it takes
  * effect, so every await in the gap is a window in which the renderer's
@@ -237,7 +237,11 @@ const COVERAGE = new WeakMap<Page, CoverageSession>();
  * unions the shards, one lost race lifts the whole project number: this is
  * what made main's coverage saw-tooth between ~66% and ~82% (#556). The
  * `toHaveTitle('CostGoblin')` check was the specific culprit — the title is
- * static HTML, so it can resolve before the bundle executes.
+ * static HTML, so it can resolve before the bundle executes. The published
+ * report now comes from ast-v8-to-istanbul, which gives code missing from
+ * V8's report the count of the range around it — 0 when nothing around it is
+ * reported either — rather than 1; the collector still converts with
+ * v8-to-istanbul too, for the audit that catches the inflation.
  *
  * Returning the page lets the invariant be expressed as a single expression
  * with no room for an await in the gap:

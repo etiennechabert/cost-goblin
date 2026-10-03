@@ -23,6 +23,7 @@ export {
   isProjectSourcePath,
   isRendererBundleUrl,
   mergeIstanbulFile,
+  padStatementLines,
   parseIstanbulFileCoverage,
   restrictToExecutableLines,
 } from './collect.js';
@@ -30,11 +31,8 @@ export {
 export { executableLines, restrictToStatementLines } from './executable-lines.js';
 export type { StatementLineReport } from './executable-lines.js';
 
-export { addBundleEntry, createBundleCoverage } from './bundle-coverage.js';
-export type { BundleCoverage, BundleEntry } from './bundle-coverage.js';
-
-export { mappedSourceLines, parseSourceMap, zeroUnmappedLines } from './source-map-lines.js';
-export type { MappedSourceLines } from './source-map-lines.js';
+export { addBundleEntry, createBundleCoverage, parseSourceMap } from './bundle-coverage.js';
+export type { BundleCoverage, BundleEntry, BundleEntryResult } from './bundle-coverage.js';
 
 export { generateLcov } from './lcov.js';
 

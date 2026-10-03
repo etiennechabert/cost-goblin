@@ -261,6 +261,32 @@ describe('parseIstanbulFileCoverage', () => {
       { blockId: 1, locations: [{ branchId: 0, line: 9, count: 2 }] },
     ]);
   });
+
+  it('puts every location on the branch node line, including an implicit else with no position', () => {
+    // ast-v8-to-istanbul's `if` without an `else`: the first location is the
+    // `if` itself, the second has no line at all. Skipping it would hide the
+    // untaken fall-through.
+    const entry = parsed({
+      statementMap: {},
+      s: {},
+      fnMap: {},
+      f: {},
+      branchMap: {
+        '0': {
+          loc: loc(6),
+          type: 'if',
+          locations: [loc(6), { start: { line: undefined, column: undefined }, end: { line: undefined, column: undefined } }],
+        },
+        '1': { loc: loc(12), type: 'cond-expr', locations: [loc(13), loc(14)] },
+      },
+      b: { '0': [3, 0], '1': [1, 2] },
+    });
+
+    expect(entry.branches).toEqual([
+      { blockId: 0, locations: [{ branchId: 0, line: 6, count: 3 }, { branchId: 1, line: 6, count: 0 }] },
+      { blockId: 1, locations: [{ branchId: 0, line: 12, count: 1 }, { branchId: 1, line: 12, count: 2 }] },
+    ]);
+  });
 });
 
 describe('mergeIstanbulFile', () => {

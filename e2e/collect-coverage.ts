@@ -76,6 +76,7 @@ async function main(): Promise<void> {
   const coverage = createBundleCoverage();
   const withoutSourceMap: string[] = [];
 
+  const started = performance.now();
   for (const entry of relevant) {
     // fileURLToPath, not a prefix strip: the URL percent-encodes spaces and
     // non-ASCII characters in the checkout path.
@@ -104,6 +105,11 @@ async function main(): Promise<void> {
     if (added.status === 'error') fail(added.message);
   }
 
+  process.stdout.write(
+    `Converted ${String(relevant.length)} renderer bundle entr${relevant.length === 1 ? 'y' : 'ies'} ` +
+      `in ${((performance.now() - started) / 1000).toFixed(1)}s\n`,
+  );
+
   if (withoutSourceMap.length > 0) {
     process.stderr.write(
       `::warning::Skipped ${String(withoutSourceMap.length)} of ${String(relevant.length)} ` +
@@ -113,9 +119,9 @@ async function main(): Promise<void> {
     );
   }
 
-  // The audit reads the raw report, every source line included: its thresholds
-  // were measured on that shape, before the unmapped-line zeroing and the
-  // statement-line restriction.
+  // The audit reads v8-to-istanbul's report, every source line included: its
+  // thresholds were measured on that shape, and it is the shape in which a
+  // lost coverage-attach race shows up as inflation.
   const verdict = auditCoverageReport(coverage.raw);
   const outputPath = join(OUTPUT_DIR, 'lcov.info');
 
@@ -131,18 +137,11 @@ async function main(): Promise<void> {
     fail(describeCoverageFailure(verdict));
   }
 
-  // Zeroed first, restricted second: the restriction drops a branch-only line
-  // whose count is 0, so an unmapped one goes rather than blocking its branch
-  // credit with a DA of 0.
-  const published = await restrictToStatementLines(
-    coverage.zeroed,
-    filePath => readFileSync(filePath, 'utf-8'),
-    coverage.mappedLines,
-  );
+  const published = await restrictToStatementLines(coverage.measured, filePath => readFileSync(filePath, 'utf-8'));
   if (published.unrestricted.length > 0) {
     process.stderr.write(
-      `::warning::Kept every bundle-mapped line of ${String(published.unrestricted.length)} file(s) whose ` +
-        `statement lines could not be computed: ${published.unrestricted.join(', ')}\n`,
+      `::warning::Published ${String(published.unrestricted.length)} file(s) as the bundle has them, unaligned ` +
+        `with the unit report, because their statement lines could not be computed: ${published.unrestricted.join(', ')}\n`,
     );
   }
 

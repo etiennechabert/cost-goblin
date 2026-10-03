@@ -34,7 +34,7 @@ export interface ExecutableLines {
 export type CoverageReport = Map<string, FileCoverage>;
 
 /**
- * One statement of a file, as v8-to-istanbul reports it: `statementMap[id]`
+ * One statement of a file, as the converter reports it: `statementMap[id]`
  * gives the line, `s[id]` the execution count.
  */
 export interface IstanbulStatement {
@@ -70,7 +70,7 @@ export interface IstanbulBranch {
 }
 
 /**
- * A v8-to-istanbul file entry narrowed to the fields lcov actually needs.
+ * A converter's file entry narrowed to the fields lcov actually needs.
  * Produced by `parseIstanbulFileCoverage` from the library's untyped output.
  */
 export interface IstanbulFileCoverage {

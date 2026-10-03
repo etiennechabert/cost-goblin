@@ -62,7 +62,9 @@ function countAt(counts: Readonly<Record<string, unknown>>, id: string): number 
 }
 
 /**
- * Narrows one entry of `v8ToIstanbul().toIstanbul()` to the fields lcov needs.
+ * Narrows one file entry of an istanbul coverage map — from
+ * `v8ToIstanbul().toIstanbul()` or ast-v8-to-istanbul — to the fields lcov
+ * needs.
  *
  * The library is untyped at this boundary (`CoverageMapData` is a union of a
  * class instance and a plain record), so the conversion is done here — under
@@ -75,7 +77,7 @@ function countAt(counts: Readonly<Record<string, unknown>>, id: string): number 
  * empty instead would grade every line "never executed" and hand the audit a
  * full-looking report with `hitShare` 0, which it grades `ok` — coverage
  * silently collapsing to zero with a green job. A caller that gets `null` must
- * treat it as a hard failure, not skip the file (see `e2e/collect-coverage.ts`).
+ * treat it as a hard failure, not skip the file (see `addBundleEntry`).
  */
 export function parseIstanbulFileCoverage(value: unknown): IstanbulFileCoverage | null {
   if (!isStringRecord(value)) return null;
@@ -123,8 +125,9 @@ function parseFunctions(
     if (line === null) continue;
     // Unnamed functions are keyed by line, not by istanbul's id: the id is
     // positional and shifts between shards, which is exactly what the merge
-    // key is chosen to avoid. Unreachable through v8-to-istanbul — it only
-    // builds an fnMap entry when V8 gave the function a name — but the input
+    // key is chosen to avoid. Unreachable through either converter —
+    // v8-to-istanbul builds an fnMap entry only when V8 gave the function a
+    // name, ast-v8-to-istanbul names the rest `(anonymous_<n>)` — but the input
     // here is untrusted `unknown`, so the fallback has to be shard-stable too.
     const name = fn['name'];
     functions.push({
@@ -139,6 +142,11 @@ function parseFunctions(
 // blockId/branchId are the raw positions in `branchMap` and `locations`, held
 // even across a skipped entry: renumbering off the surviving entries would
 // shift every later branch's dedup key out of line with the other shards'.
+//
+// Every location goes on the branch node's own start line, where istanbul's
+// lcov writer (and so the unit report) puts it. That is also the only line an
+// implicit `else` has: ast-v8-to-istanbul gives that location no position.
+// v8-to-istanbul's branch node is its one location, so for it nothing moves.
 function parseBranches(
   branchMap: Readonly<Record<string, unknown>>,
   branchCounts: Readonly<Record<string, unknown>>,
@@ -148,11 +156,12 @@ function parseBranches(
     if (!isStringRecord(branch)) continue;
     const rawLocations = branch['locations'];
     if (!isUnknownArray(rawLocations)) continue;
+    const branchLine = startLineOf(branch['loc']);
     const rawCounts = branchCounts[id];
     const counts = isUnknownArray(rawCounts) ? rawCounts : [];
     const locations: { branchId: number; line: number; count: number }[] = [];
     for (const [branchId, location] of rawLocations.entries()) {
-      const line = startLineOf(location);
+      const line = branchLine ?? startLineOf(location);
       if (line === null) continue;
       const count = counts[branchId];
       locations.push({ branchId, line, count: typeof count === 'number' ? count : 0 });
@@ -205,6 +214,36 @@ export function restrictToExecutableLines(
   return restricted;
 }
 
+/**
+ * Gives every statement line of `executable` that a file of `report` has no
+ * record for a count of 0 — source the renderer bundle has no code for, such
+ * as an export nothing imports. Zero rather than absent: Sonar adds the e2e
+ * count to the unit report's, so a line the unit tests run stays covered,
+ * while dead code in a file only e2e reaches still counts against it.
+ *
+ * Only adds zeros, so no line can come out covered that went in uncovered. A
+ * file absent from `executable` passes through unchanged, and branch-only
+ * lines are left alone: a `DA` of 0 there would only block their branch
+ * credit (see `restrictToExecutableLines`).
+ */
+export function padStatementLines(
+  report: CoverageReport,
+  executable: ReadonlyMap<string, ExecutableLines>,
+): CoverageReport {
+  const padded = createCoverageReport();
+  for (const [filePath, coverage] of report) {
+    const statements = executable.get(filePath)?.statements;
+    if (statements === undefined) {
+      padded.set(filePath, coverage);
+      continue;
+    }
+    const lines = new Map(coverage.lines);
+    for (const line of statements) if (!lines.has(line)) lines.set(line, 0);
+    padded.set(filePath, { lines, functions: coverage.functions, branches: coverage.branches });
+  }
+  return padded;
+}
+
 /** An empty report, ready to merge shards into. */
 export function createCoverageReport(): CoverageReport {
   return new Map();
@@ -241,16 +280,12 @@ export function mergeIstanbulFile(
     }
   }
 
-  // Branches are keyed by their istanbul position, which dedupes the repeats
-  // within one collector run but is NOT a stable branch identity across shards:
-  // v8-to-istanbul builds `branchMap` only from ranges V8 reported, and V8
-  // reports block coverage only for functions that actually ran, so a shard
-  // that entered fewer functions numbers the survivors differently. CI merges
-  // the shard lcovs textually, so the same source branch can appear under two
-  // BRDA keys and inflate that file's branch denominator. Line and function
-  // coverage — what Sonar's headline number is built from — are unaffected;
-  // fixing it properly means keying on the source location, which changes the
-  // emitted lcov and belongs in its own change.
+  // Branches are keyed by their istanbul position. In the published report
+  // that comes from ast-v8-to-istanbul, which numbers branches by walking the
+  // bundle's AST, so every shard built from one commit gives a source branch
+  // the same key and CI's textual merge of the shard lcovs dedupes it. (The
+  // raw v8-to-istanbul report the audit grades numbers only the ranges V8
+  // reported, so its keys shift between shards — it is never published.)
   for (const branch of data.branches) {
     for (const location of branch.locations) {
       existing.branches.push({
