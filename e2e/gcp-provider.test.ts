@@ -78,6 +78,32 @@ test.describe('mixed AWS + GCP workspace', () => {
     await expect(gcp.getByText(/gs:\/\/test-focus-export/).first()).toBeVisible();
   });
 
+  test('shows who listing and downloads run as, finding credentials only in the sandbox', async () => {
+    // The "Signed in as" panel reads the ADC location the Cloud Storage SDK
+    // reads and runs `gcloud config list`. Sandboxed, that location is the
+    // pinned, absent file — a panel naming anyone, or pointing anywhere but
+    // the sandbox, would mean it read the developer's real credentials.
+    await openDataSync();
+    const panel = page.getByRole('region', { name: 'Signed in as (gcp-main)' });
+    await expect(panel.getByText('Not signed in')).toBeVisible({ timeout: 30_000 });
+    await expect(panel.getByText(/No file at .*cloud-sandbox/)).toBeVisible();
+    // gcloud may or may not sit in a trusted location on the runner. When it
+    // does, the sandbox's CLOUDSDK_AUTH_ACCESS_TOKEN_FILE pin outranks every
+    // other gcloud credential, so that pinned (absent) file is what the
+    // download row must name — never an account from the developer's gcloud.
+    await expect(panel.getByText(/a pre-minted access token|The gcloud CLI is not installed/)).toBeVisible();
+    if (await panel.getByText(/a pre-minted access token/).count() > 0) {
+      await expect(panel.getByText(/auth\/access_token_file · .*cloud-sandbox/)).toBeVisible();
+    }
+    await expect(panel.getByText('Checking Google Cloud credentials…')).toHaveCount(0);
+
+    await panel.getByRole('button', { name: 'Re-check' }).click();
+    await expect(panel.getByText('Not signed in')).toBeVisible({ timeout: 30_000 });
+    // Running gcloud against the sandbox config must not have minted a
+    // credential store there.
+    await expectCloudSandboxed(app);
+  });
+
   test('offers GCP the hourly tier but not Cost Optimization', async () => {
     // The exporter publishes an hourly grain, so that panel is real for GCP.
     // Cost Optimization has no GCP analogue and resolveBucketPath refuses that

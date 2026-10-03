@@ -1,8 +1,10 @@
-import { render, screen, waitFor, cleanup } from '@testing-library/react';
+import { render, screen, waitFor, within, cleanup } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
-import { MOCK_MULTI_PROVIDER_CONFIG, MockCostApi } from '../__fixtures__/mock-api.js';
+import { GCLOUD_ADC_LOGIN_COMMAND, asProviderName } from '@costgoblin/core/browser';
+import type { ProviderConfig } from '@costgoblin/core/browser';
+import { MOCK_GCP_PROVIDER, MOCK_MIXED_PROVIDER_CONFIG, MOCK_MULTI_PROVIDER_CONFIG, MockCostApi } from '../__fixtures__/mock-api.js';
 import { DataManagement } from '../views/data-management.js';
 
 function renderDataManagement(api?: MockCostApi) {
@@ -259,5 +261,111 @@ describe('DataManagement', () => {
     await waitFor(() => {
       expect(screen.getByLabelText('Set up from AWS')).toBeDefined();
     });
+  });
+});
+
+describe('DataManagement — GCP "Signed in as" panel', () => {
+  const SECOND_GCP: ProviderConfig = { ...MOCK_GCP_PROVIDER, name: asProviderName('gcp-second') };
+
+  it('shows one panel per GCP provider, asked for by that provider s name', async () => {
+    const api = new MockCostApi();
+    vi.spyOn(api, 'getConfig').mockResolvedValue(MOCK_MIXED_PROVIDER_CONFIG);
+    renderDataManagement(api);
+    const section = await screen.findByRole('region', { name: 'Provider gcp-main' });
+    await waitFor(() => { expect(within(section).getByRole('region', { name: 'Signed in as (gcp-main)' })).toBeDefined(); });
+    // AWS has one credential path, already named by its profile.
+    const aws = screen.getByRole('region', { name: 'Provider aws-main' });
+    expect(within(aws).queryByRole('region', { name: /^Signed in as/ })).toBeNull();
+    await waitFor(() => { expect(api.gcpIdentitiesRequestedFor).toContain('gcp-main'); });
+    expect(api.gcpIdentitiesRequestedFor).not.toContain('aws-main');
+  });
+
+  it('surfaces the provider s warnings', async () => {
+    const api = new MockCostApi();
+    vi.spyOn(api, 'getConfig').mockResolvedValue(MOCK_MIXED_PROVIDER_CONFIG);
+    const sa = 'costgoblin-reader@acme-billing.iam.gserviceaccount.com';
+    const other = 'company-reader@corp.iam.gserviceaccount.com';
+    api.gcpIdentitiesResult = {
+      status: 'ok',
+      identities: {
+        listing: {
+          kind: 'impersonated',
+          file: { path: '/adc.json', origin: 'well-known' },
+          target: other,
+          source: { kind: 'user', account: { status: 'known', email: 'alice@acme.com' } },
+        },
+        download: {
+          kind: 'gcloud',
+          principal: { kind: 'account', account: 'admin@acme.com', fromEnv: false },
+          impersonate: { target: sa, origin: 'provider' },
+          configuration: 'default',
+        },
+        adcLoginPath: null,
+        warnings: [
+          { kind: 'target-mismatch', listingTarget: other, download: { target: sa, origin: 'provider' } },
+          { kind: 'split-accounts', listingAccount: 'alice@acme.com', downloadAccount: 'admin@acme.com', listingKeyFile: null, downloadAccountFromEnv: false },
+        ],
+        notes: [],
+      },
+    };
+    renderDataManagement(api);
+    const warnings = await screen.findByRole('list', { name: 'Credential warnings' });
+    expect(warnings.textContent).toContain(`Bucket listing impersonates ${other}, but this provider downloads as ${sa}`);
+    expect(warnings.textContent).toContain('Downloads run as admin@acme.com, but bucket listing runs as alice@acme.com');
+  });
+
+  it('re-reads every GCP provider s identities when one section is retried — they are machine-wide', async () => {
+    const api = new MockCostApi();
+    vi.spyOn(api, 'getConfig').mockResolvedValue({ ...MOCK_MIXED_PROVIDER_CONFIG, providers: [MOCK_GCP_PROVIDER, SECOND_GCP] });
+    vi.spyOn(api, 'getDataInventory').mockRejectedValue(new Error('Cloud Storage request failed: 503'));
+    const { user } = renderDataManagement(api);
+    await waitFor(() => { expect(screen.getAllByText('Retry')).toHaveLength(2); });
+    await waitFor(() => {
+      expect(api.gcpIdentitiesRequestedFor.filter(n => n === 'gcp-main')).toHaveLength(1);
+      expect(api.gcpIdentitiesRequestedFor.filter(n => n === 'gcp-second')).toHaveLength(1);
+    });
+    const first = screen.getByRole('region', { name: 'Provider gcp-main' });
+    await user.click(within(first).getByText('Retry'));
+    await waitFor(() => {
+      expect(api.gcpIdentitiesRequestedFor.filter(n => n === 'gcp-main')).toHaveLength(2);
+      expect(api.gcpIdentitiesRequestedFor.filter(n => n === 'gcp-second')).toHaveLength(2);
+    });
+  });
+
+  it('re-reads the identities when the credential poll heals the inventory on its own', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const api = new MockCostApi();
+      vi.spyOn(api, 'getConfig').mockResolvedValue({ ...MOCK_MIXED_PROVIDER_CONFIG, providers: [MOCK_GCP_PROVIDER] });
+      vi.spyOn(api, 'getDataInventory').mockRejectedValueOnce(new Error(`Google Cloud credentials expired. Run: ${GCLOUD_ADC_LOGIN_COMMAND}`));
+      renderDataManagement(api);
+      await waitFor(() => { expect(screen.getByText(/credentials expired/)).toBeDefined(); });
+      await waitFor(() => { expect(api.gcpIdentitiesRequestedFor).toHaveLength(1); });
+      // No Retry click: the 5s poll alone recovers the inventory.
+      await vi.advanceTimersByTimeAsync(5_000);
+      await waitFor(() => { expect(screen.queryByText(/credentials expired/)).toBeNull(); });
+      await waitFor(() => { expect(api.gcpIdentitiesRequestedFor).toHaveLength(2); });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not re-run gcloud after a Prune, which cannot change who is signed in — only Refresh does', async () => {
+    const api = new MockCostApi();
+    vi.spyOn(api, 'getConfig').mockResolvedValue({ ...MOCK_MIXED_PROVIDER_CONFIG, providers: [MOCK_GCP_PROVIDER] });
+    const { user } = renderDataManagement(api);
+    await waitFor(() => { expect(api.gcpIdentitiesRequestedFor).toHaveLength(1); });
+    const inventoryReads = vi.spyOn(api, 'getDataInventory');
+    await user.click(screen.getByRole('button', { name: 'Prune' }));
+    const confirm = screen.getAllByRole('button', { name: 'Prune' }).at(-1);
+    if (confirm === undefined) throw new Error('no Prune confirmation');
+    await user.click(confirm);
+    // The prune's refresh reached the section (inventory re-read)...
+    await waitFor(() => { expect(inventoryReads).toHaveBeenCalled(); });
+    // ...but not the identities.
+    expect(api.gcpIdentitiesRequestedFor).toHaveLength(1);
+    // The header Refresh does re-read them.
+    await user.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => { expect(api.gcpIdentitiesRequestedFor).toHaveLength(2); });
   });
 });

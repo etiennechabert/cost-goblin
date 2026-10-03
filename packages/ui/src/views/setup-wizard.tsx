@@ -6,6 +6,7 @@ import { Card, CardContent } from '../components/ui/card.js';
 import { Button } from '../components/ui/button.js';
 import { BundleSummaryCard, ImportConfigDialog } from '../components/config-sharing.js';
 import { ProfilePicker } from '../components/profile-picker.js';
+import { GcpIdentityPanel } from '../components/gcp-identity-panel.js';
 import { GcloudLoginButton, RetryButton, SsoLoginButton } from '../components/sso-login-button.js';
 
 type DataSource = 'daily' | 'hourly' | 'costOptimization';
@@ -43,6 +44,12 @@ type WizardStep =
 
 /** No tier collected yet. Shared safely: every writer spreads a copy first. */
 const EMPTY_PATHS: { readonly daily: string; readonly hourly: string; readonly costOpt: string } = { daily: '', hourly: '', costOpt: '' };
+
+/** The steps that touch Google credentials, where the "Signed in as" panel
+ *  shows. */
+function isGcpStep(wizard: WizardStep): boolean {
+  return wizard.step === 'gcp' || wizard.step === 'gcp-project' || wizard.step === 'gcp-bucket' || wizard.step === 'gcp-browse';
+}
 
 interface SetupWizardProps {
   /** Called when setup finishes. Carries the workspace name the user chose on
@@ -890,12 +897,16 @@ function GcpBucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
  *  at the exporter's PREFIX rather than a tier folder under it makes the daily
  *  tier list the hourly shards too — the sync has a bespoke error for it, and
  *  this refuses the selection before the user can make it. */
-function GcpBrowseStep({ state, conflictsWith, onNavigate, onConfirm, onSkip, onBack }: Readonly<{
+function GcpBrowseStep({ state, conflictsWith, onNavigate, onRetry, onConfirm, onSkip, onBack }: Readonly<{
   state: Extract<WizardStep, { step: 'gcp-browse' }>;
   /** A tier location already collected in this run that this one must not
    *  overlap — the daily path, while browsing for hourly. */
   conflictsWith?: string | undefined;
   onNavigate: (prefix: string) => void;
+  /** Re-browse the current folder after a failure. Separate from
+   *  `onNavigate` because a retry — usually right after a sign-in — must
+   *  also re-read the "Signed in as" panel, and plain navigation must not. */
+  onRetry: () => void;
   onConfirm: () => void;
   onSkip?: (() => void) | undefined;
   onBack: () => void;
@@ -947,9 +958,7 @@ function GcpBrowseStep({ state, conflictsWith, onNavigate, onConfirm, onSkip, on
         ))}
       </div>
 
-      {/* Re-browsing the current prefix IS `onNavigate(state.prefix)` — no
-          second callback needed for what the step can already do. */}
-      <GcpError message={state.error} mode="adc" onRetry={() => { onNavigate(state.prefix); }} />
+      <GcpError message={state.error} mode="adc" onRetry={onRetry} />
 
       {state.folder.kind === 'tier-parent' && (
         <div className="rounded-lg border border-warning/50 bg-warning-muted px-4 py-3">
@@ -1633,6 +1642,8 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   // one-way `setProviderName('gcp-main')` survived backing out of the GCP
   // chain and named an AWS provider "gcp-main".
   const [providerNameEdited, setProviderNameEdited] = useState(false);
+  // Re-reads the "Signed in as" panel when a GCP step's Retry runs.
+  const [gcpIdentityRefresh, setGcpIdentityRefresh] = useState(0);
   useEffect(() => {
     api.getConfig().then(config => {
       const names = config.providers.map(p => String(p.name));
@@ -2119,7 +2130,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
               onTyped={(projectId) => { startGcpBucketStep({ id: projectId, typed: true }, 'daily'); }}
               onManual={goToGcpIntro}
               onBack={handleBack}
-              onRetry={reloadGcpProjects}
+              onRetry={() => { setGcpIdentityRefresh(n => n + 1); reloadGcpProjects(); }}
             />
           )}
           {wizard.step === 'gcp-bucket' && (
@@ -2128,7 +2139,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
               onSelect={(bucket) => { gcpBrowseTo(wizard.project, wizard.source, bucket, ''); }}
               onSkip={wizard.source === 'daily' ? undefined : handleGcpSkip}
               onBack={handleBack}
-              onRetry={() => { startGcpBucketStep(wizard.project, wizard.source); }}
+              onRetry={() => { setGcpIdentityRefresh(n => n + 1); startGcpBucketStep(wizard.project, wizard.source); }}
             />
           )}
           {wizard.step === 'gcp-browse' && (
@@ -2139,6 +2150,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
               // overlap in either direction.
               conflictsWith={wizard.source === 'hourly' ? collectedPaths.daily : collectedPaths.hourly}
               onNavigate={(prefix) => { gcpBrowseTo(wizard.project, wizard.source, wizard.bucket, prefix); }}
+              onRetry={() => { setGcpIdentityRefresh(n => n + 1); gcpBrowseTo(wizard.project, wizard.source, wizard.bucket, wizard.prefix); }}
               onConfirm={handleGcpBrowseConfirm}
               onSkip={wizard.source === 'daily' ? undefined : handleGcpSkip}
               onBack={handleBack}
@@ -2188,6 +2200,18 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
               onComplete={finish}
               onBack={handleBack}
             />
+          )}
+          {/* One panel for the whole GCP chain, in a fixed slot so it survives
+              step changes instead of re-running gcloud on every click. The
+              steps' Retry buttons bump it: the usual reason to retry is a
+              sign-in that just changed who these identities are.
+              No provider name: the GCP chain always creates a provider (the
+              only fixed-name entry, per-tier Configure, is AWS-only), so
+              there is no existing `impersonateServiceAccount` to apply. */}
+          {isGcpStep(wizard) && (
+            <div className="mt-5">
+              <GcpIdentityPanel context="wizard" refreshKey={gcpIdentityRefresh} />
+            </div>
           )}
         </CardContent>
       </Card>

@@ -39,6 +39,29 @@ export {
 } from './gcs-client.js';
 
 export {
+  type AccountLookupFn,
+  type AuthorizedUserSecret,
+  type GcloudConfigValues,
+  type ParsedAdc,
+  type ParsedAdcSource,
+  activeGcloudConfigPath,
+  activeGcloudConfiguration,
+  adcCredentialsLocation,
+  adcLoginPath,
+  assembleDownloadIdentity,
+  classifyAccountLookupError,
+  credentialEmail,
+  emailFromIdToken,
+  gcloudConfigDir,
+  gcpIdentityNotes,
+  gcpIdentityWarnings,
+  grantsEmailScope,
+  parseAdcJson,
+  parseGcloudConfigList,
+  resolveListingIdentity,
+} from './gcp-identity.js';
+
+export {
   GCS_BUCKET_NAME_RULES,
   assertValidGcsBucketName,
   isValidGcsBucketName,

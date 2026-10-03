@@ -971,6 +971,115 @@ describe('SetupWizard — GCP browse-and-pick', () => {
   });
 });
 
+describe('SetupWizard — GCP "Signed in as" panel', () => {
+  function signedInPanel(): HTMLElement | null {
+    return screen.queryByRole('region', { name: 'Signed in as' });
+  }
+
+  it('shows on every GCP step that touches credentials, and nowhere else', async () => {
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    expect(signedInPanel()).toBeNull();
+
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await waitFor(() => { expect(signedInPanel()).not.toBeNull(); });
+
+    await user.click(screen.getByText('Find my export'));
+    await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
+    expect(signedInPanel()).not.toBeNull();
+    await userClickText(user, 'Acme Production');
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    expect(signedInPanel()).not.toBeNull();
+    await userClickText(user, 'acme-focus-export');
+    await waitFor(() => { expect(screen.getByLabelText('Open folder focus')).toBeDefined(); });
+    expect(signedInPanel()).not.toBeNull();
+
+    await user.click(screen.getByLabelText('Open folder focus'));
+    await waitFor(() => { expect(screen.getByLabelText('Open folder daily')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder daily'));
+    await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
+    await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('Skip')).toBeDefined(); });
+    expect(signedInPanel()).not.toBeNull();
+    await userClickText(user, 'Skip');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+    expect(signedInPanel()).toBeNull();
+  });
+
+  it('asks without a provider name — none exists yet — and does not re-run gcloud per step', async () => {
+    const { api, user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.click(screen.getByText('Find my export'));
+    await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
+    await userClickText(user, 'Acme Production');
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    expect(api.gcpIdentitiesRequestedFor).toHaveLength(1);
+    expect(api.gcpIdentitiesRequestedFor[0]).toBeUndefined();
+  });
+
+  it('never asks about an AWS provider s name after backing out of its Configure into Google Cloud', async () => {
+    // Per-tier Configure (source mode) is AWS-only and fixes the provider
+    // name; Back → Back still reaches the hub's Google Cloud tile.
+    const { api, user } = renderWizard({ source: 'daily', profile: 'default' });
+    await waitFor(() => { expect(screen.getByText('my-cur-bucket')).toBeDefined(); });
+    await userClickText(user, '← Back');
+    await waitFor(() => { expect(screen.queryByText('my-cur-bucket')).toBeNull(); });
+    await userClickText(user, '← Back');
+    await user.click(await screen.findByLabelText('Set up from Google Cloud'));
+    await waitFor(() => { expect(signedInPanel()).not.toBeNull(); });
+    await waitFor(() => { expect(api.gcpIdentitiesRequestedFor).toHaveLength(1); });
+    expect(api.gcpIdentitiesRequestedFor[0]).toBeUndefined();
+  });
+
+  it('warns on the project step when gcloud was switched to another account', async () => {
+    const { api, user } = renderWizard();
+    api.gcpIdentitiesResult = {
+      status: 'ok',
+      identities: {
+        listing: { kind: 'user', file: { path: '/adc.json', origin: 'well-known' }, account: { status: 'known', email: 'alice@acme.com' } },
+        download: { kind: 'gcloud', principal: { kind: 'account', account: 'admin@acme.com', fromEnv: false }, impersonate: null, configuration: 'admin' },
+        adcLoginPath: null,
+        warnings: [{ kind: 'split-accounts', listingAccount: 'alice@acme.com', downloadAccount: 'admin@acme.com', listingKeyFile: null, downloadAccountFromEnv: false }],
+        notes: [],
+      },
+    };
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.click(screen.getByText('Find my export'));
+    const warnings = await screen.findByRole('list', { name: 'Credential warnings' });
+    expect(warnings.textContent).toContain('Downloads and the project list run as admin@acme.com');
+    expect(warnings.textContent).toContain('switch it back before syncing');
+  });
+
+  it('re-reads the identities when the browse step is retried after a sign-in', async () => {
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    await enterGcpBrowse(user);
+    api.gcsBrowseByPrefix = {
+      ...api.gcsBrowseByPrefix,
+      'focus/': { prefixes: [], folder: { kind: 'unknown' }, hasParquet: false, truncated: false, error: 'Could not load the default credentials.' },
+    };
+    await user.click(screen.getByLabelText('Open folder focus'));
+    await waitFor(() => { expect(screen.getByText('Could not load the default credentials.')).toBeDefined(); });
+    const before = api.gcpIdentitiesRequestedFor.length;
+    // Plain navigation never re-reads the panel...
+    expect(before).toBe(1);
+    await user.click(screen.getByRole('button', { name: /Retry/ }));
+    // ...a Retry does: it usually follows the sign-in the error offered.
+    await waitFor(() => { expect(api.gcpIdentitiesRequestedFor).toHaveLength(before + 1); });
+  });
+
+  it('re-reads the identities when a step is retried', async () => {
+    const { api, user } = renderWizard();
+    api.gcpProjectsResult = { projects: [], error: 'ERROR: (gcloud.projects.list) You do not currently have an active account selected.' };
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.click(screen.getByText('Find my export'));
+    await waitFor(() => { expect(screen.getByText('Retry')).toBeDefined(); });
+    const before = api.gcpIdentitiesRequestedFor.length;
+    await userClickText(user, 'Retry');
+    await waitFor(() => { expect(api.gcpIdentitiesRequestedFor).toHaveLength(before + 1); });
+  });
+});
+
 /** Hub → GCP intro → project step, waiting until the listing has settled. */
 async function enterGcpProjectStep(user: ReturnType<typeof userEvent.setup>): Promise<void> {
   await user.click(screen.getByLabelText('Set up from Google Cloud'));

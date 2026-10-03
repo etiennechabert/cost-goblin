@@ -39,11 +39,15 @@
  *   signed-out user gets. That is deliberate — on NO_ADC_FOUND,
  *   @google-cloud/storage retries the request anonymously, so the run would
  *   still reach storage.googleapis.com. Test the signed-out UX below e2e.
+ *   The "Signed in as" panel resolves the same file the same way
+ *   (`adcCredentialsLocation`), so under the sandbox it reports "not signed
+ *   in" and never makes its account lookup.
  * - `METADATA_SERVER_DETECTION=none` stops gcp-metadata's availability ping to
  *   the GCE metadata server, so a check fails immediately offline.
  * - `CLOUDSDK_CONFIG` moves the gcloud CLI's user config and credential store
  *   (the `gcloud storage rsync` downloads, the wizard's `gcloud projects list`,
- *   google-auth-library's `gcloud config config-helper` probe). It does not
+ *   the "Signed in as" panel's `gcloud config` reads, google-auth-library's
+ *   `gcloud config config-helper` probe). It does not
  *   cover installation-scope properties (`<sdk_root>/properties`) or gcloud's
  *   own GCE metadata fallback, so `CLOUDSDK_AUTH_ACCESS_TOKEN_FILE` points at a
  *   missing file — it outranks every other gcloud credential source,
@@ -122,6 +126,11 @@ const PROVIDER_SANDBOXES: Readonly<Record<ProviderConfig['type'], ProviderSandbo
       // Without it the User-Agent build probes the metadata server.
       CLOUDSDK_METRICS_ENVIRONMENT: 'costgoblin-e2e',
       CLOUDSDK_COMPONENT_MANAGER_DISABLE_UPDATE_CHECK: 'true',
+      // Installation-scope `disable_usage_reporting = False` (an opted-in
+      // install) is outside CLOUDSDK_CONFIG's reach; without this every gcloud
+      // the run spawns — the "Signed in as" panel reads `gcloud config list`
+      // on each Data & Sync visit — reports usage to Google.
+      CLOUDSDK_CORE_DISABLE_USAGE_REPORTING: 'true',
     }),
   },
 };

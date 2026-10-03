@@ -13,6 +13,7 @@ import {
   type DailyCostsResult,
   type DataInventoryResult,
   type DataTier,
+  type GcpIdentityResult,
   type GcpProject,
   type GcsBrowseResult,
   type Dimension,
@@ -373,6 +374,37 @@ export class MockCostApi implements CostApi {
   listGcpProjects(): Promise<{ projects: readonly GcpProject[]; error?: string | undefined }> {
     return Promise.resolve(this.gcpProjectsResult);
   }
+
+  getGcpIdentities(providerName?: string): Promise<GcpIdentityResult> {
+    this.gcpIdentitiesRequestedFor.push(providerName);
+    return Promise.resolve(this.gcpIdentitiesResult);
+  }
+
+  /** Every `getGcpIdentities` call, by provider name (undefined: the wizard
+   *  before a provider exists). */
+  readonly gcpIdentitiesRequestedFor: (string | undefined)[] = [];
+
+  /** Overridable so a test can drive each identity warning. The default is
+   *  the healthy shape: one human behind both paths, plain-user ADC. */
+  gcpIdentitiesResult: GcpIdentityResult = {
+    status: 'ok',
+    identities: {
+      listing: {
+        kind: 'user',
+        file: { path: '/Users/test/.config/gcloud/application_default_credentials.json', origin: 'well-known' },
+        account: { status: 'known', email: 'alice@acme.com' },
+      },
+      download: {
+        kind: 'gcloud',
+        principal: { kind: 'account', account: 'alice@acme.com', fromEnv: false },
+        impersonate: null,
+        configuration: 'default',
+      },
+      adcLoginPath: null,
+      warnings: [],
+      notes: [],
+    },
+  };
 
   listGcsBuckets(projectId: string): Promise<{ buckets: readonly { name: string }[]; error?: string | undefined }> {
     this.gcsBucketsListedFor.push(projectId);
