@@ -273,6 +273,13 @@ so you can select the tier folder — and writes the config itself. It won't let
 folder above the tiers, which is the mistake that makes the daily tier read the
 hourly shards too.
 
+Already know the project ID? Type it into **Already know the project ID? Skip
+the project list**, just under **Find my export**, and the wizard goes straight
+to the bucket step without running `gcloud projects list` at all — the faster
+route in an organisation with thousands of projects, where that listing is slow
+and the list too long to scan. The same field is on the project step, usable
+while the list is still loading.
+
 > **"Couldn't list the buckets in …" is expected with the read-only reader, not
 > a misconfiguration.** Listing the buckets in a project is a *project-level*
 > permission; `roles/storage.objectViewer` grants rights on the bucket and
@@ -305,8 +312,9 @@ hourly shards too.
 > **active account** — never ADC, never the impersonated service account — and
 > an account whose only grant is `roles/iam.serviceAccountTokenCreator` on the
 > reader holds nothing at the project level, so the project is not listed. That
-> is expected: type the project ID into **Project not listed? Enter its ID** and
-> press **Continue**. The project is only used to list its buckets, which the
+> is expected: type the project ID into **Project not listed? Enter its ID** (or
+> into the field under **Find my export**, which skips the list) and press
+> **Continue**. The project is only used to list its buckets, which the
 > reader can't do anyway, so the bucket step then asks for the bucket name as
 > described above. If you would rather pick the project from the list, granting
 > your account `roles/browser` on the project lists it — optional, not required.

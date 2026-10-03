@@ -1089,3 +1089,78 @@ describe('SetupWizard — GCP project typed by ID', () => {
     await waitFor(() => { expect(screen.getByLabelText('Project not listed? Enter its ID')).toBeDefined(); });
   });
 });
+
+describe('SetupWizard — GCP project ID before the listing', () => {
+  // An organisation with thousands of projects waits a long time on
+  // `gcloud projects list` for a list nobody can scan — the ID has to be
+  // enterable without it.
+  it('takes the project ID on the intro step and never lists projects', async () => {
+    const { api, user } = renderWizard();
+    const listSpy = vi.spyOn(api, 'listGcpProjects');
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+
+    await user.type(screen.getByLabelText('Already know the project ID? Skip the project list'), 'billing-504501{Enter}');
+
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    expect(api.gcsBucketsListedFor).toEqual(['billing-504501']);
+    expect(listSpy).not.toHaveBeenCalled();
+  });
+
+  it('refuses a malformed ID on the intro step', async () => {
+    const { api, user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+
+    await user.type(screen.getByLabelText('Already know the project ID? Skip the project list'), 'Acme Prod{Enter}');
+    expect(screen.getByRole('button', { name: 'Continue' }).hasAttribute('disabled')).toBe(true);
+    expect(api.gcsBucketsListedFor).toEqual([]);
+  });
+
+  it('walks back from an intro-typed project to the intro, not the listing', async () => {
+    const { api, user } = renderWizard();
+    const listSpy = vi.spyOn(api, 'listGcpProjects');
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.type(screen.getByLabelText('Already know the project ID? Skip the project list'), 'billing-504501{Enter}');
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+
+    await user.click(screen.getByText('← Back'));
+    await waitFor(() => { expect(screen.getByText('Find my export')).toBeDefined(); });
+    expect(listSpy).not.toHaveBeenCalled();
+  });
+
+  it('still walks back to the listing when the project was picked from it', async () => {
+    // The intro route must not leak into a later run through the list.
+    const { api, user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.type(screen.getByLabelText('Already know the project ID? Skip the project list'), 'billing-504501{Enter}');
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    await user.click(screen.getByText('← Back'));
+    await waitFor(() => { expect(screen.getByText('Find my export')).toBeDefined(); });
+
+    await user.click(screen.getByText('Find my export'));
+    await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
+    await userClickText(user, 'Acme Production');
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    await user.click(screen.getByText('← Back'));
+    await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
+    expect(api.gcsBucketsListedFor).toEqual(['billing-504501', 'acme-prod']);
+  });
+
+  it('accepts a typed ID while the project list is still loading', async () => {
+    const { api, user } = renderWizard();
+    let resolveProjects: ((r: { projects: readonly { projectId: string; name: string }[] }) => void) | undefined;
+    api.listGcpProjects = () => new Promise((resolve) => { resolveProjects = resolve; });
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.click(screen.getByText('Find my export'));
+    expect(screen.getByText('Loading projects...')).toBeDefined();
+
+    await user.type(screen.getByLabelText('Project not listed? Enter its ID'), 'billing-504501{Enter}');
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+
+    // The listing finishing late must not drag the wizard back to the project step.
+    resolveProjects?.({ projects: [{ projectId: 'acme-prod', name: 'Acme Production' }] });
+    await new Promise((r) => { setTimeout(r, 0); });
+    expect(screen.getByText('acme-focus-export')).toBeDefined();
+    expect(screen.queryByText('Acme Production')).toBeNull();
+    expect(api.gcsBucketsListedFor).toEqual(['billing-504501']);
+  });
+});
