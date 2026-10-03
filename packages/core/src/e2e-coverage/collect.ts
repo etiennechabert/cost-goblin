@@ -161,6 +161,42 @@ function parseBranches(
   return branches;
 }
 
+/**
+ * Drops each file's line records that are not in its `executable` set (see
+ * `executableLines`). The result is the report Sonar should read: v8-to-istanbul
+ * lists every source line, the unit report only statement lines, and Sonar
+ * counts a line listed by either.
+ *
+ * This only ever REMOVES records and never touches a count, so it cannot mark
+ * anything covered that was not. It also strips a known source of inflation:
+ * v8-to-istanbul credits a line count 1 until a V8 range zeroes it, so the
+ * annotation-only lines of a type module came out as "covered".
+ *
+ * A file absent from `executable` is passed through unchanged; that is the
+ * caller's decision to make, file by file. Functions and branches are left
+ * alone: V8 reports both at real code positions, and dropping a branch that
+ * starts on a non-statement line would hide an uncovered condition.
+ */
+export function restrictToExecutableLines(
+  report: CoverageReport,
+  executable: ReadonlyMap<string, ReadonlySet<number>>,
+): CoverageReport {
+  const restricted = createCoverageReport();
+  for (const [filePath, coverage] of report) {
+    const allowed = executable.get(filePath);
+    if (allowed === undefined) {
+      restricted.set(filePath, coverage);
+      continue;
+    }
+    restricted.set(filePath, {
+      lines: new Map([...coverage.lines].filter(([line]) => allowed.has(line))),
+      functions: coverage.functions,
+      branches: coverage.branches,
+    });
+  }
+  return restricted;
+}
+
 /** An empty report, ready to merge shards into. */
 export function createCoverageReport(): CoverageReport {
   return new Map();

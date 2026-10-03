@@ -15,12 +15,14 @@ import {
   auditCoverageReport,
   createCoverageReport,
   describeCoverageFailure,
+  executableLines,
   generateLcov,
   isCoverageShardFile,
   isProjectSourcePath,
   isRendererBundleUrl,
   mergeIstanbulFile,
   parseIstanbulFileCoverage,
+  restrictToExecutableLines,
 } from '../packages/core/src/e2e-coverage/index.js';
 
 const ROOT = resolve(import.meta.dirname, '..');
@@ -129,6 +131,9 @@ async function main(): Promise<void> {
     );
   }
 
+  // The audit reads the report exactly as v8-to-istanbul produced it, every
+  // source line included: its thresholds were measured on that shape, and the
+  // statement-line restriction below would shrink the files it looks at.
   const verdict = auditCoverageReport(merged);
   const outputPath = join(OUTPUT_DIR, 'lcov.info');
 
@@ -144,7 +149,29 @@ async function main(): Promise<void> {
     fail(describeCoverageFailure(verdict));
   }
 
-  writeFileSync(outputPath, generateLcov(merged));
+  const executable = new Map<string, ReadonlySet<number>>();
+  const unrestricted: string[] = [];
+  for (const filePath of merged.keys()) {
+    try {
+      const lines = await executableLines(readFileSync(filePath, 'utf-8'), filePath);
+      if (lines === null) unrestricted.push(`${filePath} (unsupported file type)`);
+      else executable.set(filePath, lines);
+    } catch (error) {
+      unrestricted.push(`${filePath} (${error instanceof Error ? error.message : String(error)})`);
+    }
+  }
+  // A file that falls back keeps every source line, exactly as the report did
+  // before this restriction existed. That undercounts it wherever the unit
+  // report is the one covering it; it does not credit any new line, so this
+  // warns rather than fails.
+  if (unrestricted.length > 0) {
+    process.stderr.write(
+      `::warning::Could not compute statement lines for ${String(unrestricted.length)} file(s); ` +
+        `their every source line stays in the report: ${unrestricted.join(', ')}\n`,
+    );
+  }
+
+  writeFileSync(outputPath, generateLcov(restrictToExecutableLines(merged, executable)));
   process.stdout.write(`E2E coverage written to ${outputPath}\n`);
   process.stdout.write(`  ${String(merged.size)} source files covered\n`);
 }

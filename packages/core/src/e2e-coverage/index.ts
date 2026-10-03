@@ -24,7 +24,10 @@ export {
   isRendererBundleUrl,
   mergeIstanbulFile,
   parseIstanbulFileCoverage,
+  restrictToExecutableLines,
 } from './collect.js';
+
+export { executableLines } from './executable-lines.js';
 
 export { generateLcov } from './lcov.js';
 
