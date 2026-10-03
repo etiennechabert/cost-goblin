@@ -249,4 +249,19 @@ describe('restrictToStatementLines', () => {
     expect(result.unrestricted).toHaveLength(1);
     expect(result.unrestricted[0]).not.toContain('\n');
   });
+
+  it('restricts a file it cannot compute statements for to its fallback lines', async () => {
+    const report = createCoverageReport();
+    // A zeroed report: 2 and 4 are lines the bundle has no code for.
+    report.set(CORE_FILE, fileCoverage([[1, 1], [2, 0], [3, 0], [4, 0]]));
+
+    const result = await restrictToStatementLines(
+      report,
+      () => 'export const = ;',
+      new Map([[CORE_FILE, new Set([1, 3])]]),
+    );
+
+    expect(result.report.get(CORE_FILE)?.lines).toEqual(new Map([[1, 1], [3, 0]]));
+    expect(result.unrestricted).toHaveLength(1);
+  });
 });

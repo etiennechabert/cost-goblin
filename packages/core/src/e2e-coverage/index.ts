@@ -30,7 +30,10 @@ export {
 export { executableLines, restrictToStatementLines } from './executable-lines.js';
 export type { StatementLineReport } from './executable-lines.js';
 
-export { mappedSourceLines, zeroUnmappedLines } from './source-map-lines.js';
+export { addBundleEntry, createBundleCoverage } from './bundle-coverage.js';
+export type { BundleCoverage, BundleEntry } from './bundle-coverage.js';
+
+export { mappedSourceLines, parseSourceMap, zeroUnmappedLines } from './source-map-lines.js';
 export type { MappedSourceLines } from './source-map-lines.js';
 
 export { generateLcov } from './lcov.js';
