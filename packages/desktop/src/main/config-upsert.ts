@@ -28,6 +28,22 @@ function existingTierRetention(existingSync: Readonly<Record<string, unknown>>, 
   return undefined;
 }
 
+/** The config the wizard upserts into: `{}` when there is no file (`raw`
+ *  undefined) or it holds no mapping. A file that does not parse throws
+ *  instead of reading as empty — the upsert would otherwise rewrite it with
+ *  just the wizard's provider, silently dropping every other entry. `parse`
+ *  is injected so this stays free of the YAML import (and of I/O). */
+export function parseExistingConfig(raw: string | undefined, parse: (text: string) => unknown): Readonly<Record<string, unknown>> {
+  if (raw === undefined) return {};
+  let parsed: unknown;
+  try {
+    parsed = parse(raw);
+  } catch (err) {
+    throw new Error(`costgoblin.yaml could not be parsed, so setup won't overwrite it: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
+  }
+  return isStringRecord(parsed) ? parsed : {};
+}
+
 /** Upsert the wizard's provider into the parsed config by exact name match:
  *  replace the matching entry in place (position preserved), append when no
  *  entry matches. Every other provider entry is preserved verbatim, as are

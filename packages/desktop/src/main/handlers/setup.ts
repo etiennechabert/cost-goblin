@@ -8,12 +8,11 @@ import {
   gcloudSpawnShape,
   logger,
   parseS3Path,
-  isStringRecord,
 } from '@costgoblin/core';
 import type { CostApi, GcpProject, GcsBrowseResult } from '@costgoblin/core';
 import { loadSharedConfigFiles } from '@smithy/shared-ini-file-loader';
 import { awsProfileNames } from '../aws-profiles.js';
-import { upsertWizardProvider } from '../config-upsert.js';
+import { parseExistingConfig, upsertWizardProvider } from '../config-upsert.js';
 import { buildConfigTemplate, buildDimensionsTemplate, PROVIDER_ABSENT_DIMENSIONS } from '../config-templates.js';
 import { classifyManifestColumns, parseManifestColumnNames, selectManifestKey } from '../setup-manifest.js';
 import { collectGcsPrefixes, gcsNextPageToken, parseGcloudProjects } from '../setup-gcp.js';
@@ -387,18 +386,7 @@ export function registerSetupHandlers(app: AppContext): void {
     } catch (err) {
       if (!isEnoent(err)) throw err;
     }
-    let existing: Readonly<Record<string, unknown>> = {};
-    if (raw !== undefined) {
-      let parsed: unknown;
-      try {
-        parsed = parseYaml(raw);
-      } catch (err) {
-        throw new Error(`costgoblin.yaml could not be parsed, so setup won't overwrite it: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
-      }
-      if (isStringRecord(parsed)) {
-        existing = parsed;
-      }
-    }
+    const existing = parseExistingConfig(raw, parseYaml);
 
     // UPSERT by provider name: replace the matching entry in place, append a
     // new one otherwise; other providers and unknown top-level keys are

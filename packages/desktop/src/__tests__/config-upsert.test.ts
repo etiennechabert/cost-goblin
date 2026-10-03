@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { ProviderNameError } from '@costgoblin/core';
 import { validateConfig } from '@costgoblin/core';
-import { upsertWizardProvider, swapProviderCredentialsProfile } from '../main/config-upsert.js';
+import { parseExistingConfig, upsertWizardProvider, swapProviderCredentialsProfile } from '../main/config-upsert.js';
+import { parse as parseYaml } from 'yaml';
 import type { WizardProviderConfig } from '../main/config-upsert.js';
 
 function providerA(): Record<string, unknown> {
@@ -560,5 +561,22 @@ describe('setup wizard GCP payload round-trips through the config validator', ()
     expect(config.providers.map(p => String(p.name))).toEqual(['aws-main', 'gcp-main']);
     expect(config.providers[0]?.type).toBe('aws');
     expect(config.providers[1]?.type).toBe('gcp');
+  });
+});
+
+describe('parseExistingConfig', () => {
+  it('reads a missing or empty file as no config', () => {
+    expect(parseExistingConfig(undefined, parseYaml)).toEqual({});
+    expect(parseExistingConfig('', parseYaml)).toEqual({});
+  });
+
+  it('returns the parsed mapping', () => {
+    expect(parseExistingConfig('providers: []\n', parseYaml)).toEqual({ providers: [] });
+  });
+
+  it('refuses a file that does not parse instead of reading it as empty', () => {
+    // Read as empty, the upsert rewrote the file with only the wizard's
+    // provider — every other provider silently gone.
+    expect(() => parseExistingConfig('providers:\n  - name: a\n bad: [', parseYaml)).toThrow(/could not be parsed, so setup won't overwrite it/);
   });
 });
