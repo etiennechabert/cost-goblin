@@ -2633,7 +2633,17 @@ gcloud storage buckets create <span class="code-dir">gs://your-company-billing</
             <li><strong>Choose how to protect object data</strong> &mdash; <strong>untick <em>Soft delete policy</em></strong> (it is on by default), leave object versioning, bucket retention and object retention off, and keep the Google-managed encryption key.</li>
           </ul>
           <div class="step-callout"><strong>No soft delete, versioning or retention:</strong> the exporter deletes and rewrites the current month's folder on every run. Soft delete would bill you for a week of superseded files, versioning would keep them forever, and a retention policy blocks the delete outright, so every run fails.</div>
-          <div class="step-note">Optional: closed months stay in the bucket forever. A lifecycle <strong>Delete</strong> rule per tier folder caps that &mdash; age <strong>400</strong> days on <em>focus/daily/</em>, <strong>60</strong> on <em>focus/hourly/</em> (keep each above that tier's retentionDays). See the <a href="https://github.com/etiennechabert/cost-goblin/tree/main/scripts/gcp-focus-exporter#before-you-start" target="_blank" rel="noopener">exporter README</a> for the command.</div>
+          <p>Closed months stay in the bucket forever, so add a lifecycle <strong>Delete</strong> rule per tier folder (age = days since the file was written):</p>
+          <div class="code-block">
+cat &gt; lifecycle.json &lt;&lt;'JSON'
+{"rule": [
+  {"action": {"type": "Delete"}, "condition": {"age": 400, "matchesPrefix": ["focus/daily/"]}},
+  {"action": {"type": "Delete"}, "condition": {"age": 60, "matchesPrefix": ["focus/hourly/"]}}
+]}
+JSON
+gcloud storage buckets update <span class="code-dir">gs://your-company-billing</span> --lifecycle-file=lifecycle.json
+          </div>
+          <div class="step-note">Keep each age at or above that tier's <strong>retentionDays</strong> (daily 365, hourly 30 by default). The current month keeps being rewritten, so it never expires while live, and a late correction re-exports a closed month, which resets its age. Two caveats. BigQuery itself keeps only <strong>730 days</strong> of the export, so for daily history beyond two years, lengthen the daily rule or drop it. And with soft delete off, expired files are gone for good. Details in the <a href="https://github.com/etiennechabert/cost-goblin/tree/main/scripts/gcp-focus-exporter#stop-the-bucket-growing-forever-recommended" target="_blank" rel="noopener">exporter README</a>.</div>
         </div>
 
         <div class="step">

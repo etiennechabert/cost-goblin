@@ -74,11 +74,17 @@ the current month's folder on every run. Soft delete would bill you for a week
 of superseded shards, versioning would keep them forever, and a retention
 policy blocks the delete outright, so every run fails.
 
-**Optional: stop the bucket growing forever.** Closed months are never
-rewritten, so they stay in the bucket indefinitely. A lifecycle rule per tier
-folder caps that; keep each age at or above the tier's `retentionDays` (daily
-365, hourly 30 by default), with a month of margin because the current month
-keeps being rewritten until its billing finalises:
+### Stop the bucket growing forever (recommended)
+
+Nothing ever deletes a closed month from the bucket, so it grows by one
+billing period per tier, every month. GCS **Object Lifecycle Management** caps
+that with a Delete rule per tier folder, keyed on object age (days since the
+file was written):
+
+| Folder | Delete after | Why |
+|---|---|---|
+| `focus/daily/` | **400 days** | Daily `retentionDays` defaults to 365, plus a month of margin. |
+| `focus/hourly/` | **60 days** | Hourly `retentionDays` defaults to 30, and hourly is where the volume is. |
 
 ```bash
 cat > lifecycle.json <<'JSON'
@@ -88,12 +94,30 @@ cat > lifecycle.json <<'JSON'
 ]}
 JSON
 gcloud storage buckets update gs://cost-goblin --lifecycle-file=lifecycle.json
+gcloud storage buckets describe gs://cost-goblin --format="yaml(lifecycle_config)"
 ```
 
-This **replaces** any lifecycle rules the bucket already has. Expiry never touches
-what CostGoblin has already downloaded — a period that disappears from the
-bucket stays on disk until it ages out of retention — but a fresh install can
-only download what the bucket still holds.
+How the ages behave:
+
+- **Age is counted from the last export, not from the billing month.** The
+  exporter rewrites the current month's folder whenever it changes, so those
+  files stay young. A closed month starts ageing once Google stops correcting
+  it. If a late correction does arrive, the exporter re-exports that month,
+  which resets its age.
+- **Keep each age at or above that tier's `retentionDays`**, and raise both
+  together. Expiry never touches what CostGoblin has already downloaded: a
+  period that disappears from the bucket stays on disk until it ages out of
+  retention. But a fresh install, or a teammate, can only download what the
+  bucket still holds.
+- **The bucket may be your only long-term copy.** BigQuery deletes the FOCUS
+  table's partitions after **730 days** (`timePartitioning.expirationMs` on the
+  table), and the exporter only re-exports months that change. So once a month
+  has expired from both BigQuery and the bucket, it is gone. If you want daily
+  history beyond two years, give `focus/daily/` a longer age, or no rule at all.
+- **Deletes are permanent.** With soft delete off, as recommended above,
+  nothing can be recovered.
+- `--lifecycle-file` **replaces** the bucket's whole lifecycle configuration.
+  Merge in any rules you already have.
 
 ## Deploy it
 
