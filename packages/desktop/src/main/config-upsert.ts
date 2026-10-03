@@ -1,4 +1,4 @@
-import { DEFAULT_RETENTION_DAYS, isStringRecord, parseProviderName } from '@costgoblin/core';
+import { DEFAULT_RETENTION_DAYS, SERVICE_ACCOUNT_EMAIL_HINT, isServiceAccountEmail, isStringRecord, parseProviderName } from '@costgoblin/core';
 
 /** Pure YAML-object transforms behind the two config-writing IPC handlers
  *  (`setup:write-config`, `config:update-aws-profile`). They operate on the
@@ -27,6 +27,8 @@ export interface WizardProviderConfig {
   readonly costOptRetentionDays?: number | undefined;
   readonly hourlyBucket?: string | undefined;
   readonly costOptBucket?: string | undefined;
+  /** GCP only. Blank or absent carries the existing entry's value. */
+  readonly impersonateServiceAccount?: string | undefined;
 }
 
 function providerEntryName(entry: unknown): string | undefined {
@@ -117,6 +119,16 @@ export function upsertWizardProvider(
   const carriedString = (key: string): Record<string, unknown> =>
     isStringRecord(target) && typeof target[key] === 'string' ? { [key]: target[key] } : {};
 
+  // Checked here, before anything is written, rather than left to the loader:
+  // the loader would reject it too, but only after the wizard had already
+  // saved a config the app then refuses to open.
+  const impersonateTarget = wizard.impersonateServiceAccount === undefined || wizard.impersonateServiceAccount.length === 0
+    ? undefined
+    : wizard.impersonateServiceAccount;
+  if (impersonateTarget !== undefined && !isServiceAccountEmail(impersonateTarget)) {
+    throw new Error(`The impersonated account must be ${SERVICE_ACCOUNT_EMAIL_HINT}.`);
+  }
+
   const entry: Record<string, unknown> = type === 'gcp'
     ? {
         name: wizard.providerName,
@@ -129,10 +141,10 @@ export function upsertWizardProvider(
         // hand-written one and the sync fell back to ADC — 403ing on a bucket
         // granted only to the service account.
         ...(wizard.keyFile !== undefined && wizard.keyFile.length > 0 ? { keyFile: wizard.keyFile } : carriedString('keyFile')),
-        // Carried unconditionally: without this the download half ran as the
-        // signed-in user and 403'd on a bucket granted only to the service
-        // account.
-        ...carriedString('impersonateServiceAccount'),
+        // The wizard's value when it sends one, else carried from the entry
+        // being replaced: without it the download half ran as the signed-in
+        // user and 403'd on a bucket granted only to the service account.
+        ...(impersonateTarget === undefined ? carriedString('impersonateServiceAccount') : { impersonateServiceAccount: impersonateTarget }),
         sync,
       }
     : {

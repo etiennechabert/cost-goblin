@@ -1,5 +1,5 @@
 import type { ConfigBundleSummary, GcpProject, GcsFolderKind } from '@costgoblin/core/browser';
-import { gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isValidWorkspaceName, parseProviderName } from '@costgoblin/core/browser';
+import { SERVICE_ACCOUNT_EMAIL_HINT, gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isServiceAccountEmail, isValidWorkspaceName, parseProviderName } from '@costgoblin/core/browser';
 import { useState, useEffect, useRef } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { Card, CardContent } from '../components/ui/card.js';
@@ -32,8 +32,36 @@ type WizardStep =
   | { step: 'bucket'; profile: string; source: DataSource; buckets: { name: string; region: string }[]; loading: boolean; selected: string; error: string }
   | { step: 'beacon'; profile: string; source: DataSource; bucket: string; content: string; summary: ConfigBundleSummary; applying: boolean; error: string }
   | { step: 'browse'; profile: string; source: DataSource; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[]; path: string[]; error: string }
-  | { step: 'confirm'; cloud: 'aws'; profile: string; s3Path: string; hourlyPath: string; costOptPath: string; retentionDays: number }
-  | { step: 'confirm'; cloud: 'gcp'; project: string; s3Path: string; hourlyPath: string; costOptPath: string; retentionDays: number };
+  | { step: 'confirm'; cloud: 'aws'; profile: string; s3Path: string; hourlyPath: string; costOptPath: string; retention: TierRetention }
+  | { step: 'confirm'; cloud: 'gcp'; project: string; s3Path: string; hourlyPath: string; costOptPath: string; retention: TierRetention; impersonate: string };
+
+/** One retention window per tier. Each tier needs its own: a year of daily is
+ *  small, a year of hourly is ~24x that, so a single shared picker either
+ *  over-keeps hourly or under-keeps daily. */
+interface TierRetention { daily: number; hourly: number; costOpt: number }
+type RetentionTier = keyof TierRetention;
+
+const DEFAULT_TIER_RETENTION: TierRetention = { daily: 365, hourly: 30, costOpt: 90 };
+
+const RETENTION_OPTIONS: Readonly<Record<RetentionTier, readonly { days: number; label: string }[]>> = {
+  daily: [
+    { days: 90, label: '3 months' },
+    { days: 180, label: '6 months' },
+    { days: 365, label: '12 months' },
+    { days: 730, label: '2 years' },
+  ],
+  hourly: [
+    { days: 7, label: '7 days' },
+    { days: 14, label: '14 days' },
+    { days: 30, label: '30 days' },
+    { days: 90, label: '90 days' },
+  ],
+  costOpt: [
+    { days: 30, label: '30 days' },
+    { days: 90, label: '90 days' },
+    { days: 180, label: '6 months' },
+  ],
+};
 
 interface SetupWizardProps {
   /** Called when setup finishes. Carries the workspace name the user chose on
@@ -1325,10 +1353,11 @@ interface ProviderNaming {
   readonly onChange: (value: string) => void;
 }
 
-function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onBack }: Readonly<{
+function ConfirmStep({ state, providerNaming, onRetentionChange, onImpersonateChange, onComplete, onBack }: Readonly<{
   state: Extract<WizardStep, { step: 'confirm' }>;
   providerNaming: ProviderNaming;
-  onRetentionChange: (days: number) => void;
+  onRetentionChange: (tier: RetentionTier, days: number) => void;
+  onImpersonateChange: (value: string) => void;
   onComplete: () => void;
   onBack: () => void;
 }>) {
@@ -1340,9 +1369,12 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onB
     ? null
     : providerNameError(providerNaming.value, providerNaming.checkTaken, providerNaming.takenNames);
 
-  const isDaily = state.s3Path.length > 0;
-  const isHourlyOnly = !isDaily && state.hourlyPath.length > 0;
-  const isCostOptOnly = !isDaily && !isHourlyOnly && state.costOptPath.length > 0;
+  // Blank is allowed (Application Default Credentials as-is); anything typed
+  // must be a service-account address, the same check the config loader runs.
+  const impersonate = state.cloud === 'gcp' ? state.impersonate.trim() : '';
+  const impersonateError = impersonate.length > 0 && !isServiceAccountEmail(impersonate)
+    ? `Must be ${SERVICE_ACCOUNT_EMAIL_HINT}.`
+    : null;
 
   // The credential card names whichever store this provider authenticates
   // through. Hardcoding "AWS Profile" here was fine while the wizard only
@@ -1351,22 +1383,8 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onB
     ? { label: 'Google Cloud project', value: state.project }
     : { label: 'AWS Profile', value: state.profile };
 
-  const retentionOptions = isHourlyOnly
-    ? [
-        { days: 7, label: '7 days' },
-        { days: 14, label: '14 days' },
-        { days: 30, label: '30 days' },
-        { days: 90, label: '90 days' },
-      ]
-    : [
-        { days: 90, label: '3 months' },
-        { days: 180, label: '6 months' },
-        { days: 365, label: '12 months' },
-        { days: 730, label: '2 years' },
-      ];
-
   function handleSave() {
-    if (nameError !== null) return;
+    if (nameError !== null || impersonateError !== null) return;
     setSaving(true);
     setSaveError(null);
     api.writeConfig({
@@ -1378,14 +1396,11 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onB
       // `upsertWizardProvider` ignores it.
       profile: state.cloud === 'gcp' ? '' : state.profile,
       dailyBucket: state.s3Path,
-      // The Confirm step shows ONE retention picker; it configures whichever
-      // tier is primary for this run. In daily mode it sets daily retention; in
-      // hourly-only mode hourly; in a cost-opt-only run cost-opt — each of which
-      // upsertWizardProvider used to ignore, hardcoding the tier and silently
-      // discarding the choice.
-      retentionDays: isDaily ? state.retentionDays : undefined,
-      ...(isHourlyOnly ? { hourlyRetentionDays: state.retentionDays } : {}),
-      ...(isCostOptOnly ? { costOptRetentionDays: state.retentionDays } : {}),
+      // One retention per collected tier, each picked in that tier's own card.
+      ...(state.s3Path.length > 0 ? { retentionDays: state.retention.daily } : {}),
+      ...(state.hourlyPath.length > 0 ? { hourlyRetentionDays: state.retention.hourly } : {}),
+      ...(state.costOptPath.length > 0 ? { costOptRetentionDays: state.retention.costOpt } : {}),
+      ...(impersonate.length > 0 ? { impersonateServiceAccount: impersonate } : {}),
       ...(state.hourlyPath.length > 0 ? { hourlyBucket: state.hourlyPath } : {}),
       // GCP has no Cost Optimization Hub analogue and `validateGcpSync`
       // rejects the key, so it is never collected — but never sent, either.
@@ -1402,10 +1417,10 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onB
     });
   }
 
-  const paths: { label: string; value: string }[] = [];
-  if (state.s3Path.length > 0) paths.push({ label: 'Daily FOCUS export', value: state.s3Path });
-  if (state.hourlyPath.length > 0) paths.push({ label: 'Hourly FOCUS export', value: state.hourlyPath });
-  if (state.costOptPath.length > 0) paths.push({ label: 'Cost Optimization', value: state.costOptPath });
+  const paths: { label: string; value: string; tier: RetentionTier }[] = [];
+  if (state.s3Path.length > 0) paths.push({ label: 'Daily FOCUS export', value: state.s3Path, tier: 'daily' });
+  if (state.hourlyPath.length > 0) paths.push({ label: 'Hourly FOCUS export', value: state.hourlyPath, tier: 'hourly' });
+  if (state.costOptPath.length > 0) paths.push({ label: 'Cost Optimization', value: state.costOptPath, tier: 'costOpt' });
 
   return (
     <div className="flex flex-col gap-5">
@@ -1444,34 +1459,50 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onB
           <p className="text-sm font-mono text-text-primary mt-0.5">{credential.value}</p>
         </div>
 
-        {paths.map(({ label, value }) => (
+        {state.cloud === 'gcp' && (
+          <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
+            <label htmlFor="impersonate-sa" className="text-xs text-text-muted uppercase tracking-wider">Impersonate service account</label>
+            <input
+              id="impersonate-sa"
+              value={state.impersonate}
+              onChange={(e) => { onImpersonateChange(e.target.value); }}
+              placeholder="costgoblin-reader@project.iam.gserviceaccount.com (optional)"
+              spellCheck={false}
+              className="mt-1 w-full rounded-md border border-border bg-bg-primary px-3 py-1.5 text-sm font-mono text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            />
+            {impersonateError === null ? (
+              <p className="text-xs text-text-muted mt-1">The read-only reader to act as for downloads. Leave blank to use your own sign-in.</p>
+            ) : (
+              <p className="text-xs text-negative mt-1">{impersonateError}</p>
+            )}
+          </div>
+        )}
+
+        {paths.map(({ label, value, tier }) => (
           <div key={label} className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
             <p className="text-xs text-text-muted uppercase tracking-wider">{label}</p>
             <p className="text-sm font-mono text-text-primary mt-0.5">{value}</p>
+            <div role="group" aria-label={`${label} retention`} className="flex flex-wrap gap-2 mt-2.5">
+              {RETENTION_OPTIONS[tier].map(opt => (
+                <button
+                  key={opt.days}
+                  type="button"
+                  aria-pressed={state.retention[tier] === opt.days}
+                  onClick={() => { onRetentionChange(tier, opt.days); }}
+                  className={[
+                    'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                    state.retention[tier] === opt.days
+                      ? 'bg-accent text-bg-primary'
+                      : 'bg-bg-tertiary/50 text-text-secondary hover:text-text-primary',
+                  ].join(' ')}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-text-muted mt-1.5">How far back to keep this tier</p>
           </div>
         ))}
-
-        <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
-          <p className="text-xs text-text-muted uppercase tracking-wider mb-2">Data Retention</p>
-          <div className="flex gap-2">
-            {retentionOptions.map(opt => (
-              <button
-                key={opt.days}
-                type="button"
-                onClick={() => { onRetentionChange(opt.days); }}
-                className={[
-                  'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
-                  state.retentionDays === opt.days
-                    ? 'bg-accent text-bg-primary'
-                    : 'bg-bg-tertiary/50 text-text-secondary hover:text-text-primary',
-                ].join(' ')}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-          <p className="text-xs text-text-muted mt-1.5">How far back to download billing data</p>
-        </div>
       </div>
 
       {saveError !== null && (
@@ -1485,7 +1516,7 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onB
         <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
         <Button
           onClick={handleSave}
-          disabled={saving || nameError !== null}
+          disabled={saving || nameError !== null || impersonateError !== null}
           className="bg-accent hover:bg-accent-hover text-white px-8"
         >
           {saving ? 'Saving...' : 'Complete Setup'}
@@ -1658,7 +1689,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
 
     updated.hourly = gcsPath;
     setCollectedPaths(updated);
-    goToGcpConfirm(project, updated, 365);
+    goToGcpConfirm(project, updated);
   }
 
   /** Leave the GCP browse chain for the Confirm screen, keeping whatever
@@ -1668,7 +1699,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     goToGcpConfirm(wizard.project);
   }
 
-  function goToGcpConfirm(project: string, paths?: { daily: string; hourly: string; costOpt: string }, retention?: number): void {
+  function goToGcpConfirm(project: string, paths?: { daily: string; hourly: string; costOpt: string }): void {
     const p = paths ?? collectedPaths;
     setWizard({
       step: 'confirm',
@@ -1679,7 +1710,8 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
       // GCP never collects a cost-optimization path; carrying one here would
       // put a key in the config that `validateGcpSync` refuses to load.
       costOptPath: '',
-      retentionDays: retention ?? 365,
+      retention: DEFAULT_TIER_RETENTION,
+      impersonate: '',
     });
   }
 
@@ -1832,19 +1864,15 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     const source = wizard.source;
 
     const updated = { ...collectedPaths };
-    let defaultRetention: number;
     if (source === 'daily') {
       updated.daily = s3Path;
-      defaultRetention = 365;
     } else if (source === 'hourly') {
       updated.hourly = s3Path;
-      defaultRetention = 30;
     } else {
       updated.costOpt = s3Path;
-      defaultRetention = 90;
     }
     setCollectedPaths(updated);
-    goToConfirm(profile, updated, defaultRetention);
+    goToConfirm(profile, updated);
   }
 
   function handleBrowseSkip() {
@@ -1859,7 +1887,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     }
   }
 
-  function goToConfirm(profile: string, paths?: { daily: string; hourly: string; costOpt: string }, retention?: number) {
+  function goToConfirm(profile: string, paths?: { daily: string; hourly: string; costOpt: string }) {
     const p = paths ?? collectedPaths;
     setWizard({
       step: 'confirm',
@@ -1868,7 +1896,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
       s3Path: p.daily,
       hourlyPath: p.hourly,
       costOptPath: p.costOpt,
-      retentionDays: retention ?? 365,
+      retention: DEFAULT_TIER_RETENTION,
     });
   }
 
@@ -2029,7 +2057,8 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
                 takenNames: existingProviders,
                 onChange: (value) => { setProviderNameEdited(true); setProviderName(value); },
               }}
-              onRetentionChange={(days) => { setWizard(prev => prev.step === 'confirm' ? { ...prev, retentionDays: days } : prev); }}
+              onRetentionChange={(tier, days) => { setWizard(prev => prev.step === 'confirm' ? { ...prev, retention: { ...prev.retention, [tier]: days } } : prev); }}
+              onImpersonateChange={(value) => { setWizard(prev => prev.step === 'confirm' && prev.cloud === 'gcp' ? { ...prev, impersonate: value } : prev); }}
               onComplete={finish}
               onBack={handleBack}
             />
