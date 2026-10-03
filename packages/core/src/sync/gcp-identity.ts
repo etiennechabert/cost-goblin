@@ -298,7 +298,7 @@ export function parseGcloudConfigList(stdout: string): GcloudConfigValues | null
   const core = section(parsed, 'core');
   const auth = section(parsed, 'auth');
   const chain = nonEmptyString(auth['impersonate_service_account']);
-  const target = chain === null ? null : (chain.split(',').map(part => part.trim()).filter(part => part.length > 0).pop() ?? null);
+  const target = chain === null ? null : (chain.split(',').map(part => part.trim()).filter(part => part.length > 0).at(-1) ?? null);
   return {
     account: nonEmptyString(core['account']),
     impersonateServiceAccount: target,

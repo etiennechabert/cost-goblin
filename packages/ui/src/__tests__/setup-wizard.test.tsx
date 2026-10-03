@@ -1013,7 +1013,7 @@ describe('SetupWizard — GCP "Signed in as" panel', () => {
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Acme Production');
     await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
-    expect(api.gcpIdentitiesRequestedFor.length).toBe(1);
+    expect(api.gcpIdentitiesRequestedFor).toHaveLength(1);
     expect(api.gcpIdentitiesRequestedFor[0]).toBeUndefined();
   });
 
@@ -1065,7 +1065,7 @@ describe('SetupWizard — GCP "Signed in as" panel', () => {
     expect(before).toBe(1);
     await user.click(screen.getByRole('button', { name: /Retry/ }));
     // ...a Retry does: it usually follows the sign-in the error offered.
-    await waitFor(() => { expect(api.gcpIdentitiesRequestedFor.length).toBe(before + 1); });
+    await waitFor(() => { expect(api.gcpIdentitiesRequestedFor).toHaveLength(before + 1); });
   });
 
   it('re-reads the identities when a step is retried', async () => {
@@ -1076,7 +1076,7 @@ describe('SetupWizard — GCP "Signed in as" panel', () => {
     await waitFor(() => { expect(screen.getByText('Retry')).toBeDefined(); });
     const before = api.gcpIdentitiesRequestedFor.length;
     await userClickText(user, 'Retry');
-    await waitFor(() => { expect(api.gcpIdentitiesRequestedFor.length).toBe(before + 1); });
+    await waitFor(() => { expect(api.gcpIdentitiesRequestedFor).toHaveLength(before + 1); });
   });
 });
 
