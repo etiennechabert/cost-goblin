@@ -2488,6 +2488,14 @@
 └── <span class="code-dir">cost_optimization/</span> <span class="code-comment"># Cost Optimization Hub export</span>
           </div>
           <div class="step-note">Use any bucket name. The three prefixes are what matters.</div>
+          <p>The export never deletes anything, so add an S3 <strong>lifecycle rule</strong> per prefix (<strong>Management</strong> &rarr; <strong>Create lifecycle rule</strong>, scoped with a prefix filter) to stop the bucket growing forever:</p>
+          <ul class="step-checklist">
+            <li><strong>focus_daily/</strong> &mdash; expire current versions after <strong>400 days</strong> (daily retention defaults to 365; a month's files keep being rewritten until its billing finalises, so give it a month of margin).</li>
+            <li><strong>focus_hourly/</strong> &mdash; <strong>60 days</strong> (hourly retention defaults to 30, and hourly is the large export).</li>
+            <li><strong>cost_optimization/</strong> &mdash; <strong>100 days</strong> (one snapshot per day, 90-day retention).</li>
+            <li>On each rule, also delete <em>incomplete multipart uploads</em> after 7 days and, if versioning is on, <em>noncurrent versions</em> after 1 day &mdash; every overwrite turns the previous file into a noncurrent version that expiry never touches.</li>
+          </ul>
+          <div class="step-note">Keep each expiry at or above that tier's <strong>retentionDays</strong>. Expiry never deletes what CostGoblin has already downloaded, but a fresh install or a teammate can only fetch what the bucket still holds.</div>
         </div>
 
         <div class="step">
@@ -2625,6 +2633,7 @@ gcloud storage buckets create <span class="code-dir">gs://your-company-billing</
             <li><strong>Choose how to protect object data</strong> &mdash; <strong>untick <em>Soft delete policy</em></strong> (it is on by default), leave object versioning, bucket retention and object retention off, and keep the Google-managed encryption key.</li>
           </ul>
           <div class="step-callout"><strong>No soft delete, versioning or retention:</strong> the exporter deletes and rewrites the current month's folder on every run. Soft delete would bill you for a week of superseded files, versioning would keep them forever, and a retention policy blocks the delete outright, so every run fails.</div>
+          <div class="step-note">Optional: closed months stay in the bucket forever. A lifecycle <strong>Delete</strong> rule per tier folder caps that &mdash; age <strong>400</strong> days on <em>focus/daily/</em>, <strong>60</strong> on <em>focus/hourly/</em> (keep each above that tier's retentionDays). See the <a href="https://github.com/etiennechabert/cost-goblin/tree/main/scripts/gcp-focus-exporter#before-you-start" target="_blank" rel="noopener">exporter README</a> for the command.</div>
         </div>
 
         <div class="step">

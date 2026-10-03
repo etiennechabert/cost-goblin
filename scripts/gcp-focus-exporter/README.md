@@ -74,6 +74,27 @@ the current month's folder on every run. Soft delete would bill you for a week
 of superseded shards, versioning would keep them forever, and a retention
 policy blocks the delete outright, so every run fails.
 
+**Optional: stop the bucket growing forever.** Closed months are never
+rewritten, so they stay in the bucket indefinitely. A lifecycle rule per tier
+folder caps that; keep each age at or above the tier's `retentionDays` (daily
+365, hourly 30 by default), with a month of margin because the current month
+keeps being rewritten until its billing finalises:
+
+```bash
+cat > lifecycle.json <<'JSON'
+{"rule": [
+  {"action": {"type": "Delete"}, "condition": {"age": 400, "matchesPrefix": ["focus/daily/"]}},
+  {"action": {"type": "Delete"}, "condition": {"age": 60, "matchesPrefix": ["focus/hourly/"]}}
+]}
+JSON
+gcloud storage buckets update gs://cost-goblin --lifecycle-file=lifecycle.json
+```
+
+This **replaces** any lifecycle rules the bucket already has. Expiry never touches
+what CostGoblin has already downloaded — a period that disappears from the
+bucket stays on disk until it ages out of retention — but a fresh install can
+only download what the bucket still holds.
+
 ## Deploy it
 
 Three ways to run the same deployment — all three produce an identical job, so
