@@ -5,13 +5,18 @@
   "critical": true,
   "allowlist": [
     {
-      "GHSA-ch52-4w7c-c8xp|*app-builder-lib>@electron/get>got>cacheable-request>http-cache-semantics*": {
+      "GHSA-ch52-4w7c-c8xp|app-builder-lib>@electron/get>got>cacheable-request>http-cache-semantics*": {
         "active": true,
-        "notes": "No patched http-cache-semantics exists (<= 4.2.0, latest is 4.2.0). Only reached via electron-builder's app-builder-lib > @electron/get@3 > got@11 at build time to download Electron zips; got only loads cacheable-request when a `cache` option is passed, which @electron/get never does, and the flaw needs a shared cache serving multiple users. Dev-only: not in the packaged app.asar. Scoped to this chain so any other path still fails. Drop once electron-builder ships @electron/get >= 4 (got-free; 27.0.0-alpha uses ^5).",
-        "expiry": "2027-01-04"
+        "notes": "No patched http-cache-semantics exists (<= 4.2.0 is every release). Only reached via electron-builder's app-builder-lib > @electron/get@3 > got@11 > cacheable-request, a devDependency chain that downloads Electron and builder toolsets at packaging time and is not in app.asar. got always loads cacheable-request but only uses it (and so http-cache-semantics) when a `cache` option is set: app-builder-lib sets none and electron-builder's config schema rejects electronDownload.downloadOptions. The flaw also needs a shared cache serving multiple users. Inner hops are exact on purpose (audit-ci's `*` also matches `>`). This key covers the path audit-ci starts at app-builder-lib (it cuts the walk at the dmg-builder / squirrel-windows peer cycle); the next key covers the longer ones. If a package in the chain gets its own advisory, audit-ci emits `>>` at that hop and CI fails closed: add that exact variant. Drop once app-builder-lib depends on @electron/get >= 5 (got-free; 4.x still uses got@14). See PR #651."
+      }
+    },
+    {
+      "GHSA-ch52-4w7c-c8xp|*>app-builder-lib>@electron/get>got>cacheable-request>http-cache-semantics*": {
+        "active": true,
+        "notes": "Same chain reached through dmg-builder / electron-builder-squirrel-windows / electron-builder; see the entry above."
       }
     }
   ],
-  "report-type": "summary",
+  "report-type": "important",
   "package-manager": "npm"
 }
