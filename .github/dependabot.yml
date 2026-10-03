@@ -50,6 +50,18 @@ updates:
       # install script is denied in package.json#allowScripts).
       - dependency-name: "@sentry/cli"
         update-types: ["version-update:semver-major"]
+      # The root `vite` and `ast-v8-to-istanbul` devDependencies are what
+      # executableLines (packages/core/src/e2e-coverage) uses to reproduce
+      # vitest's coverage pipeline; the root overrides force vitest and
+      # @vitest/coverage-v8 onto the same copies. A major moves that pipeline
+      # (vite 8 transforms with oxc, not esbuild) and ast-v8-to-istanbul's only
+      # consumer declares ^1.0.0 — take both by hand, checking that the e2e and
+      # unit lcov line sets still agree. This also holds back packages/desktop's
+      # own vite majors.
+      - dependency-name: "vite"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "ast-v8-to-istanbul"
+        update-types: ["version-update:semver-major"]
     groups:
       all-dependencies:
         patterns:

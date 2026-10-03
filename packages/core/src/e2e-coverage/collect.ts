@@ -1,6 +1,7 @@
 import { isStringRecord } from '../utils/json.js';
 import type {
   CoverageReport,
+  ExecutableLines,
   IstanbulBranch,
   IstanbulFileCoverage,
   IstanbulFunction,
@@ -42,7 +43,7 @@ function isUnknownArray(value: unknown): value is readonly unknown[] {
 }
 
 /** Reads `<node>.start.line` out of an istanbul location node. */
-function startLineOf(node: unknown): number | null {
+export function startLineOf(node: unknown): number | null {
   if (!isStringRecord(node)) return null;
   const start = node['start'];
   if (!isStringRecord(start)) return null;
@@ -159,6 +160,49 @@ function parseBranches(
     branches.push({ blockId, locations });
   }
   return branches;
+}
+
+/**
+ * Restricts each file's line records to what the unit report could list for
+ * it (see `executableLines`). Counts are never changed and records are only
+ * removed, so no line can come out covered that went in uncovered.
+ *
+ * - A statement line keeps its record whatever the count.
+ * - A branch-only line — one the unit report lists through a `BRDA`, or that
+ *   carries one of this file's own branch records — keeps it only when the
+ *   count is above 0. SonarJS scores a line with branch records as its `DA`
+ *   hits plus its covered branches, but only when no `DA` was written first
+ *   (the first value wins). Such a line stays "to cover" through its branch
+ *   records either way; a positive `DA` adds e2e's execution evidence, while a
+ *   zero one would only block the branch credit.
+ * - Every other line is dropped.
+ *
+ * A file absent from `executable` passes through unchanged. Functions and
+ * branches are never dropped: dropping a branch would hide an uncovered
+ * condition.
+ */
+export function restrictToExecutableLines(
+  report: CoverageReport,
+  executable: ReadonlyMap<string, ExecutableLines>,
+): CoverageReport {
+  const restricted = createCoverageReport();
+  for (const [filePath, coverage] of report) {
+    const lines = executable.get(filePath);
+    if (lines === undefined) {
+      restricted.set(filePath, coverage);
+      continue;
+    }
+    const ownBranchLines = new Set(coverage.branches.map(branch => branch.line));
+    const keep = (line: number, count: number): boolean =>
+      lines.statements.has(line) ||
+      (count > 0 && (lines.branches.has(line) || ownBranchLines.has(line)));
+    restricted.set(filePath, {
+      lines: new Map([...coverage.lines].filter(([line, count]) => keep(line, count))),
+      functions: coverage.functions,
+      branches: coverage.branches,
+    });
+  }
+  return restricted;
 }
 
 /** An empty report, ready to merge shards into. */

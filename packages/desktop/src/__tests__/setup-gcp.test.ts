@@ -49,8 +49,8 @@ describe('parseGcloudProjects', () => {
   it('reports unreadable stdout as null, distinct from an empty list', () => {
     // gcloud prints update nags and auth prompts to stdout in some configs
     // while still exiting 0. Collapsing that into [] made the wizard claim
-    // "the signed-in account can't see any active projects" — a statement
-    // about the user's account rather than about our failure to read it.
+    // "No Google Cloud projects found" — a statement about the user's account
+    // rather than about our failure to read it.
     expect(parseGcloudProjects('You do not currently have an active account')).toBeNull();
     expect(parseGcloudProjects('')).toBeNull();
   });
