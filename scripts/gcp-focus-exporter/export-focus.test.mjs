@@ -267,6 +267,24 @@ describe('buildTierSelect', () => {
   it('rejects an unknown tier', () => {
     expect(() => buildTierSelect('monthly', TABLE, LIVE_COLUMNS)).toThrow(/Unknown tier/);
   });
+
+  it('bounds the ingestion partition from below so BigQuery can prune', () => {
+    // `BillingPeriodStart` is not the partition column, so on its own it
+    // prunes nothing and every export scans the whole table — measured at
+    // 2.4x the bytes for a closed month on a ~50M-row export, and growing
+    // with the table. A month's rows cannot be ingested before it starts.
+    for (const tier of TIERS) {
+      const sql = buildTierSelect(tier, TABLE, LIVE_COLUMNS);
+      expect(sql).toContain('WHERE DATE(BillingPeriodStart) = @period');
+      expect(sql).toContain('AND _PARTITIONTIME >= TIMESTAMP(@period)');
+    }
+  });
+
+  it('never adds an UPPER bound: backfills and late adjustments land after the month', () => {
+    for (const tier of TIERS) {
+      expect(buildTierSelect(tier, TABLE, LIVE_COLUMNS)).not.toMatch(/_PARTITIONTIME\s*(<|<=|BETWEEN)/);
+    }
+  });
 });
 
 describe('loadConfig', () => {
@@ -488,10 +506,10 @@ describe('DATE and TIMESTAMP parameter binding', () => {
       ['ALTER TABLE', []],
       ['EXPORT DATA', []],
       ['MERGE', []],
-      ['INFORMATION_SCHEMA.COLUMNS', LIVE_COLUMNS.map(c => ({
-        column_name: c.name,
-        data_type: c.dataType,
-      }))],
+      ['INFORMATION_SCHEMA.COLUMNS', [
+        ...LIVE_COLUMNS.map(c => ({ column_name: c.name, data_type: c.dataType, is_hidden: 'NO' })),
+        { column_name: '_PARTITIONTIME', data_type: 'TIMESTAMP', is_hidden: 'YES' },
+      ]],
       ['FROM `proj.ds.tbl`', [
         // The nine-digit shape the client ACTUALLY emits, not a hand-tidied
         // one — otherwise `timestampValue`'s normalization is never exercised
@@ -544,5 +562,57 @@ describe('DATE and TIMESTAMP parameter binding', () => {
     const merge = calls.find(c => c.sql.includes('MERGE'));
     expect(merge.params.tier).toBe('daily');
     expect(merge.params.period).toEqual({ value: '2026-03-01' });
+  });
+});
+
+describe('run — ingestion-time partitioning is required', () => {
+  const visible = LIVE_COLUMNS.map(({ name, dataType }) => ({ column_name: name, data_type: dataType, is_hidden: 'NO' }));
+  const partitionTime = { column_name: '_PARTITIONTIME', data_type: 'TIMESTAMP', is_hidden: 'YES' };
+
+  async function runWithSchema(schemaRows) {
+    const bigquery = fakeBigQuery([
+      ['INFORMATION_SCHEMA.COLUMNS', schemaRows],
+      ['CREATE TABLE IF NOT EXISTS', []],
+      ['ALTER TABLE', []],
+      ['FROM `proj.ds.tbl`', [
+        { period_label: '2026-03', period_start: '2026-03-01', watermark: { value: '2026-03-15T00:00:00Z' } },
+      ]],
+      ['FROM `proj.state.export_state`', []],
+    ]);
+    const logs = [];
+    const original = console.log;
+    console.log = (line) => { logs.push(JSON.parse(line)); };
+    try {
+      await createExporter(CONFIG, { bigquery, storage: {} }).run();
+    } finally {
+      console.log = original;
+    }
+    return { logs, sqls: logs.filter(l => l.message === 'would export').map(l => l.sql) };
+  }
+
+  it('exports every tier with the partition bound when the table qualifies', async () => {
+    const { sqls } = await runWithSchema([...visible, partitionTime]);
+    expect(sqls).toHaveLength(2);
+    for (const sql of sqls) expect(sql).toContain('_PARTITIONTIME >= TIMESTAMP(@period)');
+  });
+
+  it('keeps the hidden pseudo-columns out of the daily projection', async () => {
+    const { sqls } = await runWithSchema([
+      ...visible, partitionTime, { column_name: '_PARTITIONDATE', data_type: 'DATE', is_hidden: 'YES' },
+    ]);
+    const daily = sqls.find(s => s.includes('GROUP BY'));
+    expect(daily).toBeDefined();
+    expect(daily).not.toContain('`_PARTITIONTIME`');
+    expect(daily).not.toContain('`_PARTITIONDATE`');
+  });
+
+  it('fails hard, before deleting anything, when the table is not ingestion-time partitioned', async () => {
+    // An unbounded scan would still produce correct output — just at the
+    // cost of the whole table, every run. Refusing is the only way that
+    // regression gets noticed.
+    let logs = [];
+    await expect(runWithSchema(visible).then(r => { logs = r.logs; }))
+      .rejects.toThrow(/not ingestion-time partitioned/);
+    expect(logs.some(l => l.message === 'would delete')).toBe(false);
   });
 });

@@ -544,17 +544,28 @@ apart and totals summing across them.
 
 Enabling the export is free, and the Google-managed billing table has no
 storage charge. The recurring cost is **BigQuery bytes scanned** by
-`EXPORT DATA ... SELECT *`, billed on-demand. Measure it before committing:
+`EXPORT DATA ... SELECT *`, billed on-demand.
+
+Each export is bounded on the table's ingestion partition
+(`_PARTITIONTIME >= <first day of the month>`). `BillingPeriodStart` is not the
+partition column, so without that bound every export would scan the **whole
+table**, up to two years of billing, on every run. With it, the current month
+scans only what has been ingested since the 1st, and a closed month only what
+has been ingested since it began. On a ~50M-row export a closed month scanned
+2.4x fewer bytes than the unbounded query, and the gap widens as the table
+fills. This is also why the exporter refuses a table that is not ingestion-time
+partitioned (see Troubleshooting). Measure a month before committing:
 
 ```bash
 bq query --use_legacy_sql=false --dry_run --format=prettyjson \
-  'SELECT * FROM `PROJECT.DATASET.FOCUS_TABLE` WHERE DATE(BillingPeriodStart) = DATE "2026-07-01"'
+  'SELECT * FROM `PROJECT.DATASET.FOCUS_TABLE` WHERE DATE(BillingPeriodStart) = DATE "2026-07-01" AND _PARTITIONTIME >= TIMESTAMP "2026-07-01"'
 ```
 
-Take `totalBytesProcessed` × ~30 runs/month ÷ 2^40 × your per-TiB rate. A 1 GB
-month is a few cents; the first 1 TiB scanned each month is free. If it comes
-back large, drop the schedule to a few times a week — closed months look after
-themselves via the watermark.
+Take `totalBytesProcessed` × ~30 runs/month ÷ 2^40 × your per-TiB rate, and
+double it with `TIERS=daily,hourly`: each tier runs its own export query. A
+1 GB month is a few cents; the first 1 TiB scanned each month is free. If it
+comes back large, drop the schedule to a few times a week — closed months look
+after themselves via the watermark.
 
 GCS storage is pennies. Cloud Run and Cloud Scheduler are effectively free at
 one short run per day.
@@ -579,6 +590,14 @@ folder, and re-export:
 ```bash
 gcloud storage rm --recursive gs://<BUCKET>/<PREFIX>/<TIER>/billing_period=YYYY-MM/
 ```
+
+**`... is not ingestion-time partitioned`.** `FOCUS_TABLE` does not point
+at the Google-managed FOCUS export, which BigQuery creates ingestion-time
+partitioned. The exporter bounds every query on `_PARTITIONTIME`, so it refuses
+any other table rather than scan all of it on every run. Check with
+`bq show --format=prettyjson PROJECT:DATASET.TABLE | jq .timePartitioning`: the
+managed table shows `"type": "DAY"` and no `field`. The check runs before
+anything is deleted, so a refused run leaves the bucket untouched.
 
 **Permission denied deleting objects.** The service account needs
 `roles/storage.objectAdmin`, not `objectCreator` — deletion is the point.

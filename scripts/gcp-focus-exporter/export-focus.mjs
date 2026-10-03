@@ -261,7 +261,15 @@ export function buildDailyProjection(columns) {
  * additions flow through untouched.
  */
 export function buildTierSelect(tier, focusTable, columns) {
-  const from = `FROM \`${focusTable}\`\n     WHERE DATE(BillingPeriodStart) = @period`;
+  // `BillingPeriodStart` is not the partition column, so on its own it prunes
+  // nothing and every export scans the WHOLE table — two years of billing at
+  // full retention. The lower bound on the ingestion partition is what lets
+  // BigQuery skip everything written before the month began; a month's rows
+  // cannot land before it starts. There is deliberately NO upper bound:
+  // backfilled months are ingested on the day the export was enabled, and late
+  // corrections keep arriving after a month closes. `run` refuses a table that
+  // is not ingestion-time partitioned, so `_PARTITIONTIME` always exists here.
+  const from = `FROM \`${focusTable}\`\n     WHERE DATE(BillingPeriodStart) = @period\n       AND _PARTITIONTIME >= TIMESTAMP(@period)`;
   if (tier === 'hourly') {
     return `SELECT *\n     ${from}`;
   }
@@ -447,20 +455,38 @@ export function createExporter(config, deps = {}) {
     await query(`ALTER TABLE \`${stateTable}\` ADD COLUMN IF NOT EXISTS tier STRING`);
   }
 
-  /** The table's columns, in ordinal order, excluding pseudo-columns like
-   *  `_PARTITIONTIME` — which INFORMATION_SCHEMA lists but `SELECT *` does
-   *  not return, so projecting it would make the two tiers disagree. */
+  /** The table's columns, in ordinal order — and proof that the table is
+   *  ingestion-time partitioned, which every export query relies on.
+   *
+   *  Hidden pseudo-columns like `_PARTITIONTIME` are read only for that check
+   *  and left out of `columns`: INFORMATION_SCHEMA lists them but `SELECT *`
+   *  does not return them, so projecting one would make the two tiers
+   *  disagree.
+   *
+   *  Throws rather than falling back to an unbounded scan. Google creates the
+   *  FOCUS export ingestion-time partitioned; a table that is not would still
+   *  export correctly, but at the cost of the whole table on every run — a
+   *  silent cost regression nobody would notice until the invoice. */
   async function fetchColumns() {
     const [project, dataset, table] = focusTable.split('.');
     const rows = await query(
-      `SELECT column_name, data_type
+      `SELECT column_name, data_type, is_hidden
        FROM \`${project}.${dataset}.INFORMATION_SCHEMA.COLUMNS\`
-       WHERE table_name = @table AND is_hidden = 'NO'
+       WHERE table_name = @table
        ORDER BY ordinal_position`,
       { table },
       { table: 'STRING' },
     );
-    return rows.map(r => ({ name: String(r.column_name), dataType: String(r.data_type) }));
+    if (!rows.some(r => String(r.column_name) === '_PARTITIONTIME')) {
+      throw new Error(
+        `${focusTable} is not ingestion-time partitioned (no _PARTITIONTIME pseudo-column). `
+        + 'The exporter bounds every query on _PARTITIONTIME so BigQuery scans one month '
+        + 'instead of the whole table; point FOCUS_TABLE at the Google-managed FOCUS export.',
+      );
+    }
+    return rows
+      .filter(r => String(r.is_hidden) === 'NO')
+      .map(r => ({ name: String(r.column_name), dataType: String(r.data_type) }));
   }
 
   /**
@@ -602,8 +628,9 @@ export function createExporter(config, deps = {}) {
       periods: pending.map(p => `${p.tier}/${p.periodLabel}`),
     });
 
-    // Only the daily tier needs the schema, and only to build its GROUP BY.
-    const columns = pending.some(p => p.tier === 'daily') ? await fetchColumns() : [];
+    // Read before the first delete: the hourly tier needs only the partition
+    // check, the daily tier the columns as well to build its GROUP BY.
+    const columns = await fetchColumns();
 
     for (const { tier, periodLabel, periodStart, watermark } of pending) {
       // Order is load-bearing: the watermark is the record of "this period is
