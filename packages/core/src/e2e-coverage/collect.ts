@@ -51,6 +51,15 @@ export function startLineOf(node: unknown): number | null {
   return typeof line === 'number' ? line : null;
 }
 
+/** Reads `<node>.end.line` out of an istanbul location node. */
+function endLineOf(node: unknown): number | null {
+  if (!isStringRecord(node)) return null;
+  const end = node['end'];
+  if (!isStringRecord(end)) return null;
+  const line = end['line'];
+  return typeof line === 'number' ? line : null;
+}
+
 /**
  * A count absent from an otherwise-present map means "never executed", which is
  * what istanbul intends and what the pre-extraction collector's `?? 0` did. A
@@ -109,7 +118,8 @@ function parseStatements(
   for (const [id, statement] of Object.entries(statementMap)) {
     const line = startLineOf(statement);
     if (line === null) continue;
-    statements.push({ line, count: countAt(statementCounts, id) });
+    const endLine = endLineOf(statement);
+    statements.push({ line, ...(endLine === null ? {} : { endLine }), count: countAt(statementCounts, id) });
   }
   return statements;
 }
@@ -121,7 +131,9 @@ function parseFunctions(
   const functions: IstanbulFunction[] = [];
   for (const [id, fn] of Object.entries(fnMap)) {
     if (!isStringRecord(fn)) continue;
-    const line = startLineOf(fn['loc']);
+    // `decl` is where istanbul's lcov writer, and so the unit report, puts the
+    // FN record: ast-v8-to-istanbul's `loc` is the function's body.
+    const line = startLineOf(fn['decl']) ?? startLineOf(fn['loc']);
     if (line === null) continue;
     // Unnamed functions are keyed by line, not by istanbul's id: the id is
     // positional and shifts between shards, which is exactly what the merge
@@ -172,23 +184,31 @@ function parseBranches(
 }
 
 /**
- * Restricts each file's line records to what the unit report could list for
- * it (see `executableLines`). Counts are never changed and records are only
- * removed, so no line can come out covered that went in uncovered.
+ * Restricts each file's records to what the unit report could list for it
+ * (see `executableLines`), so that no line or branch can come out covered that
+ * went in uncovered.
  *
  * - A statement line keeps its record whatever the count.
- * - A branch-only line — one the unit report lists through a `BRDA`, or that
- *   carries one of this file's own branch records — keeps it only when the
- *   count is above 0. SonarJS scores a line with branch records as its `DA`
- *   hits plus its covered branches, but only when no `DA` was written first
- *   (the first value wins). Such a line stays "to cover" through its branch
- *   records either way; a positive `DA` adds e2e's execution evidence, while a
- *   zero one would only block the branch credit.
+ * - A branch-only line — one the unit report lists only through a `BRDA` —
+ *   keeps it only when the count is above 0. SonarJS scores a line with branch
+ *   records as its `DA` hits plus its covered branches, but only when no `DA`
+ *   was written first (the first value wins). Such a line stays "to cover"
+ *   through its branch records either way; a positive `DA` adds e2e's
+ *   execution evidence, while a zero one would only block the branch credit.
+ * - Any other line with a count above 0 is a statement the bundle starts on
+ *   another line than vitest does — an unmapped token takes the previous
+ *   token's line, so `.map(x => (` can start its body a line early. Its count
+ *   moves to the first statement line within its own span that no record of
+ *   the file starts on: the line vitest starts the same statement on.
  * - Every other line is dropped.
+ * - A branch keeps its records only on a line the unit report lists a `BRDA`
+ *   for. Elsewhere it is code the bundler injected (vite's dynamic-import
+ *   preload wrapper) or a branch an unmapped token put on the wrong line —
+ *   records no unit-side branch could ever match.
  *
- * A file absent from `executable` passes through unchanged. Functions and
- * branches are never dropped: dropping a branch would hide an uncovered
- * condition.
+ * A file the unit report lists nothing for — type-only, or excluded with a
+ * `v8 ignore file` hint — is dropped. A file absent from `executable` passes
+ * through unchanged. Functions are never dropped.
  */
 export function restrictToExecutableLines(
   report: CoverageReport,
@@ -201,14 +221,27 @@ export function restrictToExecutableLines(
       restricted.set(filePath, coverage);
       continue;
     }
-    const ownBranchLines = new Set(coverage.branches.map(branch => branch.line));
-    const keep = (line: number, count: number): boolean =>
-      lines.statements.has(line) ||
-      (count > 0 && (lines.branches.has(line) || ownBranchLines.has(line)));
+    if (lines.statements.size === 0 && lines.branches.size === 0) continue;
+    const kept = new Map<number, number>();
+    const displaced: [number, number][] = [];
+    for (const [line, count] of coverage.lines) {
+      if (lines.statements.has(line) || (count > 0 && lines.branches.has(line))) kept.set(line, count);
+      else if (count > 0) displaced.push([line, count]);
+    }
+    for (const [line, count] of displaced) {
+      const end = coverage.statementEnds.get(line) ?? line;
+      for (let target = line + 1; target <= end; target++) {
+        if (lines.statements.has(target) && !coverage.lines.has(target)) {
+          kept.set(target, Math.max(kept.get(target) ?? 0, count));
+          break;
+        }
+      }
+    }
     restricted.set(filePath, {
-      lines: new Map([...coverage.lines].filter(([line, count]) => keep(line, count))),
+      lines: kept,
       functions: coverage.functions,
-      branches: coverage.branches,
+      branches: coverage.branches.filter(branch => lines.branches.has(branch.line)),
+      statementEnds: coverage.statementEnds,
     });
   }
   return restricted;
@@ -239,7 +272,7 @@ export function padStatementLines(
     }
     const lines = new Map(coverage.lines);
     for (const line of statements) if (!lines.has(line)) lines.set(line, 0);
-    padded.set(filePath, { lines, functions: coverage.functions, branches: coverage.branches });
+    padded.set(filePath, { ...coverage, lines });
   }
   return padded;
 }
@@ -261,13 +294,15 @@ export function mergeIstanbulFile(
 ): void {
   let existing = report.get(filePath);
   if (existing === undefined) {
-    existing = { lines: new Map(), functions: new Map(), branches: [] };
+    existing = { lines: new Map(), functions: new Map(), branches: [], statementEnds: new Map() };
     report.set(filePath, existing);
   }
 
   for (const statement of data.statements) {
     const previous = existing.lines.get(statement.line) ?? 0;
     existing.lines.set(statement.line, Math.max(previous, statement.count));
+    const end = Math.max(statement.endLine ?? statement.line, existing.statementEnds.get(statement.line) ?? 0);
+    existing.statementEnds.set(statement.line, end);
   }
 
   // Keyed by name+line rather than by istanbul's id: ids are positional and

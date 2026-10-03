@@ -23,7 +23,7 @@ interface FileGroup {
 }
 
 function fileCoverage(group: FileGroup): FileCoverage {
-  const coverage: FileCoverage = { lines: new Map(), functions: new Map(), branches: [] };
+  const coverage: FileCoverage = { lines: new Map(), functions: new Map(), branches: [], statementEnds: new Map() };
   const count = group.covered === false ? 0 : 1;
   for (let line = 1; line <= group.lines; line++) coverage.lines.set(line, count);
   for (let i = 0; i < group.functions; i++) {

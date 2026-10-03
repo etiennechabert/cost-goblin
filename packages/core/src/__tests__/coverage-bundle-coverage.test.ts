@@ -6,7 +6,15 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { build } from 'vite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { addBundleEntry, type BundleEntry, createBundleCoverage, parseSourceMap } from '../e2e-coverage/bundle-coverage.js';
+import {
+  addBundleEntry,
+  type BundleCoverage,
+  type BundleEntry,
+  branchesOfPreAttachFunctions,
+  createBundleCoverage,
+  parseSourceMap,
+  withoutIgnoreFileHints,
+} from '../e2e-coverage/bundle-coverage.js';
 import type { FileCoverage } from '../e2e-coverage/types.js';
 import { isStringRecord } from '../utils/json.js';
 
@@ -27,8 +35,56 @@ describe('parseSourceMap', () => {
     expect(parseSourceMap(value)).toBeNull();
   });
 
-  it('accepts an empty sourceRoot, which resolves nothing', () => {
-    expect(parseSourceMap({ sources: ['a.ts'], mappings: '', sourceRoot: '' })).not.toBeNull();
+  it.each([['an empty', ''], ['a null', null]])('accepts %s sourceRoot, which resolves nothing', (_label, sourceRoot) => {
+    expect(parseSourceMap({ sources: ['a.ts'], mappings: '', sourceRoot })).not.toBeNull();
+  });
+});
+
+describe('withoutIgnoreFileHints', () => {
+  it('blanks every ignore-file hint without moving an offset or a line', () => {
+    const code = [
+      'a();',
+      '/* istanbul ignore file */ b();',
+      '// c8 ignore file because',
+      '/* v8 ignore file -- @preserve',
+      '   spanning lines */ c();',
+      '/* istanbul ignore next */ d();',
+    ].join('\n');
+
+    const blanked = withoutIgnoreFileHints(code);
+
+    expect(blanked).toHaveLength(code.length);
+    expect(blanked.split('\n').map(line => line.trim())).toEqual(['a();', 'b();', '', '', 'c();', '/* istanbul ignore next */ d();']);
+  });
+});
+
+describe('branchesOfPreAttachFunctions', () => {
+  const branch = (start: number): { type: string; start: number } => ({ type: 'IfStatement', start });
+
+  it('is not needed when every function that ran was measured block by block', () => {
+    expect(
+      branchesOfPreAttachFunctions([
+        { functionName: '', isBlockCoverage: true, ranges: [{ startOffset: 0, endOffset: 100, count: 1 }] },
+        { functionName: 'stale', isBlockCoverage: false, ranges: [{ startOffset: 10, endOffset: 20, count: 0 }] },
+      ]),
+    ).toBeUndefined();
+  });
+
+  it('skips the branches whose innermost function ran but was compiled before the attach', () => {
+    const ignore = branchesOfPreAttachFunctions([
+      { functionName: '', isBlockCoverage: false, ranges: [{ startOffset: 0, endOffset: 100, count: 2 }] },
+      {
+        functionName: 'measured',
+        isBlockCoverage: true,
+        ranges: [{ startOffset: 40, endOffset: 60, count: 1 }, { startOffset: 50, endOffset: 55, count: 0 }],
+      },
+    ]);
+    if (ignore === undefined) throw new Error('expected a filter');
+
+    expect(ignore(branch(5), 'branch')).toBe(true);
+    expect(ignore(branch(45), 'branch')).toBe(false);
+    expect(ignore(branch(5), 'statement')).toBe(false);
+    expect(ignore(branch(150), 'branch')).toBe(false);
   });
 });
 
@@ -111,7 +167,7 @@ describe('addBundleEntry against a vite bundle V8 actually ran', () => {
 
   const countAt = (file: FileCoverage | undefined, line: number): number | undefined => file?.lines.get(line);
 
-  async function convert(fields: Partial<BundleEntry> = {}): Promise<ReturnType<typeof createBundleCoverage>> {
+  async function convert(fields: Partial<BundleEntry> = {}): Promise<BundleCoverage> {
     const coverage = createBundleCoverage();
     const added = await addBundleEntry(coverage, { ...entry, isProjectFile: () => true, ...fields });
     expect(added).toEqual({ status: 'ok' });
@@ -158,10 +214,29 @@ describe('addBundleEntry against a vite bundle V8 actually ran', () => {
         { functionName: '', isBlockCoverage: true, ranges: [{ startOffset: 0, endOffset: entry.code.length, count: 1 }] },
       ],
     });
-    const keys = (coverage: ReturnType<typeof createBundleCoverage>): string[] =>
+    const keys = (coverage: BundleCoverage): string[] =>
       (coverage.measured.get(lib)?.branches ?? []).map(b => `${String(b.line)}:${String(b.blockId)}:${String(b.branchId)}`);
     expect(keys(topLevelOnly)).toEqual(keys(full));
     expect(keys(full).length).toBeGreaterThan(0);
+  });
+
+  it('publishes no branch of code V8 reports compiled before the attach, but keeps its statements', async () => {
+    // The whole bundle as one range with no blocks inside: compiled before
+    // coverage started, run since. `if (flag)`'s untaken arm reads taken.
+    const coverage = await convert({
+      functions: [
+        { functionName: '', isBlockCoverage: false, ranges: [{ startOffset: 0, endOffset: entry.code.length, count: 1 }] },
+      ],
+    });
+    expect(coverage.raw.get(lib)?.lines.get(7)).toBe(1);
+    expect(coverage.measured.get(lib)?.branches).toEqual([]);
+    expect(countAt(coverage.measured.get(lib), 5)).toBe(1);
+  });
+
+  it('converts a bundle that kept an ignore-file hint from one of its modules', async () => {
+    const coverage = await convert({ code: `${entry.code}/* istanbul ignore file */\n` });
+    expect(countAt(coverage.measured.get(lib), 10)).toBe(0);
+    expect(countAt(coverage.measured.get(lib), 5)).toBe(1);
   });
 
   it('files both reports under the same project paths, and only those the caller keeps', async () => {
@@ -176,7 +251,7 @@ describe('addBundleEntry against a vite bundle V8 actually ran', () => {
     [
       'a source the converters resolve differently',
       (text: string) => JSON.stringify({ ...JSON.parse(text), sources: ['webpack://lib.ts', '../entry.ts'] }),
-      '',
+      'disagree on the project files',
     ],
   ])('refuses %s and folds in nothing', async (_label, rewrite, message) => {
     const coverage = createBundleCoverage();
@@ -189,6 +264,24 @@ describe('addBundleEntry against a vite bundle V8 actually ran', () => {
     expect(added.status === 'error' ? added.message : '').toContain(message);
     expect(coverage.raw.size).toBe(0);
     expect(coverage.measured.size).toBe(0);
+  });
+
+  it('refuses a published conversion that credits nothing V8 reported running', async () => {
+    // One executed range that no statement starts in: what the converter sees
+    // when V8's offsets stop lining up with the AST's.
+    const coverage = createBundleCoverage();
+    const added = await addBundleEntry(coverage, {
+      ...entry,
+      functions: [{ functionName: '', isBlockCoverage: true, ranges: [{ startOffset: 0, endOffset: 1, count: 1 }] }],
+      isProjectFile: () => true,
+    });
+    expect(added.status === 'error' ? added.message : '').toContain('credited no statement');
+    expect(coverage.measured.size).toBe(0);
+  });
+
+  it('leaves an entry V8 reports nothing running in to the audit', async () => {
+    const coverage = await convert({ functions: [] });
+    expect(countAt(coverage.measured.get(lib), 5)).toBe(0);
   });
 
   it('folds in nothing, successfully, for a chunk with no sources', async () => {

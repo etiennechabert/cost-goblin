@@ -133,10 +133,12 @@ export interface StatementLineReport {
  *
  * A file whose source cannot be read, transformed or parsed is kept as the
  * converter reported it and named in `unrestricted` for the caller to warn
- * about. Its records are the statements of the bundle, so that credits no line
- * and can only undercount it against the unit report: a warning, not a
- * failure; and the unit tests of this module break first if vite or the
- * converter change under it.
+ * about. Its records are the bundle's statements and branches, so it can be
+ * off in either direction against the unit report — a statement the bundle
+ * starts a line early adds a line, code it tree-shook is absent rather than 0
+ * — but by a few lines, in a file the caller has already warned about: a
+ * warning, not a failure; and the unit tests of this module break first if
+ * vite or the converter change under it.
  */
 export async function restrictToStatementLines(
   report: CoverageReport,

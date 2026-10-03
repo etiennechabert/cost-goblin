@@ -48,6 +48,7 @@ function istanbulEntry(options: {
     branchMap[String(index)] = {
       type: 'branch',
       line: branch.lines[0],
+      loc: loc(branch.lines[0] ?? 0),
       locations: branch.lines.map(loc),
     };
     b[String(index)] = branch.counts;
@@ -151,13 +152,28 @@ describe('parseIstanbulFileCoverage', () => {
     );
 
     expect(entry.statements).toEqual([
-      { line: 1, count: 1 },
-      { line: 2, count: 0 },
+      { line: 1, endLine: 1, count: 1 },
+      { line: 2, endLine: 2, count: 0 },
     ]);
     expect(entry.functions).toEqual([{ name: 'render', line: 1, count: 3 }]);
     expect(entry.branches).toEqual([
       { blockId: 0, locations: [{ branchId: 0, line: 2, count: 1 }] },
     ]);
+  });
+
+  it('puts a function on its declaration line, as the unit report does', () => {
+    // ast-v8-to-istanbul's `loc` is the body, three lines below a multi-line
+    // signature; istanbul's lcov writer uses `decl`.
+    const entry = parsed({
+      statementMap: {},
+      s: {},
+      fnMap: { '0': { name: 'applyColumnOrder', decl: loc(62), loc: loc(65) } },
+      f: { '0': 2 },
+      branchMap: {},
+      b: {},
+    });
+
+    expect(entry.functions).toEqual([{ name: 'applyColumnOrder', line: 62, count: 2 }]);
   });
 
   it('names an unnamed function after its line, so the key stays shard-stable', () => {
@@ -187,8 +203,8 @@ describe('parseIstanbulFileCoverage', () => {
     });
 
     expect(entry.statements).toEqual([
-      { line: 1, count: 4 },
-      { line: 2, count: 0 },
+      { line: 1, endLine: 1, count: 4 },
+      { line: 2, endLine: 2, count: 0 },
     ]);
     expect(entry.functions).toEqual([{ name: 'run', line: 1, count: 0 }]);
     expect(entry.branches).toEqual([
@@ -327,6 +343,18 @@ describe('mergeIstanbulFile', () => {
     expect(merged?.lines.get(1)).toBe(1);
     expect(merged?.lines.get(2)).toBe(5);
     expect(merged?.functions.get('render:1')).toEqual({ name: 'render', line: 1, count: 2 });
+  });
+
+  it('keeps the furthest end line of the statements starting on each line', () => {
+    const report = createCoverageReport();
+    mergeIstanbulFile(report, '/repo/a.tsx', { statements: [{ line: 4, endLine: 9, count: 1 }], functions: [], branches: [] });
+    mergeIstanbulFile(report, '/repo/a.tsx', {
+      statements: [{ line: 4, endLine: 6, count: 0 }, { line: 12, count: 2 }],
+      functions: [],
+      branches: [],
+    });
+
+    expect(report.get('/repo/a.tsx')?.statementEnds).toEqual(new Map([[4, 9], [12, 12]]));
   });
 
   it('accumulates each file independently', () => {

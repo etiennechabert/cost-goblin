@@ -108,11 +108,13 @@ describe('executableLines', () => {
 function fileCoverage(
   lines: [number, number][],
   branchLines: number[] = [],
+  statementEnds: [number, number][] = [],
 ): FileCoverage {
   return {
     lines: new Map(lines),
     functions: new Map([['Entry:8', { name: 'Entry', line: 8, count: 0 }]]),
     branches: branchLines.map((line, blockId) => ({ line, blockId, branchId: 0, count: 0 })),
+    statementEnds: new Map(statementEnds),
   };
 }
 
@@ -147,18 +149,61 @@ describe('restrictToExecutableLines', () => {
     expect(restricted.get('/repo/a.tsx')?.lines).toEqual(new Map([[30, 2]]));
   });
 
-  it('keeps a line carrying one of its own branch records only when e2e executed it', () => {
-    // `} else {` under an untaken else: dropping its positive DA would leave
-    // only the zero BRDA, and Sonar would flip the executed line to uncovered.
+  it('moves an executed statement the bundle starts a line early onto the line vitest starts it on', () => {
+    // `.map(x => (` with the body on the next line: an unmapped token gives
+    // the bundle's statement the arrow's line, 245; vitest starts it on 246.
     const report = createCoverageReport();
-    report.set('/repo/a.tsx', fileCoverage([[40, 5], [41, 0]], [40, 41]));
+    report.set('/repo/a.tsx', fileCoverage([[240, 3], [245, 380], [250, 0]], [], [[245, 271]]));
 
-    const restricted = restrictToExecutableLines(report, new Map([['/repo/a.tsx', executable([])]]));
+    const restricted = restrictToExecutableLines(
+      report,
+      new Map([['/repo/a.tsx', executable([240, 246, 250])]]),
+    );
 
-    expect(restricted.get('/repo/a.tsx')?.lines).toEqual(new Map([[40, 5]]));
+    expect(restricted.get('/repo/a.tsx')?.lines).toEqual(new Map([[240, 3], [250, 0], [246, 380]]));
   });
 
-  it('leaves functions and branches alone', () => {
+  it('moves a count only within its statement, onto a line no record starts on, and never a zero', () => {
+    const report = createCoverageReport();
+    report.set(
+      '/repo/a.tsx',
+      fileCoverage([[10, 4], [11, 0], [20, 5], [30, 0]], [], [[10, 12], [20, 21], [30, 33]]),
+    );
+
+    // 11 already has a record of its own, so 10's count goes to 12, the next
+    // free statement line in its span. 22 lies past 20's span; 31 would only
+    // receive a zero.
+    const restricted = restrictToExecutableLines(
+      report,
+      new Map([['/repo/a.tsx', executable([11, 12, 22, 31])]]),
+    );
+
+    expect(restricted.get('/repo/a.tsx')?.lines).toEqual(new Map([[11, 0], [12, 4]]));
+  });
+
+  it('keeps branches only on the lines the unit report lists a BRDA for', () => {
+    // 32: vite's `true ? [] : void 0` preload wrapper, a branch the source has
+    // no trace of; 220: a branch an unmapped token put on the wrong line.
+    const report = createCoverageReport();
+    report.set('/repo/a.tsx', fileCoverage([[12, 1]], [12, 32, 220]));
+
+    const restricted = restrictToExecutableLines(
+      report,
+      new Map([['/repo/a.tsx', executable([12], [12, 221])]]),
+    );
+
+    expect(restricted.get('/repo/a.tsx')?.branches.map(branch => branch.line)).toEqual([12]);
+  });
+
+  it('drops a file the unit report lists nothing for', () => {
+    // A type-only module, or one excluded with an `ignore file` hint.
+    const report = createCoverageReport();
+    report.set('/repo/types.ts', fileCoverage([[3, 1]], [3]));
+
+    expect(restrictToExecutableLines(report, new Map([['/repo/types.ts', executable([])]])).size).toBe(0);
+  });
+
+  it('leaves functions alone', () => {
     const report = createCoverageReport();
     const original = fileCoverage([[8, 0], [12, 0]], [12]);
     report.set('/repo/a.tsx', original);
@@ -166,7 +211,6 @@ describe('restrictToExecutableLines', () => {
     const restricted = restrictToExecutableLines(report, new Map([['/repo/a.tsx', executable([12])]]));
 
     expect(restricted.get('/repo/a.tsx')?.functions).toEqual(original.functions);
-    expect(restricted.get('/repo/a.tsx')?.branches).toEqual(original.branches);
   });
 
   it('never adds an executable line the coverage did not report', () => {
