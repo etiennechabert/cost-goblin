@@ -78,8 +78,19 @@ export function providersEmptyForRange(
   providers: readonly ProviderSourceSpec[],
   dateRange: { readonly start: string; readonly end: string },
 ): boolean {
+  return providersWithoutDataForRange(providers, dateRange).length === providers.length;
+}
+
+/** The providers with no month on disk intersecting the range — they add no
+ *  rows to a query over it (the source builder drops them from the union, or
+ *  scans only months outside it). An undefined `availablePeriods` is unknown,
+ *  so counts as having data. */
+export function providersWithoutDataForRange(
+  providers: readonly ProviderSourceSpec[],
+  dateRange: { readonly start: string; readonly end: string },
+): readonly ProviderSourceSpec[] {
   const required = computePeriodsInRange(dateRange);
-  return !providers.some(p => p.availablePeriods === undefined || required.some(m => p.availablePeriods?.includes(m)));
+  return providers.filter(p => p.availablePeriods !== undefined && !required.some(m => p.availablePeriods?.includes(m)));
 }
 
 const EFFORT_LEVELS = new Set<string>(['VeryLow', 'Low', 'Medium', 'High']);
