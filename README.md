@@ -92,7 +92,7 @@ CostGoblin reads the **FOCUS 1.2** table via AWS Data Exports. To create one:
 
 #### Keep the bucket from growing forever
 
-The export never deletes anything: every month adds a billing period that stays in S3 indefinitely. Add an S3 **lifecycle rule** per export prefix (**S3 → your bucket → Management → Create lifecycle rule**, scope *Limit the scope of this rule using one or more filters*, prefix filter):
+The export never deletes anything: every month adds a billing period that stays in S3 indefinitely. Add an S3 **lifecycle rule** per export prefix (**S3 → your bucket → Management → Create lifecycle rule**, scope *Limit the scope of this rule using one or more filters*, prefix filter). The prefixes below assume exports delivered to `focus_daily/`, `focus_hourly/` and `cost_optimization/` at the bucket root; use your exports' own S3 path prefixes, or the rules match nothing:
 
 | Prefix | Expire current versions after | Why |
 |--------|-------------------------------|-----|

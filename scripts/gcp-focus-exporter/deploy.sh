@@ -4,7 +4,9 @@
 #
 # Idempotent: safe to re-run to pick up a code change or a config tweak.
 # Every step prints what it is doing; nothing is destructive except the
-# job/scheduler updates, which replace their own previous revision.
+# job/scheduler updates, which replace their own previous revision, and the
+# ${REPO} image repository's cleanup policy, which is (re)set on every run and
+# deletes all but its five newest images.
 #
 #   ./deploy.sh
 #
@@ -56,6 +58,8 @@ REGION="${REGION:-europe-west1}"
 
 # Artifact Registry repository (in ${REGION}) that holds the exporter's image.
 # Created if missing, with a cleanup policy keeping the 5 most recent images.
+# Give it a repository of its own: the policy REPLACES any existing one and
+# applies to every image in the repository, not just the exporter's.
 # A dedicated repository rather than `gcloud run deploy --source`'s shared
 # `cloud-run-source-deploy`, which keeps every build forever.
 REPO="${REPO:-costgoblin}"
@@ -130,7 +134,9 @@ bq --location="${LOCATION}" mk --dataset --force "${PROJECT_ID}:${STATE_DATASET}
 grant() {
   local attempt err
   for attempt in 1 2 3 4 5 6 7; do
-    if err="$("$@" 2>&1 >/dev/null)"; then return 0; fi
+    # stdin from /dev/null: with stderr captured, a gcloud prompt would be
+    # invisible and the script would hang on it. gcloud fails fast instead.
+    if err="$("$@" 2>&1 >/dev/null </dev/null)"; then return 0; fi
     if [[ "${err}" != *"ervice account"*"does not exist"* || ${attempt} -eq 7 ]]; then
       printf '%s\n' "${err}" >&2
       return 1
@@ -140,9 +146,26 @@ grant() {
   done
 }
 
+# Describe first, so a create that fails (missing permission, quota, org
+# policy) reports its own error instead of passing for "already exists" and
+# resurfacing a minute later as a misleading propagation retry.
+ensure_service_account() {   # name, display name
+  local email="$1@${PROJECT_ID}.iam.gserviceaccount.com"
+  if gcloud iam service-accounts describe "${email}" >/dev/null 2>&1; then
+    echo "    (already exists)"
+  else
+    gcloud iam service-accounts create "$1" --display-name="$2" >/dev/null
+  fi
+}
+
+BUILD_SA_EMAIL="${BUILD_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+
+# Both accounts up front, so the builder's IAM propagation overlaps the grants
+# below instead of stalling its own first grant.
 echo "==> Service account ${SA_EMAIL}"
-gcloud iam service-accounts create "${SA_NAME}" \
-  --display-name="CostGoblin FOCUS exporter" 2>/dev/null || echo "    (already exists)"
+ensure_service_account "${SA_NAME}" "CostGoblin FOCUS exporter"
+echo "==> Build service account ${BUILD_SA_EMAIL}"
+ensure_service_account "${BUILD_SA_NAME}" "CostGoblin FOCUS exporter image builder"
 
 echo "==> Granting roles"
 # Running a BigQuery job is a project-level permission, so this one has to be
@@ -198,26 +221,16 @@ if ! gcloud artifacts repositories describe "${REPO}" --location="${REGION}" >/d
     --repository-format=docker --location="${REGION}" \
     --description="CostGoblin FOCUS exporter images" >/dev/null
 fi
-# Keep policies win over Delete policies, so this deletes every image but the
-# five newest. The job pins the newest by digest, so it is never collected.
-cleanup="$(mktemp)"
-trap 'rm -f "${cleanup}"' EXIT
-cat > "${cleanup}" <<'JSON'
-[
-  {"name": "keep-recent", "action": {"type": "Keep"}, "mostRecentVersions": {"keepCount": 5}},
-  {"name": "delete-older", "action": {"type": "Delete"}, "condition": {"tagState": "any"}}
-]
-JSON
+# cleanup-policy.json: Keep policies win over Delete policies, so this deletes
+# every image but the five newest. The job pins the newest by digest, so it is
+# never collected.
 gcloud artifacts repositories set-cleanup-policies "${REPO}" \
-  --location="${REGION}" --policy="${cleanup}" --no-dry-run >/dev/null
+  --location="${REGION}" --policy=cleanup-policy.json --no-dry-run >/dev/null
 
-BUILD_SA_EMAIL="${BUILD_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 # Where `gcloud builds submit` uploads the source archive by default.
 STAGING_BUCKET="${PROJECT_ID}_cloudbuild"
 
-echo "==> Build service account ${BUILD_SA_EMAIL}"
-gcloud iam service-accounts create "${BUILD_SA_NAME}" \
-  --display-name="CostGoblin FOCUS exporter image builder" 2>/dev/null || echo "    (already exists)"
+echo "==> Granting the builder its roles"
 # Its only project-level grant: writing the build's own log lines.
 grant gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
   --member="serviceAccount:${BUILD_SA_EMAIL}" --role="roles/logging.logWriter" --condition=None >/dev/null
@@ -283,7 +296,7 @@ cat <<EOF
 Deployed.
 
   Run it now:      gcloud run jobs execute ${JOB_NAME} --region=${REGION} --wait
-  Read the logs:   gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name="${JOB_NAME}"' --freshness=1d --order=asc --format="table(timestamp,jsonPayload.message,jsonPayload.tier,jsonPayload.periodLabel)"
+  Read the logs:   gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name="${JOB_NAME}"' --freshness=1d --order=asc --format="table(timestamp,severity,jsonPayload.message,jsonPayload.tier,jsonPayload.periodLabel)"
                    (structured JSON, so 'gcloud run jobs logs read' prints blank lines)
   See the output:  gcloud storage ls gs://${BUCKET}/${PREFIX}/
 

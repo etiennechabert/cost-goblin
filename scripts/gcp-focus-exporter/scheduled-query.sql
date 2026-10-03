@@ -90,8 +90,11 @@ WHILE i < ARRAY_LENGTH(periods) DO
   -- The `_PARTITIONTIME` lower bound is what keeps this from scanning the whole
   -- table: `BillingPeriodStart` is not the partition column, and a month's
   -- rows cannot be ingested before it starts. No upper bound — backfills and
-  -- late corrections land after the month. It requires the Google-managed,
-  -- ingestion-time-partitioned export table and fails loudly on anything else.
+  -- late corrections land after the month. `IS NULL` keeps rows still in the
+  -- streaming buffer: the watermark above counts them, so dropping them would
+  -- publish a closed month without them for good. It requires the
+  -- Google-managed, ingestion-time-partitioned export table and fails loudly
+  -- on anything else.
   EXECUTE IMMEDIATE FORMAT("""
     EXPORT DATA OPTIONS(
       uri = 'gs://«BUCKET»/«PREFIX»/hourly/billing_period=%s/shard-*.parquet',
@@ -101,7 +104,7 @@ WHILE i < ARRAY_LENGTH(periods) DO
     ) AS
     SELECT * FROM `«FOCUS_TABLE»`
     WHERE DATE(BillingPeriodStart) = DATE '%s'
-      AND _PARTITIONTIME >= TIMESTAMP(DATE '%s')
+      AND (_PARTITIONTIME >= TIMESTAMP(DATE '%s') OR _PARTITIONTIME IS NULL)
   """,
   FORMAT_DATE('%Y-%m', periods[OFFSET(i)].billing_period),
   FORMAT_DATE('%Y-%m-%d', periods[OFFSET(i)].billing_period),

@@ -169,14 +169,15 @@ REGION=europe-west1  # a region inside LOCATION
 mkdir -p costgoblin-exporter && cd costgoblin-exporter
 BASE=https://raw.githubusercontent.com/etiennechabert/cost-goblin/main/scripts/gcp-focus-exporter
 curl -fsSL -O ${BASE}/export-focus.mjs -O ${BASE}/package.json -O ${BASE}/package-lock.json \
-  -O ${BASE}/Dockerfile -O ${BASE}/cloudbuild.yaml
+  -O ${BASE}/Dockerfile -O ${BASE}/cloudbuild.yaml -O ${BASE}/cleanup-policy.json
 
 # ---- one-time setup ----
 JOB=costgoblin-focus-exporter
 SA=costgoblin-exporter@${PROJECT_ID}.iam.gserviceaccount.com
 gcloud config set project ${PROJECT_ID}
 gcloud services enable bigquery.googleapis.com storage.googleapis.com \
-  run.googleapis.com cloudscheduler.googleapis.com cloudbuild.googleapis.com
+  run.googleapis.com cloudscheduler.googleapis.com cloudbuild.googleapis.com \
+  artifactregistry.googleapis.com
 bq --location=${LOCATION} mk --dataset --force ${PROJECT_ID}:costgoblin_exporter
 gcloud iam service-accounts create costgoblin-exporter \
   --display-name="CostGoblin FOCUS exporter"
@@ -220,12 +221,16 @@ gcloud storage buckets add-iam-policy-binding gs://${BUCKET} \
 # Semicolon-separated, and `^;^` tells gcloud so. TIERS=daily,hourly contains a
 # comma, which is gcloud's DEFAULT delimiter — with it, TIERS would silently
 # truncate to `daily` and an empty `hourly=` variable would appear beside it.
-ENV_VARS=FOCUS_TABLE=${FOCUS_TABLE};BUCKET=${BUCKET};PREFIX=focus;TIERS=daily
-ENV_VARS=${ENV_VARS};STATE_TABLE=${PROJECT_ID}.costgoblin_exporter.export_state
-ENV_VARS=${ENV_VARS};BQ_LOCATION=${LOCATION}
+# Quoted: unquoted, each `;` would end the assignment.
+ENV_VARS="FOCUS_TABLE=${FOCUS_TABLE};BUCKET=${BUCKET};PREFIX=focus;TIERS=daily"
+ENV_VARS="${ENV_VARS};STATE_TABLE=${PROJECT_ID}.costgoblin_exporter.export_state"
+ENV_VARS="${ENV_VARS};BQ_LOCATION=${LOCATION}"
 IMAGE=${REGION}-docker.pkg.dev/${PROJECT_ID}/costgoblin/${JOB}
 gcloud artifacts repositories create costgoblin --repository-format=docker \
   --location=${REGION} --description="CostGoblin FOCUS exporter images"
+# Keep the 5 newest images and delete the rest, so rebuilds don't pile up.
+gcloud artifacts repositories set-cleanup-policies costgoblin --location=${REGION} \
+  --policy=cleanup-policy.json --no-dry-run
 # Build as a dedicated, narrowly-granted service account rather than Cloud
 # Build's default (the Compute Engine default SA, which many organisations
 # strip of the permissions a build needs). If a grant below fails with
@@ -614,6 +619,13 @@ double it with `TIERS=daily,hourly`: each tier runs its own export query. A
 1 GB month is a few cents; the first 1 TiB scanned each month is free. If it
 comes back large, drop the schedule to a few times a week — closed months look
 after themselves via the watermark.
+
+Every run, including one that finds nothing to do, also checks which months
+changed: `MAX(x_ExportTime)` per `BillingPeriodStart`, which reads those two
+columns across the whole table (roughly 16 bytes a row). It is small next to an
+export, but it grows with the table; dry-run
+`SELECT DATE(BillingPeriodStart), MAX(x_ExportTime) FROM ... GROUP BY 1` to add
+it to the estimate.
 
 GCS storage is pennies. Cloud Run and Cloud Scheduler are effectively free at
 one short run per day.

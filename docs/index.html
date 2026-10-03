@@ -2672,15 +2672,16 @@ REGION=<span class="code-file">europe-west1</span>  <span class="code-comment">#
 mkdir -p costgoblin-exporter &amp;&amp; cd costgoblin-exporter
 BASE=https://raw.githubusercontent.com/etiennechabert/cost-goblin/main/scripts/gcp-focus-exporter
 curl -fsSL -O $BASE/export-focus.mjs -O $BASE/package.json -O $BASE/package-lock.json \
-  -O $BASE/Dockerfile -O $BASE/cloudbuild.yaml
+  -O $BASE/Dockerfile -O $BASE/cloudbuild.yaml -O $BASE/cleanup-policy.json
 
 <span class="code-comment"># ---- one-time setup ----</span>
 JOB=costgoblin-focus-exporter
 SA=costgoblin-exporter@$PROJECT_ID.iam.gserviceaccount.com
 gcloud config set project $PROJECT_ID
 gcloud services enable bigquery.googleapis.com storage.googleapis.com \
-  run.googleapis.com cloudscheduler.googleapis.com cloudbuild.googleapis.com
-bq --location=$LOCATION mk --dataset --force $PROJECT_ID:costgoblin_exporter
+  run.googleapis.com cloudscheduler.googleapis.com cloudbuild.googleapis.com \
+  artifactregistry.googleapis.com
+bq --location=$LOCATION mk --dataset --force ${PROJECT_ID}:costgoblin_exporter
 gcloud iam service-accounts create costgoblin-exporter \
   --display-name="CostGoblin FOCUS exporter"
 for ROLE in bigquery.jobUser bigquery.dataViewer bigquery.dataEditor; do
@@ -2698,8 +2699,12 @@ ENV_VARS=$ENV_VARS,BQ_LOCATION=$LOCATION
 IMAGE=$REGION-docker.pkg.dev/$PROJECT_ID/costgoblin/$JOB
 gcloud artifacts repositories create costgoblin --repository-format=docker \
   --location=$REGION --description="CostGoblin FOCUS exporter images"
+gcloud artifacts repositories set-cleanup-policies costgoblin --location=$REGION \
+  --policy=cleanup-policy.json --no-dry-run   <span class="code-comment"># keep the 5 newest images</span>
+<span class="code-comment"># if a grant below fails with "Service account ... does not exist", wait a minute and repeat it</span>
 BUILDER=costgoblin-builder@$PROJECT_ID.iam.gserviceaccount.com
-gcloud iam service-accounts create costgoblin-builder
+gcloud iam service-accounts create costgoblin-builder \
+  --display-name="CostGoblin FOCUS exporter image builder"
 gcloud projects add-iam-policy-binding $PROJECT_ID --condition=None \
   --member=serviceAccount:$BUILDER --role=roles/logging.logWriter
 gcloud artifacts repositories add-iam-policy-binding costgoblin --location=$REGION \
@@ -2715,7 +2720,7 @@ gcloud run jobs deploy $JOB --image=$IMAGE --region=$REGION \
   --set-env-vars="$ENV_VARS"
 gcloud scheduler jobs create http $JOB-trigger --location=$REGION \
   --schedule="0 6 * * *" --http-method=POST \
-  --uri=https://$REGION-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/$PROJECT_ID/jobs/$JOB:run \
+  --uri=https://$REGION-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/$PROJECT_ID/jobs/${JOB}:run \
   --oauth-service-account-email=$SA
 gcloud run jobs add-iam-policy-binding $JOB --region=$REGION \
   --member=serviceAccount:$SA --role=roles/run.invoker

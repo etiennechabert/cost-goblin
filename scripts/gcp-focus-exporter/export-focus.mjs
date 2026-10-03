@@ -269,7 +269,13 @@ export function buildTierSelect(tier, focusTable, columns) {
   // backfilled months are ingested on the day the export was enabled, and late
   // corrections keep arriving after a month closes. `run` refuses a table that
   // is not ingestion-time partitioned, so `_PARTITIONTIME` always exists here.
-  const from = `FROM \`${focusTable}\`\n     WHERE DATE(BillingPeriodStart) = @period\n       AND _PARTITIONTIME >= TIMESTAMP(@period)`;
+  //
+  // `IS NULL` keeps rows still in the streaming buffer, whose `_PARTITIONTIME`
+  // is NULL until they are flushed. `pendingExports` counts them in the
+  // watermark, so dropping them here would mark a closed month published
+  // without them, and nothing would ever re-export it. The NULL partition is
+  // pruned like any other, so the bound still scans one month.
+  const from = `FROM \`${focusTable}\`\n     WHERE DATE(BillingPeriodStart) = @period\n       AND (_PARTITIONTIME >= TIMESTAMP(@period) OR _PARTITIONTIME IS NULL)`;
   if (tier === 'hourly') {
     return `SELECT *\n     ${from}`;
   }
