@@ -17,6 +17,12 @@ export interface FileCoverage {
   readonly functions: Map<string, { name: string; line: number; count: number }>;
   /** One entry per branch location; deduplicated when lcov is generated. */
   readonly branches: { line: number; blockId: number; branchId: number; count: number }[];
+  /**
+   * Statement start line → the furthest end line of a statement starting
+   * there: where `restrictToExecutableLines` may move a count to when the
+   * bundle starts a statement on another line than vitest does.
+   */
+  readonly statementEnds: Map<number, number>;
 }
 
 /**
@@ -34,11 +40,13 @@ export interface ExecutableLines {
 export type CoverageReport = Map<string, FileCoverage>;
 
 /**
- * One statement of a file, as v8-to-istanbul reports it: `statementMap[id]`
- * gives the line, `s[id]` the execution count.
+ * One statement of a file, as the converter reports it: `statementMap[id]`
+ * gives the lines, `s[id]` the execution count.
  */
 export interface IstanbulStatement {
   readonly line: number;
+  /** The statement's last line; taken as `line` when absent. */
+  readonly endLine?: number;
   readonly count: number;
 }
 
@@ -70,7 +78,7 @@ export interface IstanbulBranch {
 }
 
 /**
- * A v8-to-istanbul file entry narrowed to the fields lcov actually needs.
+ * A converter's file entry narrowed to the fields lcov actually needs.
  * Produced by `parseIstanbulFileCoverage` from the library's untyped output.
  */
 export interface IstanbulFileCoverage {

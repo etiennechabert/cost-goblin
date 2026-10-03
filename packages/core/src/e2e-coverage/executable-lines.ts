@@ -2,7 +2,7 @@ import { pathToFileURL } from 'node:url';
 import astV8ToIstanbul from 'ast-v8-to-istanbul';
 import { moduleRunnerTransform, parseAstAsync, transformWithEsbuild } from 'vite';
 import { isStringRecord } from '../utils/json.js';
-import { restrictToExecutableLines, startLineOf } from './collect.js';
+import { padStatementLines, restrictToExecutableLines, startLineOf } from './collect.js';
 import type { CoverageReport, ExecutableLines } from './types.js';
 
 type IgnoreNode = NonNullable<Parameters<typeof astV8ToIstanbul>[0]['ignoreNode']>;
@@ -60,10 +60,10 @@ function startLines(locations: Iterable<unknown>, into: Set<number>): void {
  *
  * Sonar merges the unit and e2e lcov files and counts a line listed by either.
  * The unit report comes from @vitest/coverage-v8, which remaps through the AST
- * and lists only these lines; the e2e report comes from v8-to-istanbul, which
- * lists every source line — signatures, type annotations, JSX continuation
- * lines. Without restricting it, a component the unit tests run but no e2e
- * suite renders had every such line counted uncovered.
+ * and lists only these lines. The e2e report goes through the same converter,
+ * but over the renderer bundle's AST, which rollup has rewritten: imports
+ * inlined, exports dropped, unused code removed. So a few of its statements
+ * start on other lines, and some lines have none.
  *
  * Computed the way vitest does it: vite's esbuild transform (loader and JSX
  * mode inferred from the path and its nearest tsconfig), vite's module-runner
@@ -116,23 +116,29 @@ export async function executableLines(source: string, filePath: string): Promise
   return { statements, branches };
 }
 
-/** The e2e report as Sonar should read it, and the files it had to leave whole. */
+/** The e2e report as Sonar should read it, and the files it could not align. */
 export interface StatementLineReport {
   readonly report: CoverageReport;
-  /** `<path> (<reason>)` for each file kept with every source line. */
+  /** `<path> (<reason>)` for each file whose statement lines could not be computed. */
   readonly unrestricted: readonly string[];
 }
 
 /**
- * Restricts every file of `report` to its `executableLines` (see
- * `restrictToExecutableLines`), reading each source through `readSource`.
+ * Aligns every file of `report` with the lines the unit report lists for it
+ * (`executableLines`, reading each source through `readSource`): restricted to
+ * them (`restrictToExecutableLines`), then padded with a 0 for each statement
+ * line it has no record for (`padStatementLines`). The bundle's AST starts a
+ * few statements on other lines than vitest's transform does, and has none for
+ * code it tree-shook.
  *
- * A file whose source cannot be read, transformed or parsed is kept whole —
- * every source line, as v8-to-istanbul emitted it — and named in
- * `unrestricted` for the caller to warn about. That undercounts it wherever the
- * unit report covers it, but credits no line, so it is a warning, not a
- * failure; and the unit tests of this module break first if vite or the
- * converter change under it.
+ * A file whose source cannot be read, transformed or parsed is kept as the
+ * converter reported it and named in `unrestricted` for the caller to warn
+ * about. Its records are the bundle's statements and branches, so it can be
+ * off in either direction against the unit report — a statement the bundle
+ * starts a line early adds a line, code it tree-shook is absent rather than 0
+ * — but by a few lines, in a file the caller has already warned about: a
+ * warning, not a failure; and the unit tests of this module break first if
+ * vite or the converter change under it.
  */
 export async function restrictToStatementLines(
   report: CoverageReport,
@@ -150,5 +156,5 @@ export async function restrictToStatementLines(
       unrestricted.push(`${filePath} (${reason ?? ''})`);
     }
   }
-  return { report: restrictToExecutableLines(report, executable), unrestricted };
+  return { report: padStatementLines(restrictToExecutableLines(report, executable), executable), unrestricted };
 }
