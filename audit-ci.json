@@ -3,7 +3,15 @@
   "moderate": false,
   "high": true,
   "critical": true,
-  "allowlist": [],
+  "allowlist": [
+    {
+      "GHSA-ch52-4w7c-c8xp|*app-builder-lib>@electron/get>got>cacheable-request>http-cache-semantics*": {
+        "active": true,
+        "notes": "No patched http-cache-semantics exists (<= 4.2.0, latest is 4.2.0). Only reached via electron-builder's app-builder-lib > @electron/get@3 > got@11 at build time to download Electron zips; got only loads cacheable-request when a `cache` option is passed, which @electron/get never does, and the flaw needs a shared cache serving multiple users. Dev-only: not in the packaged app.asar. Scoped to this chain so any other path still fails. Drop once electron-builder ships @electron/get >= 4 (got-free; 27.0.0-alpha uses ^5).",
+        "expiry": "2027-01-04"
+      }
+    }
+  ],
   "report-type": "summary",
   "package-manager": "npm"
 }
