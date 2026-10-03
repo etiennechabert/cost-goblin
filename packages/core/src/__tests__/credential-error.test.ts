@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { isCredentialError, isS3SyncDownloadFailure } from '../sync/s3-client.js';
 import { isGcloudCliAccountError, isGcloudDownloadFailure, isGcpBucketListDeniedMessage, isGcpCredentialError } from '../sync/gcs-client.js';
+import { describeGcpImpersonationFailure, isGcpImpersonationError } from '../sync/gcp-credential-errors.js';
 
 /** The verbatim denial a live least-privilege reader produces on the wizard's
  *  bucket step — `roles/storage.objectViewer` on the bucket, nothing at the
@@ -145,6 +146,101 @@ describe('isGcpBucketListDeniedMessage', () => {
 
   it('is not classified as a credential error', () => {
     expect(isGcpCredentialError(new Error(BUCKET_LIST_DENIED))).toBe(false);
+  });
+});
+
+describe('isGcpImpersonationError', () => {
+  // The shapes the app really sees. google-auth-library's
+  // `Impersonated.refreshToken` rewrites the IAM failure to
+  // `<STATUS>: unable to impersonate: <message>`, and for a 403/404
+  // `OAuth2Client.getRequestMetadataAsync` then prefixes
+  // `Could not refresh access token: ` — the same prefix an expired login
+  // carries, which is why it cannot be the deciding marker.
+  const TOKEN_CREATOR_MISSING = "Could not refresh access token: PERMISSION_DENIED: unable to impersonate: Permission 'iam.serviceAccounts.getAccessToken' denied on resource (or it may not exist).";
+  const API_DISABLED = 'Could not refresh access token: PERMISSION_DENIED: unable to impersonate: IAM Service Account Credentials API has not been used in project 123 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/iamcredentials.googleapis.com/overview?project=123';
+  const NO_SUCH_READER = 'Could not refresh access token: NOT_FOUND: unable to impersonate: Not found; Gaia id not found for email costgoblin-raeder@proj.iam.gserviceaccount.com';
+  const QUOTA_PROJECT_DENIED = 'Could not refresh access token: PERMISSION_DENIED: unable to impersonate: Caller does not have required permission to use project quota-proj. Grant the caller the roles/serviceusage.serviceUsageConsumer role';
+  const GCLOUD_CLI_DENIED = "gcloud storage rsync failed (exit 1): ERROR: (gcloud.storage.rsync) Failed to impersonate [reader@proj.iam.gserviceaccount.com]. Make sure the account that's trying to impersonate it has access to the service account itself and the \"roles/iam.serviceAccountTokenCreator\" role.";
+  const DENIALS = [TOKEN_CREATOR_MISSING, API_DISABLED, NO_SUCH_READER, QUOTA_PROJECT_DENIED, GCLOUD_CLI_DENIED];
+
+  it('detects every IAM-side impersonation failure, from either half of a sync', () => {
+    for (const msg of DENIALS) expect(isGcpImpersonationError(new Error(msg)), msg).toBe(true);
+  });
+
+  it('keeps them out of the credential branch, whose sign-in button cannot grant a role', () => {
+    for (const msg of DENIALS) {
+      expect(isGcpCredentialError(new Error(msg)), msg).toBe(false);
+      expect(isGcpBucketListDeniedMessage(msg), msg).toBe(false);
+    }
+  });
+
+  it('leaves an expired source login to the credential branch', () => {
+    // The user's own refresh token failing arrives under the same wrapper —
+    // and a sign-in DOES fix that one.
+    for (const expired of [
+      'unable to impersonate: Error: invalid_grant: reauth related error (invalid_rapt)',
+      'unable to impersonate: Error: invalid_grant: Token has been expired or revoked.',
+    ]) {
+      expect(isGcpImpersonationError(new Error(expired)), expired).toBe(false);
+      expect(isGcpCredentialError(new Error(expired)), expired).toBe(true);
+    }
+  });
+
+  it('leaves transient mint failures to the caller\'s ordinary retry path', () => {
+    // Impersonated.refreshToken wraps EVERY failure — offline, 5xx, rate
+    // limits — in the same `unable to impersonate:` text. Only an IAM-side
+    // answer is a grant problem; the rest must stay a silent skip / local
+    // fallback, not a 'grant Token Creator' remedy for a grant that exists.
+    for (const transient of [
+      'unable to impersonate: GaxiosError: request to https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/r@p.iam.gserviceaccount.com:generateAccessToken failed, reason: getaddrinfo ENOTFOUND iamcredentials.googleapis.com',
+      'Could not refresh access token: UNAVAILABLE: unable to impersonate: The service is currently unavailable.',
+      'RESOURCE_EXHAUSTED: unable to impersonate: Quota exceeded for quota metric',
+    ]) {
+      expect(isGcpImpersonationError(new Error(transient)), transient).toBe(false);
+    }
+  });
+
+  it('leaves a too-narrowly consented ADC login to the credential branch, which a sign-in fixes', () => {
+    const narrow = 'Could not refresh access token: PERMISSION_DENIED: unable to impersonate: Request had insufficient authentication scopes. ACCESS_TOKEN_SCOPE_INSUFFICIENT';
+    expect(isGcpImpersonationError(new Error(narrow))).toBe(false);
+    expect(isGcpCredentialError(new Error(narrow))).toBe(true);
+  });
+
+  it('does not claim ordinary credential errors, object denials or non-errors', () => {
+    for (const msg of [...GCP_CREDENTIAL_MESSAGES, BUCKET_LIST_DENIED, 'storage.objects.list access denied (403)']) {
+      expect(isGcpImpersonationError(new Error(msg)), msg).toBe(false);
+    }
+    expect(isGcpImpersonationError('unable to impersonate')).toBe(false);
+  });
+
+  it('is still recognised after describeGcpImpersonationFailure rewrites it', () => {
+    // The scheduler and the inventory fallback re-classify the REWRITTEN error.
+    const rewritten = new Error(describeGcpImpersonationFailure('reader@proj.iam.gserviceaccount.com', TOKEN_CREATOR_MISSING));
+    expect(isGcpImpersonationError(rewritten)).toBe(true);
+    expect(isGcpCredentialError(rewritten)).toBe(false);
+  });
+});
+
+describe('describeGcpImpersonationFailure', () => {
+  it('names the reader, every cause, and keeps the raw denial', () => {
+    const raw = 'Could not refresh access token: NOT_FOUND: unable to impersonate: Not found; Gaia id not found for email reader@proj.iam.gserviceaccount.com';
+    const text = describeGcpImpersonationFailure('reader@proj.iam.gserviceaccount.com', raw);
+    expect(text).toContain('add-iam-policy-binding reader@proj.iam.gserviceaccount.com');
+    expect(text).toContain('roles/iam.serviceAccountTokenCreator');
+    expect(text).toMatch(/exists/);
+    expect(text).toContain('iamcredentials.googleapis.com');
+    expect(text).toMatch(/quota project/);
+    expect(text).toContain(raw);
+    // No sign-in can fix an IAM grant: the toolbar raises its sign-in button
+    // on these markers, so they must stay out.
+    expect(text).not.toContain('GCP credentials');
+    expect(text).not.toContain('Run: ');
+  });
+
+  it('never pastes prose into the command when the reader is unknown', () => {
+    const text = describeGcpImpersonationFailure(undefined, 'unable to impersonate: x');
+    expect(text).toContain('add-iam-policy-binding <service-account>');
+    expect(text).not.toMatch(/add-iam-policy-binding the /);
   });
 });
 

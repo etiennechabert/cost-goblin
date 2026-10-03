@@ -286,11 +286,10 @@ export interface CostApi {
    *  — a GCP sync authenticates through both stores, and re-running ADC cannot
    *  refresh a stale CLI account. Defaults to `'adc'`.
    *
-   *  `providerName` names the provider whose failure raised the button, so ADC
-   *  is minted with THAT provider's impersonation. Without it a two-GCP
-   *  workspace could stamp provider A's service account onto the machine-wide
-   *  credential while the user was trying to fix provider B. */
-  gcloudLogin(mode?: GcloudLoginMode, providerName?: string): Promise<void>;
+   *  ADC is always the user's own login: a provider's
+   *  `impersonateServiceAccount` is applied per client on top of it, so no
+   *  provider needs to be named here. */
+  gcloudLogin(mode?: GcloudLoginMode): Promise<void>;
   getAccountMapping(): Promise<AccountMappingStatus>;
   /** `postSetup` is true only on the launch immediately following the setup
    *  wizard (carried across the wizard's relaunch), so the UI can land the user
@@ -306,9 +305,11 @@ export interface CostApi {
    *  the Resource Manager client would. */
   listGcpProjects(): Promise<{ projects: readonly GcpProject[]; error?: string | undefined }>;
   /** Buckets in one project, read through Application Default Credentials —
-   *  the same store `browseGcs` and the sync's listing half use. */
-  listGcsBuckets(projectId: string): Promise<{ buckets: readonly { name: string }[]; error?: string | undefined }>;
-  browseGcs(params: { projectId: string; bucket: string; prefix: string }): Promise<GcsBrowseResult>;
+   *  the same client `browseGcs` and the sync's listing half build — as the
+   *  user's own login, or as `impersonateServiceAccount` when given, which is
+   *  then exactly the identity the provider will sync as. */
+  listGcsBuckets(projectId: string, impersonateServiceAccount?: string): Promise<{ buckets: readonly { name: string }[]; error?: string | undefined }>;
+  browseGcs(params: { projectId: string; bucket: string; prefix: string; impersonateServiceAccount?: string | undefined }): Promise<GcsBrowseResult>;
   /** Write starter `costgoblin.yaml` / `dimensions.yaml` (only where absent)
    *  and reveal the config folder. `providerType` selects which arm is active
    *  in the template and which the other is commented out beside — a GCP user
@@ -409,6 +410,10 @@ export interface CostApi {
     type?: 'aws' | 'gcp' | undefined;
     profile: string;
     keyFile?: string | undefined;
+    /** GCP only: the service account to read the bucket as. Authoritative
+     *  when present — '' clears an existing entry's reader. Omit it to keep
+     *  the entry's value (or none, for a new provider). */
+    impersonateServiceAccount?: string | undefined;
     dailyBucket: string;
     /** Daily-tier retention (the wizard's picker in daily mode). */
     retentionDays?: number | undefined;

@@ -197,8 +197,8 @@ const api: CostApi = {
   ssoLogin(profile: string): Promise<void> {
     return invoke<undefined>('data:sso-login', profile).then(() => undefined);
   },
-  gcloudLogin(mode?: 'adc' | 'cli', providerName?: string): Promise<void> {
-    return invoke<undefined>('data:gcloud-login', mode, providerName).then(() => undefined);
+  gcloudLogin(mode?: 'adc' | 'cli'): Promise<void> {
+    return invoke<undefined>('data:gcloud-login', mode).then(() => undefined);
   },
   getAccountMapping(): Promise<AccountMappingStatus> {
     return invoke<AccountMappingStatus>('data:account-mapping');
@@ -221,10 +221,10 @@ const api: CostApi = {
   listGcpProjects(): Promise<{ projects: readonly GcpProject[]; error?: string | undefined }> {
     return invoke<{ projects: readonly GcpProject[]; error?: string | undefined }>('setup:list-gcp-projects');
   },
-  listGcsBuckets(projectId: string): Promise<{ buckets: readonly { name: string }[]; error?: string | undefined }> {
-    return invoke<{ buckets: readonly { name: string }[]; error?: string | undefined }>('setup:list-gcs-buckets', projectId);
+  listGcsBuckets(projectId: string, impersonateServiceAccount?: string): ReturnType<CostApi['listGcsBuckets']> {
+    return invoke<{ buckets: readonly { name: string }[]; error?: string | undefined }>('setup:list-gcs-buckets', projectId, impersonateServiceAccount);
   },
-  browseGcs(params: { projectId: string; bucket: string; prefix: string }): Promise<GcsBrowseResult> {
+  browseGcs(params: Parameters<CostApi['browseGcs']>[0]): Promise<GcsBrowseResult> {
     return invoke<GcsBrowseResult>('setup:browse-gcs', params);
   },
   scaffoldConfig(providerType?: 'aws' | 'gcp'): Promise<void> {
@@ -233,7 +233,7 @@ const api: CostApi = {
   // `type` was missing here while the handler and `upsertWizardProvider` both
   // already read it, so this bridge's own signature was the only thing
   // stopping the wizard from writing a gcp provider.
-  writeConfig(config: { providerName: string; type?: 'aws' | 'gcp' | undefined; profile: string; keyFile?: string | undefined; dailyBucket: string; retentionDays?: number | undefined; hourlyBucket?: string | undefined; costOptBucket?: string | undefined; tags?: { tagName: string; label: string; concept?: string | undefined }[] | undefined }): Promise<void> {
+  writeConfig(config: Parameters<CostApi['writeConfig']>[0]): Promise<void> {
     return invoke<undefined>('setup:write-config', config).then(() => undefined);
   },
   updateAwsProfile(profile: string, providerName?: string): Promise<void> {

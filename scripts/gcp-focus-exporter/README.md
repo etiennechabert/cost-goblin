@@ -501,9 +501,9 @@ it never uses that reach. That is fine for a personal project. On a company or
 shared laptop, confine it instead.
 
 For least privilege — the recommendation for company and shared machines —
-create a read-only service account and impersonate it. No long-lived key, and
-the identity CostGoblin reads the bucket with can reach nothing but this
-bucket:
+create a read-only service account and have CostGoblin impersonate it. No
+long-lived key, and the identity CostGoblin reads the bucket with can reach
+nothing but this bucket:
 
 ```bash
 SA=costgoblin-reader@PROJECT.iam.gserviceaccount.com
@@ -513,17 +513,27 @@ gcloud storage buckets add-iam-policy-binding gs://cost-goblin \
   --member=serviceAccount:${SA} \
   --role=roles/storage.objectViewer
 # Impersonation needs permission to mint that account's tokens. It is NOT
-# implied by roles/editor — only by Owner — so without this the login below
-# fails with "Unable to impersonate", which is exactly the wall the
-# least-privilege reader is most likely to hit.
+# implied by roles/editor — only by Owner — so without this every read fails
+# with "unable to impersonate … iam.serviceAccounts.getAccessToken denied",
+# which is exactly the wall the least-privilege reader is most likely to hit.
 gcloud iam service-accounts add-iam-policy-binding ${SA} \
   --member="user:$(gcloud config get-value account)" \
   --role=roles/iam.serviceAccountTokenCreator
-gcloud auth application-default login \
-  --impersonate-service-account=${SA}
 ```
 
-then name it in the config:
+Minting the reader's token is an IAM Service Account Credentials API call,
+billed to your ADC **quota project** — the one `gcloud auth application-default
+login` prints when it finishes, *not* necessarily the reader's project. If
+CostGoblin reports that API as disabled, enable it in the project the message
+names (or point ADC at a project where it is on with
+`gcloud auth application-default set-quota-project PROJECT`):
+
+```bash
+gcloud services enable iamcredentials.googleapis.com --project=QUOTA_PROJECT
+```
+
+then name it on the provider — in the setup wizard's **Read-only service
+account** field, or by hand in the config:
 
 ```yaml
   - name: gcp-main
@@ -533,26 +543,37 @@ then name it in the config:
       ...
 ```
 
-Both halves are needed: the `gcloud auth` command covers the listing SDK, which
-reads ADC, while the config field passes the same identity to the
-`gcloud storage rsync` download, which uses gcloud's own credentials and would
-otherwise run as the signed-in user.
+Application Default Credentials stay your own plain
+`gcloud auth application-default login` — do **not** pass
+`--impersonate-service-account` to it. CostGoblin impersonates per provider, on
+top of that login: the listing reads the bucket as the provider's
+`impersonateServiceAccount`, and the `gcloud storage rsync` download passes the
+same account to gcloud. ADC is a single file per machine, so impersonating
+there would give every GCP provider the same reader; per provider, two
+providers — a personal project's reader and a company project's, say — each
+read as their own. Grant yourself `roles/iam.serviceAccountTokenCreator` on
+each reader.
+
+> Set up before this changed, with `application-default login
+> --impersonate-service-account=…`? Nothing to redo: CostGoblin mints every
+> provider's reader from *your* login underneath that file, so a second
+> provider with a different reader works too. The app's **Sign in** button
+> rewrites ADC as the plain login the next time you use it.
 
 Two limits apply even then, so weigh them before telling an approver the app is
 confined to the bucket:
 
-- **Without `impersonateServiceAccount` (or a `keyFile`), the download runs as
-  gcloud's signed-in account**, not as the reader — whatever that account can
-  reach, the `gcloud storage rsync` process can too. And the wizard's project
-  list (`gcloud projects list`) *always* runs as gcloud's active account, with
-  or without impersonation — which is why a least-privilege account is not
-  shown its project and types the ID instead.
+- **Without `impersonateServiceAccount` (or a `keyFile`), both halves run as
+  you** — the listing as your ADC login, the download as gcloud's signed-in
+  account — and whatever those can reach, the app can too. And the wizard's
+  project list (`gcloud projects list`) *always* runs as gcloud's active
+  account, with or without impersonation — which is why a least-privilege
+  account is not shown its project and types the ID instead.
 - **Impersonation confines the identity used, not what is stored.** The ADC
-  file written by `gcloud auth application-default login
-  --impersonate-service-account=…` still holds *your own* refresh token as the
-  source credential it impersonates from. Software running as you that reads
-  that file can act as you — so full-disk encryption and an account nobody else
-  uses still matter.
+  file still holds *your own* refresh token as the source credential every
+  reader is minted from. Software running as you that reads that file can act
+  as you — so full-disk encryption and an account nobody else uses still
+  matter.
 
 A `keyFile: /path/to/key.json` is also accepted for environments that require a
 service-account key, but impersonation is the better default — there is no

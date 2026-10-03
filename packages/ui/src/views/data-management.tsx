@@ -727,10 +727,10 @@ function ProviderSection({ provider, soleProvider, refreshSignal, onCounts, onCo
             <SsoLoginButton profile={awsProfile} onRetry={retryInventory} />
           )}
           {gcpAdcRemedy && (
-            <GcloudLoginButton mode="adc" providerName={name} onRetry={retryInventory} />
+            <GcloudLoginButton mode="adc" onRetry={retryInventory} />
           )}
           {gcpCliRemedy && (
-            <GcloudLoginButton mode="cli" providerName={name} onRetry={retryInventory} />
+            <GcloudLoginButton mode="cli" onRetry={retryInventory} />
           )}
           {!awsSsoRemedy && !gcpAdcRemedy && !gcpCliRemedy && (
             <div className="mt-2"><RetryButton onRetry={retryInventory} /></div>

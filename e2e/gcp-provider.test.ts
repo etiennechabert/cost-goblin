@@ -91,6 +91,36 @@ test.describe('mixed AWS + GCP workspace', () => {
     await expect(aws.getByText('Cost Optimization', { exact: true })).toBeVisible();
   });
 
+  test('add-provider wizard takes an optional read-only service account for GCP', async () => {
+    // The reader the wizard browses as is written as the provider's
+    // impersonateServiceAccount. Stops before "Find my export", which would
+    // spawn gcloud: the field and its validation are what is exercised here.
+    // The modal backdrop is aria-hidden, so CSS locators rather than roles.
+    await openDataSync();
+    await page.locator('button', { hasText: 'Add Provider' }).click();
+    await page.locator('[aria-label="Set up from Google Cloud"]').click();
+
+    const reader = page.locator('#gcp-reader');
+    const find = page.locator('button', { hasText: 'Find my export' });
+    await expect(reader).toHaveValue('');
+    await expect(find).toBeEnabled();
+
+    await reader.fill('someone@gmail.com');
+    await expect(page.locator('#gcp-reader-help')).toContainText('name@project.iam.gserviceaccount.com');
+    await expect(find).toBeDisabled();
+
+    await reader.fill('costgoblin-reader@test-project.iam.gserviceaccount.com');
+    await expect(page.locator('#gcp-reader-help')).toContainText('Token Creator');
+    await expect(find).toBeEnabled();
+    await screenshot(page, 'gcp-wizard-reader-field');
+
+    // The GCP intro is taller than the test window, which pushes the modal's
+    // close button above the viewport; dispatch the click rather than scroll.
+    await page.locator('button[title="Close"]').dispatchEvent('click');
+    await expect(reader).toHaveCount(0);
+    await assertNoReactCrash(page);
+  });
+
   test('attributes spend to both providers in one query', async () => {
     await clickNavButton(page, 'Explorer');
     // The synthetic fixture is Jan–Feb 2026; the default 30-day window is well

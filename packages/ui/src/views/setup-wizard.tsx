@@ -1,5 +1,5 @@
 import type { ConfigBundleSummary, GcpProject, GcsFolderKind } from '@costgoblin/core/browser';
-import { GCP_PROJECT_ID_RULES, gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isValidGcpProjectId, isValidWorkspaceName, parseProviderName } from '@costgoblin/core/browser';
+import { GCP_PROJECT_ID_RULES, gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isServiceAccountEmail, isValidGcpProjectId, isValidWorkspaceName, parseProviderName, SERVICE_ACCOUNT_EMAIL_RULE } from '@costgoblin/core/browser';
 import { useState, useEffect, useRef } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { Card, CardContent } from '../components/ui/card.js';
@@ -39,7 +39,7 @@ type WizardStep =
   | { step: 'beacon'; profile: string; source: DataSource; bucket: string; content: string; summary: ConfigBundleSummary; applying: boolean; error: string }
   | { step: 'browse'; profile: string; source: DataSource; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[]; path: string[]; error: string }
   | { step: 'confirm'; cloud: 'aws'; profile: string; s3Path: string; hourlyPath: string; costOptPath: string; retentionDays: number }
-  | { step: 'confirm'; cloud: 'gcp'; project: GcpProjectChoice; s3Path: string; hourlyPath: string; costOptPath: string; retentionDays: number };
+  | { step: 'confirm'; cloud: 'gcp'; project: GcpProjectChoice; reader: string; clearsReader: boolean; s3Path: string; hourlyPath: string; costOptPath: string; retentionDays: number };
 
 /** No tier collected yet. Shared safely: every writer spreads a copy first. */
 const EMPTY_PATHS: { readonly daily: string; readonly hourly: string; readonly costOpt: string } = { daily: '', hourly: '', costOpt: '' };
@@ -336,8 +336,11 @@ const GCP_EXPORTER_DOCS = 'https://github.com/etiennechabert/cost-goblin/tree/ma
  * takes a typed ID, so nobody has to wait the listing out). Hand-editing survives as the escape hatch for setups the wizard
  * can't browse at all.
  */
-function GcpIntroStep({ state, onBrowse, onProjectId, onScaffold, onDone, onBack }: Readonly<{
+function GcpIntroStep({ state, reader, onReaderChange, onBrowse, onProjectId, onScaffold, onDone, onBack }: Readonly<{
   state: { scaffolded: boolean; error: string };
+  /** The read-only service account to browse and sync as; '' for none. */
+  reader: string;
+  onReaderChange: (reader: string) => void;
   onBrowse: () => void;
   /** A project ID typed here skips `gcloud projects list` entirely. */
   onProjectId: (projectId: string) => void;
@@ -345,6 +348,8 @@ function GcpIntroStep({ state, onBrowse, onProjectId, onScaffold, onDone, onBack
   onDone: () => void;
   onBack: () => void;
 }>) {
+  const trimmedReader = reader.trim();
+  const readerInvalid = trimmedReader.length > 0 && !isServiceAccountEmail(trimmedReader);
   return (
     <div className="flex flex-col items-center gap-5 text-center">
       <span className="text-2xl font-bold text-accent tracking-wider">Set up from Google Cloud</span>
@@ -352,7 +357,8 @@ function GcpIntroStep({ state, onBrowse, onProjectId, onScaffold, onDone, onBack
         CostGoblin reads a GCS bucket that your own exporter fills from the FOCUS 1.2 BigQuery
         billing export. It never calls BigQuery — it only reads Cloud Storage, plus your project
         list during setup. Signed in as yourself, it can reach whatever your Google account can; to
-        confine it to the export bucket, use a read-only service account (see the exporter docs).
+        confine it to the export bucket, name a read-only service account below and CostGoblin reads
+        as that account instead (see the exporter docs).
       </p>
       <ol className="flex w-full max-w-md flex-col gap-2 text-left text-sm text-text-secondary list-decimal pl-5">
         <li>
@@ -374,8 +380,30 @@ function GcpIntroStep({ state, onBrowse, onProjectId, onScaffold, onDone, onBack
         </li>
         <li>Pick the exported folder below — CostGoblin writes the config for you.</li>
       </ol>
+      <div className="flex w-full max-w-md flex-col gap-1.5 text-left">
+        <label htmlFor="gcp-reader" className="text-xs text-text-muted">
+          Read-only service account (optional)
+        </label>
+        <input
+          id="gcp-reader"
+          type="text"
+          value={reader}
+          onChange={(e) => { onReaderChange(e.target.value); }}
+          placeholder="costgoblin-reader@PROJECT.iam.gserviceaccount.com"
+          spellCheck={false}
+          autoComplete="off"
+          aria-invalid={readerInvalid}
+          aria-describedby="gcp-reader-help"
+          className="h-9 rounded-md border border-border bg-bg-primary px-3 font-mono text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent"
+        />
+        <p id="gcp-reader-help" className={readerInvalid ? 'text-xs text-negative' : 'text-xs text-text-muted'}>
+          {readerInvalid
+            ? `Use ${SERVICE_ACCOUNT_EMAIL_RULE}.`
+            : 'Your Google account needs the Service Account Token Creator role on it. Leave blank to read as yourself.'}
+        </p>
+      </div>
       <div className="flex w-full max-w-xs flex-col gap-3">
-        <Button onClick={onBrowse} className="bg-accent hover:bg-accent-hover text-white">
+        <Button onClick={onBrowse} disabled={readerInvalid} className="bg-accent hover:bg-accent-hover text-white">
           Find my export
         </Button>
         <div className="text-left">
@@ -1475,6 +1503,7 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onB
   const credential = state.cloud === 'gcp'
     ? { label: 'Google Cloud project', value: state.project.id }
     : { label: 'AWS Profile', value: state.profile };
+  const reader = state.cloud === 'gcp' ? state.reader : '';
 
   const retentionOptions = isHourlyOnly
     ? [
@@ -1502,6 +1531,11 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onB
       // string keeps the payload's shape while the gcp arm of
       // `upsertWizardProvider` ignores it.
       profile: state.cloud === 'gcp' ? '' : state.profile,
+      // The reader the GCP chain browsed as becomes the provider's
+      // `impersonateServiceAccount`. '' (clear) only when the user emptied a
+      // reader the wizard showed them; otherwise blank is omitted, so an
+      // existing entry's reader is carried (see `goToGcpConfirm`).
+      ...(state.cloud === 'gcp' && (reader !== '' || state.clearsReader) ? { impersonateServiceAccount: reader } : {}),
       dailyBucket: state.s3Path,
       // The Confirm step shows ONE retention picker; it configures whichever
       // tier is primary for this run. In daily mode it sets daily retention; in
@@ -1569,6 +1603,13 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onB
           <p className="text-sm font-mono text-text-primary mt-0.5">{credential.value}</p>
         </div>
 
+        {reader !== '' && (
+          <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
+            <p className="text-xs text-text-muted uppercase tracking-wider">Reads as</p>
+            <p className="text-sm font-mono text-text-primary mt-0.5 break-all">{reader}</p>
+          </div>
+        )}
+
         {paths.map(({ label, value }) => (
           <div key={label} className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
             <p className="text-xs text-text-muted uppercase tracking-wider">{label}</p>
@@ -1628,6 +1669,9 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   // mode), free-text when adding one, prefilled 'aws-main' on first run.
   const [providerName, setProviderName] = useState(initialProviderName ?? (mode === 'add' ? '' : 'aws-main'));
   const [existingProviders, setExistingProviders] = useState<readonly string[]>([]);
+  // Each configured GCP provider's reader, to prefill the field when the run
+  // reconfigures that provider — so it browses as what the sync will use.
+  const [existingGcpReaders, setExistingGcpReaders] = useState<ReadonlyMap<string, string>>(new Map());
   // Whether the user has typed a name. Until they do, the default is DERIVED
   // from the cloud they picked rather than written into state on entry — a
   // one-way `setProviderName('gcp-main')` survived backing out of the GCP
@@ -1637,6 +1681,8 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     api.getConfig().then(config => {
       const names = config.providers.map(p => String(p.name));
       setExistingProviders(names);
+      setExistingGcpReaders(new Map(config.providers.flatMap(p =>
+        p.type === 'gcp' && p.impersonateServiceAccount !== undefined ? [[String(p.name), p.impersonateServiceAccount]] : [])));
       // Source mode without an explicit target: writeConfig upserts by name,
       // so per-tier Configure must land on the provider it came from — the
       // first configured one, matching the page that opened us.
@@ -1665,6 +1711,14 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     return workspaceNaming !== undefined ? { step: 'welcome' } : { step: 'start' };
   });
   const [collectedPaths, setCollectedPaths] = useState(EMPTY_PATHS);
+  // The GCP chain's optional reader. Every bucket listing and browse below
+  // runs as it, and it is written as the provider's `impersonateServiceAccount`
+  // — so the wizard sees exactly what the sync will. '' means the ADC login.
+  const [gcpReader, setGcpReader] = useState('');
+  // The reader the field was prefilled with, so emptying it reads as a
+  // decision to clear rather than "nothing known".
+  const [gcpReaderSeed, setGcpReaderSeed] = useState('');
+  const gcpReaderArg = gcpReader.trim() === '' ? undefined : gcpReader.trim();
   // Monotonic token for every step loader, AWS and GCP alike. Each resolver
   // rebuilds a whole step object from captured args, so without this a slow
   // response (a cold ADC token refresh, gcloud sitting on a re-auth prompt
@@ -1760,7 +1814,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   function startGcpBucketStep(project: GcpProjectChoice, source: GcpSource): void {
     const token = ++stepRequestRef.current;
     setWizard({ step: 'gcp-bucket', project, source, buckets: [], loading: true, selected: '', error: '' });
-    api.listGcsBuckets(project.id).then(result => {
+    api.listGcsBuckets(project.id, gcpReaderArg).then(result => {
       if (stepRequestRef.current !== token) return;
       setWizard({ step: 'gcp-bucket', project, source, buckets: result.buckets, loading: false, selected: '', error: result.error ?? '' });
     }).catch((err: unknown) => {
@@ -1773,7 +1827,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     const path = prefix.split('/').filter(s => s.length > 0);
     const token = ++stepRequestRef.current;
     setWizard({ step: 'gcp-browse', project, source, bucket, prefix, prefixes: [], loading: true, folder: { kind: 'unknown' }, hasParquet: false, truncated: false, error: '', path });
-    api.browseGcs({ projectId: project.id, bucket, prefix }).then(result => {
+    api.browseGcs({ projectId: project.id, bucket, prefix, impersonateServiceAccount: gcpReaderArg }).then(result => {
       if (stepRequestRef.current !== token) return;
       setWizard({ step: 'gcp-browse', project, source, bucket, prefix, prefixes: result.prefixes, loading: false, folder: result.folder, hasParquet: result.hasParquet, truncated: result.truncated, error: result.error ?? '', path });
     }).catch((err: unknown) => {
@@ -1819,6 +1873,12 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
       step: 'confirm',
       cloud: 'gcp',
       project,
+      reader: gcpReaderArg ?? '',
+      // Clearing is only ever sent for a reader the user saw and removed. A
+      // blank field with nothing prefilled is ambiguous — config not loaded
+      // yet, or a rename at Confirm onto an existing provider — so the
+      // upsert carries that entry's reader instead of dropping it.
+      clearsReader: gcpReaderArg === undefined && gcpReaderSeed !== '',
       s3Path: p.daily,
       hourlyPath: p.hourly,
       // GCP never collects a cost-optimization path; carrying one here would
@@ -1876,7 +1936,19 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     // those are also reached by ← Back mid-flow, where clearing a name the
     // user has already typed would be the more surprising behaviour.
     setProviderNameEdited(false);
+    setGcpReader('');
+    setGcpReaderSeed('');
     setWizard({ step: 'start' });
+  }
+
+  /** Enter the GCP chain, seeding the reader from the provider this run would
+   *  write — its fixed or typed name, else the GCP default. */
+  function enterGcp(): void {
+    const name = providerNameFixed || providerNameEdited || mode === 'add' ? providerName : defaultProviderName('gcp');
+    const seed = existingGcpReaders.get(name) ?? '';
+    setGcpReader(seed);
+    setGcpReaderSeed(seed);
+    setWizard({ step: 'gcp', scaffolded: false, error: '' });
   }
 
   function handleProfileSelect(profile: string) {
@@ -2096,7 +2168,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
             <StartStep
               workspaceLabel={workspaceNaming !== undefined ? workspaceName : workspaceLabel}
               onSetup={goToProfileStep}
-              onGcp={() => { setWizard({ step: 'gcp', scaffolded: false, error: '' }); }}
+              onGcp={enterGcp}
               onImport={() => { setImportOpen(true); }}
               onBack={workspaceNaming !== undefined ? () => { setWizard({ step: 'welcome' }); } : undefined}
               jumpBack={jumpBack}
@@ -2105,6 +2177,8 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
           {wizard.step === 'gcp' && (
             <GcpIntroStep
               state={wizard}
+              reader={gcpReader}
+              onReaderChange={setGcpReader}
               onBrowse={goToGcpProjectStep}
               onProjectId={startGcpFromTypedProject}
               onScaffold={handleGcpScaffold}

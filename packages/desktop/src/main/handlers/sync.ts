@@ -29,7 +29,6 @@ import type {
   AccountMappingEntry,
   GcloudLoginMode,
   ProviderAuth,
-  ProviderConfig,
   ProviderName,
   PruneResult,
   SyncProgress,
@@ -42,6 +41,7 @@ import {
   toUserFriendlyError,
 } from './context.js';
 import { triggerAutoSyncNow } from '../auto-sync.js';
+import { gcloudLoginArgs, gcloudLoginEnv } from '../gcloud-login.js';
 import { SYNC_ALREADY_RUNNING } from '../sync-client.js';
 import { parseSyncId, resolveProvider, resolveSyncId } from '../sync-id.js';
 import { recordSyncLog } from '../sync-log.js';
@@ -402,7 +402,7 @@ export function registerSyncHandlers(app: AppContext): void {
   // Sibling channel rather than an extra argument on `data:sso-login`: that
   // handler's `(profile: string)` arity is frozen across CostApi, the preload
   // bridge and the SSO button, and GCP's ADC login takes no profile at all.
-  ipcMain.handle('data:gcloud-login', async (_event, rawMode: unknown, rawProvider: unknown): Promise<void> => {
+  ipcMain.handle('data:gcloud-login', async (_event, rawMode: unknown): Promise<void> => {
     const { spawn } = await import('node:child_process');
     // Child-env PATH only — gcloud itself is spawned by the absolute path
     // below. `gcloudChildPath` puts the trusted SDK dirs first so the
@@ -412,34 +412,7 @@ export function registerSyncHandlers(app: AppContext): void {
 
     const mode: GcloudLoginMode = rawMode === 'cli' ? 'cli' : 'adc';
 
-    // Re-establishing ADC without the impersonation flag would REPLACE a
-    // working impersonating credential with a plain-user one — turning the
-    // button that exists to fix auth into the thing that breaks it, since the
-    // least-privilege recipe grants the bucket only to the service account.
-    //
-    // Resolved from the provider whose error raised the button, NOT the first
-    // one that happens to have impersonation configured: in a two-GCP
-    // workspace that stamped provider A's service account onto the
-    // machine-wide ADC while the user was trying to fix provider B, leaving B
-    // with a 403 no classifier recognises and no button at all.
-    const config = await getConfig().catch(() => null);
-    const gcpProviders = (config?.providers ?? []).filter(
-      (p): p is Extract<ProviderConfig, { type: 'gcp' }> => p.type === 'gcp',
-    );
-    const named = typeof rawProvider === 'string'
-      ? gcpProviders.find(p => String(p.name) === rawProvider)
-      : undefined;
-    // With no name supplied, only impersonate when it is unambiguous — one GCP
-    // provider means there is nothing to pick wrong.
-    const target = named ?? (gcpProviders.length === 1 ? gcpProviders[0] : undefined);
-    const impersonate = target?.impersonateServiceAccount;
-
-    const loginArgs = mode === 'cli' ? ['auth', 'login'] : ['auth', 'application-default', 'login'];
-    // `gcloud auth login` signs in the CLI's own account and takes no
-    // impersonation flag — that is a property of the credential ADC mints.
-    if (mode === 'adc' && impersonate !== undefined) {
-      loginArgs.push(`--impersonate-service-account=${impersonate}`);
-    }
+    const loginArgs = gcloudLoginArgs(mode);
 
     // `findGcloudCli` returning null is the "not installed" signal on every
     // platform — it cannot come from spawn: on Windows gcloud is a `.cmd`
@@ -455,7 +428,7 @@ export function registerSyncHandlers(app: AppContext): void {
         stdio: 'ignore',
         detached: true,
         shell: shape.shell,
-        env: { ...process.env, PATH: fullPath },
+        env: gcloudLoginEnv(mode, process.env, fullPath),
       });
       child.on('error', (err: NodeJS.ErrnoException) => {
         if (err.code === 'ENOENT') {

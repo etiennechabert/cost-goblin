@@ -29,7 +29,6 @@ export {
 } from './object-store.js';
 
 export {
-  GCS_READ_ONLY_SCOPE,
   createGcsHandle,
   isGcloudCliAccountError,
   isGcloudDownloadFailure,
@@ -37,6 +36,14 @@ export {
   isGcpCredentialError,
   parseGcsPath,
 } from './gcs-client.js';
+
+export { describeGcpImpersonationFailure, isGcpImpersonationError } from './gcp-credential-errors.js';
+
+export {
+  type GcsStorageOptions,
+  GCS_READ_ONLY_SCOPE,
+  createGcsStorage,
+} from './gcs-storage.js';
 
 export {
   GCS_BUCKET_NAME_RULES,

@@ -19,6 +19,8 @@ export { ConfigValidationError } from './config/validator.js';
 // (normalize/strip-bounded.ts, node:vm) must never be exported from here.
 export { MAX_NAME_STRIP_PATTERNS, MAX_NAME_STRIP_PATTERN_LENGTH, nameStripPatternViolations } from './config/strip-pattern-limits.js';
 export { GCLOUD_ADC_LOGIN_COMMAND, GCLOUD_CLI_LOGIN_COMMAND } from './config/credential-commands.js';
+// The wizard checks the optional reader field with the validator's own rule.
+export { SERVICE_ACCOUNT_EMAIL_RULE, isServiceAccountEmail } from './config/service-account.js';
 // The wizard renders a GCS listing's classification and enforces the same
 // tier-overlap rule the config validator applies at load time. Imported from
 // the leaf module rather than the sync barrel, which pulls in node built-ins

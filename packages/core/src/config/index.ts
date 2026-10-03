@@ -39,3 +39,4 @@ export {
 } from './provider-name.js';
 export { BUILTIN_EXCLUSION_RULES, DEFAULT_COST_SCOPE, mergeBuiltInExclusionRules } from './cost-scope-seed.js';
 export { GCLOUD_ADC_LOGIN_COMMAND, GCLOUD_CLI_LOGIN_COMMAND } from './credential-commands.js';
+export { SERVICE_ACCOUNT_EMAIL_RULE, isServiceAccountEmail } from './service-account.js';
