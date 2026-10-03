@@ -772,12 +772,16 @@ function GcpBucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
  *  at the exporter's PREFIX rather than a tier folder under it makes the daily
  *  tier list the hourly shards too — the sync has a bespoke error for it, and
  *  this refuses the selection before the user can make it. */
-function GcpBrowseStep({ state, conflictsWith, onNavigate, onConfirm, onSkip, onBack }: Readonly<{
+function GcpBrowseStep({ state, conflictsWith, onNavigate, onRetry, onConfirm, onSkip, onBack }: Readonly<{
   state: Extract<WizardStep, { step: 'gcp-browse' }>;
   /** A tier location already collected in this run that this one must not
    *  overlap — the daily path, while browsing for hourly. */
   conflictsWith?: string | undefined;
   onNavigate: (prefix: string) => void;
+  /** Re-browse the current folder after a failure. Separate from
+   *  `onNavigate` because a retry — usually right after a sign-in — must
+   *  also re-read the "Signed in as" panel, and plain navigation must not. */
+  onRetry: () => void;
   onConfirm: () => void;
   onSkip?: (() => void) | undefined;
   onBack: () => void;
@@ -829,9 +833,7 @@ function GcpBrowseStep({ state, conflictsWith, onNavigate, onConfirm, onSkip, on
         ))}
       </div>
 
-      {/* Re-browsing the current prefix IS `onNavigate(state.prefix)` — no
-          second callback needed for what the step can already do. */}
-      <GcpError message={state.error} mode="adc" onRetry={() => { onNavigate(state.prefix); }} />
+      <GcpError message={state.error} mode="adc" onRetry={onRetry} />
 
       {state.folder.kind === 'tier-parent' && (
         <div className="rounded-lg border border-warning/50 bg-warning-muted px-4 py-3">
@@ -1993,6 +1995,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
               // overlap in either direction.
               conflictsWith={wizard.source === 'hourly' ? collectedPaths.daily : collectedPaths.hourly}
               onNavigate={(prefix) => { gcpBrowseTo(wizard.project, wizard.source, wizard.bucket, prefix); }}
+              onRetry={() => { setGcpIdentityRefresh(n => n + 1); gcpBrowseTo(wizard.project, wizard.source, wizard.bucket, wizard.prefix); }}
               onConfirm={handleGcpBrowseConfirm}
               onSkip={wizard.source === 'daily' ? undefined : handleGcpSkip}
               onBack={handleBack}
@@ -2046,14 +2049,13 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
           {/* One panel for the whole GCP chain, in a fixed slot so it survives
               step changes instead of re-running gcloud on every click. The
               steps' Retry buttons bump it: the usual reason to retry is a
-              sign-in that just changed who these identities are. */}
+              sign-in that just changed who these identities are.
+              No provider name: the GCP chain always creates a provider (the
+              only fixed-name entry, per-tier Configure, is AWS-only), so
+              there is no existing `impersonateServiceAccount` to apply. */}
           {isGcpStep(wizard) && (
             <div className="mt-5">
-              <GcpIdentityPanel
-                context="wizard"
-                providerName={providerNameFixed && existingProviders.includes(providerName) ? providerName : undefined}
-                refreshKey={gcpIdentityRefresh}
-              />
+              <GcpIdentityPanel context="wizard" refreshKey={gcpIdentityRefresh} />
             </div>
           )}
         </CardContent>

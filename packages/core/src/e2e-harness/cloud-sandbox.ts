@@ -126,6 +126,11 @@ const PROVIDER_SANDBOXES: Readonly<Record<ProviderConfig['type'], ProviderSandbo
       // Without it the User-Agent build probes the metadata server.
       CLOUDSDK_METRICS_ENVIRONMENT: 'costgoblin-e2e',
       CLOUDSDK_COMPONENT_MANAGER_DISABLE_UPDATE_CHECK: 'true',
+      // Installation-scope `disable_usage_reporting = False` (an opted-in
+      // install) is outside CLOUDSDK_CONFIG's reach; without this every gcloud
+      // the run spawns — the "Signed in as" panel reads `gcloud config list`
+      // on each Data & Sync visit — reports usage to Google.
+      CLOUDSDK_CORE_DISABLE_USAGE_REPORTING: 'true',
     }),
   },
 };

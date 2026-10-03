@@ -119,6 +119,12 @@ describe('cloudSandboxEnv', () => {
     });
   });
 
+  it('keeps a sandboxed gcloud from reporting usage, whatever the install opted into', () => {
+    // The "Signed in as" panel runs `gcloud config list` on every Data & Sync
+    // visit; installation-scope properties are outside CLOUDSDK_CONFIG's reach.
+    expect(env['CLOUDSDK_CORE_DISABLE_USAGE_REPORTING']).toBe('true');
+  });
+
   it('makes every gcloud invocation fail on a missing token file', () => {
     // auth/access_token_file outranks installation-scope properties and the
     // app's keyFile override (CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE).

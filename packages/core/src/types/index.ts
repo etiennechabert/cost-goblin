@@ -77,7 +77,10 @@ export { DEFAULT_PLACEHOLDER_PATTERNS } from './query.js';
 export type {
   GcpAccountLookup,
   GcpAccountLookupFailure,
+  GcpCredentialFile,
   GcpDownloadIdentity,
+  GcpDownloadImpersonation,
+  GcpDownloadPrincipal,
   GcpIdentities,
   GcpIdentityNote,
   GcpIdentityResult,

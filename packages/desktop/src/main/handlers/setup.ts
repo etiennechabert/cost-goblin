@@ -3,9 +3,6 @@ import {
   GCS_READ_ONLY_SCOPE,
   assertValidGcsBucketName,
   classifyGcsFolder,
-  findGcloudCli,
-  gcloudChildPath,
-  gcloudSpawnShape,
   logger,
   parseS3Path,
   isStringRecord,
@@ -16,7 +13,9 @@ import { awsProfileNames } from '../aws-profiles.js';
 import { upsertWizardProvider } from '../config-upsert.js';
 import { buildConfigTemplate, buildDimensionsTemplate, PROVIDER_ABSENT_DIMENSIONS } from '../config-templates.js';
 import { classifyManifestColumns, parseManifestColumnNames, selectManifestKey } from '../setup-manifest.js';
-import { defaultIdentityDeps, resolveGcpIdentities } from '../gcp-identity.js';
+import { runGcloudCapture } from '../gcloud-capture.js';
+import { createGcpIdentityResolver, defaultIdentityDeps } from '../gcp-identity.js';
+import type { GcpIdentityResolver, IdentityProviderOptions } from '../gcp-identity.js';
 import { collectGcsPrefixes, gcsNextPageToken, parseGcloudProjects } from '../setup-gcp.js';
 import type { DetectedReportType } from '../setup-manifest.js';
 import type { AppContext } from './context.js';
@@ -198,101 +197,59 @@ export function registerSetupHandlers(app: AppContext): void {
   // so it costs no new dependency and no extra API to enable.
 
   ipcMain.handle('setup:list-gcp-projects', async (): Promise<{ projects: readonly GcpProject[]; error?: string | undefined }> => {
-    const { spawn } = await import('node:child_process');
-    const { StringDecoder } = await import('node:string_decoder');
-
-    // `findGcloudCli` returning null is the "not installed" signal on every
-    // platform — it cannot come from spawn: on Windows gcloud is a `.cmd`
-    // that needs a shell (CVE-2024-27980, encapsulated in gcloudSpawnShape),
-    // and cmd.exe starts fine whether or not gcloud exists, so ENOENT can
-    // never fire there.
-    const bin = findGcloudCli();
-    if (bin === null) {
-      return { projects: [], error: 'GCLOUD_CLI_NOT_FOUND' };
+    // Shared capture helper: trusted binary, gcloudSpawnShape, trusted-first
+    // child PATH, stdin ignored so a re-auth prompt fails on the timeout.
+    const result = await runGcloudCapture(['projects', 'list', '--format=json'], GCLOUD_PROJECTS_TIMEOUT_MS);
+    switch (result.kind) {
+      case 'missing':
+        return { projects: [], error: 'GCLOUD_CLI_NOT_FOUND' };
+      case 'timeout':
+        return { projects: [], error: 'Timed out listing projects. Check that `gcloud auth login` has been run.' };
+      case 'failed':
+        return { projects: [], error: result.message };
+      case 'exited':
+        break;
     }
-    // Trusted SDK dirs first — see gcloudChildPath: the launcher's helper
-    // lookups must not be served by a writable early inherited-PATH entry.
-    const fullPath = gcloudChildPath(process.env['PATH'] ?? '');
-    const shape = gcloudSpawnShape(bin, ['projects', 'list', '--format=json']);
-
-    return new Promise<{ projects: readonly GcpProject[]; error?: string | undefined }>((resolve) => {
-      const proc = spawn(shape.command, shape.args, {
-        // stdin ignored: a gcloud that wants interactive re-auth must fail
-        // on the timeout below rather than block waiting for input.
-        stdio: ['ignore', 'pipe', 'pipe'],
-        shell: shape.shell,
-        env: { ...process.env, PATH: fullPath },
-      });
-
-      // StringDecoder, not chunk.toString(): a pipe boundary can fall mid
-      // multi-byte character, and two halves each decode to U+FFFD. JSON still
-      // parses, so a mangled project name would reach the picker silently.
-      const outDecoder = new StringDecoder('utf8');
-      const errDecoder = new StringDecoder('utf8');
-      let stdout = '';
-      let stderr = '';
-      let settled = false;
-      const finish = (result: { projects: readonly GcpProject[]; error?: string | undefined }): void => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve(result);
-      };
-
-      const timer = setTimeout(() => {
-        proc.kill();
-        finish({ projects: [], error: 'Timed out listing projects. Check that `gcloud auth login` has been run.' });
-      }, GCLOUD_PROJECTS_TIMEOUT_MS);
-
-      proc.stdout.on('data', (chunk: Buffer) => { stdout += outDecoder.write(chunk); });
-      proc.stderr.on('data', (chunk: Buffer) => { stderr += errDecoder.write(chunk); });
-
-      proc.on('error', (err: NodeJS.ErrnoException) => {
-        finish({ projects: [], error: err.code === 'ENOENT' ? 'GCLOUD_CLI_NOT_FOUND' : err.message });
-      });
-
-      proc.on('close', (code) => {
-        stdout += outDecoder.end();
-        stderr += errDecoder.end();
-        if (code === 0) {
-          const projects = parseGcloudProjects(stdout);
-          if (projects === null) {
-            // Exit 0 but unreadable stdout. Reporting [] here would render as
-            // "the signed-in account can't see any active projects" — a false
-            // statement about their account, with no remedy offered.
-            finish({ projects: [], error: 'Could not read the project list from gcloud. Run `gcloud projects list` in a terminal to see what it printed.' });
-            return;
-          }
-          finish({ projects });
-          return;
-        }
-        // gcloud's own stderr is the most useful thing to show: it names the
-        // exact remedy ("You do not currently have an active account") that
-        // the wizard's sign-in button then performs.
-        const message = stderr.trim().length > 0 ? stderr.trim() : `gcloud projects list failed (exit ${String(code)})`;
-        logger.info('setup:list-gcp-projects failed', { error: message });
-        finish({ projects: [], error: message });
-      });
-    });
+    if (result.code === 0) {
+      const projects = parseGcloudProjects(result.stdout);
+      // Exit 0 but unreadable stdout. Reporting [] here would render as "the
+      // signed-in account can't see any active projects" — a false statement
+      // about their account, with no remedy offered.
+      if (projects === null) {
+        return { projects: [], error: 'Could not read the project list from gcloud. Run `gcloud projects list` in a terminal to see what it printed.' };
+      }
+      return { projects };
+    }
+    // gcloud's own stderr is the most useful thing to show: it names the exact
+    // remedy ("You do not currently have an active account") that the
+    // wizard's sign-in button then performs.
+    const stderr = result.stderr.trim();
+    const message = stderr.length > 0 ? stderr : `gcloud projects list failed (exit ${String(result.code)})`;
+    logger.info('setup:list-gcp-projects failed', { error: message });
+    return { projects: [], error: message };
   });
 
-  // Read-only: who the listing SDK (ADC) and the gcloud CLI run as, for the
+  // Read-only: who the listing SDK and the gcloud CLI run as, for the
   // "Signed in as" panel. Lives with the wizard's GCP handlers because the
   // wizard is its first caller; Data Management passes a provider name so
-  // that provider's `impersonateServiceAccount` / `keyFile` apply.
+  // that provider's `impersonateServiceAccount` / `keyFile` apply. One
+  // resolver for the process, created on first use, so the panels Data
+  // Management mounts together share a single gcloud read.
+  let identityResolver: GcpIdentityResolver | null = null;
   ipcMain.handle('data:gcp-identities', async (_event, rawProvider: unknown): Promise<GcpIdentityResult> => {
-    let options: { keyFile?: string | undefined; impersonateServiceAccount?: string | undefined } = {};
+    let provider: IdentityProviderOptions = {};
     if (typeof rawProvider === 'string') {
       // The wizard runs before a config exists, so a load failure is only an
       // error when a provider was actually named.
       const config = await app.getConfig().catch(() => null);
-      const provider = config?.providers.find(p => String(p.name) === rawProvider);
-      if (provider === undefined) return { status: 'unavailable', reason: `No provider named "${rawProvider}" is configured.` };
-      if (provider.type !== 'gcp') return { status: 'unavailable', reason: `"${rawProvider}" is not a Google Cloud provider.` };
-      options = { keyFile: provider.keyFile, impersonateServiceAccount: provider.impersonateServiceAccount };
+      const named = config?.providers.find(p => String(p.name) === rawProvider);
+      if (named === undefined) return { status: 'unavailable', reason: `No provider named "${rawProvider}" is configured.` };
+      if (named.type !== 'gcp') return { status: 'unavailable', reason: `"${rawProvider}" is not a Google Cloud provider.` };
+      provider = named;
     }
     try {
-      return { status: 'ok', identities: await resolveGcpIdentities(options, await defaultIdentityDeps()) };
+      identityResolver ??= createGcpIdentityResolver(await defaultIdentityDeps());
+      return { status: 'ok', identities: await identityResolver.resolve(provider) };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       logger.info('data:gcp-identities failed', { error: message });

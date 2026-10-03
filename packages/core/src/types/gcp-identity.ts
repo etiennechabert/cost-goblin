@@ -1,11 +1,13 @@
 /** Which Google identities a GCP provider's two credential paths run as.
  *
  *  A GCP sync authenticates twice: the Cloud Storage SDK lists the bucket with
- *  Application Default Credentials, and `gcloud storage rsync` downloads as
- *  gcloud's ACTIVE account (impersonating the provider's
- *  `impersonateServiceAccount` when set). The wizard's project list runs as
- *  that active account too. The two stores are changed by different commands
- *  and routinely drift apart, so these types exist to show both side by side.
+ *  Application Default Credentials (or the provider's `keyFile`), and
+ *  `gcloud storage rsync` downloads with gcloud's own credentials — its active
+ *  account, unless gcloud's `auth/*` properties override it, impersonating the
+ *  provider's `impersonateServiceAccount` (or gcloud's own
+ *  `auth/impersonate_service_account`). The wizard's project list runs as
+ *  that same gcloud identity. The stores are changed by different commands and
+ *  routinely drift apart, so these types exist to show both side by side.
  *
  *  Secret-free by construction: every field is an account email, a service
  *  account, a configuration name or a file path. Refresh tokens, client
@@ -28,75 +30,119 @@ export type GcpAccountLookup =
  *  source token with `cloud-platform` alone and writes `"account": ""`. */
 export type GcpAccountLookupFailure = 'expired' | 'unreachable' | 'not-recorded';
 
-/** Who the source of an impersonating ADC credential is — the human (or key)
+/** A credential file and why it is the one in play — which decides the
+ *  remedy when it is wrong: signing in again rewrites only the well-known
+ *  file, never the one `GOOGLE_APPLICATION_CREDENTIALS` names. */
+export interface GcpCredentialFile {
+  readonly path: string;
+  /** `env`: named by `GOOGLE_APPLICATION_CREDENTIALS`. `well-known`: gcloud's
+   *  `application_default_credentials.json`. `key-file`: the provider's
+   *  `keyFile`. */
+  readonly origin: 'env' | 'well-known' | 'key-file';
+}
+
+/** Who the source of an impersonating credential is — the human (or key)
  *  that must hold Service Account Token Creator on the target. */
 export type GcpImpersonationSource =
   | { readonly kind: 'user'; readonly account: GcpAccountLookup }
   | { readonly kind: 'service-account'; readonly email: string }
   | { readonly kind: 'other'; readonly type: string | null };
 
-/** The identity the Cloud Storage SDK lists buckets as. `credentialsPath` is
- *  the file that identity was read from, so a user can tell which ADC file
- *  is in play (the `GOOGLE_APPLICATION_CREDENTIALS` override, or gcloud's
- *  well-known location). */
+/** The identity the Cloud Storage SDK lists buckets as. */
 export type GcpListingIdentity =
-  /** No ADC file where the SDK looks. */
-  | { readonly kind: 'not-signed-in'; readonly credentialsPath: string | null }
+  /** No credential file where the SDK looks. `file` is null when neither
+   *  `HOME` nor `APPDATA` gives the SDK anywhere to look. */
+  | { readonly kind: 'not-signed-in'; readonly file: GcpCredentialFile | null }
   /** A file exists but could not be read or parsed. */
-  | { readonly kind: 'unreadable'; readonly credentialsPath: string }
+  | { readonly kind: 'unreadable'; readonly file: GcpCredentialFile }
   /** `gcloud auth application-default login` as a plain user. */
-  | { readonly kind: 'user'; readonly credentialsPath: string; readonly account: GcpAccountLookup }
+  | { readonly kind: 'user'; readonly file: GcpCredentialFile; readonly account: GcpAccountLookup }
   /** `gcloud auth application-default login --impersonate-service-account=<target>`. */
-  | { readonly kind: 'impersonated'; readonly credentialsPath: string; readonly source: GcpImpersonationSource; readonly target: string }
-  /** A service-account key: the ADC file itself, or the provider's `keyFile`. */
-  | { readonly kind: 'service-account'; readonly credentialsPath: string; readonly email: string; readonly origin: 'adc' | 'key-file' }
+  | { readonly kind: 'impersonated'; readonly file: GcpCredentialFile; readonly source: GcpImpersonationSource; readonly target: string }
+  /** A service-account key. */
+  | { readonly kind: 'service-account'; readonly file: GcpCredentialFile; readonly email: string }
   /** Workload or workforce identity federation. `target` is the service
    *  account it impersonates, when the config names one. */
-  | { readonly kind: 'external'; readonly credentialsPath: string; readonly target: string | null }
-  /** A credential type this build does not describe. */
-  | { readonly kind: 'unrecognized'; readonly credentialsPath: string; readonly type: string | null };
+  | { readonly kind: 'external'; readonly file: GcpCredentialFile; readonly target: string | null }
+  /** A credential type the SDK would reject, or this build cannot describe. */
+  | { readonly kind: 'unrecognized'; readonly file: GcpCredentialFile; readonly type: string | null };
+
+/** The base credential gcloud authenticates with, before any impersonation.
+ *  gcloud's precedence: `auth/access_token_file`, then a credential file
+ *  override (the provider's `keyFile`, else gcloud's own
+ *  `auth/credential_file_override`), then the active account. */
+export type GcpDownloadPrincipal =
+  /** gcloud's active account (`core/account`); null when none is set.
+   *  `fromEnv`: set by `CLOUDSDK_CORE_ACCOUNT` in CostGoblin's environment,
+   *  which `gcloud config set account` cannot override. */
+  | { readonly kind: 'account'; readonly account: string | null; readonly fromEnv: boolean }
+  /** A credential file passed to gcloud. `email` is null when the file is
+   *  not a readable service-account key. */
+  | { readonly kind: 'key-file'; readonly path: string; readonly origin: 'provider' | 'gcloud-config'; readonly email: string | null }
+  /** A pre-minted token (`auth/access_token_file`): whoever it was minted
+   *  for, which gcloud does not say. */
+  | { readonly kind: 'access-token-file'; readonly path: string };
+
+/** The service account the download impersonates, and who asked for it:
+ *  the provider's `impersonateServiceAccount` (passed as a flag, so it wins),
+ *  or gcloud's own `auth/impersonate_service_account`. */
+export interface GcpDownloadImpersonation {
+  readonly target: string;
+  readonly origin: 'provider' | 'gcloud-config';
+}
 
 /** The identity `gcloud storage rsync` downloads as (and, for the wizard,
  *  `gcloud projects list` lists projects as). */
 export type GcpDownloadIdentity =
-  /** gcloud's active account, from `gcloud config get-value account`.
-   *  `account` is null when no account is active. `impersonate` is the
-   *  provider's `impersonateServiceAccount`, which the download adds as a
-   *  flag; null when the provider sets none (or in the wizard, before a
-   *  provider exists). */
-  | { readonly kind: 'gcloud'; readonly account: string | null; readonly configuration: string | null; readonly impersonate: string | null }
-  /** The provider's `keyFile` overrides gcloud's credential for the download,
-   *  so the active account plays no part. `email` is null when the key file
-   *  could not be read. */
-  | { readonly kind: 'key-file'; readonly keyFile: string; readonly email: string | null }
+  | {
+    readonly kind: 'gcloud';
+    readonly principal: GcpDownloadPrincipal;
+    readonly impersonate: GcpDownloadImpersonation | null;
+    /** The active gcloud configuration's name. */
+    readonly configuration: string;
+  }
   | { readonly kind: 'cli-missing' }
   | { readonly kind: 'cli-error'; readonly message: string };
 
-/** A mismatch between the two paths that will cause a failure (or run a half
- *  of the sync as someone unexpected), in the order the panel shows them. */
+/** A disagreement between the two paths that will fail a sync, or run one
+ *  half of it as someone unexpected. In the order the panel shows them. */
 export type GcpIdentityWarning =
-  /** ADC impersonates a different service account than the provider names:
-   *  listing reads as one service account, downloads as another. */
-  | { readonly kind: 'adc-target-mismatch'; readonly adcTarget: string; readonly providerTarget: string }
-  /** The provider names a service account but ADC does not impersonate one,
-   *  so listing runs as the ADC identity itself. */
-  | { readonly kind: 'adc-not-impersonated'; readonly providerTarget: string }
-  /** gcloud's active account is not the person behind ADC: downloads and the
-   *  project list run as one human, bucket listing as another. */
-  | { readonly kind: 'split-accounts'; readonly listingAccount: string; readonly downloadAccount: string };
+  /** Listing and downloads impersonate different service accounts. */
+  | { readonly kind: 'target-mismatch'; readonly listingTarget: string; readonly download: GcpDownloadImpersonation }
+  /** Downloads impersonate a service account; listing does not. */
+  | { readonly kind: 'listing-not-impersonated'; readonly download: GcpDownloadImpersonation }
+  /** Listing impersonates a service account; downloads do not, so they run
+   *  as gcloud's own identity — typically a provider created without
+   *  `impersonateServiceAccount` after an impersonated ADC login. */
+  | { readonly kind: 'download-not-impersonated'; readonly listingTarget: string }
+  /** Listing and downloads authenticate as two different principals.
+   *  `listingKeyFile` is the key file behind listing when that principal is
+   *  a service account, which gcloud can only become through a key. */
+  | {
+    readonly kind: 'split-accounts';
+    readonly listingAccount: string;
+    readonly downloadAccount: string;
+    readonly listingKeyFile: string | null;
+    readonly downloadAccountFromEnv: boolean;
+  };
 
 /** Something the panel cannot check but the user should, shown muted rather
  *  than as a warning: nothing is known to be wrong. */
 export type GcpIdentityNote =
   /** The human behind ADC is not recorded (see `not-recorded`), so the
    *  split-accounts check cannot run. Downloads run as `downloadAccount`;
-   *  `target` is the service account ADC impersonates, which that account
-   *  must also be able to impersonate when the provider sets the same one. */
-  | { readonly kind: 'listing-account-unrecorded'; readonly downloadAccount: string; readonly target: string | null };
+   *  `downloadTarget` is the service account they impersonate, which that
+   *  account must be allowed to impersonate. */
+  | { readonly kind: 'listing-account-unrecorded'; readonly downloadAccount: string; readonly downloadTarget: string | null };
 
 export interface GcpIdentities {
   readonly listing: GcpListingIdentity;
   readonly download: GcpDownloadIdentity;
+  /** Where `gcloud auth application-default login` would write, when that is
+   *  NOT the file the SDK reads (`CLOUDSDK_CONFIG` moves the former but not
+   *  the latter). Null when they agree, or when `GOOGLE_APPLICATION_CREDENTIALS`
+   *  names the file. */
+  readonly adcLoginPath: string | null;
   readonly warnings: readonly GcpIdentityWarning[];
   readonly notes: readonly GcpIdentityNote[];
 }

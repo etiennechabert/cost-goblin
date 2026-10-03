@@ -1017,14 +1017,29 @@ describe('SetupWizard — GCP "Signed in as" panel', () => {
     expect(api.gcpIdentitiesRequestedFor[0]).toBeUndefined();
   });
 
+  it('never asks about an AWS provider s name after backing out of its Configure into Google Cloud', async () => {
+    // Per-tier Configure (source mode) is AWS-only and fixes the provider
+    // name; Back → Back still reaches the hub's Google Cloud tile.
+    const { api, user } = renderWizard({ source: 'daily', profile: 'default' });
+    await waitFor(() => { expect(screen.getByText('my-cur-bucket')).toBeDefined(); });
+    await userClickText(user, '← Back');
+    await waitFor(() => { expect(screen.queryByText('my-cur-bucket')).toBeNull(); });
+    await userClickText(user, '← Back');
+    await user.click(await screen.findByLabelText('Set up from Google Cloud'));
+    await waitFor(() => { expect(signedInPanel()).not.toBeNull(); });
+    await waitFor(() => { expect(api.gcpIdentitiesRequestedFor).toHaveLength(1); });
+    expect(api.gcpIdentitiesRequestedFor[0]).toBeUndefined();
+  });
+
   it('warns on the project step when gcloud was switched to another account', async () => {
     const { api, user } = renderWizard();
     api.gcpIdentitiesResult = {
       status: 'ok',
       identities: {
-        listing: { kind: 'user', credentialsPath: '/adc.json', account: { status: 'known', email: 'alice@acme.com' } },
-        download: { kind: 'gcloud', account: 'admin@acme.com', configuration: 'admin', impersonate: null },
-        warnings: [{ kind: 'split-accounts', listingAccount: 'alice@acme.com', downloadAccount: 'admin@acme.com' }],
+        listing: { kind: 'user', file: { path: '/adc.json', origin: 'well-known' }, account: { status: 'known', email: 'alice@acme.com' } },
+        download: { kind: 'gcloud', principal: { kind: 'account', account: 'admin@acme.com', fromEnv: false }, impersonate: null, configuration: 'admin' },
+        adcLoginPath: null,
+        warnings: [{ kind: 'split-accounts', listingAccount: 'alice@acme.com', downloadAccount: 'admin@acme.com', listingKeyFile: null, downloadAccountFromEnv: false }],
         notes: [],
       },
     };
@@ -1033,6 +1048,24 @@ describe('SetupWizard — GCP "Signed in as" panel', () => {
     const warnings = await screen.findByRole('list', { name: 'Credential warnings' });
     expect(warnings.textContent).toContain('Downloads and the project list run as admin@acme.com');
     expect(warnings.textContent).toContain('switch it back before syncing');
+  });
+
+  it('re-reads the identities when the browse step is retried after a sign-in', async () => {
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    await enterGcpBrowse(user);
+    api.gcsBrowseByPrefix = {
+      ...api.gcsBrowseByPrefix,
+      'focus/': { prefixes: [], folder: { kind: 'unknown' }, hasParquet: false, truncated: false, error: 'Could not load the default credentials.' },
+    };
+    await user.click(screen.getByLabelText('Open folder focus'));
+    await waitFor(() => { expect(screen.getByText('Could not load the default credentials.')).toBeDefined(); });
+    const before = api.gcpIdentitiesRequestedFor.length;
+    // Plain navigation never re-reads the panel...
+    expect(before).toBe(1);
+    await user.click(screen.getByRole('button', { name: /Retry/ }));
+    // ...a Retry does: it usually follows the sign-in the error offered.
+    await waitFor(() => { expect(api.gcpIdentitiesRequestedFor.length).toBe(before + 1); });
   });
 
   it('re-reads the identities when a step is retried', async () => {
