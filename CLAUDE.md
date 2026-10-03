@@ -144,6 +144,8 @@ The window is hidden by default (`COSTGOBLIN_HEADLESS=1`, set by `launchApp`) so
 
 **Statement lines only:** after the audit (which reads the raw report its thresholds were measured on), the collector restricts every e2e file to the lines the unit report can list — `restrictToStatementLines` in `packages/core/src/e2e-coverage/executable-lines.ts`, whose doc comments explain why Sonar needs it. It reproduces vitest's own pipeline, so `vite` and `ast-v8-to-istanbul` are root devDependencies that the `overrides` force vitest and @vitest/coverage-v8 to share (`$vite`, `$ast-v8-to-istanbul`) — bump them at the root; Dependabot holds back their majors.
 
+**Unmapped lines zeroed:** the report that restriction runs on has every line the renderer bundle has no code for set to 0 first (`addBundleEntry` in `packages/core/src/e2e-coverage/bundle-coverage.ts`, `mappedSourceLines` in `source-map-lines.ts`): v8-to-istanbul is subtractive, so tree-shaken or inlined source would otherwise read as covered. The module docs cover why, what the restriction then keeps, and the source maps the collector refuses. v8-to-istanbul still credits a mapped line that a count-0 range only partly covers.
+
 ### Fixture Data
 - Real company data is in `data/raw/` — NEVER committed (gitignored + pre-commit guard)
 - `profile.json` extracted from real data — committed (statistical shape, no PII)

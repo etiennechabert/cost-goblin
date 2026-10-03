@@ -116,10 +116,10 @@ export async function executableLines(source: string, filePath: string): Promise
   return { statements, branches };
 }
 
-/** The e2e report as Sonar should read it, and the files it had to leave whole. */
+/** The e2e report as Sonar should read it, and the files it could not restrict. */
 export interface StatementLineReport {
   readonly report: CoverageReport;
-  /** `<path> (<reason>)` for each file kept with every source line. */
+  /** `<path> (<reason>)` for each file whose statement lines could not be computed. */
   readonly unrestricted: readonly string[];
 }
 
@@ -127,16 +127,19 @@ export interface StatementLineReport {
  * Restricts every file of `report` to its `executableLines` (see
  * `restrictToExecutableLines`), reading each source through `readSource`.
  *
- * A file whose source cannot be read, transformed or parsed is kept whole —
- * every source line, as v8-to-istanbul emitted it — and named in
- * `unrestricted` for the caller to warn about. That undercounts it wherever the
- * unit report covers it, but credits no line, so it is a warning, not a
- * failure; and the unit tests of this module break first if vite or the
- * converter change under it.
+ * A file whose source cannot be read, transformed or parsed is named in
+ * `unrestricted` for the caller to warn about, and restricted instead to its
+ * `fallbackLines` — the lines its bundle has code for — or, without them, kept
+ * whole. Either can undercount it against the unit report, but neither credits
+ * a line, so it is a warning, not a failure; and the unit tests of this module
+ * break first if vite or the converter change under it. The fallback matters
+ * for a zeroed report: kept whole, its blank, comment and type lines would be
+ * published at 0.
  */
 export async function restrictToStatementLines(
   report: CoverageReport,
   readSource: (filePath: string) => string,
+  fallbackLines?: ReadonlyMap<string, ReadonlySet<number>>,
 ): Promise<StatementLineReport> {
   const executable = new Map<string, ExecutableLines>();
   const unrestricted: string[] = [];
@@ -148,6 +151,8 @@ export async function restrictToStatementLines(
       // the list into a single-line `::warning::` workflow command.
       const [reason] = (error instanceof Error ? error.message : String(error)).split('\n');
       unrestricted.push(`${filePath} (${reason ?? ''})`);
+      const fallback = fallbackLines?.get(filePath);
+      if (fallback !== undefined) executable.set(filePath, { statements: fallback, branches: new Set() });
     }
   }
   return { report: restrictToExecutableLines(report, executable), unrestricted };
