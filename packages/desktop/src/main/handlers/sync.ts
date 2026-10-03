@@ -46,6 +46,7 @@ import { SYNC_ALREADY_RUNNING } from '../sync-client.js';
 import { parseSyncId, resolveProvider, resolveSyncId } from '../sync-id.js';
 import { recordSyncLog } from '../sync-log.js';
 import { traceSpan, SPAN_OP } from '../telemetry/tracing.js';
+import { refreshAfterSync } from './sync-refresh.js';
 
 type ExpectedDataType = 'daily' | 'hourly' | 'cost-optimization';
 
@@ -138,7 +139,7 @@ export async function cascadeRollupForDeletedMonth(app: AppContext, month: strin
   const provider = await app.getFirstProviderName();
   if (provider === null) return;
   const monthsLeft = await listLocalMonths(app.ctx.dataDir, provider, 'daily');
-  if (monthsLeft.includes(month)) app.maintainRollup([month]);
+  if (monthsLeft.includes(month)) void app.maintainRollup([month]);
   else await app.rollupStore.deletePeriod(month);
 }
 
@@ -304,22 +305,14 @@ export function registerSyncHandlers(app: AppContext): void {
       // next sync, so a write failure must never fail the (successful) sync.
       await writeTierLastSync(ctx.dataDir, provider.name, tier, now.toISOString()).catch(() => { /* cosmetic */ });
       if (result.filesDownloaded > 0) {
-        if (tier === 'daily') {
-          if (provider.name === config.providers[0]?.name) {
-            // Re-roll only the daily partitions this sync touched (file replace).
-            // FIRST provider only — the RollupStore is bound to its tree; other
-            // providers' daily data is queried raw.
-            app.maintainRollup(changedRollupMonths(fileEntries.map(e => extractPeriod(e.key))));
-          } else {
-            app.warmupBase();
-          }
-          // Then re-discover + recompute baselines against the refreshed data —
-          // baselines read ALL providers, so every daily sync recomputes.
-          app.recomputeBaselines();
-        } else {
-          // Hourly / cost-opt don't feed the daily rollup; just refresh caches.
-          app.warmupBase();
-        }
+        // Re-roll the partitions this sync touched (file replace), then
+        // recompute baselines against the refreshed data. Background work: it
+        // settles, never rejects, and must not hold the sync's reply.
+        void refreshAfterSync(app, {
+          tier,
+          firstProvider: provider.name === config.providers[0]?.name,
+          changedMonths: changedRollupMonths(fileEntries.map(e => extractPeriod(e.key))),
+        });
       }
       return result;
     } catch (err: unknown) {
