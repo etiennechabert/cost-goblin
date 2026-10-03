@@ -8,8 +8,16 @@
  *  wizard's input all check it against this one pattern. */
 const SERVICE_ACCOUNT_EMAIL = /^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z0-9-]+\.iam\.gserviceaccount\.com$/;
 
-export function isServiceAccountEmail(value: string): boolean {
-  return SERVICE_ACCOUNT_EMAIL.test(value);
+/** Takes `unknown` because the writer's caller is an IPC payload: `RegExp.test`
+ *  stringifies its argument, so without the type check a one-element array
+ *  holding a valid address would pass and be written to YAML as a list. */
+export function isServiceAccountEmail(value: unknown): value is string {
+  return typeof value === 'string' && SERVICE_ACCOUNT_EMAIL.test(value);
 }
 
-export const SERVICE_ACCOUNT_EMAIL_HINT = 'a service-account address like name@project.iam.gserviceaccount.com';
+/** A real, valid address — the hint and the wizard's placeholder show it, so it
+ *  must itself pass the grammar (`name@…` would not: the id needs 6+ chars).
+ *  Short enough to fit the wizard's input without truncating. */
+export const SERVICE_ACCOUNT_EMAIL_EXAMPLE = 'reader@my-project.iam.gserviceaccount.com';
+
+export const SERVICE_ACCOUNT_EMAIL_HINT = `a service-account address like ${SERVICE_ACCOUNT_EMAIL_EXAMPLE}`;

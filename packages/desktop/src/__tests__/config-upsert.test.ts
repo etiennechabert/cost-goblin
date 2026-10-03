@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { ProviderNameError } from '@costgoblin/core';
 import { validateConfig } from '@costgoblin/core';
 import { upsertWizardProvider, swapProviderCredentialsProfile } from '../main/config-upsert.js';
+import type { WizardProviderConfig } from '../main/config-upsert.js';
 
 function providerA(): Record<string, unknown> {
   return {
@@ -61,7 +62,7 @@ describe('upsertWizardProvider', () => {
   it('replaces a matching provider in place, preserving its position and the other entries', () => {
     const a = providerA();
     const b = providerB();
-    const c = { name: 'aws-payer-c', type: 'aws', credentialsProfile: 'payer-c', sync: { intervalMinutes: 60 } };
+    const c = { name: 'aws-payer-c', type: 'aws', credentialsProfile: 'payer-c', sync: { daily: { bucket: 's3://bucket-c/daily/', retentionDays: 365 }, intervalMinutes: 60 } };
     const result = upsertWizardProvider({ providers: [a, b, c] }, {
       providerName: 'aws-payer-b',
       profile: 'payer-b-readonly',
@@ -145,9 +146,10 @@ describe('upsertWizardProvider', () => {
   });
 
   it('honours the wizard-picked cost-opt retention instead of hardcoding a default', () => {
-    // Cost-opt-only run: no daily/hourly, and the picker value arrives as
+    // Cost-opt-only run (per-tier Configure on an existing provider): no
+    // daily/hourly in the payload, and the picker value arrives as
     // costOptRetentionDays (was silently discarded before).
-    const result = upsertWizardProvider({}, {
+    const result = upsertWizardProvider({ providers: [providerA()] }, {
       providerName: 'aws-main',
       profile: 'default',
       dailyBucket: '',
@@ -160,10 +162,11 @@ describe('upsertWizardProvider', () => {
   });
 
   it('honours the wizard-picked hourly retention instead of hardcoding 30', () => {
-    // Hourly-only run: no daily bucket, and the Confirm-step picker value
-    // arrives as hourlyRetentionDays. It used to be discarded (hourly forced to
-    // 30), so the retention picker shown for the hourly tier was a lie.
-    const result = upsertWizardProvider({}, {
+    // Hourly-only run (per-tier Configure on an existing provider): no daily
+    // bucket in the payload, and the Confirm-step picker value arrives as
+    // hourlyRetentionDays. It used to be discarded (hourly forced to 30), so
+    // the retention picker shown for the hourly tier was a lie.
+    const result = upsertWizardProvider({ providers: [providerA()] }, {
       providerName: 'aws-main',
       profile: 'default',
       dailyBucket: '',
@@ -176,6 +179,7 @@ describe('upsertWizardProvider', () => {
       credentialsProfile: 'default',
       sync: {
         intervalMinutes: 60,
+        daily: { bucket: 's3://bucket-a/daily/', retentionDays: 90 },
         hourly: { bucket: 's3://b/hourly/', retentionDays: 90 },
       },
     });
@@ -357,13 +361,13 @@ describe('upsertWizardProvider — gcp arm', () => {
   it('keeps an explicit key file and omits it when blank', () => {
     const withKey = upsertWizardProvider({}, {
       providerName: 'gcp-main', type: 'gcp', profile: '',
-      dailyBucket: 'gs://b/focus', keyFile: '/home/me/sa.json',
+      dailyBucket: 'gs://acme-focus-export/focus/daily/', keyFile: '/home/me/sa.json',
     });
     expect(providers(withKey)[0]).toMatchObject({ keyFile: '/home/me/sa.json' });
 
     const blank = upsertWizardProvider({}, {
       providerName: 'gcp-main', type: 'gcp', profile: '',
-      dailyBucket: 'gs://b/focus', keyFile: '',
+      dailyBucket: 'gs://acme-focus-export/focus/daily/', keyFile: '',
     });
     const entry = providers(blank)[0];
     expect(entry).not.toHaveProperty('keyFile');
@@ -386,36 +390,89 @@ describe('upsertWizardProvider — gcp arm', () => {
     });
   });
 
-  it('replaces an existing impersonation target with the wizard one, and keeps it when none is sent', () => {
+  it('replaces an existing impersonation target, keeps it when none is sent, and removes it when blank', () => {
     const existing = {
       providers: [{ ...providerGcp(), impersonateServiceAccount: 'old-reader@acme-prod.iam.gserviceaccount.com' }],
     };
     const name = String(providerGcp()['name']);
     const replaced = upsertWizardProvider(existing, {
-      providerName: name, type: 'gcp', profile: '', dailyBucket: 'gs://b/focus/daily/',
+      providerName: name, type: 'gcp', profile: '', dailyBucket: 'gs://acme-focus-export/focus/daily/',
       impersonateServiceAccount: 'new-reader@acme-prod.iam.gserviceaccount.com',
     });
     expect(providers(replaced)[0]).toMatchObject({ impersonateServiceAccount: 'new-reader@acme-prod.iam.gserviceaccount.com' });
 
     const kept = upsertWizardProvider(existing, {
-      providerName: name, type: 'gcp', profile: '', dailyBucket: 'gs://b/focus/daily/',
+      providerName: name, type: 'gcp', profile: '', dailyBucket: 'gs://acme-focus-export/focus/daily/',
     });
     expect(providers(kept)[0]).toMatchObject({ impersonateServiceAccount: 'old-reader@acme-prod.iam.gserviceaccount.com' });
 
+    // Blank in the wizard means "use my own sign-in": once the field shows the
+    // current target, sending '' is how the user removes it.
     const blank = upsertWizardProvider(existing, {
-      providerName: name, type: 'gcp', profile: '', dailyBucket: 'gs://b/focus/daily/',
+      providerName: name, type: 'gcp', profile: '', dailyBucket: 'gs://acme-focus-export/focus/daily/',
       impersonateServiceAccount: '',
     });
-    expect(providers(blank)[0]).toMatchObject({ impersonateServiceAccount: 'old-reader@acme-prod.iam.gserviceaccount.com' });
+    expect(providers(blank)[0]).not.toHaveProperty('impersonateServiceAccount');
   });
 
   it('refuses a malformed impersonation target before writing anything', () => {
     // The value lands in a gcloud argv; the loader would reject it too, but
     // only after the wizard had already written an unloadable file.
     expect(() => upsertWizardProvider({}, {
-      providerName: 'gcp-main', type: 'gcp', profile: '', dailyBucket: 'gs://b/focus/daily/',
+      providerName: 'gcp-main', type: 'gcp', profile: '', dailyBucket: 'gs://acme-focus-export/focus/daily/',
       impersonateServiceAccount: 'me@gmail.com',
     })).toThrow(/service-account address/);
+  });
+
+  it('replaces a carried key file with the impersonation target, so the result still loads', () => {
+    // keyFile and impersonateServiceAccount are exclusive. Carrying the key
+    // file beside a newly typed target wrote a config the loader refuses.
+    const existing = { providers: [{ ...providerGcp(), keyFile: '/home/me/sa.json' }] };
+    const written = upsertWizardProvider(existing, {
+      providerName: 'gcp-main', type: 'gcp', profile: '', dailyBucket: 'gs://acme-focus-export/focus/daily/',
+      impersonateServiceAccount: 'costgoblin-reader@acme-prod.iam.gserviceaccount.com',
+    });
+    expect(providers(written)[0]).not.toHaveProperty('keyFile');
+    expect(validateConfig(written).providers[0]).toMatchObject({
+      impersonateServiceAccount: 'costgoblin-reader@acme-prod.iam.gserviceaccount.com',
+    });
+
+    // Untouched, the key file stays.
+    const kept = upsertWizardProvider(existing, {
+      providerName: 'gcp-main', type: 'gcp', profile: '', dailyBucket: 'gs://acme-focus-export/focus/daily/',
+    });
+    expect(providers(kept)[0]).toMatchObject({ keyFile: '/home/me/sa.json' });
+  });
+
+  it('replaces a carried impersonation target with a key file the payload sets', () => {
+    const existing = {
+      providers: [{ ...providerGcp(), impersonateServiceAccount: 'old-reader@acme-prod.iam.gserviceaccount.com' }],
+    };
+    const written = upsertWizardProvider(existing, {
+      providerName: 'gcp-main', type: 'gcp', profile: '', dailyBucket: 'gs://acme-focus-export/focus/daily/',
+      keyFile: '/home/me/sa.json',
+    });
+    expect(providers(written)[0]).not.toHaveProperty('impersonateServiceAccount');
+    expect(providers(written)[0]).toMatchObject({ keyFile: '/home/me/sa.json' });
+  });
+
+  it('refuses a non-string impersonation target from the IPC payload', () => {
+    // RegExp.test stringifies its argument, so a one-element array holding a
+    // valid address used to pass and be written to YAML as a list.
+    const wizard: WizardProviderConfig = {
+      providerName: 'gcp-main', type: 'gcp', profile: '', dailyBucket: 'gs://acme-focus-export/focus/daily/',
+    };
+    Reflect.set(wizard, 'impersonateServiceAccount', ['costgoblin-reader@acme-prod.iam.gserviceaccount.com']);
+    expect(() => upsertWizardProvider({}, wizard)).toThrow(/service-account address/);
+  });
+
+  it('ignores a malformed impersonation target on an aws payload', () => {
+    // A gcp-only field must not fail an aws write the aws arm never reads.
+    const written = upsertWizardProvider({}, {
+      providerName: 'aws-main', profile: 'prod', dailyBucket: 's3://b/focus_daily/',
+      impersonateServiceAccount: 'not-an-address',
+    });
+    expect(providers(written)[0]).not.toHaveProperty('impersonateServiceAccount');
   });
 
   it('never writes an impersonation target onto an aws provider', () => {
@@ -434,7 +491,7 @@ describe('upsertWizardProvider — gcp arm', () => {
     // error anywhere.
     expect(() => upsertWizardProvider({ providers: [providerA()] }, {
       providerName: 'aws-main', type: 'gcp', profile: '',
-      dailyBucket: 'gs://b/focus',
+      dailyBucket: 'gs://acme-focus-export/focus/daily/',
     })).toThrow(/is a AWS provider — refusing to rewrite it as GCP/);
   });
 
@@ -489,13 +546,12 @@ describe('setup wizard GCP payload round-trips through the config validator', ()
     expect(String(config.providers[0]?.sync.hourly?.bucket)).toBe('gs://acme-focus-export/focus/hourly/');
   });
 
-  it('would be rejected by the validator if the wizard ever let the tiers overlap', () => {
-    // Guards the reason the wizard enforces `gcsTiersOverlap` up front: this
-    // config is writable but not loadable, so the check has to live in the UI.
-    const written = upsertWizardProvider({}, gcpWizardPayload({
+  it('refuses to write tiers that overlap, since the loader would refuse to open them', () => {
+    // The wizard enforces `gcsTiersOverlap` up front too; this is the writer's
+    // backstop, which now runs the loader's own validation before returning.
+    expect(() => upsertWizardProvider({}, gcpWizardPayload({
       hourlyBucket: 'gs://acme-focus-export/focus/daily/',
-    }));
-    expect(() => validateConfig(written)).toThrow(/must not overlap/);
+    }))).toThrow(/can't load: .*must not overlap/);
   });
 
   it('adds a gcp provider beside an existing aws one without disturbing it', () => {

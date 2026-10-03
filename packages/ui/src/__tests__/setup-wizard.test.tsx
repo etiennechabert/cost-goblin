@@ -1,13 +1,16 @@
-import type { CheckConfigBeaconParams, CheckConfigBeaconResult } from '@costgoblin/core/browser';
+import type { CheckConfigBeaconParams, CheckConfigBeaconResult, CostGoblinConfig } from '@costgoblin/core/browser';
+import { asBucketPath } from '@costgoblin/core/browser';
 import { render, screen, waitFor, within, cleanup } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
-import { MockCostApi } from '../__fixtures__/mock-api.js';
+import { MOCK_GCP_PROVIDER, MockCostApi } from '../__fixtures__/mock-api.js';
 import { SetupWizard } from '../views/setup-wizard.js';
 
-function renderWizard(props?: { source?: 'daily' | 'hourly' | 'costOptimization'; profile?: string; mode?: 'add' }) {
+function renderWizard(props?: { source?: 'daily' | 'hourly' | 'costOptimization'; profile?: string; mode?: 'add'; config?: CostGoblinConfig }) {
   const api = new MockCostApi();
+  // Before render: the wizard reads the configured providers on mount.
+  if (props?.config !== undefined) vi.spyOn(api, 'getConfig').mockResolvedValue(props.config);
   const onComplete = vi.fn();
   const user = userEvent.setup();
   return {
@@ -587,35 +590,6 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     expect(written?.costOptBucket).toBeUndefined();
   });
 
-  it('collects the hourly tier when the exporter publishes one', async () => {
-    const { api, user } = renderWizard();
-    gcpExportLayout(api);
-    await enterGcpBrowse(user);
-    await user.click(screen.getByLabelText('Open folder focus'));
-    await waitFor(() => { expect(screen.getByLabelText('Open folder daily')).toBeDefined(); });
-    await user.click(screen.getByLabelText('Open folder daily'));
-    await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
-    await userClickText(user, 'Use this location');
-
-    // Now on the hourly bucket step — pick the bucket and walk to hourly/.
-    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
-    await userClickText(user, 'acme-focus-export');
-    await waitFor(() => { expect(screen.getByLabelText('Open folder focus')).toBeDefined(); });
-    await user.click(screen.getByLabelText('Open folder focus'));
-    await waitFor(() => { expect(screen.getByLabelText('Open folder hourly')).toBeDefined(); });
-    await user.click(screen.getByLabelText('Open folder hourly'));
-    await waitFor(() => { expect(screen.getByText('FOCUS export detected')).toBeDefined(); });
-    await userClickText(user, 'Use this location');
-
-    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
-    await userClickText(user, 'Complete Setup');
-    await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
-
-    const written = api.writtenConfigs[0];
-    expect(written?.dailyBucket).toBe('gs://acme-focus-export/focus/daily/');
-    expect(written?.hourlyBucket).toBe('gs://acme-focus-export/focus/hourly/');
-  });
-
   /** Walks the GCP flow through BOTH tiers to the Confirm step. */
   async function walkGcpBothTiersToConfirm(user: ReturnType<typeof userEvent.setup>): Promise<void> {
     await enterGcpBrowse(user);
@@ -634,6 +608,18 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await userClickText(user, 'Use this location');
     await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
   }
+
+  it('collects the hourly tier when the exporter publishes one', async () => {
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    await walkGcpBothTiersToConfirm(user);
+    await userClickText(user, 'Complete Setup');
+    await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
+
+    const written = api.writtenConfigs[0];
+    expect(written?.dailyBucket).toBe('gs://acme-focus-export/focus/daily/');
+    expect(written?.hourlyBucket).toBe('gs://acme-focus-export/focus/hourly/');
+  });
 
   it('sets each tier retention in its own card instead of one shared picker', async () => {
     // One shared picker configured only the daily tier; hourly silently took
@@ -691,7 +677,96 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     expect(field.getAttribute('aria-describedby')).toBe('impersonate-sa-hint');
     const complete = screen.getByText('Complete Setup').closest('button');
     expect(complete?.disabled).toBe(true);
+    // Clicking it must not write anything.
+    if (complete !== null) await user.click(complete);
     expect(api.writtenConfigs).toHaveLength(0);
+  });
+
+  /** A configured gcp-main the GCP walk lands on, with a tuned retention
+   *  (hourly 60 is not one of the presets) and an impersonation target. */
+  function existingGcpConfig(extra?: { keyFile?: string; impersonateServiceAccount?: string }): CostGoblinConfig {
+    return {
+      providers: [{
+        ...MOCK_GCP_PROVIDER,
+        ...extra,
+        sync: {
+          daily: { bucket: asBucketPath('gs://acme-focus-export/focus/daily/'), retentionDays: 730 },
+          hourly: { bucket: asBucketPath('gs://acme-focus-export/focus/hourly/'), retentionDays: 60 },
+          intervalMinutes: 60,
+        },
+      }],
+      defaults: { periodDays: 30, costMetric: 'effective', lagDays: 2 },
+    };
+  }
+
+  it('shows and keeps the retention and impersonation target a re-run provider already has', async () => {
+    // The pickers used to start on the defaults, so re-running setup (e.g. to
+    // add the impersonation target) silently cut a tuned hourly window to 30.
+    const { api, user } = renderWizard({
+      config: existingGcpConfig({ impersonateServiceAccount: 'old-reader@acme-prod.iam.gserviceaccount.com' }),
+    });
+    gcpExportLayout(api);
+    await walkGcpBothTiersToConfirm(user);
+
+    const daily = screen.getByRole('group', { name: 'Daily FOCUS export retention' });
+    const hourly = screen.getByRole('group', { name: 'Hourly FOCUS export retention' });
+    expect(within(daily).getByRole('button', { name: '2 years', pressed: true })).toBeDefined();
+    // Off-preset, it still shows — pressed — rather than snapping to 30.
+    expect(within(hourly).getByRole('button', { name: '60 days', pressed: true })).toBeDefined();
+    expect(screen.getByLabelText<HTMLInputElement>('Impersonate service account').value)
+      .toBe('old-reader@acme-prod.iam.gserviceaccount.com');
+
+    await userClickText(user, 'Complete Setup');
+    await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
+    const written = api.writtenConfigs[0];
+    expect(written?.retentionDays).toBe(730);
+    expect(written?.hourlyRetentionDays).toBe(60);
+    // Untouched: absent, so the writer keeps the current target.
+    expect(written?.impersonateServiceAccount).toBeUndefined();
+  });
+
+  it('removes the impersonation target when the user clears the field', async () => {
+    // "Leave blank to use your own sign-in" has to be true on a re-run too.
+    const { api, user } = renderWizard({
+      config: existingGcpConfig({ impersonateServiceAccount: 'old-reader@acme-prod.iam.gserviceaccount.com' }),
+    });
+    gcpExportLayout(api);
+    await walkGcpBothTiersToConfirm(user);
+
+    await user.clear(screen.getByLabelText('Impersonate service account'));
+    expect(screen.getByText(/Leave blank to use your own sign-in/)).toBeDefined();
+    await userClickText(user, 'Complete Setup');
+    await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
+    expect(api.writtenConfigs[0]?.impersonateServiceAccount).toBe('');
+  });
+
+  it('says a typed impersonation target replaces the key file the provider uses', async () => {
+    const { api, user } = renderWizard({ config: existingGcpConfig({ keyFile: '/home/me/sa.json' }) });
+    gcpExportLayout(api);
+    await walkGcpBothTiersToConfirm(user);
+
+    expect(screen.getByText(/Leave blank to keep using the key file \/home\/me\/sa\.json/)).toBeDefined();
+    await user.type(screen.getByLabelText('Impersonate service account'), 'costgoblin-reader@acme-prod.iam.gserviceaccount.com');
+    expect(screen.getByText(/Replaces the key file this provider uses now/)).toBeDefined();
+  });
+
+  it('keeps the typed impersonation target and retention picks across Back', async () => {
+    // They lived in the Confirm step's own state, so ← Back and forward again
+    // rebuilt it blank — and a quick Complete wrote no impersonation target.
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    await walkGcpBothTiersToConfirm(user);
+
+    await user.type(screen.getByLabelText('Impersonate service account'), 'costgoblin-reader@acme-prod.iam.gserviceaccount.com');
+    await user.click(within(screen.getByRole('group', { name: 'Daily FOCUS export retention' })).getByRole('button', { name: '2 years' }));
+    await userClickText(user, '← Back');
+    await waitFor(() => { expect(screen.getByText('Skip')).toBeDefined(); });
+    await userClickText(user, 'Skip');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+
+    expect(screen.getByLabelText<HTMLInputElement>('Impersonate service account').value)
+      .toBe('costgoblin-reader@acme-prod.iam.gserviceaccount.com');
+    expect(within(screen.getByRole('group', { name: 'Daily FOCUS export retention' })).getByRole('button', { name: '2 years', pressed: true })).toBeDefined();
   });
 
   it('refuses an hourly tier that overlaps the daily one', async () => {

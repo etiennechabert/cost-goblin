@@ -1,5 +1,5 @@
-import type { ConfigBundleSummary, GcpProject, GcsFolderKind } from '@costgoblin/core/browser';
-import { SERVICE_ACCOUNT_EMAIL_HINT, gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isServiceAccountEmail, isValidWorkspaceName, parseProviderName } from '@costgoblin/core/browser';
+import type { ConfigBundleSummary, GcpProject, GcsFolderKind, ProviderConfig } from '@costgoblin/core/browser';
+import { DEFAULT_RETENTION_DAYS, SERVICE_ACCOUNT_EMAIL_EXAMPLE, SERVICE_ACCOUNT_EMAIL_HINT, gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isServiceAccountEmail, isValidWorkspaceName, parseProviderName } from '@costgoblin/core/browser';
 import { useState, useEffect, useRef } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { Card, CardContent } from '../components/ui/card.js';
@@ -32,18 +32,13 @@ type WizardStep =
   | { step: 'bucket'; profile: string; source: DataSource; buckets: { name: string; region: string }[]; loading: boolean; selected: string; error: string }
   | { step: 'beacon'; profile: string; source: DataSource; bucket: string; content: string; summary: ConfigBundleSummary; applying: boolean; error: string }
   | { step: 'browse'; profile: string; source: DataSource; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[]; path: string[]; error: string }
-  | { step: 'confirm'; cloud: 'aws'; profile: string; s3Path: string; hourlyPath: string; costOptPath: string; retention: TierRetention }
-  | { step: 'confirm'; cloud: 'gcp'; project: string; s3Path: string; hourlyPath: string; costOptPath: string; retention: TierRetention; impersonate: string };
+  | { step: 'confirm'; cloud: 'aws'; profile: string; s3Path: string; hourlyPath: string; costOptPath: string }
+  | { step: 'confirm'; cloud: 'gcp'; project: string; s3Path: string; hourlyPath: string; costOptPath: string };
 
 /** One retention window per tier. Each tier needs its own: a year of daily is
  *  small, a year of hourly is ~24x that, so a single shared picker either
  *  over-keeps hourly or under-keeps daily. */
-interface TierRetention { daily: number; hourly: number; costOpt: number }
-type RetentionTier = keyof TierRetention;
-
-const DEFAULT_TIER_RETENTION: TierRetention = { daily: 365, hourly: 30, costOpt: 90 };
-
-const RETENTION_OPTIONS: Readonly<Record<RetentionTier, readonly { days: number; label: string }[]>> = {
+const RETENTION_OPTIONS: Readonly<Record<DataSource, readonly { days: number; label: string }[]>> = {
   daily: [
     { days: 90, label: '3 months' },
     { days: 180, label: '6 months' },
@@ -56,7 +51,7 @@ const RETENTION_OPTIONS: Readonly<Record<RetentionTier, readonly { days: number;
     { days: 30, label: '30 days' },
     { days: 90, label: '90 days' },
   ],
-  costOpt: [
+  costOptimization: [
     { days: 30, label: '30 days' },
     { days: 90, label: '90 days' },
     { days: 180, label: '6 months' },
@@ -1353,11 +1348,24 @@ interface ProviderNaming {
   readonly onChange: (value: string) => void;
 }
 
-function ConfirmStep({ state, providerNaming, onRetentionChange, onImpersonateChange, onComplete, onBack }: Readonly<{
+/** The Confirm step's choices that are not the provider's name. Held by the
+ *  wizard, not the step, so Back and forward again keeps them. `picks` holds
+ *  only tiers the user clicked and `impersonate` is `undefined` until typed
+ *  in: untouched, each shows (and writes) the provider's current value. */
+interface ConfirmChoices {
+  readonly picks: Readonly<Partial<Record<DataSource, number>>>;
+  readonly onPick: (tier: DataSource, days: number) => void;
+  readonly impersonate: string | undefined;
+  readonly onImpersonateChange: (value: string) => void;
+}
+
+function ConfirmStep({ state, providerNaming, existing, choices, onComplete, onBack }: Readonly<{
   state: Extract<WizardStep, { step: 'confirm' }>;
   providerNaming: ProviderNaming;
-  onRetentionChange: (tier: RetentionTier, days: number) => void;
-  onImpersonateChange: (value: string) => void;
+  /** The configured provider this run will replace (same name and cloud),
+   *  whose values seed the pickers and the impersonation field. */
+  existing: ProviderConfig | undefined;
+  choices: ConfirmChoices;
   onComplete: () => void;
   onBack: () => void;
 }>) {
@@ -1369,12 +1377,28 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onImpersonateCh
     ? null
     : providerNameError(providerNaming.value, providerNaming.checkTaken, providerNaming.takenNames);
 
-  // Blank is allowed (Application Default Credentials as-is); anything typed
-  // must be a service-account address, the same check the config loader runs.
-  const impersonate = state.cloud === 'gcp' ? state.impersonate.trim() : '';
-  const impersonateError = impersonate.length > 0 && !isServiceAccountEmail(impersonate)
+  // What each tier will keep: the user's pick, else what the provider being
+  // replaced already has (a re-run must not quietly reset a tuned window),
+  // else the shared default the prune paths also use.
+  function tierRetention(tier: DataSource): number {
+    return choices.picks[tier] ?? existing?.sync[tier]?.retentionDays ?? DEFAULT_RETENTION_DAYS[tier];
+  }
+
+  const existingGcp = existing?.type === 'gcp' ? existing : undefined;
+  const existingKeyFile = existingGcp?.keyFile;
+  // Blank is allowed (Application Default Credentials, or the key file the
+  // provider already has); anything typed must be a service-account address,
+  // the same check the config loader runs.
+  const impersonateValue = choices.impersonate ?? existingGcp?.impersonateServiceAccount ?? '';
+  const impersonate = impersonateValue.trim();
+  const impersonateError = state.cloud === 'gcp' && impersonate.length > 0 && !isServiceAccountEmail(impersonate)
     ? `Must be ${SERVICE_ACCOUNT_EMAIL_HINT}.`
     : null;
+  const impersonateHint = existingKeyFile === undefined
+    ? 'The read-only reader to act as for downloads. Leave blank to use your own sign-in.'
+    : impersonate.length > 0
+      ? `The read-only reader to act as for downloads. Replaces the key file this provider uses now (${existingKeyFile}).`
+      : `Leave blank to keep using the key file ${existingKeyFile}, or enter the read-only reader to act as instead.`;
 
   // The credential card names whichever store this provider authenticates
   // through. Hardcoding "AWS Profile" here was fine while the wizard only
@@ -1396,15 +1420,17 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onImpersonateCh
       // `upsertWizardProvider` ignores it.
       profile: state.cloud === 'gcp' ? '' : state.profile,
       dailyBucket: state.s3Path,
-      // One retention per collected tier, each picked in that tier's own card.
-      ...(state.s3Path.length > 0 ? { retentionDays: state.retention.daily } : {}),
-      ...(state.hourlyPath.length > 0 ? { hourlyRetentionDays: state.retention.hourly } : {}),
-      ...(state.costOptPath.length > 0 ? { costOptRetentionDays: state.retention.costOpt } : {}),
-      ...(impersonate.length > 0 ? { impersonateServiceAccount: impersonate } : {}),
-      ...(state.hourlyPath.length > 0 ? { hourlyBucket: state.hourlyPath } : {}),
+      // Each collected tier with the retention its card shows.
+      ...(state.s3Path.length > 0 ? { retentionDays: tierRetention('daily') } : {}),
+      ...(state.hourlyPath.length > 0 ? { hourlyBucket: state.hourlyPath, hourlyRetentionDays: tierRetention('hourly') } : {}),
       // GCP has no Cost Optimization Hub analogue and `validateGcpSync`
       // rejects the key, so it is never collected — but never sent, either.
-      ...(state.cloud !== 'gcp' && state.costOptPath.length > 0 ? { costOptBucket: state.costOptPath } : {}),
+      ...(state.cloud !== 'gcp' && state.costOptPath.length > 0
+        ? { costOptBucket: state.costOptPath, costOptRetentionDays: tierRetention('costOptimization') }
+        : {}),
+      // Untouched means "keep the provider's current value" (absent); once
+      // edited the field is the truth, so blank is sent as '' and removes it.
+      ...(state.cloud === 'gcp' && choices.impersonate !== undefined ? { impersonateServiceAccount: impersonate } : {}),
     }).then(() => {
       onComplete();
     }).catch((err: unknown) => {
@@ -1417,10 +1443,10 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onImpersonateCh
     });
   }
 
-  const paths: { label: string; value: string; tier: RetentionTier }[] = [];
-  if (state.s3Path.length > 0) paths.push({ label: 'Daily FOCUS export', value: state.s3Path, tier: 'daily' });
-  if (state.hourlyPath.length > 0) paths.push({ label: 'Hourly FOCUS export', value: state.hourlyPath, tier: 'hourly' });
-  if (state.costOptPath.length > 0) paths.push({ label: 'Cost Optimization', value: state.costOptPath, tier: 'costOpt' });
+  const paths: { value: string; tier: DataSource }[] = [];
+  if (state.s3Path.length > 0) paths.push({ value: state.s3Path, tier: 'daily' });
+  if (state.hourlyPath.length > 0) paths.push({ value: state.hourlyPath, tier: 'hourly' });
+  if (state.costOptPath.length > 0) paths.push({ value: state.costOptPath, tier: 'costOptimization' });
 
   return (
     <div className="flex flex-col gap-5">
@@ -1464,11 +1490,9 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onImpersonateCh
             <label htmlFor="impersonate-sa" className="text-xs text-text-muted uppercase tracking-wider">Impersonate service account</label>
             <input
               id="impersonate-sa"
-              value={state.impersonate}
-              onChange={(e) => { onImpersonateChange(e.target.value); }}
-              // "Optional" leads so the field's width truncates the address,
-              // not the hint that it can be left blank.
-              placeholder="Optional · sa@project.iam.gserviceaccount.com"
+              value={impersonateValue}
+              onChange={(e) => { choices.onImpersonateChange(e.target.value); }}
+              placeholder={SERVICE_ACCOUNT_EMAIL_EXAMPLE}
               spellCheck={false}
               aria-invalid={impersonateError !== null}
               aria-describedby="impersonate-sa-hint"
@@ -1477,28 +1501,34 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onImpersonateCh
                 impersonateError === null ? 'border-border focus-visible:ring-accent' : 'border-negative focus-visible:ring-negative',
               ].join(' ')}
             />
-            {impersonateError === null ? (
-              <p id="impersonate-sa-hint" className="text-xs text-text-muted mt-1">The read-only reader to act as for downloads. Leave blank to use your own sign-in.</p>
-            ) : (
-              <p id="impersonate-sa-hint" className="text-xs text-negative mt-1">{impersonateError}</p>
-            )}
+            <p id="impersonate-sa-hint" className={`text-xs mt-1 ${impersonateError === null ? 'text-text-muted' : 'text-negative'}`}>
+              {impersonateError ?? impersonateHint}
+            </p>
           </div>
         )}
 
-        {paths.map(({ label, value, tier }) => (
-          <div key={label} className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
+        {paths.map(({ value, tier }) => {
+          const label = SOURCE_LABELS[tier].title;
+          const selected = tierRetention(tier);
+          // A hand-tuned window that isn't one of the presets still shows,
+          // pressed, so keeping it is the default rather than impossible.
+          const options = RETENTION_OPTIONS[tier].some(opt => opt.days === selected)
+            ? RETENTION_OPTIONS[tier]
+            : [...RETENTION_OPTIONS[tier], { days: selected, label: `${String(selected)} days` }].sort((x, y) => x.days - y.days);
+          return (
+          <div key={tier} className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
             <p className="text-xs text-text-muted uppercase tracking-wider">{label}</p>
             <p className="text-sm font-mono text-text-primary mt-0.5">{value}</p>
             <div role="group" aria-label={`${label} retention`} className="flex flex-wrap gap-2 mt-2.5">
-              {RETENTION_OPTIONS[tier].map(opt => (
+              {options.map(opt => (
                 <button
                   key={opt.days}
                   type="button"
-                  aria-pressed={state.retention[tier] === opt.days}
-                  onClick={() => { onRetentionChange(tier, opt.days); }}
+                  aria-pressed={selected === opt.days}
+                  onClick={() => { choices.onPick(tier, opt.days); }}
                   className={[
                     'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
-                    state.retention[tier] === opt.days
+                    selected === opt.days
                       ? 'bg-accent text-bg-primary'
                       : 'bg-bg-tertiary/50 text-text-secondary hover:text-text-primary',
                   ].join(' ')}
@@ -1509,7 +1539,8 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onImpersonateCh
             </div>
             <p className="text-xs text-text-muted mt-1.5">How far back to keep this tier</p>
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {saveError !== null && (
@@ -1541,6 +1572,13 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   // mode), free-text when adding one, prefilled 'aws-main' on first run.
   const [providerName, setProviderName] = useState(initialProviderName ?? (mode === 'add' ? '' : 'aws-main'));
   const [existingProviders, setExistingProviders] = useState<readonly string[]>([]);
+  // The full configured providers, so a re-run's Confirm step can show (and
+  // keep) the retention windows and credential the target already has.
+  const [existingConfigs, setExistingConfigs] = useState<readonly ProviderConfig[]>([]);
+  // Confirm-step choices. Wizard-level, like `providerName`, so ← Back and
+  // forward again keeps them; cleared when a cloud chain starts over.
+  const [retentionPicks, setRetentionPicks] = useState<Partial<Record<DataSource, number>>>({});
+  const [impersonateInput, setImpersonateInput] = useState<string | undefined>(undefined);
   // Whether the user has typed a name. Until they do, the default is DERIVED
   // from the cloud they picked rather than written into state on entry — a
   // one-way `setProviderName('gcp-main')` survived backing out of the GCP
@@ -1550,6 +1588,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     api.getConfig().then(config => {
       const names = config.providers.map(p => String(p.name));
       setExistingProviders(names);
+      setExistingConfigs(config.providers);
       // Source mode without an explicit target: writeConfig upserts by name,
       // so per-tier Configure must land on the provider it came from — the
       // first configured one, matching the page that opened us.
@@ -1635,6 +1674,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   function goToGcpProjectStep(): void {
     // See `goToProfileStep`: the two chains share `collectedPaths`.
     setCollectedPaths({ daily: '', hourly: '', costOpt: '' });
+    resetConfirmChoices();
     reloadGcpProjects();
   }
 
@@ -1717,9 +1757,12 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
       // GCP never collects a cost-optimization path; carrying one here would
       // put a key in the config that `validateGcpSync` refuses to load.
       costOptPath: '',
-      retention: DEFAULT_TIER_RETENTION,
-      impersonate: '',
     });
+  }
+
+  function resetConfirmChoices(): void {
+    setRetentionPicks({});
+    setImpersonateInput(undefined);
   }
 
   // Goes through `startBucketStep` rather than repeating its body, so the
@@ -1737,6 +1780,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     // the AWS leg survived a ← Back to the hub and was written into a gcp
     // provider, whose loader then refuses the config on the next launch.
     setCollectedPaths({ daily: '', hourly: '', costOpt: '' });
+    resetConfirmChoices();
     // Token-guarded like the other step loaders: a slow profile listing landing
     // after the user navigated on would otherwise teleport them back here.
     const token = ++stepRequestRef.current;
@@ -1903,7 +1947,6 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
       s3Path: p.daily,
       hourlyPath: p.hourly,
       costOptPath: p.costOpt,
-      retention: DEFAULT_TIER_RETENTION,
     });
   }
 
@@ -1944,6 +1987,12 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
       }
     }
   }
+
+  // The name Confirm will write under — and so which configured provider it
+  // replaces, whose values seed the step.
+  const confirmProviderName = wizard.step !== 'confirm' || providerNameFixed || providerNameEdited || mode === 'add'
+    ? providerName
+    : defaultProviderName(wizard.cloud);
 
   // Standalone onboarding renders without the app header — the window's only
   // macOS drag region (titleBarStyle: hiddenInset means no native title bar) —
@@ -2056,16 +2105,21 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
             <ConfirmStep
               state={wizard}
               providerNaming={{
-                value: providerNameFixed || providerNameEdited || mode === 'add'
-                  ? providerName
-                  : defaultProviderName(wizard.cloud),
+                value: confirmProviderName,
                 fixed: providerNameFixed,
                 checkTaken: mode === 'add',
                 takenNames: existingProviders,
                 onChange: (value) => { setProviderNameEdited(true); setProviderName(value); },
               }}
-              onRetentionChange={(tier, days) => { setWizard(prev => prev.step === 'confirm' ? { ...prev, retention: { ...prev.retention, [tier]: days } } : prev); }}
-              onImpersonateChange={(value) => { setWizard(prev => prev.step === 'confirm' && prev.cloud === 'gcp' ? { ...prev, impersonate: value } : prev); }}
+              // Only a same-cloud entry: a different-cloud one is refused by
+              // the writer, so its values must not seed anything.
+              existing={existingConfigs.find(c => String(c.name) === confirmProviderName && c.type === wizard.cloud)}
+              choices={{
+                picks: retentionPicks,
+                onPick: (tier, days) => { setRetentionPicks(prev => ({ ...prev, [tier]: days })); },
+                impersonate: impersonateInput,
+                onImpersonateChange: setImpersonateInput,
+              }}
               onComplete={finish}
               onBack={handleBack}
             />
