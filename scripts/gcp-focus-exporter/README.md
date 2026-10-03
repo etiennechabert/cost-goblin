@@ -119,8 +119,10 @@ cd scripts/gcp-focus-exporter
 ```
 
 It enables the APIs, creates the watermark dataset and a service account,
-grants the four roles it needs, builds and deploys the Cloud Run job, and wires
-up a daily Cloud Scheduler trigger. Re-run it any time to pick up changes.
+grants the four roles it needs, builds the image into a `costgoblin` Artifact
+Registry repository as a separate `costgoblin-builder` service account (see
+the top of `deploy.sh` for why), deploys the Cloud Run job, and wires up a
+daily Cloud Scheduler trigger. Re-run it any time to pick up changes.
 
 ### 3. Copy-paste, if you would rather see exactly what runs
 
@@ -142,7 +144,8 @@ REGION=europe-west1  # a region inside LOCATION
 # ---- fetch the exporter ----
 mkdir -p costgoblin-exporter && cd costgoblin-exporter
 BASE=https://raw.githubusercontent.com/etiennechabert/cost-goblin/main/scripts/gcp-focus-exporter
-curl -fsSL -O ${BASE}/export-focus.mjs -O ${BASE}/package.json -O ${BASE}/Dockerfile
+curl -fsSL -O ${BASE}/export-focus.mjs -O ${BASE}/package.json -O ${BASE}/package-lock.json \
+  -O ${BASE}/Dockerfile -O ${BASE}/cloudbuild.yaml
 
 # ---- one-time setup ----
 JOB=costgoblin-focus-exporter
@@ -199,7 +202,24 @@ ENV_VARS=${ENV_VARS};BQ_LOCATION=${LOCATION}
 IMAGE=${REGION}-docker.pkg.dev/${PROJECT_ID}/costgoblin/${JOB}
 gcloud artifacts repositories create costgoblin --repository-format=docker \
   --location=${REGION} --description="CostGoblin FOCUS exporter images"
-gcloud builds submit --region=${REGION} --tag=${IMAGE} .
+# Build as a dedicated, narrowly-granted service account rather than Cloud
+# Build's default (the Compute Engine default SA, which many organisations
+# strip of the permissions a build needs). If a grant below fails with
+# "Service account ... does not exist", wait a minute and repeat it.
+BUILDER=costgoblin-builder@${PROJECT_ID}.iam.gserviceaccount.com
+gcloud iam service-accounts create costgoblin-builder \
+  --display-name="CostGoblin FOCUS exporter image builder"
+gcloud projects add-iam-policy-binding ${PROJECT_ID} --condition=None \
+  --member=serviceAccount:${BUILDER} --role=roles/logging.logWriter
+gcloud artifacts repositories add-iam-policy-binding costgoblin --location=${REGION} \
+  --member=serviceAccount:${BUILDER} --role=roles/artifactregistry.writer
+gcloud storage buckets create gs://${PROJECT_ID}_cloudbuild --location=${REGION} \
+  --uniform-bucket-level-access   # skip if it already exists
+gcloud storage buckets add-iam-policy-binding gs://${PROJECT_ID}_cloudbuild \
+  --member=serviceAccount:${BUILDER} --role=roles/storage.objectViewer
+gcloud builds submit --region=${REGION} --config=cloudbuild.yaml \
+  --substitutions=_IMAGE=${IMAGE} \
+  --service-account=projects/${PROJECT_ID}/serviceAccounts/${BUILDER} .
 gcloud run jobs deploy ${JOB} --image=${IMAGE} --region=${REGION} \
   --service-account=${SA} --tasks=1 --max-retries=1 --task-timeout=30m \
   --set-env-vars="^;^${ENV_VARS}"

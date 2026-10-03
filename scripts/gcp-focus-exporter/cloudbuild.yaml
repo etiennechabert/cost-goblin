@@ -1,0 +1,12 @@
+# Build config for deploy.sh's `gcloud builds submit`.
+#
+# A build that runs as a user-specified service account (deploy.sh's
+# costgoblin-builder) must say where its logs go, and `--tag` cannot: hence
+# this file instead of `gcloud builds submit --tag`. CLOUD_LOGGING_ONLY keeps
+# the logs out of a GCS bucket the builder would otherwise need write access to.
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ['build', '-t', '${_IMAGE}', '.']
+images: ['${_IMAGE}']
+options:
+  logging: CLOUD_LOGGING_ONLY

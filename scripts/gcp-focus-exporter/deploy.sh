@@ -60,6 +60,13 @@ REGION="${REGION:-europe-west1}"
 # `cloud-run-source-deploy`, which keeps every build forever.
 REPO="${REPO:-costgoblin}"
 
+# Service account the image is BUILT as. Cloud Build's default is the project's
+# Compute Engine default service account, which organisations commonly strip of
+# its automatic Editor grant (the iam.automaticIamGrantsForDefaultServiceAccounts
+# policy) — leaving it unable to read its own build source. A dedicated builder
+# with three narrow grants works either way and widens nothing project-wide.
+BUILD_SA_NAME="${BUILD_SA_NAME:-costgoblin-builder}"
+
 # How often to check for changed periods.
 #
 # Daily is the right answer for almost everyone: the upstream export only
@@ -116,6 +123,23 @@ echo "==> Watermark dataset ${STATE_DATASET} (in ${LOCATION})"
 # exporter joins the two in one query.
 bq --location="${LOCATION}" mk --dataset --force "${PROJECT_ID}:${STATE_DATASET}" >/dev/null
 
+# A service account created moments ago takes a while to become bindable: IAM
+# answers "Service account ... does not exist" until it has propagated, which
+# used to fail every first deploy here. Retry exactly that error for up to a
+# minute; any other failure is reported at once.
+grant() {
+  local attempt err
+  for attempt in 1 2 3 4 5 6 7; do
+    if err="$("$@" 2>&1 >/dev/null)"; then return 0; fi
+    if [[ "${err}" != *"ervice account"*"does not exist"* || ${attempt} -eq 7 ]]; then
+      printf '%s\n' "${err}" >&2
+      return 1
+    fi
+    echo "    (new service account not visible to IAM yet; retrying in 10s)" >&2
+    sleep 10
+  done
+}
+
 echo "==> Service account ${SA_EMAIL}"
 gcloud iam service-accounts create "${SA_NAME}" \
   --display-name="CostGoblin FOCUS exporter" 2>/dev/null || echo "    (already exists)"
@@ -123,7 +147,7 @@ gcloud iam service-accounts create "${SA_NAME}" \
 echo "==> Granting roles"
 # Running a BigQuery job is a project-level permission, so this one has to be
 # granted at the project. It confers no data access on its own.
-gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+grant gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
   --member="serviceAccount:${SA_EMAIL}" --role="roles/bigquery.jobUser" --condition=None >/dev/null
 
 # Data access is granted per DATASET, not project-wide. Project-level
@@ -163,7 +187,7 @@ grant_dataset_access "${BILLING_PROJECT}" "${BILLING_DATASET}" READER
 grant_dataset_access "${PROJECT_ID}" "${STATE_DATASET}" WRITER
 # objectAdmin, not objectCreator: deleting each period's folder before the
 # re-export is the whole point of this job.
-gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" \
+grant gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" \
   --member="serviceAccount:${SA_EMAIL}" --role="roles/storage.objectAdmin" >/dev/null
 
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${JOB_NAME}"
@@ -187,8 +211,35 @@ JSON
 gcloud artifacts repositories set-cleanup-policies "${REPO}" \
   --location="${REGION}" --policy="${cleanup}" --no-dry-run >/dev/null
 
+BUILD_SA_EMAIL="${BUILD_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+# Where `gcloud builds submit` uploads the source archive by default.
+STAGING_BUCKET="${PROJECT_ID}_cloudbuild"
+
+echo "==> Build service account ${BUILD_SA_EMAIL}"
+gcloud iam service-accounts create "${BUILD_SA_NAME}" \
+  --display-name="CostGoblin FOCUS exporter image builder" 2>/dev/null || echo "    (already exists)"
+# Its only project-level grant: writing the build's own log lines.
+grant gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${BUILD_SA_EMAIL}" --role="roles/logging.logWriter" --condition=None >/dev/null
+# Push the image — to this one repository.
+grant gcloud artifacts repositories add-iam-policy-binding "${REPO}" --location="${REGION}" \
+  --member="serviceAccount:${BUILD_SA_EMAIL}" --role="roles/artifactregistry.writer" >/dev/null
+# Read the uploaded source archive. The staging bucket is normally created by
+# the first `gcloud builds submit`, but the grant has to exist before the
+# build starts, so create it here when it is missing.
+if ! gcloud storage buckets describe "gs://${STAGING_BUCKET}" >/dev/null 2>&1; then
+  gcloud storage buckets create "gs://${STAGING_BUCKET}" \
+    --location="${REGION}" --uniform-bucket-level-access >/dev/null
+fi
+grant gcloud storage buckets add-iam-policy-binding "gs://${STAGING_BUCKET}" \
+  --member="serviceAccount:${BUILD_SA_EMAIL}" --role="roles/storage.objectViewer" >/dev/null
+
 echo "==> Building the image"
-gcloud builds submit --region="${REGION}" --tag="${IMAGE}" .
+# The logs live in Cloud Logging only (see cloudbuild.yaml), so gcloud cannot
+# stream them here; it waits for the result and prints a console link.
+gcloud builds submit --region="${REGION}" --config=cloudbuild.yaml \
+  --substitutions="_IMAGE=${IMAGE}" \
+  --service-account="projects/${PROJECT_ID}/serviceAccounts/${BUILD_SA_EMAIL}" .
 
 echo "==> Deploying the job"
 # `^;^` switches --set-env-vars to a semicolon delimiter. TIERS=daily,hourly
@@ -222,7 +273,7 @@ gcloud scheduler jobs create http "${JOB_NAME}-trigger" \
 
 # The scheduler authenticates as the same service account, so it needs to be
 # allowed to start the job it owns.
-gcloud run jobs add-iam-policy-binding "${JOB_NAME}" \
+grant gcloud run jobs add-iam-policy-binding "${JOB_NAME}" \
   --region="${REGION}" \
   --member="serviceAccount:${SA_EMAIL}" \
   --role="roles/run.invoker" >/dev/null

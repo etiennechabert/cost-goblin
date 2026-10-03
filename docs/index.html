@@ -2661,7 +2661,8 @@ REGION=<span class="code-file">europe-west1</span>  <span class="code-comment">#
 <span class="code-comment"># ---- fetch the exporter ----</span>
 mkdir -p costgoblin-exporter &amp;&amp; cd costgoblin-exporter
 BASE=https://raw.githubusercontent.com/etiennechabert/cost-goblin/main/scripts/gcp-focus-exporter
-curl -fsSL -O $BASE/export-focus.mjs -O $BASE/package.json -O $BASE/Dockerfile
+curl -fsSL -O $BASE/export-focus.mjs -O $BASE/package.json -O $BASE/package-lock.json \
+  -O $BASE/Dockerfile -O $BASE/cloudbuild.yaml
 
 <span class="code-comment"># ---- one-time setup ----</span>
 JOB=costgoblin-focus-exporter
@@ -2687,7 +2688,18 @@ ENV_VARS=$ENV_VARS,BQ_LOCATION=$LOCATION
 IMAGE=$REGION-docker.pkg.dev/$PROJECT_ID/costgoblin/$JOB
 gcloud artifacts repositories create costgoblin --repository-format=docker \
   --location=$REGION --description="CostGoblin FOCUS exporter images"
-gcloud builds submit --region=$REGION --tag=$IMAGE .
+BUILDER=costgoblin-builder@$PROJECT_ID.iam.gserviceaccount.com
+gcloud iam service-accounts create costgoblin-builder
+gcloud projects add-iam-policy-binding $PROJECT_ID --condition=None \
+  --member=serviceAccount:$BUILDER --role=roles/logging.logWriter
+gcloud artifacts repositories add-iam-policy-binding costgoblin --location=$REGION \
+  --member=serviceAccount:$BUILDER --role=roles/artifactregistry.writer
+gcloud storage buckets create gs://${PROJECT_ID}_cloudbuild --location=$REGION \
+  --uniform-bucket-level-access   <span class="code-comment"># skip if it already exists</span>
+gcloud storage buckets add-iam-policy-binding gs://${PROJECT_ID}_cloudbuild \
+  --member=serviceAccount:$BUILDER --role=roles/storage.objectViewer
+gcloud builds submit --region=$REGION --config=cloudbuild.yaml \
+  --substitutions=_IMAGE=$IMAGE --service-account=projects/$PROJECT_ID/serviceAccounts/$BUILDER .
 gcloud run jobs deploy $JOB --image=$IMAGE --region=$REGION \
   --service-account=$SA --tasks=1 --max-retries=1 --task-timeout=30m \
   --set-env-vars="$ENV_VARS"
