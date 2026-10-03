@@ -202,7 +202,8 @@ cat <<EOF
 Deployed.
 
   Run it now:      gcloud run jobs execute ${JOB_NAME} --region=${REGION} --wait
-  Watch the logs:  gcloud run jobs executions logs read --job=${JOB_NAME} --region=${REGION}
+  Read the logs:   gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name="${JOB_NAME}"' --freshness=1d --order=asc --format="table(timestamp,jsonPayload.message,jsonPayload.tier,jsonPayload.periodLabel)"
+                   (structured JSON, so 'gcloud run jobs logs read' prints blank lines)
   See the output:  gcloud storage ls gs://${BUCKET}/${PREFIX}/
 
 Then point CostGoblin at the TIER folder, not the prefix:
