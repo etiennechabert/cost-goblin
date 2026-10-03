@@ -277,8 +277,8 @@ Already know the project ID? Type it into **Already know the project ID? Skip
 the project list**, just under **Find my export**, and the wizard goes straight
 to the bucket step without running `gcloud projects list` at all — the faster
 route in an organisation with thousands of projects, where that listing is slow
-and the list too long to scan. The same field is on the project step, usable
-while the list is still loading.
+and the list too long to scan. The project step has a similar field, **Project
+not listed? Enter its ID**, usable while the list is still loading.
 
 > **"Couldn't list the buckets in …" is expected with the read-only reader, not
 > a misconfiguration.** Listing the buckets in a project is a *project-level*
@@ -311,8 +311,8 @@ while the list is still loading.
 > The wizard runs `gcloud projects list`, which authenticates as gcloud's
 > **active account** — never ADC, never the impersonated service account — and
 > an account whose only grant is `roles/iam.serviceAccountTokenCreator` on the
-> reader holds nothing at the project level, so the project is not listed. That
-> is expected: type the project ID into **Project not listed? Enter its ID** (or
+> reader — set up for you by an admin — holds nothing at the project level, so
+> the project is not listed. That is expected: type the project ID into **Project not listed? Enter its ID** (or
 > into the field under **Find my export**, which skips the list) and press
 > **Continue**. The project is only used to list its buckets, which the
 > reader can't do anyway, so the bucket step then asks for the bucket name as
@@ -327,9 +327,14 @@ while the list is still loading.
 > gcloud config set account you@example.com
 > ```
 
-To write the entry by hand instead — for a setup the wizard can't browse at
-all, say — take the **Write the config by hand instead** link on
-that same screen, or open the config folder from **Data Management → Generate
+The wizard writes neither `keyFile` nor `impersonateServiceAccount`. If you use
+either (see [Credentials](#credentials)), add it to the provider the wizard
+wrote — without `impersonateServiceAccount` the download runs as your own
+gcloud account and is refused on a bucket granted only to the reader.
+
+To write the entry by hand instead — a bare service-account key the wizard
+can't browse with, for example — take the **Write the config by hand
+instead** link on the GCP setup screen, or open the config folder from **Data Management → Generate
 config templates & open folder**. Replace the `providers` entry (or add a
 second one alongside your AWS provider):
 

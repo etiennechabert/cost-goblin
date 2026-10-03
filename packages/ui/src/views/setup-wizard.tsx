@@ -1,5 +1,5 @@
 import type { ConfigBundleSummary, GcpProject, GcsFolderKind } from '@costgoblin/core/browser';
-import { gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isValidGcpProjectId, isValidWorkspaceName, parseProviderName } from '@costgoblin/core/browser';
+import { GCP_PROJECT_ID_RULES, gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isValidGcpProjectId, isValidWorkspaceName, parseProviderName } from '@costgoblin/core/browser';
 import { useState, useEffect, useRef } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { Card, CardContent } from '../components/ui/card.js';
@@ -21,19 +21,28 @@ const SOURCE_LABELS: Record<DataSource, { title: string; description: string }> 
   costOptimization: { title: 'Cost Optimization', description: 'RI/SP recommendations and rightsizing suggestions' },
 };
 
+/** The project the GCP chain lists buckets in, and how the user supplied it.
+ *  Rides on every GCP step so ← Back from the daily bucket step knows where it
+ *  came from: a TYPED ID returns to the intro, which holds the typed entry,
+ *  rather than starting the `gcloud projects list` the user just skipped. */
+interface GcpProjectChoice { readonly id: string; readonly typed: boolean }
+
 type WizardStep =
   | { step: 'welcome' }
   | { step: 'start' }
   | { step: 'gcp'; scaffolded: boolean; error: string }
   | { step: 'gcp-project'; projects: readonly GcpProject[]; loading: boolean; selected: string; error: string }
-  | { step: 'gcp-bucket'; project: string; source: GcpSource; buckets: readonly { name: string }[]; loading: boolean; selected: string; error: string }
-  | { step: 'gcp-browse'; project: string; source: GcpSource; bucket: string; prefix: string; prefixes: readonly string[]; loading: boolean; folder: GcsFolderKind; hasParquet: boolean; truncated: boolean; error: string; path: string[] }
+  | { step: 'gcp-bucket'; project: GcpProjectChoice; source: GcpSource; buckets: readonly { name: string }[]; loading: boolean; selected: string; error: string }
+  | { step: 'gcp-browse'; project: GcpProjectChoice; source: GcpSource; bucket: string; prefix: string; prefixes: readonly string[]; loading: boolean; folder: GcsFolderKind; hasParquet: boolean; truncated: boolean; error: string; path: string[] }
   | { step: 'profile'; profiles: string[]; loading: boolean; selected: string }
   | { step: 'bucket'; profile: string; source: DataSource; buckets: { name: string; region: string }[]; loading: boolean; selected: string; error: string }
   | { step: 'beacon'; profile: string; source: DataSource; bucket: string; content: string; summary: ConfigBundleSummary; applying: boolean; error: string }
   | { step: 'browse'; profile: string; source: DataSource; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[]; path: string[]; error: string }
   | { step: 'confirm'; cloud: 'aws'; profile: string; s3Path: string; hourlyPath: string; costOptPath: string; retentionDays: number }
-  | { step: 'confirm'; cloud: 'gcp'; project: string; s3Path: string; hourlyPath: string; costOptPath: string; retentionDays: number };
+  | { step: 'confirm'; cloud: 'gcp'; project: GcpProjectChoice; s3Path: string; hourlyPath: string; costOptPath: string; retentionDays: number };
+
+/** No tier collected yet. Shared safely: every writer spreads a copy first. */
+const EMPTY_PATHS: { readonly daily: string; readonly hourly: string; readonly costOpt: string } = { daily: '', hourly: '', costOpt: '' };
 
 interface SetupWizardProps {
   /** Called when setup finishes. Carries the workspace name the user chose on
@@ -321,10 +330,10 @@ const GCP_EXPORTER_DOCS = 'https://github.com/etiennechabert/cost-goblin/tree/ma
  * own exporter has run — but it is an ORDERING constraint, not a reason to
  * hand-edit YAML. Once the exporter has run, a GCS bucket browses exactly like
  * an S3 one, so this states the prerequisite and then offers the same
- * pick-from-a-list flow AWS gets. A project ID typed here (or on the next
- * step) skips the project list — for an account that can't list its project,
- * or an organisation whose thousands of projects make the list slow and
- * useless. Hand-editing survives as the escape hatch for setups the wizard
+ * pick-from-a-list flow AWS gets. A project ID typed here skips the project
+ * list — for an account that can't list its project, or an organisation whose
+ * thousands of projects make the list slow and useless (the next step also
+ * takes a typed ID, so nobody has to wait the listing out). Hand-editing survives as the escape hatch for setups the wizard
  * can't browse at all.
  */
 function GcpIntroStep({ state, onBrowse, onProjectId, onScaffold, onDone, onBack }: Readonly<{
@@ -373,7 +382,6 @@ function GcpIntroStep({ state, onBrowse, onProjectId, onScaffold, onDone, onBack
           <GcpProjectIdEntry
             id="gcp-intro-project-id"
             label="Already know the project ID? Skip the project list"
-            prominent={false}
             onSubmit={onProjectId}
           />
         </div>
@@ -416,12 +424,17 @@ function GcpIntroStep({ state, onBrowse, onProjectId, onScaffold, onDone, onBack
  *  to offer it.
  *
  *  `GCLOUD_CLI_NOT_FOUND` is excluded: the login button cannot run a CLI that
- *  is not installed. */
+ *  is not installed. So is `GCLOUD_PROJECTS_TIMEOUT`: across thousands of
+ *  projects the listing is simply slow, and a sign-in cannot make it faster. */
 function isGcpAuthError(message: string): boolean {
-  if (message.length === 0 || message.includes('GCLOUD_CLI_NOT_FOUND')) return false;
+  if (message.length === 0 || message.includes('GCLOUD_CLI_NOT_FOUND') || message.includes(GCLOUD_PROJECTS_TIMEOUT)) return false;
   return isGcpCredentialError(new Error(message))
     || message.includes('do not currently have an active account');
 }
+
+/** Sentinel the project-listing handler returns when `gcloud projects list`
+ *  outlives its ceiling. Mirrors the desktop handler's literal. */
+const GCLOUD_PROJECTS_TIMEOUT = 'GCLOUD_PROJECTS_TIMEOUT';
 
 /** Error panel shared by the three GCP steps. `GCLOUD_CLI_NOT_FOUND` is a
  *  sentinel the handlers return rather than a message worth showing. */
@@ -435,6 +448,7 @@ function GcpError({ message, mode, onRetry }: Readonly<{
 }>) {
   if (message.length === 0) return null;
   const missingCli = message.includes('GCLOUD_CLI_NOT_FOUND');
+  const timedOut = message.includes(GCLOUD_PROJECTS_TIMEOUT);
   const retryAction = isGcpAuthError(message) ? (
     <GcloudLoginButton mode={mode} onRetry={onRetry} />
   ) : (
@@ -446,9 +460,15 @@ function GcpError({ message, mode, onRetry }: Readonly<{
           with no break opportunity in it, and `whitespace-pre-wrap` alone let
           that one token run straight out of the panel and across the window. */}
       <p className="text-sm text-negative whitespace-pre-wrap break-words">
-        {missingCli
-          ? 'The Google Cloud CLI (gcloud) is not installed — CostGoblin needs it to list your projects and download the export.'
-          : message}
+        {missingCli && 'The Google Cloud CLI (gcloud) is not installed — CostGoblin needs it to list your projects and download the export.'}
+        {timedOut && (
+          <>
+            Listing your projects timed out. In an organisation with many projects that is expected —
+            enter the project ID instead. If gcloud is waiting to re-authenticate, run{' '}
+            <code>gcloud auth login</code> in a terminal, then Retry.
+          </>
+        )}
+        {!missingCli && !timedOut && message}
       </p>
       {/* Every branch gets a way to re-run the step. Gating the retry on the
           sign-in branch alone left the failures a sign-in CANNOT fix — a
@@ -512,7 +532,7 @@ function GcpBucketListDenied({ project, message, detailsOpen, onToggleDetails, o
         For a least-privilege reader this is expected and harmless:{' '}
         <code className="text-text-secondary">roles/storage.objectViewer</code> is granted on the bucket
         itself, while listing buckets is a project-level permission — so type the bucket name below and
-        press Browse. If instead the credential has no access to this project, browsing will fail too;
+        press Browse. If instead the credential has no access to the bucket, browsing will fail too;
         the details below name the principal that was denied.
       </p>
       <details
@@ -543,30 +563,40 @@ function GcpBucketListDenied({ project, message, detailsOpen, onToggleDetails, o
   );
 }
 
-/** Typed project ID. Two accounts need it: the documented least-privilege
- *  one, which holds only Token Creator on the read-only reader and so is never
- *  shown its project by `gcloud projects list`; and one in an organisation
- *  with thousands of projects, where the listing is slow and the list
- *  unscannable.
+/** A typed value with an action button — the bucket steps' "enter it
+ *  directly" escape hatch and the GCP project-ID entry.
  *
- *  `prominent` while there is no list to pick from (still loading, empty, or
- *  failed): then it is the way forward, so it gets the primary button. Beside
- *  a populated list, or on the intro, it is a quiet secondary option, the same
- *  shape as the bucket step's manual entry. */
-function GcpProjectIdEntry({ id, label, prominent, onSubmit }: Readonly<{
+ *  The value is trimmed when validated and submitted, never as it is typed: a
+ *  per-keystroke trim deletes each space while it is still trailing, so a
+ *  display name typed as `billing export` silently became the valid-looking
+ *  `billingexport`. The rule is shown after a submit attempt or on blur, not
+ *  while a valid value is still being typed through invalid prefixes.
+ *
+ *  `prominent` when it is the way forward (nothing listed yet): then it gets
+ *  the primary button and no divider. */
+function ManualEntry({ id, label, placeholder, actionLabel, isValid, rules, prominent = false, onSubmit }: Readonly<{
   id: string;
   label: string;
-  prominent: boolean;
-  onSubmit: (projectId: string) => void;
+  placeholder: string;
+  actionLabel: string;
+  isValid: (value: string) => boolean;
+  /** Shown, once the user has tried, when `isValid` refuses a non-empty value. */
+  rules?: string | undefined;
+  prominent?: boolean | undefined;
+  onSubmit: (value: string) => void;
 }>) {
   const [value, setValue] = useState('');
-  const valid = isValidGcpProjectId(value);
-  // An empty field is unfinished, not wrong — no red before the first keystroke.
-  const invalid = value.length > 0 && !valid;
-  const submit = (): void => { if (valid) onSubmit(value); };
+  const [attempted, setAttempted] = useState(false);
+  const trimmed = value.trim();
+  const valid = isValid(trimmed);
+  const invalid = attempted && trimmed.length > 0 && !valid;
+  const submit = (): void => {
+    if (valid) onSubmit(trimmed);
+    else setAttempted(true);
+  };
 
   return (
-    <div className={prominent ? 'flex flex-col gap-1.5' : 'flex flex-col gap-1.5 border-t border-border pt-4'}>
+    <div className={`flex flex-col gap-1.5${prominent ? '' : ' border-t border-border pt-4'}`}>
       <label htmlFor={id} className={prominent ? 'text-sm text-text-secondary' : 'text-xs text-text-muted'}>
         {label}
       </label>
@@ -574,33 +604,49 @@ function GcpProjectIdEntry({ id, label, prominent, onSubmit }: Readonly<{
         <input
           id={id}
           value={value}
-          // Trimmed as typed, like the bucket entry: a project ID copied from
-          // the console routinely arrives with a trailing space or newline.
-          onChange={(e) => { setValue(e.target.value.trim()); }}
-          onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
-          placeholder="my-billing-project"
+          onChange={(e) => { setValue(e.target.value); }}
+          onBlur={() => { setAttempted(true); }}
+          // `isComposing`: the Enter that commits an IME composition is not a submit.
+          onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) submit(); }}
+          placeholder={placeholder}
           spellCheck={false}
           autoComplete="off"
           aria-invalid={invalid}
           aria-describedby={invalid ? `${id}-error` : undefined}
           className="h-9 flex-1 rounded-md border border-border bg-bg-primary px-3 font-mono text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent aria-invalid:border-negative"
         />
-        <Button
-          variant={prominent ? 'default' : 'outline'}
-          disabled={!valid}
-          onClick={submit}
-          className={prominent ? 'bg-accent hover:bg-accent-hover text-white' : undefined}
-        >
-          Continue
+        <Button variant={prominent ? 'default' : 'outline'} disabled={!valid} onClick={submit}>
+          {actionLabel}
         </Button>
       </div>
-      {invalid && (
-        <p id={`${id}-error`} className="text-xs text-negative">
-          A project ID is 6–30 lowercase letters, digits or hyphens, starts with a letter and
-          doesn&apos;t end with a hyphen — the ID, not the project&apos;s display name.
-        </p>
+      {invalid && rules !== undefined && (
+        <p id={`${id}-error`} className="text-xs text-negative">{rules}</p>
       )}
     </div>
+  );
+}
+
+/** Typed project ID. Two accounts need it: the documented least-privilege
+ *  one, which holds only Token Creator on the read-only reader and so is never
+ *  shown its project by `gcloud projects list`; and one in an organisation
+ *  with thousands of projects, where that listing is slow or times out. */
+function GcpProjectIdEntry({ id, label, prominent, onSubmit }: Readonly<{
+  id: string;
+  label: string;
+  prominent?: boolean | undefined;
+  onSubmit: (projectId: string) => void;
+}>) {
+  return (
+    <ManualEntry
+      id={id}
+      label={label}
+      placeholder="my-billing-project"
+      actionLabel="Continue"
+      isValid={isValidGcpProjectId}
+      rules={`${GCP_PROJECT_ID_RULES} — the ID, not the project's display name.`}
+      prominent={prominent}
+      onSubmit={onSubmit}
+    />
   );
 }
 
@@ -608,9 +654,12 @@ function GcpProjectIdEntry({ id, label, prominent, onSubmit }: Readonly<{
  *
  *  Has no AWS counterpart: S3's ListBuckets is account-wide and takes no
  *  arguments, while `storage.getBuckets()` is project-scoped. */
-function GcpProjectStep({ state, onSelect, onManual, onBack, onRetry }: Readonly<{
+function GcpProjectStep({ state, onSelect, onTyped, onManual, onBack, onRetry }: Readonly<{
   state: Extract<WizardStep, { step: 'gcp-project' }>;
+  /** A project picked from the listing. */
   onSelect: (projectId: string) => void;
+  /** A project ID typed into the entry. */
+  onTyped: (projectId: string) => void;
   onManual: () => void;
   onBack: () => void;
   onRetry: () => void;
@@ -634,6 +683,19 @@ function GcpProjectStep({ state, onSelect, onManual, onBack, onRetry }: Readonly
 
       <GcpError message={state.error} mode="cli" onRetry={onRetry} />
 
+      {/* Above the list, and rendered WHILE the listing runs: across thousands
+          of projects it is slow, typing the ID abandons it (the step token
+          drops its late result), and a list landing above the field would
+          shift Continue out from under a pending click. Not prominent after a
+          failed listing — the sync downloads with that same gcloud CLI, so the
+          panel's own fix stays the primary action. */}
+      <GcpProjectIdEntry
+        id="gcp-project-manual"
+        label="Project not listed? Enter its ID"
+        prominent={state.projects.length === 0 && state.error === ''}
+        onSubmit={onTyped}
+      />
+
       {state.loading && (
         <div className="flex items-center justify-center py-8">
           <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-border border-t-accent" />
@@ -644,10 +706,11 @@ function GcpProjectStep({ state, onSelect, onManual, onBack, onRetry }: Readonly
         <div className="rounded-lg border border-border bg-bg-tertiary/30 px-4 py-4">
           <p className="text-sm text-text-secondary">No Google Cloud projects found</p>
           <p className="text-xs text-text-muted mt-1">
-            Expected for a least-privilege account: one that only impersonates the read-only reader
-            can&apos;t list the project, but can still read the bucket in it — type the project ID below.
-            Granting it <code className="text-text-secondary">roles/browser</code> on the project would
-            list it here instead.
+            Expected for a least-privilege account — one whose only grant is Token Creator on the
+            read-only reader can&apos;t list the project — so type the project ID above. Otherwise,
+            check which account gcloud has active (<code className="text-text-secondary">gcloud auth list</code>).
+            Granting your account <code className="text-text-secondary">roles/browser</code> on the
+            project would list it here instead.
           </p>
         </div>
       )}
@@ -686,18 +749,6 @@ function GcpProjectStep({ state, onSelect, onManual, onBack, onRetry }: Readonly
         </>
       )}
 
-      {/* Offered WHILE the listing runs — across thousands of projects it is
-          slow, and typing the ID abandons it (the step token drops its late
-          result). And after a FAILED listing too: projects are listed with the
-          gcloud CLI and buckets with ADC, so a CLI that is missing or signed
-          out says nothing about whether the bucket is reachable. */}
-      <GcpProjectIdEntry
-        id="gcp-project-manual"
-        label="Project not listed? Enter its ID"
-        prominent={state.projects.length === 0}
-        onSubmit={onSelect}
-      />
-
       <div className="flex items-center justify-between pt-2">
         <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
         <button
@@ -721,7 +772,6 @@ function GcpBucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
   onRetry: () => void;
 }>) {
   const [filter, setFilter] = useState('');
-  const [manual, setManual] = useState('');
   // Survives a re-list along with the rest of this component's state: Retry and
   // the hourly→daily Back both keep `step` at 'gcp-bucket', so React reuses the
   // element. Lifted out of the panel for exactly that reason — the panel itself
@@ -745,14 +795,14 @@ function GcpBucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
         <h2 className="text-xl font-semibold text-text-primary">{sourceLabel.title}</h2>
         <p className="text-sm text-text-secondary mt-1">{sourceLabel.description}</p>
         <p className="text-xs text-text-muted mt-0.5">
-          Select the Cloud Storage bucket in <code className="text-text-secondary">{state.project}</code>
+          Select the Cloud Storage bucket in <code className="text-text-secondary">{state.project.id}</code>
         </p>
       </div>
 
       {bucketListDenied
         ? (
           <GcpBucketListDenied
-            project={state.project}
+            project={state.project.id}
             message={state.error}
             detailsOpen={detailsOpen}
             onToggleDetails={setDetailsOpen}
@@ -815,29 +865,14 @@ function GcpBucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
           label stays neutral: the alternative wording diagnosed a permissions
           problem, and it rendered for a dropped connection and for a project
           that genuinely has no buckets just as readily as for a real denial. */}
-      <div className="flex flex-col gap-1.5 border-t border-border pt-4">
-        <label htmlFor="gcs-bucket-manual" className="text-xs text-text-muted">
-          Or enter a bucket name directly
-        </label>
-        <div className="flex gap-2">
-          <input
-            id="gcs-bucket-manual"
-            value={manual}
-            onChange={(e) => { setManual(e.target.value.trim()); }}
-            onKeyDown={(e) => { if (e.key === 'Enter' && manual.length > 0) onSelect(manual); }}
-            placeholder="my-focus-export"
-            spellCheck={false}
-            className="h-9 flex-1 rounded-md border border-border bg-bg-primary px-3 font-mono text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent"
-          />
-          <Button
-            variant="outline"
-            disabled={manual.length === 0}
-            onClick={() => { onSelect(manual); }}
-          >
-            Browse
-          </Button>
-        </div>
-      </div>
+      <ManualEntry
+        id="gcs-bucket-manual"
+        label="Or enter a bucket name directly"
+        placeholder="my-focus-export"
+        actionLabel="Browse"
+        isValid={(name) => name.length > 0}
+        onSubmit={onSelect}
+      />
 
       <div className="flex items-center justify-between pt-2">
         <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
@@ -1438,7 +1473,7 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onB
   // through. Hardcoding "AWS Profile" here was fine while the wizard only
   // built AWS providers; a GCP run has no profile at all.
   const credential = state.cloud === 'gcp'
-    ? { label: 'Google Cloud project', value: state.project }
+    ? { label: 'Google Cloud project', value: state.project.id }
     : { label: 'AWS Profile', value: state.profile };
 
   const retentionOptions = isHourlyOnly
@@ -1629,11 +1664,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     // named, e.g. created via Settings → New workspace) start at the hub.
     return workspaceNaming !== undefined ? { step: 'welcome' } : { step: 'start' };
   });
-  const [collectedPaths, setCollectedPaths] = useState({ daily: '', hourly: '', costOpt: '' });
-  // Whether the GCP project was typed on the intro, so ← Back from the daily
-  // bucket step returns there instead of starting the (possibly very slow)
-  // `gcloud projects list` the user just chose to skip.
-  const [gcpProjectFromIntro, setGcpProjectFromIntro] = useState(false);
+  const [collectedPaths, setCollectedPaths] = useState(EMPTY_PATHS);
   // Monotonic token for every step loader, AWS and GCP alike. Each resolver
   // rebuilds a whole step object from captured args, so without this a slow
   // response (a cold ADC token refresh, gcloud sitting on a re-auth prompt
@@ -1678,28 +1709,37 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
    *  a second press must not clobber a config the user has already edited —
    *  the handler only writes files that do not exist. */
   function handleGcpScaffold(): void {
+    const token = ++stepRequestRef.current;
     api.scaffoldConfig('gcp').then(() => {
+      if (stepRequestRef.current !== token) return;
       setWizard({ step: 'gcp', scaffolded: true, error: '' });
     }).catch((err: unknown) => {
+      if (stepRequestRef.current !== token) return;
       setWizard({ step: 'gcp', scaffolded: false, error: err instanceof Error ? err.message : String(err) });
     });
   }
 
-  /** Enter the GCP browse flow. Retargets the default provider name to the
-   *  GCP arm, but only while it is still the untouched AWS default — a name
-   *  the user typed, or one fixed by source/add mode, is never rewritten. */
+  /** Back to the GCP intro from inside the chain. Bumps the step token like
+   *  `handleBack` does: a `gcloud projects list` still running against
+   *  thousands of projects would otherwise land later and drag the user back
+   *  to the project step, discarding whatever they had started on the intro. */
+  function goToGcpIntro(): void {
+    ++stepRequestRef.current;
+    setWizard({ step: 'gcp', scaffolded: false, error: '' });
+  }
+
+  /** Enter the GCP browse flow through the project listing. */
   function goToGcpProjectStep(): void {
     // See `goToProfileStep`: the two chains share `collectedPaths`.
-    setCollectedPaths({ daily: '', hourly: '', costOpt: '' });
-    setGcpProjectFromIntro(false);
+    setCollectedPaths(EMPTY_PATHS);
     reloadGcpProjects();
   }
 
-  /** The intro's typed-ID route: straight to the bucket step, no listing. */
+  /** Enter the GCP browse flow with a typed project ID — straight to the
+   *  bucket step, never running `gcloud projects list`. */
   function startGcpFromTypedProject(projectId: string): void {
-    setCollectedPaths({ daily: '', hourly: '', costOpt: '' });
-    setGcpProjectFromIntro(true);
-    startGcpBucketStep(projectId, 'daily');
+    setCollectedPaths(EMPTY_PATHS);
+    startGcpBucketStep({ id: projectId, typed: true }, 'daily');
   }
 
   /** The listing half of `goToGcpProjectStep`, without the `collectedPaths`
@@ -1717,10 +1757,10 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     });
   }
 
-  function startGcpBucketStep(project: string, source: GcpSource): void {
+  function startGcpBucketStep(project: GcpProjectChoice, source: GcpSource): void {
     const token = ++stepRequestRef.current;
     setWizard({ step: 'gcp-bucket', project, source, buckets: [], loading: true, selected: '', error: '' });
-    api.listGcsBuckets(project).then(result => {
+    api.listGcsBuckets(project.id).then(result => {
       if (stepRequestRef.current !== token) return;
       setWizard({ step: 'gcp-bucket', project, source, buckets: result.buckets, loading: false, selected: '', error: result.error ?? '' });
     }).catch((err: unknown) => {
@@ -1729,11 +1769,11 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     });
   }
 
-  function gcpBrowseTo(project: string, source: GcpSource, bucket: string, prefix: string): void {
+  function gcpBrowseTo(project: GcpProjectChoice, source: GcpSource, bucket: string, prefix: string): void {
     const path = prefix.split('/').filter(s => s.length > 0);
     const token = ++stepRequestRef.current;
     setWizard({ step: 'gcp-browse', project, source, bucket, prefix, prefixes: [], loading: true, folder: { kind: 'unknown' }, hasParquet: false, truncated: false, error: '', path });
-    api.browseGcs({ projectId: project, bucket, prefix }).then(result => {
+    api.browseGcs({ projectId: project.id, bucket, prefix }).then(result => {
       if (stepRequestRef.current !== token) return;
       setWizard({ step: 'gcp-browse', project, source, bucket, prefix, prefixes: result.prefixes, loading: false, folder: result.folder, hasParquet: result.hasParquet, truncated: result.truncated, error: result.error ?? '', path });
     }).catch((err: unknown) => {
@@ -1770,7 +1810,10 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     goToGcpConfirm(wizard.project);
   }
 
-  function goToGcpConfirm(project: string, paths?: { daily: string; hourly: string; costOpt: string }, retention?: number): void {
+  function goToGcpConfirm(project: GcpProjectChoice, paths?: { daily: string; hourly: string; costOpt: string }, retention?: number): void {
+    // Skip is offered while the hourly bucket step is still loading; without
+    // this its late listing would pull the user back from Confirm.
+    ++stepRequestRef.current;
     const p = paths ?? collectedPaths;
     setWizard({
       step: 'confirm',
@@ -1799,7 +1842,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     // what the other collected. Without this, an s3:// hourly path picked on
     // the AWS leg survived a ← Back to the hub and was written into a gcp
     // provider, whose loader then refuses the config on the next launch.
-    setCollectedPaths({ daily: '', hourly: '', costOpt: '' });
+    setCollectedPaths(EMPTY_PATHS);
     // Token-guarded like the other step loaders: a slow profile listing landing
     // after the user navigated on would otherwise teleport them back here.
     const token = ++stepRequestRef.current;
@@ -1823,7 +1866,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     // browse/beacon/project step whose loader is mid-flight, and its late
     // response would otherwise teleport the user back into that step.
     stepRequestRef.current += 1;
-    setCollectedPaths({ daily: '', hourly: '', costOpt: '' });
+    setCollectedPaths(EMPTY_PATHS);
     // The ✕ abandons the whole configuration, so the typed name goes with the
     // collected paths. Left set, a name entered for an abandoned GCP provider
     // prefilled the next AWS run — the same wrong-cloud-name failure the
@@ -1962,6 +2005,8 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   }
 
   function goToConfirm(profile: string, paths?: { daily: string; hourly: string; costOpt: string }, retention?: number) {
+    // See `goToGcpConfirm`: Skip can leave a loader in flight.
+    ++stepRequestRef.current;
     const p = paths ?? collectedPaths;
     setWizard({
       step: 'confirm',
@@ -1997,7 +2042,9 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
       setWizard({ step: 'gcp', scaffolded: false, error: '' });
     } else if (wizard.step === 'gcp-bucket') {
       if (wizard.source === 'daily') {
-        if (gcpProjectFromIntro) {
+        // A typed ID returns to the intro, which holds the typed entry; only a
+        // project picked from the listing goes back to the listing.
+        if (wizard.project.typed) {
           setWizard({ step: 'gcp', scaffolded: false, error: '' });
         } else {
           goToGcpProjectStep();
@@ -2062,14 +2109,15 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
               onProjectId={startGcpFromTypedProject}
               onScaffold={handleGcpScaffold}
               onDone={finish}
-              onBack={() => { setWizard({ step: 'start' }); }}
+              onBack={() => { ++stepRequestRef.current; setWizard({ step: 'start' }); }}
             />
           )}
           {wizard.step === 'gcp-project' && (
             <GcpProjectStep
               state={wizard}
-              onSelect={(projectId) => { startGcpBucketStep(projectId, 'daily'); }}
-              onManual={() => { setWizard({ step: 'gcp', scaffolded: false, error: '' }); }}
+              onSelect={(projectId) => { startGcpBucketStep({ id: projectId, typed: false }, 'daily'); }}
+              onTyped={(projectId) => { startGcpBucketStep({ id: projectId, typed: true }, 'daily'); }}
+              onManual={goToGcpIntro}
               onBack={handleBack}
               onRetry={reloadGcpProjects}
             />

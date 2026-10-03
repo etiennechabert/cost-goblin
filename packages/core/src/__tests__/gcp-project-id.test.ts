@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { GCP_PROJECT_ID_PATTERN, isValidGcpProjectId } from '../config/gcp-project-id.js';
+import { isValidGcpProjectId } from '../config/gcp-project-id.js';
 
 describe('isValidGcpProjectId', () => {
   it('accepts typical project IDs', () => {
@@ -29,13 +29,14 @@ describe('isValidGcpProjectId', () => {
   });
 
   it('rejects uppercase, underscores, dots, spaces and other characters', () => {
-    for (const id of ['Acme-prod', 'acme_prod', 'acme.prod', 'acme prod', 'acme/prod', 'acme-prod\n', ' acme-prod']) {
+    for (const id of ['Acme-prod', 'acme_prod', 'acme.prod', 'acme prod', 'acme/prod', 'acme-prod;rm']) {
       expect(isValidGcpProjectId(id), JSON.stringify(id)).toBe(false);
     }
   });
 
-  it('is anchored at both ends, so a valid ID cannot smuggle a suffix', () => {
-    expect(GCP_PROJECT_ID_PATTERN.test('acme-prod')).toBe(true);
-    expect(isValidGcpProjectId('acme-prod;rm')).toBe(false);
+  it('is anchored at both ends, so surrounding whitespace is not accepted', () => {
+    // JS `$` without the m flag does not match before a trailing newline.
+    expect(isValidGcpProjectId('acme-prod\n')).toBe(false);
+    expect(isValidGcpProjectId(' acme-prod')).toBe(false);
   });
 });

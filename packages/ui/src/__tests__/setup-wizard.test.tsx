@@ -1,5 +1,5 @@
 import type { CheckConfigBeaconParams, CheckConfigBeaconResult } from '@costgoblin/core/browser';
-import { render, screen, waitFor, cleanup } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
@@ -978,11 +978,37 @@ async function enterGcpProjectStep(user: ReturnType<typeof userEvent.setup>): Pr
   await waitFor(() => { expect(screen.queryByText('Loading projects...')).toBeNull(); });
 }
 
+/** Hub → GCP intro → typed project ID → daily bucket step, never listing projects. */
+async function enterGcpBucketFromIntro(user: ReturnType<typeof userEvent.setup>, projectId: string): Promise<void> {
+  await user.click(screen.getByLabelText('Set up from Google Cloud'));
+  await user.type(screen.getByLabelText('Already know the project ID? Skip the project list'), `${projectId}{Enter}`);
+  await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+}
+
+/** A `listGcpProjects` that stays pending until the test settles it — the
+ *  large-organisation case, where the listing takes many seconds. */
+function deferProjectListing(api: MockCostApi): { settle: () => Promise<void> } {
+  let resolve: ((r: { projects: readonly { projectId: string; name: string }[] }) => void) | undefined;
+  api.listGcpProjects = () => new Promise((r) => { resolve = r; });
+  return {
+    // Inside act, so a late setWizard that escaped the step token would be
+    // rendered before the test asserts — not left to scheduler timing.
+    settle: async () => {
+      await act(async () => {
+        resolve?.({ projects: [{ projectId: 'acme-prod', name: 'Acme Production' }] });
+        await Promise.resolve();
+      });
+    },
+  };
+}
+
+const PROJECT_ID_RULES = /6–30 lowercase letters, digits or hyphens/;
+
 describe('SetupWizard — GCP project typed by ID', () => {
   // The documented least-privilege user holds only Token Creator on the
   // read-only reader, so `gcloud projects list` returns nothing — typing the
   // ID is the only way past this step without an admin granting roles/browser.
-  it('offers the ID entry prominently when no project is listed', async () => {
+  it('offers the ID entry when no project is listed, and submits it with Continue', async () => {
     const { api, user } = renderWizard();
     api.gcpProjectsResult = { projects: [] };
     await enterGcpProjectStep(user);
@@ -996,27 +1022,17 @@ describe('SetupWizard — GCP project typed by ID', () => {
     expect(api.gcsBucketsListedFor).toEqual(['billing-504501']);
   });
 
-  it('keeps the ID entry as a secondary option beside a populated list', async () => {
+  it('keeps the ID entry beside a populated list', async () => {
     const { api, user } = renderWizard();
     await enterGcpProjectStep(user);
 
     expect(screen.getByText('Acme Production')).toBeDefined();
     // The empty-list explanation belongs to the empty list only.
     expect(screen.queryByText(/can.t list the project/)).toBeNull();
-    await user.type(screen.getByLabelText('Project not listed? Enter its ID'), 'unlisted-project');
-    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await user.type(screen.getByLabelText('Project not listed? Enter its ID'), 'unlisted-project{Enter}');
 
     await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
     expect(api.gcsBucketsListedFor).toEqual(['unlisted-project']);
-  });
-
-  it('submits on Enter', async () => {
-    const { api, user } = renderWizard();
-    api.gcpProjectsResult = { projects: [] };
-    await enterGcpProjectStep(user);
-
-    await user.type(screen.getByLabelText('Project not listed? Enter its ID'), 'acme-billing{Enter}');
-    await waitFor(() => { expect(api.gcsBucketsListedFor).toEqual(['acme-billing']); });
   });
 
   it('trims surrounding whitespace from a pasted ID', async () => {
@@ -1030,15 +1046,15 @@ describe('SetupWizard — GCP project typed by ID', () => {
     await waitFor(() => { expect(api.gcsBucketsListedFor).toEqual(['acme-billing']); });
   });
 
+  // The rule table itself is pinned in core's gcp-project-id.test.ts; these
+  // are the mistakes only the UI can make — chiefly typing the display name.
   it.each([
-    ['too short', 'acme'],
-    ['too long', `a${'b'.repeat(30)}`],
-    ['a leading digit', '1acme-prod'],
+    ['a display name', 'Acme Production'],
+    // Typed key by key: a per-keystroke trim used to delete each space while
+    // it was still trailing, collapsing this into the valid-looking `billingexport`.
+    ['a lowercase display name with a space', 'billing export'],
     ['a trailing hyphen', 'acme-prod-'],
-    ['uppercase', 'Acme-Prod'],
-    ['an underscore', 'acme_prod'],
-    ['a project name rather than its ID', 'Acme Production'],
-  ])('refuses an ID with %s', async (_why, id) => {
+  ])('refuses %s', async (_why, id) => {
     const { api, user } = renderWizard();
     api.gcpProjectsResult = { projects: [] };
     await enterGcpProjectStep(user);
@@ -1046,29 +1062,44 @@ describe('SetupWizard — GCP project typed by ID', () => {
     const input = screen.getByLabelText('Project not listed? Enter its ID');
     await user.type(input, `${id}{Enter}`);
 
-    const continueButton = screen.getByRole('button', { name: 'Continue' });
-    expect(continueButton.hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Continue' }).hasAttribute('disabled')).toBe(true);
     expect(input.getAttribute('aria-invalid')).toBe('true');
-    expect(screen.getByText(/6–30 lowercase letters, digits or hyphens/)).toBeDefined();
-    // Neither the button nor Enter may reach the bucket step.
+    expect(screen.getByText(PROJECT_ID_RULES)).toBeDefined();
     expect(api.gcsBucketsListedFor).toEqual([]);
     expect(screen.getByText('Google Cloud project')).toBeDefined();
   });
 
-  it('does not flag an empty field as invalid', async () => {
+  it('does not flag an ID while it is still being typed', async () => {
+    // `b`, `bi` … `billing-` are all invalid on the way to a valid ID; red on
+    // every one of them is noise, so the rule appears on Enter or on blur.
     const { api, user } = renderWizard();
     api.gcpProjectsResult = { projects: [] };
     await enterGcpProjectStep(user);
 
     const input = screen.getByLabelText('Project not listed? Enter its ID');
     expect(input.getAttribute('aria-invalid')).toBe('false');
-    expect(screen.queryByText(/6–30 lowercase letters, digits or hyphens/)).toBeNull();
+    await user.type(input, 'billing-');
+    expect(input.getAttribute('aria-invalid')).toBe('false');
+    expect(screen.queryByText(PROJECT_ID_RULES)).toBeNull();
     expect(screen.getByRole('button', { name: 'Continue' }).hasAttribute('disabled')).toBe(true);
+
+    await user.tab();
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    expect(screen.getByText(PROJECT_ID_RULES)).toBeDefined();
+  });
+
+  it('does not submit on the Enter that commits an IME composition', async () => {
+    const { api, user } = renderWizard();
+    api.gcpProjectsResult = { projects: [] };
+    await enterGcpProjectStep(user);
+
+    const input = screen.getByLabelText('Project not listed? Enter its ID');
+    await user.type(input, 'billing');
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+    expect(api.gcsBucketsListedFor).toEqual([]);
   });
 
   it('still offers the ID entry when listing projects failed', async () => {
-    // Projects are listed with the gcloud CLI, buckets with ADC — a CLI
-    // failure says nothing about whether the bucket is reachable.
     const { api, user } = renderWizard();
     api.gcpProjectsResult = { projects: [], error: 'GCLOUD_CLI_NOT_FOUND' };
     await enterGcpProjectStep(user);
@@ -1078,15 +1109,32 @@ describe('SetupWizard — GCP project typed by ID', () => {
     await waitFor(() => { expect(api.gcsBucketsListedFor).toEqual(['acme-billing']); });
   });
 
-  it('walks back from a typed project to the project step', async () => {
+  it('explains a listing timeout without offering a sign-in', async () => {
+    // Thousands of projects outlast the 20 s ceiling. The old message carried
+    // `gcloud auth login`, which classified a latency problem as a credential
+    // one and offered a sign-in that could not help.
+    const { api, user } = renderWizard();
+    api.gcpProjectsResult = { projects: [], error: 'GCLOUD_PROJECTS_TIMEOUT' };
+    await enterGcpProjectStep(user);
+
+    await waitFor(() => { expect(screen.getByText(/Listing your projects timed out/)).toBeDefined(); });
+    expect(screen.queryByText('GCLOUD_PROJECTS_TIMEOUT')).toBeNull();
+    expect(screen.queryByText('Sign in the gcloud CLI')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeDefined();
+    expect(screen.getByLabelText('Project not listed? Enter its ID')).toBeDefined();
+  });
+
+  it('walks back from a typed project to the intro, not into a fresh listing', async () => {
     const { api, user } = renderWizard();
     api.gcpProjectsResult = { projects: [] };
     await enterGcpProjectStep(user);
+    const listSpy = vi.spyOn(api, 'listGcpProjects');
 
     await user.type(screen.getByLabelText('Project not listed? Enter its ID'), 'acme-billing{Enter}');
     await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
     await user.click(screen.getByText('← Back'));
-    await waitFor(() => { expect(screen.getByLabelText('Project not listed? Enter its ID')).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByText('Find my export')).toBeDefined(); });
+    expect(listSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -1094,15 +1142,14 @@ describe('SetupWizard — GCP project ID before the listing', () => {
   // An organisation with thousands of projects waits a long time on
   // `gcloud projects list` for a list nobody can scan — the ID has to be
   // enterable without it.
-  it('takes the project ID on the intro step and never lists projects', async () => {
+  it('takes the project ID on the intro step, never lists projects, and walks back to the intro', async () => {
     const { api, user } = renderWizard();
     const listSpy = vi.spyOn(api, 'listGcpProjects');
-    await user.click(screen.getByLabelText('Set up from Google Cloud'));
-
-    await user.type(screen.getByLabelText('Already know the project ID? Skip the project list'), 'billing-504501{Enter}');
-
-    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    await enterGcpBucketFromIntro(user, 'billing-504501');
     expect(api.gcsBucketsListedFor).toEqual(['billing-504501']);
+
+    await user.click(screen.getByText('← Back'));
+    await waitFor(() => { expect(screen.getByText('Find my export')).toBeDefined(); });
     expect(listSpy).not.toHaveBeenCalled();
   });
 
@@ -1115,24 +1162,10 @@ describe('SetupWizard — GCP project ID before the listing', () => {
     expect(api.gcsBucketsListedFor).toEqual([]);
   });
 
-  it('walks back from an intro-typed project to the intro, not the listing', async () => {
-    const { api, user } = renderWizard();
-    const listSpy = vi.spyOn(api, 'listGcpProjects');
-    await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.type(screen.getByLabelText('Already know the project ID? Skip the project list'), 'billing-504501{Enter}');
-    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
-
-    await user.click(screen.getByText('← Back'));
-    await waitFor(() => { expect(screen.getByText('Find my export')).toBeDefined(); });
-    expect(listSpy).not.toHaveBeenCalled();
-  });
-
   it('still walks back to the listing when the project was picked from it', async () => {
-    // The intro route must not leak into a later run through the list.
+    // The typed route must not leak into a later run through the list.
     const { api, user } = renderWizard();
-    await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.type(screen.getByLabelText('Already know the project ID? Skip the project list'), 'billing-504501{Enter}');
-    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    await enterGcpBucketFromIntro(user, 'billing-504501');
     await user.click(screen.getByText('← Back'));
     await waitFor(() => { expect(screen.getByText('Find my export')).toBeDefined(); });
 
@@ -1147,8 +1180,7 @@ describe('SetupWizard — GCP project ID before the listing', () => {
 
   it('accepts a typed ID while the project list is still loading', async () => {
     const { api, user } = renderWizard();
-    let resolveProjects: ((r: { projects: readonly { projectId: string; name: string }[] }) => void) | undefined;
-    api.listGcpProjects = () => new Promise((resolve) => { resolveProjects = resolve; });
+    const listing = deferProjectListing(api);
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
     await user.click(screen.getByText('Find my export'));
     expect(screen.getByText('Loading projects...')).toBeDefined();
@@ -1157,10 +1189,66 @@ describe('SetupWizard — GCP project ID before the listing', () => {
     await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
 
     // The listing finishing late must not drag the wizard back to the project step.
-    resolveProjects?.({ projects: [{ projectId: 'acme-prod', name: 'Acme Production' }] });
-    await new Promise((r) => { setTimeout(r, 0); });
+    await listing.settle();
     expect(screen.getByText('acme-focus-export')).toBeDefined();
     expect(screen.queryByText('Acme Production')).toBeNull();
     expect(api.gcsBucketsListedFor).toEqual(['billing-504501']);
+  });
+
+  it('is not pulled back to the project step by a listing it walked away from', async () => {
+    // "Write the config by hand instead" mid-listing, then start typing on the
+    // intro: a late listing used to land and discard what was typed.
+    const { api, user } = renderWizard();
+    const listing = deferProjectListing(api);
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Write the config by hand instead'));
+    await waitFor(() => { expect(screen.getByText('Find my export')).toBeDefined(); });
+    await user.type(screen.getByLabelText('Already know the project ID? Skip the project list'), 'billing');
+
+    await listing.settle();
+    expect(screen.getByText('Find my export')).toBeDefined();
+    expect(screen.queryByText('Acme Production')).toBeNull();
+    expect(screen.getByDisplayValue('billing')).toBeDefined();
+  });
+
+  it('is not pulled off the hub by a listing it backed out of', async () => {
+    const { api, user } = renderWizard();
+    const listing = deferProjectListing(api);
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Write the config by hand instead'));
+    await waitFor(() => { expect(screen.getByText('Find my export')).toBeDefined(); });
+    await user.click(screen.getByText('← Back'));
+    await waitFor(() => { expect(screen.getByLabelText('Set up from AWS')).toBeDefined(); });
+
+    await listing.settle();
+    expect(screen.getByLabelText('Set up from AWS')).toBeDefined();
+  });
+
+  it('is not pulled back from Confirm by an hourly bucket listing it skipped', async () => {
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    await enterGcpBucketFromIntro(user, 'billing-504501');
+    await userClickText(user, 'acme-focus-export');
+    await waitFor(() => { expect(screen.getByLabelText('Open folder focus')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder focus'));
+    await waitFor(() => { expect(screen.getByLabelText('Open folder daily')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder daily'));
+    await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
+
+    // The hourly leg's bucket listing stays pending while the user skips it.
+    let resolveBuckets: ((r: { buckets: readonly { name: string }[] }) => void) | undefined;
+    api.listGcsBuckets = () => new Promise((r) => { resolveBuckets = r; });
+    await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('Skip')).toBeDefined(); });
+    await userClickText(user, 'Skip');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+
+    await act(async () => {
+      resolveBuckets?.({ buckets: [{ name: 'acme-focus-export' }] });
+      await Promise.resolve();
+    });
+    expect(screen.getByText('Confirm Setup')).toBeDefined();
   });
 });
