@@ -19,9 +19,9 @@ function isUsableLifecycle(entry: Readonly<Record<string, unknown>>): boolean {
  *
  *  Returns `null` — NOT an empty array — when the payload isn't a JSON array.
  *  gcloud writes update nags and auth prose to stdout in some configurations
- *  while still exiting 0, and collapsing that into `[]` told the user
- *  "the signed-in account can't see any active projects", which is a claim
- *  about their account rather than the truth (we couldn't read the answer).
+ *  while still exiting 0, and collapsing that into `[]` shows the wizard's
+ *  "No Google Cloud projects found" panel — a claim about their account
+ *  rather than the truth (we couldn't read the answer).
  *  An empty array still means genuinely zero projects. */
 export function parseGcloudProjects(stdout: string): GcpProject[] | null {
   const parsed = parseJsonArray(stdout);

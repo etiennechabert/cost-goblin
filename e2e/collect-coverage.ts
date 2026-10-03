@@ -10,6 +10,7 @@
 import { readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { join, resolve, relative } from 'node:path';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import v8ToIstanbul from 'v8-to-istanbul';
 import {
   auditCoverageReport,
@@ -21,6 +22,7 @@ import {
   isRendererBundleUrl,
   mergeIstanbulFile,
   parseIstanbulFileCoverage,
+  restrictToStatementLines,
 } from '../packages/core/src/e2e-coverage/index.js';
 
 const ROOT = resolve(import.meta.dirname, '..');
@@ -77,7 +79,9 @@ async function main(): Promise<void> {
   const withoutSourceMap: string[] = [];
 
   for (const entry of relevant) {
-    const urlPath = entry.url.replace(/^file:\/\//, '');
+    // fileURLToPath, not a prefix strip: the URL percent-encodes spaces and
+    // non-ASCII characters in the checkout path.
+    const urlPath = entry.url.startsWith('file:') ? fileURLToPath(entry.url) : entry.url;
     const sourceMapPath = `${urlPath}.map`;
 
     let sourceMap: string;
@@ -129,6 +133,8 @@ async function main(): Promise<void> {
     );
   }
 
+  // The audit reads the raw report, every source line included: its thresholds
+  // were measured on that shape, before the statement-line restriction below.
   const verdict = auditCoverageReport(merged);
   const outputPath = join(OUTPUT_DIR, 'lcov.info');
 
@@ -144,7 +150,15 @@ async function main(): Promise<void> {
     fail(describeCoverageFailure(verdict));
   }
 
-  writeFileSync(outputPath, generateLcov(merged));
+  const published = await restrictToStatementLines(merged, filePath => readFileSync(filePath, 'utf-8'));
+  if (published.unrestricted.length > 0) {
+    process.stderr.write(
+      `::warning::Kept every source line of ${String(published.unrestricted.length)} file(s) whose ` +
+        `statement lines could not be computed: ${published.unrestricted.join(', ')}\n`,
+    );
+  }
+
+  writeFileSync(outputPath, generateLcov(published.report));
   process.stdout.write(`E2E coverage written to ${outputPath}\n`);
   process.stdout.write(`  ${String(merged.size)} source files covered\n`);
 }

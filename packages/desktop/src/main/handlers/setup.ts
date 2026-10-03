@@ -243,7 +243,11 @@ export function registerSetupHandlers(app: AppContext): void {
 
       const timer = setTimeout(() => {
         proc.kill();
-        finish({ projects: [], error: 'Timed out listing projects. Check that `gcloud auth login` has been run.' });
+        // A sentinel, not prose: the old message carried `gcloud auth login`,
+        // which the wizard's credential check matched — so an organisation
+        // whose thousands of projects simply outlast this ceiling was offered
+        // a sign-in that could not help. The wizard words both causes.
+        finish({ projects: [], error: 'GCLOUD_PROJECTS_TIMEOUT' });
       }, GCLOUD_PROJECTS_TIMEOUT_MS);
 
       proc.stdout.on('data', (chunk: Buffer) => { stdout += outDecoder.write(chunk); });
@@ -259,9 +263,9 @@ export function registerSetupHandlers(app: AppContext): void {
         if (code === 0) {
           const projects = parseGcloudProjects(stdout);
           if (projects === null) {
-            // Exit 0 but unreadable stdout. Reporting [] here would render as
-            // "the signed-in account can't see any active projects" — a false
-            // statement about their account, with no remedy offered.
+            // Exit 0 but unreadable stdout. Reporting [] here would render the
+            // "No Google Cloud projects found" panel — a false statement about
+            // their account, with no remedy offered.
             finish({ projects: [], error: 'Could not read the project list from gcloud. Run `gcloud projects list` in a terminal to see what it printed.' });
             return;
           }

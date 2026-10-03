@@ -267,6 +267,34 @@ describe('buildTierSelect', () => {
   it('rejects an unknown tier', () => {
     expect(() => buildTierSelect('monthly', TABLE, LIVE_COLUMNS)).toThrow(/Unknown tier/);
   });
+
+  it('bounds the ingestion partition from below so BigQuery can prune', () => {
+    // `BillingPeriodStart` is not the partition column, so on its own it
+    // prunes nothing and every export scans the whole table — measured at
+    // 2.4x the bytes for a closed month on a ~50M-row export, and growing
+    // with the table. A month's rows cannot be ingested before it starts.
+    for (const tier of TIERS) {
+      const sql = buildTierSelect(tier, TABLE, LIVE_COLUMNS);
+      expect(sql).toContain('WHERE DATE(BillingPeriodStart) = @period');
+      expect(sql).toContain('AND (_PARTITIONTIME >= TIMESTAMP(@period) OR _PARTITIONTIME IS NULL)');
+    }
+  });
+
+  it('keeps rows still in the streaming buffer, which the watermark already counts', () => {
+    // Their `_PARTITIONTIME` is NULL, so a bare `>=` would drop them while the
+    // watermark advanced past them, publishing a closed month without them.
+    for (const tier of TIERS) {
+      expect(buildTierSelect(tier, TABLE, LIVE_COLUMNS)).toContain('OR _PARTITIONTIME IS NULL');
+    }
+  });
+
+  it('never adds an UPPER bound: backfills and late adjustments land after the month', () => {
+    for (const tier of TIERS) {
+      const sql = buildTierSelect(tier, TABLE, LIVE_COLUMNS);
+      expect(sql).not.toMatch(/_PARTITION(TIME|DATE)\s*(<|<=|BETWEEN)/);
+      expect(sql).not.toMatch(/>=?\s*_PARTITION(TIME|DATE)/);
+    }
+  });
 });
 
 describe('loadConfig', () => {
@@ -423,6 +451,26 @@ describe('scheduled-query.sql (standalone hourly-only exporter)', () => {
     // The MERGE that records progress — already tier-keyed; assert it stays so.
     expect(sql).toMatch(/ON st\.billing_period = s\.bp AND IFNULL\(st\.tier, 'hourly'\) = s\.tier/);
   });
+
+  it('bounds the export on the ingestion partition like the JS copy, with every FORMAT slot filled', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const { fileURLToPath } = await import('node:url');
+    const { dirname, join } = await import('node:path');
+    const here = dirname(fileURLToPath(import.meta.url));
+    const sql = await readFile(join(here, 'scheduled-query.sql'), 'utf-8');
+
+    expect(sql).toContain("AND (_PARTITIONTIME >= TIMESTAMP(DATE '%s') OR _PARTITIONTIME IS NULL)");
+    expect(sql).not.toMatch(/_PARTITION(TIME|DATE)\s*(<|<=|BETWEEN)/);
+
+    // BigQuery only reports a placeholder/argument mismatch in
+    // EXECUTE IMMEDIATE FORMAT(...) when the scheduled query runs.
+    const call = sql.match(/FORMAT\("""([\s\S]*?)""",([\s\S]*?)\);/);
+    expect(call, 'no EXECUTE IMMEDIATE FORMAT call').not.toBeNull();
+    const placeholders = (call[1].match(/%s/g) ?? []).length;
+    const args = (call[2].match(/FORMAT_DATE\(/g) ?? []).length;
+    expect(placeholders).toBe(3);
+    expect(args).toBe(placeholders);
+  });
 });
 
 describe('normalizeTimestamp', () => {
@@ -488,10 +536,10 @@ describe('DATE and TIMESTAMP parameter binding', () => {
       ['ALTER TABLE', []],
       ['EXPORT DATA', []],
       ['MERGE', []],
-      ['INFORMATION_SCHEMA.COLUMNS', LIVE_COLUMNS.map(c => ({
-        column_name: c.name,
-        data_type: c.dataType,
-      }))],
+      ['INFORMATION_SCHEMA.COLUMNS', [
+        ...LIVE_COLUMNS.map(c => ({ column_name: c.name, data_type: c.dataType, is_hidden: 'NO' })),
+        { column_name: '_PARTITIONTIME', data_type: 'TIMESTAMP', is_hidden: 'YES' },
+      ]],
       ['FROM `proj.ds.tbl`', [
         // The nine-digit shape the client ACTUALLY emits, not a hand-tidied
         // one — otherwise `timestampValue`'s normalization is never exercised
@@ -544,5 +592,79 @@ describe('DATE and TIMESTAMP parameter binding', () => {
     const merge = calls.find(c => c.sql.includes('MERGE'));
     expect(merge.params.tier).toBe('daily');
     expect(merge.params.period).toEqual({ value: '2026-03-01' });
+  });
+});
+
+describe('run — ingestion-time partitioning is required', () => {
+  const visible = LIVE_COLUMNS.map(({ name, dataType }) => ({ column_name: name, data_type: dataType, is_hidden: 'NO' }));
+  const partitionTime = { column_name: '_PARTITIONTIME', data_type: 'TIMESTAMP', is_hidden: 'YES' };
+
+  async function runWithSchema(schemaRows, logs = [], tiers = CONFIG.tiers) {
+    const bigquery = fakeBigQuery([
+      ['INFORMATION_SCHEMA.COLUMNS', schemaRows],
+      ['CREATE TABLE IF NOT EXISTS', []],
+      ['ALTER TABLE', []],
+      ['FROM `proj.ds.tbl`', [
+        { period_label: '2026-03', period_start: '2026-03-01', watermark: { value: '2026-03-15T00:00:00Z' } },
+      ]],
+      ['FROM `proj.state.export_state`', []],
+    ]);
+    // `logs` is the caller's array, so a run that throws still leaves behind
+    // what it logged before throwing.
+    const original = console.log;
+    console.log = (line) => { logs.push(JSON.parse(line)); };
+    try {
+      await createExporter({ ...CONFIG, tiers }, { bigquery, storage: {} }).run();
+    } finally {
+      console.log = original;
+    }
+    return {
+      logs,
+      sqls: logs.filter(l => l.message === 'would export').map(l => l.sql),
+      schemaQuery: bigquery.calls.find(c => c.sql.includes('INFORMATION_SCHEMA.COLUMNS'))?.sql,
+    };
+  }
+
+  it('reads the hidden columns too: the partition check needs `_PARTITIONTIME`', async () => {
+    // Filtering `is_hidden` in SQL would hide `_PARTITIONTIME` from the check,
+    // and every run against the real export would refuse.
+    const { schemaQuery } = await runWithSchema([...visible, partitionTime]);
+    expect(schemaQuery).toBeDefined();
+    expect(schemaQuery).toContain('is_hidden');
+    expect(schemaQuery).not.toMatch(/WHERE[\s\S]*is_hidden/);
+  });
+
+  it('exports every tier with the partition bound when the table qualifies', async () => {
+    const { sqls } = await runWithSchema([...visible, partitionTime]);
+    expect(sqls).toHaveLength(2);
+    for (const sql of sqls) expect(sql).toContain('_PARTITIONTIME >= TIMESTAMP(@period)');
+  });
+
+  it('keeps the hidden pseudo-columns out of the daily projection', async () => {
+    const { sqls } = await runWithSchema([
+      ...visible, partitionTime, { column_name: '_PARTITIONDATE', data_type: 'DATE', is_hidden: 'YES' },
+    ]);
+    const daily = sqls.find(s => s.includes('GROUP BY'));
+    expect(daily).toBeDefined();
+    expect(daily).not.toContain('`_PARTITIONTIME`');
+    expect(daily).not.toContain('`_PARTITIONDATE`');
+  });
+
+  it('fails hard, before deleting anything, when the table is not ingestion-time partitioned', async () => {
+    // An unbounded scan would still produce correct output — just at the
+    // cost of the whole table, every run. Refusing is the only way that
+    // regression gets noticed.
+    const logs = [];
+    await expect(runWithSchema(visible, logs)).rejects.toThrow(/not ingestion-time partitioned/);
+    // It got as far as finding work, and stopped before touching the bucket.
+    expect(logs.some(l => l.message === 'periods to export')).toBe(true);
+    expect(logs.some(l => l.message === 'would delete')).toBe(false);
+  });
+
+  it('refuses an hourly-only run too, though hourly needs no column list', async () => {
+    const logs = [];
+    await expect(runWithSchema(visible, logs, ['hourly'])).rejects.toThrow(/not ingestion-time partitioned/);
+    expect(logs.some(l => l.message === 'periods to export')).toBe(true);
+    expect(logs.some(l => l.message === 'would delete')).toBe(false);
   });
 });

@@ -1247,6 +1247,20 @@
       border-color: var(--emerald);
     }
 
+    .step-checklist {
+      list-style: none;
+      padding-left: 46px;
+      margin-bottom: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      font-size: 14px;
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+
+    .step-checklist strong { color: var(--text); }
+
     .step-callout {
       margin-top: 16px;
       margin-left: 46px;
@@ -1930,7 +1944,7 @@
       .terminal-line { flex-direction: column; gap: 2px; }
       .t-tool { min-width: auto; }
       .terminal-line + .terminal-line { margin-top: 8px; }
-      .step p, .step .code-block, .step-note { margin-left: 0; padding-left: 0; }
+      .step p, .step .code-block, .step-note, .step-checklist { margin-left: 0; padding-left: 0; }
       .step .code-block { font-size: 11px; padding: 16px; }
     }
 
@@ -2474,6 +2488,14 @@
 └── <span class="code-dir">cost_optimization/</span> <span class="code-comment"># Cost Optimization Hub export</span>
           </div>
           <div class="step-note">Use any bucket name. The three prefixes are what matters.</div>
+          <p>The export never deletes anything, so add an S3 <strong>lifecycle rule</strong> per prefix (<strong>Management</strong> &rarr; <strong>Create lifecycle rule</strong>, scoped with a prefix filter) to stop the bucket growing forever:</p>
+          <ul class="step-checklist">
+            <li><strong>focus_daily/</strong> &mdash; expire current versions after <strong>400 days</strong> (daily retention defaults to 365; a month's files keep being rewritten until its billing finalises, so give it a month of margin).</li>
+            <li><strong>focus_hourly/</strong> &mdash; <strong>60 days</strong> (hourly retention defaults to 30, and hourly is the large export).</li>
+            <li><strong>cost_optimization/</strong> &mdash; <strong>100 days</strong> (one snapshot per day, 90-day retention).</li>
+            <li>On each rule, also delete <em>incomplete multipart uploads</em> after 7 days and, if versioning is on, <em>noncurrent versions</em> after 1 day &mdash; every overwrite turns the previous file into a noncurrent version that expiry never touches.</li>
+          </ul>
+          <div class="step-note">Keep each expiry at or above that tier's <strong>retentionDays</strong>. Expiry never deletes what CostGoblin has already downloaded, but a fresh install or a teammate can only fetch what the bucket still holds.</div>
         </div>
 
         <div class="step">
@@ -2595,12 +2617,33 @@ Format:   <span class="code-file">Parquet</span>
             <span class="step-num">1</span>
             <h4>Create the bucket</h4>
           </div>
-          <p>The bucket must be in the same location as the export dataset &mdash; BigQuery refuses to export across locations:</p>
+          <p>The bucket must be in <strong>exactly the same location as the export dataset</strong> &mdash; BigQuery refuses to export across locations, and neither location can be changed later. Find the dataset's in <strong>BigQuery</strong> &rarr; <strong>Explorer</strong> &rarr; your billing export dataset &rarr; <strong>Details</strong> &rarr; <strong>Data location</strong> (the dataset name usually ends in <em>_eu</em> or <em>_us</em>). Then:</p>
           <div class="code-block">
 gcloud storage buckets create <span class="code-dir">gs://your-company-billing</span> \
-  --location=<span class="code-file">EU</span> --uniform-bucket-level-access
+  --location=<span class="code-file">EU</span> --default-storage-class=STANDARD \
+  --uniform-bucket-level-access --public-access-prevention \
+  --soft-delete-duration=0
           </div>
-          <div class="step-note">Standard storage class, and leave <strong>object versioning off</strong>: the exporter rewrites a period's folder whenever that month changes, so versioning would silently retain every superseded file forever.</div>
+          <p>Creating it in the Console instead (<strong>Cloud Storage</strong> &rarr; <strong>Buckets</strong> &rarr; <strong>Create</strong>)? This is what to pick on each screen:</p>
+          <ul class="step-checklist">
+            <li><strong>Get started</strong> &mdash; any name. Leave <em>Hierarchical namespace</em> off.</li>
+            <li><strong>Choose where to store your data</strong> &mdash; the dataset's location. An <em>EU</em> dataset &rarr; <em>Multi-region</em>, <em>eu</em>; a <em>US</em> dataset &rarr; <em>Multi-region</em>, <em>us</em>; a single-region dataset such as <em>europe-west1</em> &rarr; <em>Region</em>, that same region. Never <em>Dual-region</em> or <em>Zone</em>, and leave cross-bucket replication unchecked.</li>
+            <li><strong>Choose how to store your data</strong> &mdash; <em>Standard</em>, Autoclass off.</li>
+            <li><strong>Choose how to control access to objects</strong> &mdash; keep <em>Enforce public access prevention</em> checked; access control <em>Uniform</em>.</li>
+            <li><strong>Choose how to protect object data</strong> &mdash; <strong>untick <em>Soft delete policy</em></strong> (it is on by default), leave object versioning, bucket retention and object retention off, and keep the Google-managed encryption key.</li>
+          </ul>
+          <div class="step-callout"><strong>No soft delete, versioning or retention:</strong> the exporter deletes and rewrites the current month's folder on every run. Soft delete would bill you for a week of superseded files, versioning would keep them forever, and a retention policy blocks the delete outright, so every run fails.</div>
+          <p>Closed months stay in the bucket forever, so add a lifecycle <strong>Delete</strong> rule per tier folder (age = days since the file was written):</p>
+          <div class="code-block">
+cat &gt; lifecycle.json &lt;&lt;'JSON'
+{"rule": [
+  {"action": {"type": "Delete"}, "condition": {"age": 400, "matchesPrefix": ["focus/daily/"]}},
+  {"action": {"type": "Delete"}, "condition": {"age": 60, "matchesPrefix": ["focus/hourly/"]}}
+]}
+JSON
+gcloud storage buckets update <span class="code-dir">gs://your-company-billing</span> --lifecycle-file=lifecycle.json
+          </div>
+          <div class="step-note">Keep each age at or above that tier's <strong>retentionDays</strong> (daily 365, hourly 30 by default). The current month keeps being rewritten, so it never expires while live, and a late correction re-exports a closed month, which resets its age. Two caveats. BigQuery itself keeps only <strong>730 days</strong> of the export, so for daily history beyond two years, lengthen the daily rule or drop it. And with soft delete off, expired files are gone for good. Details in the <a href="https://github.com/etiennechabert/cost-goblin/tree/main/scripts/gcp-focus-exporter#stop-the-bucket-growing-forever-recommended" target="_blank" rel="noopener">exporter README</a>.</div>
         </div>
 
         <div class="step">
@@ -2628,15 +2671,17 @@ REGION=<span class="code-file">europe-west1</span>  <span class="code-comment">#
 <span class="code-comment"># ---- fetch the exporter ----</span>
 mkdir -p costgoblin-exporter &amp;&amp; cd costgoblin-exporter
 BASE=https://raw.githubusercontent.com/etiennechabert/cost-goblin/main/scripts/gcp-focus-exporter
-curl -fsSL -O $BASE/export-focus.mjs -O $BASE/package.json -O $BASE/Dockerfile
+curl -fsSL -O $BASE/export-focus.mjs -O $BASE/package.json -O $BASE/package-lock.json \
+  -O $BASE/Dockerfile -O $BASE/cloudbuild.yaml -O $BASE/cleanup-policy.json
 
 <span class="code-comment"># ---- one-time setup ----</span>
 JOB=costgoblin-focus-exporter
 SA=costgoblin-exporter@$PROJECT_ID.iam.gserviceaccount.com
 gcloud config set project $PROJECT_ID
 gcloud services enable bigquery.googleapis.com storage.googleapis.com \
-  run.googleapis.com cloudscheduler.googleapis.com cloudbuild.googleapis.com
-bq --location=$LOCATION mk --dataset --force $PROJECT_ID:costgoblin_exporter
+  run.googleapis.com cloudscheduler.googleapis.com cloudbuild.googleapis.com \
+  artifactregistry.googleapis.com
+bq --location=$LOCATION mk --dataset --force ${PROJECT_ID}:costgoblin_exporter
 gcloud iam service-accounts create costgoblin-exporter \
   --display-name="CostGoblin FOCUS exporter"
 for ROLE in bigquery.jobUser bigquery.dataViewer bigquery.dataEditor; do
@@ -2651,12 +2696,31 @@ gcloud storage buckets add-iam-policy-binding gs://$BUCKET \
 ENV_VARS=FOCUS_TABLE=$FOCUS_TABLE,BUCKET=$BUCKET,PREFIX=focus
 ENV_VARS=$ENV_VARS,STATE_TABLE=$PROJECT_ID.costgoblin_exporter.export_state
 ENV_VARS=$ENV_VARS,BQ_LOCATION=$LOCATION
-gcloud run jobs deploy $JOB --source=. --region=$REGION \
+IMAGE=$REGION-docker.pkg.dev/$PROJECT_ID/costgoblin/$JOB
+gcloud artifacts repositories create costgoblin --repository-format=docker \
+  --location=$REGION --description="CostGoblin FOCUS exporter images"
+gcloud artifacts repositories set-cleanup-policies costgoblin --location=$REGION \
+  --policy=cleanup-policy.json --no-dry-run   <span class="code-comment"># keep the 5 newest images</span>
+<span class="code-comment"># if a grant below fails with "Service account ... does not exist", wait a minute and repeat it</span>
+BUILDER=costgoblin-builder@$PROJECT_ID.iam.gserviceaccount.com
+gcloud iam service-accounts create costgoblin-builder \
+  --display-name="CostGoblin FOCUS exporter image builder"
+gcloud projects add-iam-policy-binding $PROJECT_ID --condition=None \
+  --member=serviceAccount:$BUILDER --role=roles/logging.logWriter
+gcloud artifacts repositories add-iam-policy-binding costgoblin --location=$REGION \
+  --member=serviceAccount:$BUILDER --role=roles/artifactregistry.writer
+gcloud storage buckets create gs://${PROJECT_ID}_cloudbuild --location=$REGION \
+  --uniform-bucket-level-access   <span class="code-comment"># skip if it already exists</span>
+gcloud storage buckets add-iam-policy-binding gs://${PROJECT_ID}_cloudbuild \
+  --member=serviceAccount:$BUILDER --role=roles/storage.objectViewer
+gcloud builds submit --region=$REGION --config=cloudbuild.yaml \
+  --substitutions=_IMAGE=$IMAGE --service-account=projects/$PROJECT_ID/serviceAccounts/$BUILDER .
+gcloud run jobs deploy $JOB --image=$IMAGE --region=$REGION \
   --service-account=$SA --tasks=1 --max-retries=1 --task-timeout=30m \
   --set-env-vars="$ENV_VARS"
 gcloud scheduler jobs create http $JOB-trigger --location=$REGION \
   --schedule="0 6 * * *" --http-method=POST \
-  --uri=https://$REGION-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/$PROJECT_ID/jobs/$JOB:run \
+  --uri=https://$REGION-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/$PROJECT_ID/jobs/${JOB}:run \
   --oauth-service-account-email=$SA
 gcloud run jobs add-iam-policy-binding $JOB --region=$REGION \
   --member=serviceAccount:$SA --role=roles/run.invoker
@@ -2711,12 +2775,13 @@ gcloud auth application-default login \
           </div>
           <p>Then name it on the provider with <em>impersonateServiceAccount:</em> so the app knows to assume it.</p>
           <div class="step-callout"><strong>&ldquo;Couldn't list the buckets in &hellip;&rdquo; is expected here, not a misconfiguration.</strong> Listing the buckets in a project is a <em>project-level</em> permission, and <em>roles/storage.objectViewer</em> grants rights on the bucket and deliberately nothing above it &mdash; so the wizard reports that it could not list them. Type the bucket name into the field below and press <strong>Browse</strong>: walking a bucket needs only <em>storage.objects.list</em>, which the reader already has, and every step after it behaves normally. Before leaving that screen, expand <strong>Details</strong> if you are unsure &mdash; the same denial is returned when the credential has no access to the project at all, and the raw message names the principal that was refused, which is usually the tell that ADC resolved to a different account than you meant. If you would rather have the dropdown work, add <em>roles/storage.bucketViewer</em> at the project level &mdash; convenience bought by letting the reader see the name of every bucket in the project.</div>
+          <div class="step-callout"><strong>An empty project list one screen earlier is expected too.</strong> The wizard lists projects with <em>gcloud projects list</em>, as your own active account &mdash; and an account whose only grant is <em>roles/iam.serviceAccountTokenCreator</em> on the reader &mdash; set up for you by an admin &mdash; holds nothing at the project level, so its project is not listed. (If you ran the commands above yourself, your account can list the project: an empty list then usually means gcloud has a different account active &mdash; check <em>gcloud auth list</em>.) Type the project ID into <strong>Project not listed? Enter its ID</strong> &mdash; or, to skip the listing altogether, into the field under <strong>Find my export</strong> &mdash; and press <strong>Continue</strong>: the project is only used to list its buckets, which the reader can't do anyway, so the next screen asks for the bucket name as above. Granting your account <em>roles/browser</em> on the project lists it instead &mdash; optional, if you would rather pick it from the list.</div>
           <p style="margin-top:14px"><strong>For a personal project</strong> &mdash; sign in as yourself. CostGoblin then acts as you: the credential carries your account's full access, so the app can reach whatever your Google account can, BigQuery and the billing account included, even though it never uses that reach:</p>
           <div class="code-block">
 gcloud auth application-default login
           </div>
           <div class="step-note">Two credential stores are in play, by design: the app <em>lists</em> the bucket through Application Default Credentials, while the <em>download</em> runs as gcloud's own active account. If you are signed into both a work and a personal account, listing can succeed while the download fails &mdash; check <em>gcloud auth list</em> and fix it with <em>gcloud config set account you@example.com</em>. Re-running <em>application-default login</em> will not repair a stale CLI account.</div>
-          <div class="step-note"><strong>What impersonation does not confine.</strong> Without <em>impersonateServiceAccount:</em> (or a <em>keyFile:</em>) on the provider, the download runs as gcloud's signed-in account, not as the reader &mdash; and the wizard's project list (<em>gcloud projects list</em>) always does, with or without impersonation. And impersonation confines the identity the app uses, not what is stored: the Application Default Credentials file still holds <em>your own</em> refresh token as the credential it impersonates from, so full-disk encryption and an account nobody else uses still matter.</div>
+          <div class="step-note"><strong>What impersonation does not confine.</strong> Without <em>impersonateServiceAccount:</em> (or a <em>keyFile:</em>) on the provider, the download runs as gcloud's signed-in account, not as the reader &mdash; and the wizard's project list (<em>gcloud projects list</em>) always does, with or without impersonation, which is why a least-privilege account types the project ID instead. And impersonation confines the identity the app uses, not what is stored: the Application Default Credentials file still holds <em>your own</em> refresh token as the credential it impersonates from, so full-disk encryption and an account nobody else uses still matter.</div>
         </div>
 
         <div class="step">
@@ -2724,7 +2789,7 @@ gcloud auth application-default login
             <span class="step-num">4</span>
             <h4>Connect CostGoblin</h4>
           </div>
-          <p>Add the provider in <strong>Sync</strong> &mdash; either pick <strong>Google Cloud &rarr; Find my export</strong> and let the wizard walk the bucket and write the config, or point it by hand at the tier folder, <em>gs://your-company-billing/focus/daily</em>.</p>
+          <p>Add the provider in <strong>Sync</strong> &mdash; either pick <strong>Google Cloud &rarr; Find my export</strong> and let the wizard walk the bucket and write the config (already know the project ID? type it under that button to skip the project list &mdash; faster when your organisation has thousands of projects), or point it by hand at the tier folder, <em>gs://your-company-billing/focus/daily</em>.</p>
           <p>Each sync downloads only the periods that changed and rewrites them locally into the same FOCUS&nbsp;1.2 shape the AWS exports use &mdash; so both clouds land in one set of dashboards, split by a <strong>provider</strong> dimension.</p>
           <div class="step-note">GCP's managed billing table has a two-year retention. Your local Parquet mirror keeps everything you have ever synced, so it doubles as the long-term archive.</div>
           <div class="step-note"><strong>Coming from the AWS setup?</strong> GCP's FOCUS export is a single export, so a GCP source configures the <strong>daily</strong> tier only &mdash; there is no separate hourly export and no Cost Optimization Hub equivalent. Whatever time granularity the export carries is preserved in your local Parquet, so nothing is discarded.</div>
