@@ -21,10 +21,7 @@ const { createGcsStorage } = vi.hoisted(() => ({
   })),
 }));
 
-vi.mock('../sync/gcs-storage.js', () => ({
-  GCS_READ_ONLY_SCOPE: 'https://www.googleapis.com/auth/devstorage.read_only',
-  createGcsStorage,
-}));
+vi.mock('../sync/gcs-storage.js', () => ({ createGcsStorage }));
 
 const READER_A = 'reader-a@personal-proj.iam.gserviceaccount.com';
 const READER_B = 'reader-b@company-proj.iam.gserviceaccount.com';
@@ -67,23 +64,5 @@ describe('createObjectStoreHandle for GCP providers', () => {
       {},
       { keyFile: '/keys/reader.json' },
     ]);
-  });
-
-  it('builds the client on first use, so a missing login fails the listing rather than the handle', async () => {
-    createGcsStorage.mockRejectedValueOnce(new Error('Could not load the default credentials.'));
-    const handle = await createObjectStoreHandle(providerAuth(gcpProvider('gcp-personal', { impersonateServiceAccount: READER_A })));
-    expect(createGcsStorage).not.toHaveBeenCalled();
-
-    await expect(handle.listFiles('billing-export', 'focus/daily/')).rejects.toThrow(/Could not load the default credentials/);
-    // The failed build is not cached: after a sign-in the same handle works.
-    await expect(handle.listFiles('billing-export', 'focus/daily/')).resolves.toHaveLength(1);
-    expect(createGcsStorage).toHaveBeenCalledTimes(2);
-  });
-
-  it('builds the client once per handle across calls', async () => {
-    const handle = await createObjectStoreHandle(providerAuth(gcpProvider('gcp-personal', { impersonateServiceAccount: READER_A })));
-    await handle.listFiles('billing-export', 'focus/daily/');
-    await handle.listFiles('billing-export', 'focus/hourly/');
-    expect(createGcsStorage).toHaveBeenCalledTimes(1);
   });
 });

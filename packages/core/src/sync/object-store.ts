@@ -52,17 +52,10 @@ export function providerAuth(provider: ProviderConfig): ProviderAuth {
  *  dynamic import inside its own `create…Handle`, so a workspace with no GCP
  *  provider never loads the GCS SDK (and vice versa). */
 export function createObjectStoreHandle(auth: ProviderAuth): Promise<ObjectStoreHandle> {
-  // `impersonateServiceAccount` is forwarded so the listing reads AS the
-  // provider's own reader, exactly like the download half's
-  // `gcloud storage rsync --impersonate-service-account`. It used to be left
-  // to ADC (`application-default login --impersonate-service-account`), but
-  // ADC is one file per machine, so two GCP providers with two readers could
-  // never both list.
+  // Both credential fields go to `createGcsStorage`, which owns how a GCP
+  // provider authenticates (per-provider impersonation on top of ADC).
   if (auth.kind === 'gcp') {
-    return createGcsHandle({
-      ...(auth.keyFile === undefined ? {} : { keyFile: auth.keyFile }),
-      ...(auth.impersonateServiceAccount === undefined ? {} : { impersonateServiceAccount: auth.impersonateServiceAccount }),
-    });
+    return createGcsHandle({ keyFile: auth.keyFile, impersonateServiceAccount: auth.impersonateServiceAccount });
   }
   return createS3Handle(auth.profile);
 }

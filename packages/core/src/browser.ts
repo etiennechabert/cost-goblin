@@ -20,7 +20,7 @@ export { ConfigValidationError } from './config/validator.js';
 export { MAX_NAME_STRIP_PATTERNS, MAX_NAME_STRIP_PATTERN_LENGTH, nameStripPatternViolations } from './config/strip-pattern-limits.js';
 export { GCLOUD_ADC_LOGIN_COMMAND, GCLOUD_CLI_LOGIN_COMMAND } from './config/credential-commands.js';
 // The wizard checks the optional reader field with the validator's own rule.
-export { isServiceAccountEmail } from './config/service-account.js';
+export { SERVICE_ACCOUNT_EMAIL_RULE, isServiceAccountEmail } from './config/service-account.js';
 // The wizard renders a GCS listing's classification and enforces the same
 // tier-overlap rule the config validator applies at load time. Imported from
 // the leaf module rather than the sync barrel, which pulls in node built-ins
@@ -30,7 +30,7 @@ export { gcsTiersOverlap } from './sync/gcs-export-layout.js';
 // The wizard classifies GCP errors to decide whether to offer an inline
 // sign-in. Same leaf-module reasoning: never re-export this from
 // `gcs-client.ts`, which imports node:fs and the Cloud Storage SDK.
-export { describeGcpImpersonationDenied, isGcpBucketListDeniedMessage, isGcpCredentialError, isGcpImpersonationDeniedMessage } from './sync/gcp-credential-errors.js';
+export { isGcpBucketListDeniedMessage, isGcpCredentialError } from './sync/gcp-credential-errors.js';
 export { isDiscoverableBeaconLocation, splitS3Location, suggestedConfigBeaconLocation } from './config/sharing-location.js';
 export { DEFAULT_COST_SCOPE, DEFAULT_MARKETPLACE_ATTRIBUTION, BUILTIN_EXCLUSION_RULES } from './config/cost-scope-seed.js';
 export {

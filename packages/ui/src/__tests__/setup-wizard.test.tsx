@@ -3,7 +3,7 @@ import { render, screen, waitFor, cleanup } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
-import { MockCostApi } from '../__fixtures__/mock-api.js';
+import { MOCK_GCP_PROVIDER, MOCK_MIXED_PROVIDER_CONFIG, MockCostApi } from '../__fixtures__/mock-api.js';
 import { SetupWizard } from '../views/setup-wizard.js';
 
 function renderWizard(props?: { source?: 'daily' | 'hourly' | 'costOptimization'; profile?: string; mode?: 'add' }) {
@@ -492,6 +492,20 @@ function gcpExportLayout(api: MockCostApi): void {
   };
 }
 
+/** Bucket root → focus/daily → Use this location → skip hourly → Confirm. */
+async function walkGcpDailyToConfirm(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await userClickText(user, 'acme-focus-export');
+  await waitFor(() => { expect(screen.getByLabelText('Open folder focus')).toBeDefined(); });
+  await user.click(screen.getByLabelText('Open folder focus'));
+  await waitFor(() => { expect(screen.getByLabelText('Open folder daily')).toBeDefined(); });
+  await user.click(screen.getByLabelText('Open folder daily'));
+  await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
+  await userClickText(user, 'Use this location');
+  await waitFor(() => { expect(screen.getByText('Skip')).toBeDefined(); });
+  await userClickText(user, 'Skip');
+  await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+}
+
 /** Hub → GCP intro → project → bucket → bucket root. */
 async function enterGcpBrowse(user: ReturnType<typeof userEvent.setup>): Promise<void> {
   await user.click(screen.getByLabelText('Set up from Google Cloud'));
@@ -632,7 +646,54 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     expect(screen.queryByText('Reads as')).toBeNull();
     await userClickText(user, 'Complete Setup');
     await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
+    // Omitted, not '': with nothing prefilled the wizard cannot tell "no
+    // reader" from "reader not loaded yet / provider renamed at Confirm", so
+    // an existing entry's reader is carried rather than silently dropped.
     expect(api.writtenConfigs[0]?.impersonateServiceAccount).toBeUndefined();
+  });
+
+  it('prefills the reader of the provider this run reconfigures, and clears it when emptied', async () => {
+    const reader = 'old-reader@acme-prod.iam.gserviceaccount.com';
+    const gcpMain = MOCK_GCP_PROVIDER;
+    if (gcpMain.type !== 'gcp') throw new Error('MOCK_GCP_PROVIDER must be a gcp provider');
+    const spy = vi.spyOn(MockCostApi.prototype, 'getConfig').mockResolvedValue({
+      ...MOCK_MIXED_PROVIDER_CONFIG,
+      providers: [{ ...gcpMain, impersonateServiceAccount: reader }],
+    });
+    try {
+      const { api, user } = renderWizard();
+      gcpExportLayout(api);
+      await user.click(screen.getByLabelText('Set up from Google Cloud'));
+      const field = screen.getByLabelText('Read-only service account (optional)');
+      await waitFor(() => { expect(screen.getByDisplayValue(reader)).toBe(field); });
+
+      await user.clear(field);
+      await user.click(screen.getByText('Find my export'));
+      await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
+      await userClickText(user, 'Acme Production');
+      await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+      expect(api.gcsBucketsListedAs).toEqual([undefined]);
+
+      // Emptying a reader the wizard showed IS a decision: written as ''.
+      await walkGcpDailyToConfirm(user);
+      await userClickText(user, 'Complete Setup');
+      await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
+      expect(api.writtenConfigs[0]?.impersonateServiceAccount).toBe('');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('forgets the reader when the user abandons the run with the close button', async () => {
+    const { user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.type(screen.getByLabelText('Read-only service account (optional)'), 'reader@acme-prod.iam.gserviceaccount.com');
+    await user.click(screen.getByText('Find my export'));
+    await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Back to start'));
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    expect(screen.getByLabelText('Read-only service account (optional)')).toBeDefined();
+    expect(screen.queryByDisplayValue('reader@acme-prod.iam.gserviceaccount.com')).toBeNull();
   });
 
   it('holds the browse back on an address that is not a service account', async () => {

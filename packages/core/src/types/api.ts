@@ -410,8 +410,9 @@ export interface CostApi {
     type?: 'aws' | 'gcp' | undefined;
     profile: string;
     keyFile?: string | undefined;
-    /** GCP only: the service account to read the bucket as. Blank keeps an
-     *  existing entry's value (or none, for a new provider). */
+    /** GCP only: the service account to read the bucket as. Authoritative
+     *  when present — '' clears an existing entry's reader. Omit it to keep
+     *  the entry's value (or none, for a new provider). */
     impersonateServiceAccount?: string | undefined;
     dailyBucket: string;
     /** Daily-tier retention (the wizard's picker in daily mode). */

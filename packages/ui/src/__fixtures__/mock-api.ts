@@ -380,7 +380,7 @@ export class MockCostApi implements CostApi {
     return Promise.resolve(this.gcsBucketsResult);
   }
 
-  browseGcs(params: { projectId: string; bucket: string; prefix: string; impersonateServiceAccount?: string | undefined }): Promise<GcsBrowseResult> {
+  browseGcs(params: Parameters<CostApi['browseGcs']>[0]): Promise<GcsBrowseResult> {
     this.gcsBrowsed.push(params);
     // Keyed by prefix so a test can walk `focus/` (the tier parent) into
     // `focus/daily/` (the export) and assert the wizard reacts to each.
@@ -413,7 +413,7 @@ export class MockCostApi implements CostApi {
   /** The reader each bucket listing ran as (undefined = the ADC login), in
    *  the same order as `gcsBucketsListedFor`. */
   readonly gcsBucketsListedAs: (string | undefined)[] = [];
-  readonly gcsBrowsed: { projectId: string; bucket: string; prefix: string; impersonateServiceAccount?: string | undefined }[] = [];
+  readonly gcsBrowsed: Parameters<CostApi['browseGcs']>[0][] = [];
 
   scaffoldConfig(providerType?: 'aws' | 'gcp'): Promise<void> {
     this.scaffoldedFor.push(providerType ?? 'aws');

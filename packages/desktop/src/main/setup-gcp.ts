@@ -1,6 +1,7 @@
 import {
-  describeGcpImpersonationDenied,
-  isGcpImpersonationDeniedMessage,
+  describeGcpImpersonationFailure,
+  isGcpImpersonationError,
+  SERVICE_ACCOUNT_EMAIL_RULE,
   isServiceAccountEmail,
   isStringRecord,
   parseJsonArray,
@@ -132,11 +133,11 @@ export function parseWizardReader(raw: unknown):
   | { readonly ok: true; readonly reader: string | undefined }
   | { readonly ok: false; readonly error: string } {
   if (raw === undefined) return { ok: true, reader: undefined };
-  if (typeof raw !== 'string') return { ok: false, error: 'The reader must be a service-account address like name@project.iam.gserviceaccount.com' };
+  if (typeof raw !== 'string') return { ok: false, error: `The reader must be ${SERVICE_ACCOUNT_EMAIL_RULE}` };
   const reader = raw.trim();
   if (reader.length === 0) return { ok: true, reader: undefined };
   if (!isServiceAccountEmail(reader)) {
-    return { ok: false, error: `"${reader}" is not a service-account address like name@project.iam.gserviceaccount.com` };
+    return { ok: false, error: `"${reader}" is not ${SERVICE_ACCOUNT_EMAIL_RULE}` };
   }
   return { ok: true, reader };
 }
@@ -147,6 +148,8 @@ export function parseWizardReader(raw: unknown):
  *  because the wizard classifies the raw text to decide between a sign-in
  *  button and the bucket-list-denied explainer. */
 export function wizardGcsErrorMessage(err: unknown, reader: string | undefined): string {
-  const message = err instanceof Error ? err.message : String(err);
-  return isGcpImpersonationDeniedMessage(message) ? describeGcpImpersonationDenied(reader, message) : message;
+  if (err instanceof Error) {
+    return isGcpImpersonationError(err) ? describeGcpImpersonationFailure(reader, err.message) : err.message;
+  }
+  return String(err);
 }

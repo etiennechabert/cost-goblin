@@ -1,5 +1,5 @@
 import type { ConfigBundleSummary, GcpProject, GcsFolderKind } from '@costgoblin/core/browser';
-import { gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isServiceAccountEmail, isValidWorkspaceName, parseProviderName } from '@costgoblin/core/browser';
+import { gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isServiceAccountEmail, isValidWorkspaceName, SERVICE_ACCOUNT_EMAIL_RULE, parseProviderName } from '@costgoblin/core/browser';
 import { useState, useEffect, useRef } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { Card, CardContent } from '../components/ui/card.js';
@@ -33,7 +33,7 @@ type WizardStep =
   | { step: 'beacon'; profile: string; source: DataSource; bucket: string; content: string; summary: ConfigBundleSummary; applying: boolean; error: string }
   | { step: 'browse'; profile: string; source: DataSource; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[]; path: string[]; error: string }
   | { step: 'confirm'; cloud: 'aws'; profile: string; s3Path: string; hourlyPath: string; costOptPath: string; retentionDays: number }
-  | { step: 'confirm'; cloud: 'gcp'; project: string; reader: string; s3Path: string; hourlyPath: string; costOptPath: string; retentionDays: number };
+  | { step: 'confirm'; cloud: 'gcp'; project: string; reader: string; clearsReader: boolean; s3Path: string; hourlyPath: string; costOptPath: string; retentionDays: number };
 
 interface SetupWizardProps {
   /** Called when setup finishes. Carries the workspace name the user chose on
@@ -385,7 +385,7 @@ function GcpIntroStep({ state, reader, onReaderChange, onBrowse, onScaffold, onD
         />
         <p id="gcp-reader-help" className={readerInvalid ? 'text-xs text-negative' : 'text-xs text-text-muted'}>
           {readerInvalid
-            ? 'Use a service-account address like name@project.iam.gserviceaccount.com.'
+            ? `Use ${SERVICE_ACCOUNT_EMAIL_RULE}.`
             : 'Your Google account needs the Service Account Token Creator role on it. Leave blank to read as yourself.'}
         </p>
       </div>
@@ -1407,8 +1407,10 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onB
       // `upsertWizardProvider` ignores it.
       profile: state.cloud === 'gcp' ? '' : state.profile,
       // The reader the GCP chain browsed as becomes the provider's
-      // `impersonateServiceAccount`, so the sync lists as that same identity.
-      ...(reader === '' ? {} : { impersonateServiceAccount: reader }),
+      // `impersonateServiceAccount`. '' (clear) only when the user emptied a
+      // reader the wizard showed them; otherwise blank is omitted, so an
+      // existing entry's reader is carried (see `goToGcpConfirm`).
+      ...(state.cloud === 'gcp' && (reader !== '' || state.clearsReader) ? { impersonateServiceAccount: reader } : {}),
       dailyBucket: state.s3Path,
       // The Confirm step shows ONE retention picker; it configures whichever
       // tier is primary for this run. In daily mode it sets daily retention; in
@@ -1542,6 +1544,9 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   // mode), free-text when adding one, prefilled 'aws-main' on first run.
   const [providerName, setProviderName] = useState(initialProviderName ?? (mode === 'add' ? '' : 'aws-main'));
   const [existingProviders, setExistingProviders] = useState<readonly string[]>([]);
+  // Each configured GCP provider's reader, to prefill the field when the run
+  // reconfigures that provider — so it browses as what the sync will use.
+  const [existingGcpReaders, setExistingGcpReaders] = useState<ReadonlyMap<string, string>>(new Map());
   // Whether the user has typed a name. Until they do, the default is DERIVED
   // from the cloud they picked rather than written into state on entry — a
   // one-way `setProviderName('gcp-main')` survived backing out of the GCP
@@ -1551,6 +1556,8 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     api.getConfig().then(config => {
       const names = config.providers.map(p => String(p.name));
       setExistingProviders(names);
+      setExistingGcpReaders(new Map(config.providers.flatMap(p =>
+        p.type === 'gcp' && p.impersonateServiceAccount !== undefined ? [[String(p.name), p.impersonateServiceAccount]] : [])));
       // Source mode without an explicit target: writeConfig upserts by name,
       // so per-tier Configure must land on the provider it came from — the
       // first configured one, matching the page that opened us.
@@ -1583,6 +1590,9 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   // runs as it, and it is written as the provider's `impersonateServiceAccount`
   // — so the wizard sees exactly what the sync will. '' means the ADC login.
   const [gcpReader, setGcpReader] = useState('');
+  // The reader the field was prefilled with, so emptying it reads as a
+  // decision to clear rather than "nothing known".
+  const [gcpReaderSeed, setGcpReaderSeed] = useState('');
   const gcpReaderArg = gcpReader.trim() === '' ? undefined : gcpReader.trim();
   // Monotonic token for every step loader, AWS and GCP alike. Each resolver
   // rebuilds a whole step object from captured args, so without this a slow
@@ -1719,6 +1729,11 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
       cloud: 'gcp',
       project,
       reader: gcpReaderArg ?? '',
+      // Clearing is only ever sent for a reader the user saw and removed. A
+      // blank field with nothing prefilled is ambiguous — config not loaded
+      // yet, or a rename at Confirm onto an existing provider — so the
+      // upsert carries that entry's reader instead of dropping it.
+      clearsReader: gcpReaderArg === undefined && gcpReaderSeed !== '',
       s3Path: p.daily,
       hourlyPath: p.hourly,
       // GCP never collects a cost-optimization path; carrying one here would
@@ -1776,7 +1791,19 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     // those are also reached by ← Back mid-flow, where clearing a name the
     // user has already typed would be the more surprising behaviour.
     setProviderNameEdited(false);
+    setGcpReader('');
+    setGcpReaderSeed('');
     setWizard({ step: 'start' });
+  }
+
+  /** Enter the GCP chain, seeding the reader from the provider this run would
+   *  write — its fixed or typed name, else the GCP default. */
+  function enterGcp(): void {
+    const name = providerNameFixed || providerNameEdited || mode === 'add' ? providerName : defaultProviderName('gcp');
+    const seed = existingGcpReaders.get(name) ?? '';
+    setGcpReader(seed);
+    setGcpReaderSeed(seed);
+    setWizard({ step: 'gcp', scaffolded: false, error: '' });
   }
 
   function handleProfileSelect(profile: string) {
@@ -1988,7 +2015,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
             <StartStep
               workspaceLabel={workspaceNaming !== undefined ? workspaceName : workspaceLabel}
               onSetup={goToProfileStep}
-              onGcp={() => { setWizard({ step: 'gcp', scaffolded: false, error: '' }); }}
+              onGcp={enterGcp}
               onImport={() => { setImportOpen(true); }}
               onBack={workspaceNaming !== undefined ? () => { setWizard({ step: 'welcome' }); } : undefined}
               jumpBack={jumpBack}

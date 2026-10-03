@@ -22,17 +22,11 @@ export function parseGcsPath(gcsPath: string): { bucket: string; prefix: string 
 // the renderer without dragging node built-ins in. Re-exported here because
 // this is where every existing importer expects to find them.
 export {
-  describeGcpImpersonationDenied,
   isGcloudCliAccountError,
   isGcloudDownloadFailure,
   isGcpBucketListDeniedMessage,
   isGcpCredentialError,
-  isGcpImpersonationDeniedMessage,
 } from './gcp-credential-errors.js';
-
-// The scope moved with the client construction to `gcs-storage.ts`; kept
-// exported here for existing importers.
-export { GCS_READ_ONLY_SCOPE } from './gcs-storage.js';
 
 /** GCS object size arrives as a string on the REST metadata (JSON numbers
  *  can't hold a 64-bit size), and the SDK types it as `string | number`.
@@ -54,21 +48,10 @@ function toSize(value: string | number | undefined): number {
  *  is deliberately NOT mixed in: the exporter rewrites a period's folder
  *  wholesale, so a generation-based hash would report every re-export as
  *  changed even when the bytes are identical. */
-export function createGcsHandle(auth: GcsStorageOptions = {}): Promise<ObjectStoreHandle> {
-  // Built on first use, not here: resolving an impersonating client reads ADC,
-  // and a missing login must fail the listing call — where the sync's error
-  // classification and sign-in buttons live — not the handle's construction.
-  // A rejected build is forgotten so the next call retries after a sign-in.
-  let pending: ReturnType<typeof createGcsStorage> | undefined;
-  const getStorage = (): ReturnType<typeof createGcsStorage> => {
-    pending ??= createGcsStorage(auth).catch((err: unknown) => {
-      pending = undefined;
-      throw err;
-    });
-    return pending;
-  };
+export async function createGcsHandle(auth: GcsStorageOptions = {}): Promise<ObjectStoreHandle> {
+  const storage = await createGcsStorage(auth);
 
-  return Promise.resolve({
+  return {
     async listFiles(bucket: string, prefix: string): Promise<ManifestFileEntry[]> {
       // The SDK puts the bucket in its request URL unencoded, so a name with
       // `\`, `#`, `?` or `%` would list a different bucket than the one the
@@ -77,7 +60,6 @@ export function createGcsHandle(auth: GcsStorageOptions = {}): Promise<ObjectSto
       assertValidGcsBucketName(bucket);
       // autoPaginate walks nextPageToken internally and resolves with the
       // full set — the pagination loop `createS3Handle` writes by hand.
-      const storage = await getStorage();
       const [files] = await storage.bucket(bucket).getFiles({ prefix, autoPaginate: true });
 
       const entries: ManifestFileEntry[] = [];
@@ -94,7 +76,6 @@ export function createGcsHandle(auth: GcsStorageOptions = {}): Promise<ObjectSto
 
     async downloadFile(bucket: string, key: string, localPath: string, options?: DownloadOptions): Promise<void> {
       assertValidGcsBucketName(bucket);
-      const storage = await getStorage();
       await mkdir(dirname(localPath), { recursive: true });
 
       const sourceStream = storage.bucket(bucket).file(key).createReadStream();
@@ -117,5 +98,5 @@ export function createGcsHandle(auth: GcsStorageOptions = {}): Promise<ObjectSto
 
       await pipeline(sourceStream, progressStream, writeStream, { signal: options.signal });
     },
-  });
+  };
 }

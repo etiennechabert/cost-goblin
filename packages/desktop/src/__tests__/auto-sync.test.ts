@@ -223,6 +223,30 @@ describe('auto-sync runOnce (multi-provider orchestration)', () => {
     }
   });
 
+  it('records a refused GCP impersonation as a provider error, though no sign-in fixes it', async () => {
+    // The handler has already rewritten the denial (describeGcpImpersonationFailure),
+    // so this is the shape the scheduler classifies. A skip here would leave
+    // the provider silently unsynced every pass while the toolbar shows idle.
+    const denial = "CostGoblin could not read as reader@proj.iam.gserviceaccount.com. Check that … — Details: Could not refresh access token: PERMISSION_DENIED: unable to impersonate: Permission 'iam.serviceAccounts.getAccessToken' denied on resource (or it may not exist).";
+    writePrefs({ autoSync: true, autoPrune: false });
+    const calls = newCalls();
+    const deps = buildDeps({
+      getInventory: (provider, tier) => {
+        calls.inventory.push({ provider, tier });
+        if (provider === 'aws-a') return Promise.reject(new Error(denial));
+        return Promise.resolve(missingPeriodInventory());
+      },
+    }, calls);
+
+    await runOnce(deps);
+
+    const status = getAutoSyncStatus();
+    expect(status.state).toBe('idle');
+    if (status.state === 'idle') {
+      expect(status.providerErrors).toEqual([{ provider: 'aws-a', message: denial }]);
+    }
+  });
+
   it('treats a transient (non-credential) inventory failure as a skip, not a provider error', async () => {
     writePrefs({ autoSync: true, autoPrune: false });
     const calls = newCalls();

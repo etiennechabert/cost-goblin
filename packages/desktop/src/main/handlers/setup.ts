@@ -408,7 +408,10 @@ export function registerSetupHandlers(app: AppContext): void {
     // only failed THERE would be written to disk and stop the app starting.
     const reader = parseWizardReader(wizardConfig.impersonateServiceAccount);
     if (!reader.ok) throw new Error(reader.error);
-    const costgoblinYaml = upsertWizardProvider(existing, { ...wizardConfig, impersonateServiceAccount: reader.reader });
+    // Absent stays absent (carry the entry's own); present-but-blank is the
+    // wizard saying it browsed as the ADC login, which clears it.
+    const impersonateServiceAccount = wizardConfig.impersonateServiceAccount === undefined ? undefined : reader.reader ?? '';
+    const costgoblinYaml = upsertWizardProvider(existing, { ...wizardConfig, impersonateServiceAccount });
 
     await fs.writeFile(ctx.configPath, stringify(costgoblinYaml), 'utf-8');
 

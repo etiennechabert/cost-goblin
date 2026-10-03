@@ -41,6 +41,7 @@ import {
   toUserFriendlyError,
 } from './context.js';
 import { triggerAutoSyncNow } from '../auto-sync.js';
+import { gcloudLoginArgs, gcloudLoginEnv } from '../gcloud-login.js';
 import { SYNC_ALREADY_RUNNING } from '../sync-client.js';
 import { parseSyncId, resolveProvider, resolveSyncId } from '../sync-id.js';
 import { recordSyncLog } from '../sync-log.js';
@@ -411,14 +412,7 @@ export function registerSyncHandlers(app: AppContext): void {
 
     const mode: GcloudLoginMode = rawMode === 'cli' ? 'cli' : 'adc';
 
-    // Always the user's OWN login — never `--impersonate-service-account`.
-    // Each provider's `impersonateServiceAccount` is applied per client, on
-    // top of ADC (`createGcsStorage`), so ADC must stay the plain user
-    // credential every reader is minted from. Stamping one provider's reader
-    // onto this machine-wide file is what used to lock every other GCP
-    // provider out; re-running this button also migrates a machine off that
-    // legacy setup.
-    const loginArgs = mode === 'cli' ? ['auth', 'login'] : ['auth', 'application-default', 'login'];
+    const loginArgs = gcloudLoginArgs(mode);
 
     // `findGcloudCli` returning null is the "not installed" signal on every
     // platform — it cannot come from spawn: on Windows gcloud is a `.cmd`
@@ -434,7 +428,7 @@ export function registerSyncHandlers(app: AppContext): void {
         stdio: 'ignore',
         detached: true,
         shell: shape.shell,
-        env: { ...process.env, PATH: fullPath },
+        env: gcloudLoginEnv(mode, process.env, fullPath),
       });
       child.on('error', (err: NodeJS.ErrnoException) => {
         if (err.code === 'ENOENT') {

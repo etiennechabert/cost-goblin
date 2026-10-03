@@ -2,7 +2,7 @@ import { asBucketPath, asDimensionId } from '../types/branded.js';
 import type { BucketPath } from '../types/branded.js';
 import { isSafeColumnIdentifier } from '../query/identifier-validator.js';
 import { parseProviderName } from './provider-name.js';
-import { isServiceAccountEmail } from './service-account.js';
+import { SERVICE_ACCOUNT_EMAIL_RULE, isServiceAccountEmail } from './service-account.js';
 import { gcsTiersOverlap } from '../sync/gcs-export-layout.js';
 import { GCS_BUCKET_NAME_RULES, isValidGcsBucketName, splitGcsLocation } from '../sync/gcs-bucket-name.js';
 import { logger } from '../logger/logger.js';
@@ -214,7 +214,7 @@ function validateServiceAccountEmail(raw: unknown, ctx: string): string | undefi
   assertString(raw, `${ctx}.impersonateServiceAccount`);
   if (!isServiceAccountEmail(raw)) {
     throw new ConfigValidationError(
-      `${ctx}.impersonateServiceAccount must be a service-account address like name@project.iam.gserviceaccount.com`,
+      `${ctx}.impersonateServiceAccount must be ${SERVICE_ACCOUNT_EMAIL_RULE}`,
     );
   }
   return raw;

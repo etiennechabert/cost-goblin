@@ -27,11 +27,11 @@ import {
   GCLOUD_ADC_LOGIN_COMMAND,
   GCLOUD_CLI_LOGIN_COMMAND,
   isCredentialError,
-  describeGcpImpersonationDenied,
+  describeGcpImpersonationFailure,
   isGcloudDownloadFailure,
   isGcloudCliAccountError,
   isGcpCredentialError,
-  isGcpImpersonationDeniedMessage,
+  isGcpImpersonationError,
   isS3SyncDownloadFailure,
 } from '@costgoblin/core';
 import { buildAccountReverseMap } from './query-utils.js';
@@ -715,10 +715,10 @@ export function toUserFriendlyError(err: unknown, auth: ProviderAuth): Error {
     if (isGcloudCliAccountError(err)) {
       return new Error(`The gcloud CLI is signed in as a different account than CostGoblin's credentials, or its session expired. Run: ${GCLOUD_CLI_LOGIN_COMMAND}`);
     }
-    // Before the credential check too: an impersonation the IAM API refuses
-    // is a missing grant, and a sign-in button would loop on it.
-    if (err instanceof Error && isGcpImpersonationDeniedMessage(err.message)) {
-      return new Error(describeGcpImpersonationDenied(auth.impersonateServiceAccount, err.message));
+    // An impersonation the IAM side refuses is a missing grant or a wrong
+    // reader; the text carries no sign-in marker, since signing in would loop.
+    if (isGcpImpersonationError(err) && err instanceof Error) {
+      return new Error(describeGcpImpersonationFailure(auth.impersonateServiceAccount, err.message));
     }
     if (isGcpCredentialError(err)) {
       return new Error(`GCP credentials are missing or expired. Run: ${GCLOUD_ADC_LOGIN_COMMAND}`);
@@ -738,9 +738,11 @@ export function toUserFriendlyError(err: unknown, auth: ProviderAuth): Error {
   return err instanceof Error ? err : new Error(String(err));
 }
 
-/** Whether an error from either provider indicates credentials the user must
- *  refresh. Used where the arm isn't known up front (the auto-sync
- *  scheduler's shared catch). */
+/** Whether an error from either provider is an authentication failure the
+ *  user must act on — expired credentials, or a GCP reader the user may not
+ *  impersonate. Gates whether a listing failure is surfaced rather than
+ *  replaced by the local-only inventory or skipped by the scheduler; it does
+ *  NOT decide which remedy is offered (`toUserFriendlyError` does). */
 export function isAnyCredentialError(err: unknown): boolean {
-  return isCredentialError(err) || isGcpCredentialError(err);
+  return isCredentialError(err) || isGcpCredentialError(err) || isGcpImpersonationError(err);
 }

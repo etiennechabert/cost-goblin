@@ -29,19 +29,19 @@ export {
 } from './object-store.js';
 
 export {
-  GCS_READ_ONLY_SCOPE,
   createGcsHandle,
-  describeGcpImpersonationDenied,
   isGcloudCliAccountError,
   isGcloudDownloadFailure,
   isGcpBucketListDeniedMessage,
   isGcpCredentialError,
-  isGcpImpersonationDeniedMessage,
   parseGcsPath,
 } from './gcs-client.js';
 
+export { describeGcpImpersonationFailure, isGcpImpersonationError } from './gcp-credential-errors.js';
+
 export {
   type GcsStorageOptions,
+  GCS_READ_ONLY_SCOPE,
   createGcsStorage,
 } from './gcs-storage.js';
 

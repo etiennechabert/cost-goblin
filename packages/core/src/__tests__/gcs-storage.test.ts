@@ -2,16 +2,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { GCS_READ_ONLY_SCOPE, createGcsStorage } from '../sync/gcs-storage.js';
 
 /** Both SDKs are replaced wholesale. `Storage` records the options it was
- *  built with; `GoogleAuth` stands in for Application Default Credentials and
- *  hands back whatever `adcClient` is set to; `Impersonated` records its
- *  options and exposes `getTargetPrincipal`, the one accessor the code under
- *  test reads to recognise a legacy ADC file that already impersonates. */
-const { storageOptions, googleAuthOptions, impersonatedOptions, state } = vi.hoisted(() => {
+ *  built with. `GoogleAuth` records its options and stands in for Application
+ *  Default Credentials: `getClient` hands back `state.adcClient`, `jsonContent`
+ *  is the parsed ADC file, and `fromJSON` builds a tagged client from a
+ *  credential body. `Impersonated` records its options. */
+const { storageOptions, googleAuthOptions, impersonatedOptions, fromJsonInputs, state } = vi.hoisted(() => {
   const storage: Record<string, unknown>[] = [];
   const googleAuth: Record<string, unknown>[] = [];
   const impersonated: Record<string, unknown>[] = [];
-  const adc: { adcClient: unknown; adcError: Error | undefined } = { adcClient: undefined, adcError: undefined };
-  return { storageOptions: storage, googleAuthOptions: googleAuth, impersonatedOptions: impersonated, state: adc };
+  const fromJson: unknown[] = [];
+  const adc: { adcClient: unknown; adcError: Error | undefined; adcFile: unknown } = {
+    adcClient: undefined,
+    adcError: undefined,
+    adcFile: null,
+  };
+  return { storageOptions: storage, googleAuthOptions: googleAuth, impersonatedOptions: impersonated, fromJsonInputs: fromJson, state: adc };
 });
 
 vi.mock('@google-cloud/storage', () => ({
@@ -31,17 +36,21 @@ vi.mock('google-auth-library', () => {
       this.options = options;
       impersonatedOptions.push(options);
     }
-    getTargetPrincipal(): unknown {
-      return this.options['targetPrincipal'];
-    }
   }
   class GoogleAuth {
+    readonly options: Record<string, unknown>;
+    readonly jsonContent: unknown = state.adcFile;
     constructor(options: Record<string, unknown>) {
+      this.options = options;
       googleAuthOptions.push(options);
     }
     getClient(): Promise<unknown> {
       if (state.adcError !== undefined) return Promise.reject(state.adcError);
       return Promise.resolve(state.adcClient);
+    }
+    fromJSON(input: unknown): unknown {
+      fromJsonInputs.push(input);
+      return { kind: 'from-json', input };
     }
   }
   return { GoogleAuth, Impersonated };
@@ -51,9 +60,18 @@ const READER_A = 'reader-a@personal-proj.iam.gserviceaccount.com';
 const READER_B = 'reader-b@company-proj.iam.gserviceaccount.com';
 const IAM_SCOPE = 'https://www.googleapis.com/auth/cloud-platform';
 
-/** The user's own ADC login — the shape `gcloud auth application-default
- *  login` (no impersonation flag) produces. */
+/** The user's own ADC login — what `gcloud auth application-default login`
+ *  (no impersonation flag) produces. */
 const userAdc = { kind: 'authorized_user' };
+
+/** An ADC file from the legacy `--impersonate-service-account` recipe. */
+function legacyAdcFile(target: string): Record<string, unknown> {
+  return {
+    type: 'impersonated_service_account',
+    service_account_impersonation_url: `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${target}:generateAccessToken`,
+    source_credentials: { type: 'authorized_user', client_id: 'cid', client_secret: 'secret', refresh_token: 'rt', ignored: 42 },
+  };
+}
 
 function onlyStorageOptions(): Record<string, unknown> {
   expect(storageOptions).toHaveLength(1);
@@ -62,54 +80,57 @@ function onlyStorageOptions(): Record<string, unknown> {
   return options;
 }
 
+function authClientOf(options: Record<string, unknown>): Record<string, unknown> {
+  const client: unknown = options['authClient'];
+  if (typeof client !== 'object' || client === null || !('options' in client)) throw new Error('no recorded authClient');
+  const recorded: unknown = client.options;
+  if (typeof recorded !== 'object' || recorded === null) throw new Error('authClient options missing');
+  return Object.fromEntries(Object.entries(recorded));
+}
+
 beforeEach(() => {
   storageOptions.length = 0;
   googleAuthOptions.length = 0;
   impersonatedOptions.length = 0;
+  fromJsonInputs.length = 0;
   state.adcClient = userAdc;
   state.adcError = undefined;
+  state.adcFile = null;
 });
 
 describe('createGcsStorage without impersonation', () => {
-  it('reads Application Default Credentials with the read-only scope and never touches google-auth-library', async () => {
+  it('puts the read-only scope on the credential, since Storage ignores its own scopes option', async () => {
     await createGcsStorage({});
-    expect(onlyStorageOptions()).toEqual({ scopes: [GCS_READ_ONLY_SCOPE] });
-    expect(googleAuthOptions).toEqual([]);
+    expect(authClientOf(onlyStorageOptions())).toEqual({ scopes: [GCS_READ_ONLY_SCOPE] });
     expect(impersonatedOptions).toEqual([]);
   });
 
-  it('forwards a key file and a project id unchanged', async () => {
+  it('mints a key file read-only and forwards the project id to both Storage and the credential', async () => {
     await createGcsStorage({ keyFile: '/keys/reader.json', projectId: 'billing-proj' });
-    expect(onlyStorageOptions()).toEqual({
-      scopes: [GCS_READ_ONLY_SCOPE],
-      projectId: 'billing-proj',
-      keyFilename: '/keys/reader.json',
-    });
+    const options = onlyStorageOptions();
+    expect(options['projectId']).toBe('billing-proj');
+    expect(authClientOf(options)).toEqual({ projectId: 'billing-proj', scopes: [GCS_READ_ONLY_SCOPE], keyFilename: '/keys/reader.json' });
   });
 });
 
 describe('createGcsStorage with impersonateServiceAccount', () => {
   it('impersonates the service account from the user ADC, asking only for read-only storage', async () => {
-    await createGcsStorage({ impersonateServiceAccount: READER_A, projectId: 'billing-proj' });
+    await createGcsStorage({ impersonateServiceAccount: READER_A });
 
     // The source credential needs cloud-platform to call the IAM Credentials
-    // API; the minted token is narrowed to read-only storage.
-    expect(googleAuthOptions).toEqual([{ scopes: [IAM_SCOPE] }]);
-    expect(impersonatedOptions).toEqual([{
-      sourceClient: userAdc,
-      targetPrincipal: READER_A,
-      targetScopes: [GCS_READ_ONLY_SCOPE],
-      lifetime: 3600,
-    }]);
-
+    // API; its project comes from the reader's address, which spares
+    // google-auth-library a gcloud exec + metadata probe per client.
+    expect(googleAuthOptions).toEqual([{ scopes: [IAM_SCOPE], projectId: 'personal-proj' }]);
+    expect(impersonatedOptions).toEqual([{ sourceClient: userAdc, targetPrincipal: READER_A, targetScopes: [GCS_READ_ONLY_SCOPE] }]);
     const options = onlyStorageOptions();
-    expect(options['projectId']).toBe('billing-proj');
-    expect(options['scopes']).toEqual([GCS_READ_ONLY_SCOPE]);
-    expect(options).not.toHaveProperty('keyFilename');
-    const authClient = options['authClient'];
-    expect(authClient).toBeDefined();
-    expect(authClient).not.toBe(userAdc);
-    expect(authClient).toHaveProperty('options.targetPrincipal', READER_A);
+    expect(options).not.toHaveProperty('projectId');
+    expect(authClientOf(options)['targetPrincipal']).toBe(READER_A);
+  });
+
+  it('prefers the caller project id over the one in the reader address', async () => {
+    await createGcsStorage({ impersonateServiceAccount: READER_A, projectId: 'billing-proj' });
+    expect(googleAuthOptions).toEqual([{ scopes: [IAM_SCOPE], projectId: 'billing-proj' }]);
+    expect(onlyStorageOptions()['projectId']).toBe('billing-proj');
   });
 
   it('gives two providers sharing one ADC login their own service account each', async () => {
@@ -118,44 +139,36 @@ describe('createGcsStorage with impersonateServiceAccount', () => {
 
     expect(impersonatedOptions.map(o => o['targetPrincipal'])).toEqual([READER_A, READER_B]);
     expect(impersonatedOptions.map(o => o['sourceClient'])).toEqual([userAdc, userAdc]);
-    const principals = storageOptions.map(o => {
-      const client: unknown = o['authClient'];
-      return typeof client === 'object' && client !== null && 'getTargetPrincipal' in client && typeof client.getTargetPrincipal === 'function'
-        ? String(client.getTargetPrincipal())
-        : null;
-    });
-    expect(principals).toEqual([READER_A, READER_B]);
+    expect(storageOptions.map(o => authClientOf(o)['targetPrincipal'])).toEqual([READER_A, READER_B]);
   });
 
-  it('reuses a legacy ADC file that already impersonates the same service account', async () => {
-    // `gcloud auth application-default login --impersonate-service-account=A`
-    // makes ADC itself an Impersonated(A). Wrapping it again would ask A for
-    // the right to impersonate A, which nobody grants — so it is used as-is.
-    const { Impersonated } = await import('google-auth-library');
-    const legacy = new Impersonated({ targetPrincipal: READER_A });
-    impersonatedOptions.length = 0;
-    state.adcClient = legacy;
+  it.each([
+    ['the same account', READER_A],
+    ['a different account', READER_B],
+  ])('mints from the user login underneath a legacy ADC that impersonates %s', async (_label, legacyTarget) => {
+    // `application-default login --impersonate-service-account=<x>` makes ADC
+    // itself an impersonation. Minting from that wrapper would ask <x> for the
+    // right to impersonate the reader; the user's login holds that grant.
+    state.adcFile = legacyAdcFile(legacyTarget);
+    state.adcClient = { kind: 'legacy-impersonated' };
 
     await createGcsStorage({ impersonateServiceAccount: READER_A });
 
-    expect(impersonatedOptions).toEqual([]);
-    expect(onlyStorageOptions()['authClient']).toBe(legacy);
+    expect(fromJsonInputs).toEqual([{ type: 'authorized_user', client_id: 'cid', client_secret: 'secret', refresh_token: 'rt' }]);
+    expect(impersonatedOptions).toHaveLength(1);
+    expect(impersonatedOptions[0]?.['sourceClient']).toEqual({ kind: 'from-json', input: fromJsonInputs[0] });
+    expect(impersonatedOptions[0]?.['targetPrincipal']).toBe(READER_A);
   });
 
-  it('chains from a legacy ADC that impersonates a DIFFERENT account rather than silently using it', async () => {
-    const { Impersonated } = await import('google-auth-library');
-    const legacy = new Impersonated({ targetPrincipal: READER_A });
-    impersonatedOptions.length = 0;
-    state.adcClient = legacy;
-
-    await createGcsStorage({ impersonateServiceAccount: READER_B });
-
-    expect(impersonatedOptions).toEqual([{
-      sourceClient: legacy,
-      targetPrincipal: READER_B,
-      targetScopes: [GCS_READ_ONLY_SCOPE],
-      lifetime: 3600,
-    }]);
+  it('applies GOOGLE_CLOUD_QUOTA_PROJECT to the unwrapped login, as GoogleAuth does for ADC it loads itself', async () => {
+    state.adcFile = legacyAdcFile(READER_A);
+    vi.stubEnv('GOOGLE_CLOUD_QUOTA_PROJECT', 'billing-quota');
+    try {
+      await createGcsStorage({ impersonateServiceAccount: READER_A });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(impersonatedOptions[0]?.['sourceClient']).toMatchObject({ quotaProjectId: 'billing-quota' });
   });
 
   it('surfaces a missing ADC login as the SDK error, unchanged', async () => {

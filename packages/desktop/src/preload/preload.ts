@@ -221,10 +221,10 @@ const api: CostApi = {
   listGcpProjects(): Promise<{ projects: readonly GcpProject[]; error?: string | undefined }> {
     return invoke<{ projects: readonly GcpProject[]; error?: string | undefined }>('setup:list-gcp-projects');
   },
-  listGcsBuckets(projectId: string, impersonateServiceAccount?: string): Promise<{ buckets: readonly { name: string }[]; error?: string | undefined }> {
+  listGcsBuckets(projectId: string, impersonateServiceAccount?: string): ReturnType<CostApi['listGcsBuckets']> {
     return invoke<{ buckets: readonly { name: string }[]; error?: string | undefined }>('setup:list-gcs-buckets', projectId, impersonateServiceAccount);
   },
-  browseGcs(params: { projectId: string; bucket: string; prefix: string; impersonateServiceAccount?: string | undefined }): Promise<GcsBrowseResult> {
+  browseGcs(params: Parameters<CostApi['browseGcs']>[0]): Promise<GcsBrowseResult> {
     return invoke<GcsBrowseResult>('setup:browse-gcs', params);
   },
   scaffoldConfig(providerType?: 'aws' | 'gcp'): Promise<void> {
@@ -233,7 +233,7 @@ const api: CostApi = {
   // `type` was missing here while the handler and `upsertWizardProvider` both
   // already read it, so this bridge's own signature was the only thing
   // stopping the wizard from writing a gcp provider.
-  writeConfig(config: { providerName: string; type?: 'aws' | 'gcp' | undefined; profile: string; keyFile?: string | undefined; impersonateServiceAccount?: string | undefined; dailyBucket: string; retentionDays?: number | undefined; hourlyBucket?: string | undefined; costOptBucket?: string | undefined; tags?: { tagName: string; label: string; concept?: string | undefined }[] | undefined }): Promise<void> {
+  writeConfig(config: Parameters<CostApi['writeConfig']>[0]): Promise<void> {
     return invoke<undefined>('setup:write-config', config).then(() => undefined);
   },
   updateAwsProfile(profile: string, providerName?: string): Promise<void> {

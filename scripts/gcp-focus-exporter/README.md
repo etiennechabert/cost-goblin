@@ -408,9 +408,17 @@ gcloud storage buckets add-iam-policy-binding gs://cost-goblin \
 gcloud iam service-accounts add-iam-policy-binding ${SA} \
   --member="user:$(gcloud config get-value account)" \
   --role=roles/iam.serviceAccountTokenCreator
-# Minting goes through the IAM Service Account Credentials API. Usually on
-# already; enable it if CostGoblin reports it disabled.
-gcloud services enable iamcredentials.googleapis.com --project=PROJECT
+```
+
+Minting the reader's token is an IAM Service Account Credentials API call,
+billed to your ADC **quota project** — the one `gcloud auth application-default
+login` prints when it finishes, *not* necessarily the reader's project. If
+CostGoblin reports that API as disabled, enable it in the project the message
+names (or point ADC at a project where it is on with
+`gcloud auth application-default set-quota-project PROJECT`):
+
+```bash
+gcloud services enable iamcredentials.googleapis.com --project=QUOTA_PROJECT
 ```
 
 then name it on the provider — in the setup wizard's **Read-only service
@@ -436,10 +444,10 @@ read as their own. Grant yourself `roles/iam.serviceAccountTokenCreator` on
 each reader.
 
 > Set up before this changed, with `application-default login
-> --impersonate-service-account=…`? That keeps working for a provider that
-> names the same account. To add a second GCP provider with a different reader,
-> run the plain `gcloud auth application-default login` once (the app's
-> **Sign in** button does exactly that).
+> --impersonate-service-account=…`? Nothing to redo: CostGoblin mints every
+> provider's reader from *your* login underneath that file, so a second
+> provider with a different reader works too. The app's **Sign in** button
+> rewrites ADC as the plain login the next time you use it.
 
 Two limits apply even then, so weigh them before telling an approver the app is
 confined to the bucket:

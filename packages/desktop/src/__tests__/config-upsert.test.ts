@@ -397,6 +397,16 @@ describe('upsertWizardProvider — gcp arm', () => {
     expect(providers(carried)[0]).toMatchObject({ impersonateServiceAccount: 'old@proj.iam.gserviceaccount.com' });
   });
 
+  it('clears an existing reader when the wizard explicitly names none', () => {
+    // The wizard always sends the field for a GCP run ('' = browsed as the
+    // ADC login), so the written entry matches the identity it browsed with.
+    const existing = { providers: [{ ...providerGcp(), impersonateServiceAccount: 'old@proj.iam.gserviceaccount.com' }] };
+    const cleared = upsertWizardProvider(existing, {
+      providerName: 'gcp-main', type: 'gcp', profile: '', dailyBucket: 'gs://b/focus', impersonateServiceAccount: '',
+    });
+    expect(providers(cleared)[0]).not.toHaveProperty('impersonateServiceAccount');
+  });
+
   it('never combines a newly named reader with a carried key file, which the validator rejects', () => {
     const existing = { providers: [{ name: 'gcp-main', type: 'gcp', keyFile: '/home/me/sa.json', sync: { daily: { bucket: 'gs://billing-export/focus/daily/', retentionDays: 365 } } }] };
     const result = upsertWizardProvider(existing, {

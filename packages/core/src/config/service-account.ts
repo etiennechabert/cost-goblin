@@ -8,6 +8,10 @@
  *  gcloud argv array or an impersonation request. */
 const SERVICE_ACCOUNT_EMAIL_PATTERN = /^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z0-9-]+\.iam\.gserviceaccount\.com$/;
 
+/** The rule, in words — one copy for the validator, the IPC check and the
+ *  wizard, so widening the pattern cannot leave stale messages behind. */
+export const SERVICE_ACCOUNT_EMAIL_RULE = 'a service-account address like name@project.iam.gserviceaccount.com';
+
 export function isServiceAccountEmail(value: string): boolean {
   return SERVICE_ACCOUNT_EMAIL_PATTERN.test(value);
 }

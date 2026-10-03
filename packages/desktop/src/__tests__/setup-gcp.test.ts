@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { isGcpCredentialError } from '@costgoblin/core';
 import type { GcsPrefixPage } from '../main/setup-gcp.js';
 import { collectGcsPrefixes, extractGcsPrefixNames, gcsNextPageToken, parseGcloudProjects, parseWizardReader, wizardGcsErrorMessage } from '../main/setup-gcp.js';
 
@@ -210,10 +211,15 @@ describe('parseWizardReader', () => {
 
 describe('wizardGcsErrorMessage', () => {
   it('rewrites an impersonation denial into the Token Creator remedy, naming the reader', () => {
-    const raw = "PERMISSION_DENIED: unable to impersonate: Permission 'iam.serviceAccounts.getAccessToken' denied on resource (or it may not exist).";
+    // Verbatim runtime shape: google-auth-library prefixes the IAM 403 with
+    // the same `Could not refresh access token` an expired login carries.
+    const raw = "Could not refresh access token: PERMISSION_DENIED: unable to impersonate: Permission 'iam.serviceAccounts.getAccessToken' denied on resource (or it may not exist).";
     const message = wizardGcsErrorMessage(new Error(raw), 'reader@proj.iam.gserviceaccount.com');
     expect(message).toContain('roles/iam.serviceAccountTokenCreator');
     expect(message).toContain('reader@proj.iam.gserviceaccount.com');
+    // The wizard offers a sign-in button on this predicate; signing in cannot
+    // grant a role, so it must not fire.
+    expect(isGcpCredentialError(new Error(message))).toBe(false);
   });
 
   it('passes every other failure through verbatim, so sign-in and bucket-list classification still see it', () => {
