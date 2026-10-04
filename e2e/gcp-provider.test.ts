@@ -53,32 +53,37 @@ test.afterAll(async () => {
 
 test.describe('mixed AWS + GCP workspace', () => {
   test('boots and renders without a crash', async () => {
-    await waitForQuerySettle(page);
-    await assertNoReactCrash(page);
+    // The settle only waits on widget slots already in the DOM, so it would
+    // pass vacuously before the dashboard has rendered any.
+    await expect(page.getByRole('heading', { name: 'Cost Overview' })).toBeVisible({ timeout: 15_000 });
+    await waitForQuerySettle(page); // ends with assertNoReactCrash
     await screenshot(page, 'gcp-mixed-dashboard');
-  });
-
-  test('lists both providers on Data & Sync', async () => {
-    await openDataSync();
-    await expect(page.getByLabel('Provider gcp-main')).toBeVisible();
   });
 
   test('runs with cloud credential discovery sandboxed', async () => {
     // This suite is where the leak showed: launched with the runner's env, a
     // developer's real ADC let the app query `gs://test-focus-export` as them,
-    // and the card below sat on "Checking Cloud Storage for available data..."
+    // and the GCP card sat on "Checking Cloud Storage for available data..."
     // while it did. CI holds no credentials to leak, so this check is what
     // keeps a developer's run as credential-free as CI's.
     await expectCloudSandboxed(app);
   });
 
-  test('shows the GCP provider reading a gs:// bucket with ADC', async () => {
+  test('Data & Sync lists both providers, with the GCP one reading gs:// via ADC and offering hourly but not Cost Optimization', async () => {
     await openDataSync();
     const gcp = page.getByLabel('Provider gcp-main');
+    await expect(gcp).toBeVisible();
     // No keyFile in the fixture config, so it must report Application Default
     // Credentials rather than an AWS profile name.
     await expect(gcp.getByText('application default credentials')).toBeVisible();
     await expect(gcp.getByText(/gs:\/\/test-focus-export/).first()).toBeVisible();
+
+    // The exporter publishes an hourly grain, so that panel is real for GCP.
+    // Cost Optimization has no GCP analogue and resolveBucketPath refuses that
+    // tier, so offering the panel would be a button that can only error.
+    await expect(gcp.getByText('Hourly', { exact: true })).toBeVisible();
+    await expect(gcp.getByText('Cost Optimization', { exact: true })).toHaveCount(0);
+    await expect(page.getByLabel('Provider aws-main').getByText('Cost Optimization', { exact: true })).toBeVisible();
   });
 
   test('shows who listing and downloads run as, finding credentials only in the sandbox', async () => {
@@ -101,19 +106,6 @@ test.describe('mixed AWS + GCP workspace', () => {
     // Running gcloud against the sandbox config must not have minted a
     // credential store there.
     await expectCloudSandboxed(app);
-  });
-
-  test('offers GCP the hourly tier but not Cost Optimization', async () => {
-    // The exporter publishes an hourly grain, so that panel is real for GCP.
-    // Cost Optimization has no GCP analogue and resolveBucketPath refuses that
-    // tier, so offering the panel would be a button that can only error.
-    await openDataSync();
-    const gcp = page.getByLabel('Provider gcp-main');
-    await expect(gcp.getByText('Hourly', { exact: true })).toBeVisible();
-    await expect(gcp.getByText('Cost Optimization', { exact: true })).toHaveCount(0);
-
-    const aws = page.getByLabel('Provider aws-main');
-    await expect(aws.getByText('Cost Optimization', { exact: true })).toBeVisible();
   });
 
   test('attributes spend to both providers in one query', async () => {
