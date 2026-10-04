@@ -152,19 +152,20 @@ test.describe('Data Management', () => {
     await expect(page.getByText('Nothing to prune — all local data is within retention.')).toBeVisible({ timeout: LOAD_TIMEOUT });
   });
 
-  test('configure button opens setup wizard modal', async () => {
-    const configBtns = page.locator('button[title*="Configure"]');
-    const count = await configBtns.count();
-
-    if (count > 0) {
-      await configBtns.first().click();
-
-      const closeBtn = page.locator('button[title="Close"]');
-      const isOpen = await closeBtn.isVisible().catch(() => false);
-      if (isOpen) {
-        await screenshot(page, 'data-management-configure-modal');
-        await closeBtn.click();
-      }
+  test('Add Provider and the tier gear open their setup wizard dialogs and Close dismisses them', async () => {
+    // Two different wizard dialogs behind two buttons: the header's Add
+    // Provider and the Daily panel's gear. Role queries reach them only
+    // because the dialogs are no longer inside an aria-hidden overlay.
+    for (const { trigger, dialogName, shot } of [
+      { trigger: 'Add Provider', dialogName: 'Add provider', shot: 'add-provider' },
+      { trigger: 'Configure daily', dialogName: /^Configure daily data source for /, shot: 'daily' },
+    ]) {
+      await page.getByRole('button', { name: trigger, exact: true }).first().click();
+      const dialog = page.getByRole('dialog', { name: dialogName });
+      await expect(dialog).toBeVisible();
+      await screenshot(page, `data-management-modal-${shot}`);
+      await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+      await expect(dialog).toBeHidden();
     }
   });
 });
