@@ -36,7 +36,7 @@ export async function queryCosts(
   const groupBy: DimensionId = toDimensionId(params.groupBy);
   const dateRange: DateRange = params.dateRange !== undefined
     ? toDateRange(params.dateRange)
-    : defaultDateRange();
+    : defaultDateRange(ctx.now());
   const filters = toFilterMap(params.filters);
   const limit = params.limit ?? 15;
 

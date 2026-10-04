@@ -376,6 +376,18 @@ describe('workflow policy (.github/workflows)', () => {
     expect(scan?.['continue-on-error']).toBeUndefined();
   });
 
+  it('ci.yml runs the e2e shards with the window shown under xvfb', () => {
+    // A hidden window on Linux starves requestAnimationFrame (~1-5 fps) and
+    // every Playwright click waits on frames: the suites ran ~8x slower.
+    const steps = stepsOf(ci.jobs['test-e2e']);
+    const playwrightRuns = steps.filter((s) => runBody(s).includes('playwright test'));
+    expect(playwrightRuns.length).toBeGreaterThan(0);
+    for (const step of playwrightRuns) {
+      expect(runBody(step)).toMatch(/^xvfb-run /);
+      expect(step.env?.COSTGOBLIN_HEADLESS).toBe('0');
+    }
+  });
+
   it('ci.yml security-audit asserts the npm guards before npm ci', () => {
     const steps = stepsOf(ci.jobs['security-audit']);
     const assertAt = steps.findIndex((s) => runBody(s).includes(ASSERT_SCRIPT));

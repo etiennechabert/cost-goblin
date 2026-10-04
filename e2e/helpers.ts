@@ -1,4 +1,4 @@
-import { expect, _electron, type ElectronApplication, type Page } from '@playwright/test';
+import { expect, _electron, type ElectronApplication, type Locator, type Page } from '@playwright/test';
 import { join } from 'node:path';
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -14,7 +14,12 @@ export const ROOT = join(import.meta.dirname, '..');
 const DESKTOP_DIR = join(ROOT, 'packages', 'desktop');
 export const SCREENSHOT_DIR = join(tmpdir(), 'costgoblin-e2e');
 export const V8_DIR = join(tmpdir(), 'costgoblin-e2e-v8');
-mkdirSync(SCREENSHOT_DIR, { recursive: true });
+/** Debug screenshots from {@link screenshot} are opt-in. Nothing reads them:
+ *  CI doesn't upload SCREENSHOT_DIR, and the homepage images come from
+ *  homepage-screenshots.ts, which takes its own. Taking them on every run
+ *  cost a capture per call (~50 calls across the suites). */
+const SCREENSHOTS = process.env['COSTGOBLIN_E2E_SCREENSHOTS'] === '1';
+if (SCREENSHOTS) mkdirSync(SCREENSHOT_DIR, { recursive: true });
 mkdirSync(V8_DIR, { recursive: true });
 
 export const LOAD_TIMEOUT = 5_000;
@@ -40,13 +45,25 @@ export const FIXTURE_MULTI_CONFIG_DIR = join(ROOT, 'packages', 'core', 'src', '_
  *  produces — and the natural guesses `true`/`yes` all silently show the
  *  window, the opposite of what they read like. Only an explicit '0' opts out.
  *
+ *  CI opts out (ci.yml sets '0'), because hiding costs a lot there and buys
+ *  nothing. On Linux a never-shown window gets ~1-5 compositor frames per
+ *  second, so requestAnimationFrame starves. Playwright's actionability checks
+ *  wait on animation frames, so every click took 1-2s, and the suites ran ~8x
+ *  slower than with the window shown on xvfb's virtual display, which nobody
+ *  can see or click anyway. macOS keeps rendering a hidden window at full rate,
+ *  so the hidden default stays fast for local runs. On a Linux desktop, run
+ *  under `xvfb-run` with '0' rather than hidden.
+ *
  *  See CLAUDE.md's Layer 4 section for the developer-facing version. */
 export const HEADLESS = process.env['COSTGOBLIN_HEADLESS'] === '0' ? '0' : '1';
 
 /** "Today" for every app launched by `launchApp`: the day after the fixture
  *  window (generate.ts pins 2026-01-01..2026-03-01), so relative presets like
  *  "Last 30 days" resolve to dates that actually hold fixture data. The app
- *  honours it via COSTGOBLIN_NOW (see packages/desktop/src/renderer/fake-clock.ts). */
+ *  honours it via COSTGOBLIN_NOW in both processes: the renderer's Date is
+ *  patched (packages/desktop/src/renderer/fake-clock.ts) and the main process
+ *  hands handlers a pinned clock (IpcContext.now), so main-computed windows
+ *  (Cost Scope preview, tag discovery, baselines, retention) hold it too. */
 export const FIXTURE_NOW = '2026-03-02T12:00:00Z';
 
 // Per-launch temp root, keyed by the app it was created for, so closeApp can
@@ -292,7 +309,7 @@ export async function attachCoverage(page: Page): Promise<Page> {
  *  window is really the app. The standard suite opening — see
  *  {@link attachCoverage} for why the ordering inside cannot be rearranged. */
 export async function launchAppWithCoverage(
-  overrides?: { configDir?: string; dataDir?: string },
+  overrides?: { configDir?: string; dataDir?: string; stateFiles?: Readonly<Record<string, string>> },
 ): Promise<{ app: ElectronApplication; page: Page }> {
   const app = await launchApp(overrides);
   // Everything past this point can throw (firstWindow times out, the title
@@ -385,7 +402,9 @@ export async function finishCoverage(
   }
 }
 
+/** Save a debug PNG to SCREENSHOT_DIR, only when COSTGOBLIN_E2E_SCREENSHOTS=1. */
 export async function screenshot(page: Page, name: string): Promise<void> {
+  if (!SCREENSHOTS) return;
   await page.screenshot({ path: join(SCREENSHOT_DIR, `${name}.png`) });
 }
 
@@ -397,6 +416,44 @@ export async function assertNoReactCrash(page: Page): Promise<void> {
   }
 }
 
+/** Runs in the renderer (serialized by page.evaluate — no outer references).
+ *  What still keeps the dashboard from being settled, one entry per blocker
+ *  (empty when settled):
+ *  - an in-viewport widget slot that hasn't mounted yet;
+ *  - a mounted slot still loading: CoinRainLoader's `<output>`, or a plain
+ *    "Loading …" line like the baseline widget's. Mounted slots count wherever
+ *    they are — the scheduler also mounts slots up to 400px below the fold,
+ *    and tests read those (the overview's breakdown table). Slots further down
+ *    stay deferred until scrolled to, so they can't be waited on;
+ *  - the rollup-building overlay, which stands in for every slot while the
+ *    rollup for the range is computed.
+ *  Read twice 100ms apart, so a slot mounting between the reads (its loader
+ *  not painted yet) can't pass on one lucky read. A page with no slots and no
+ *  overlay (every non-dashboard view) needs only the first. */
+async function unsettledWidgets(): Promise<string[]> {
+  const read = (): string[] => {
+    const blockers = [...document.querySelectorAll('h3')].some(h => h.textContent === 'Preparing your cost data')
+      ? ['rollup-building overlay']
+      : [];
+    for (const slot of document.querySelectorAll('[data-widget-id]')) {
+      const id = slot.getAttribute('data-widget-id') ?? '(unnamed)';
+      if (slot.getAttribute('data-widget-state') === 'mounted') {
+        if (slot.querySelector('output') !== null || /\bLoading\b/.test(slot.textContent ?? '')) blockers.push(`${id}: loading`);
+        continue;
+      }
+      const box = slot.getBoundingClientRect();
+      if (box.bottom > 0 && box.top < window.innerHeight && box.right > 0 && box.left < window.innerWidth) {
+        blockers.push(`${id}: not mounted`);
+      }
+    }
+    return blockers;
+  };
+  const first = read();
+  if (first.length === 0 && document.querySelector('[data-widget-id]') === null) return first;
+  await new Promise(resolve => { setTimeout(resolve, 100); });
+  return [...new Set([...first, ...read()])];
+}
+
 export async function waitForQuerySettle(page: Page): Promise<void> {
   // Wait for any "Loading" text to disappear, or time out gracefully.
   // Views may show errors instead of data — that's fine, we just need the query cycle to finish.
@@ -405,29 +462,30 @@ export async function waitForQuerySettle(page: Page): Promise<void> {
   } catch {
     // Loading text might never have appeared (instant response or error)
   }
-  // small settle for rendering
-  await page.waitForTimeout(300);
+  // Then the dashboard widgets. A failed evaluate (a reload destroying the
+  // context mid-poll) is retried rather than failing the poll outright.
+  await expect.poll(
+    () => page.evaluate(unsettledWidgets).catch((err: unknown) => [`page not ready: ${String(err)}`]),
+    { message: 'dashboard widgets settled (slots mounted, no loader, no rollup overlay)', timeout: 20_000, intervals: [100] },
+  ).toEqual([]);
   // catch React crashes that happened during query/render cycle
   await assertNoReactCrash(page);
 }
 
-/** Wait for the Cost Scope preview to finish its debounced first load. The
- *  preview effect debounces 300ms and then runs several IPC queries
- *  serially (per-rule + totals + daily + sample + count). Polling for the
- *  in-header "loading…" marker to disappear is the only reliable settle
- *  signal — waitForQuerySettle's generic "Loading" check doesn't fire here
- *  because the preview uses its own marker to stay scoped to this view. */
+/** The Cost Scope preview histogram's day bars (title "<date>\nkept: …").
+ *  Scoped to the visible card: at lg+ the preview renders twice (a hidden
+ *  mobile copy plus the sticky aside). */
+export function costScopePreviewBars(page: Page): Locator {
+  return page.getByTestId('cost-scope-preview').filter({ visible: true }).locator('div[title*="kept:"]');
+}
+
+/** Wait for the Cost Scope preview's debounced first load to paint fixture
+ *  data. The main process computes the preview window from the pinned clock,
+ *  so it always covers fixture days: an empty preview fails here rather than
+ *  passing as "settled". */
 export async function waitForCostScopePreview(page: Page): Promise<void> {
-  // The marker only appears once the first debounce fires (~300ms). Give
-  // it a little room to show up before checking for its disappearance.
-  await page.waitForTimeout(400);
-  const marker = page.getByTestId('preview-loading');
-  try {
-    await expect(marker).toBeHidden({ timeout: LOAD_TIMEOUT });
-  } catch {
-    // Marker may have finished before we attached the locator; that's fine.
-  }
-  await page.waitForTimeout(200);
+  await expect(costScopePreviewBars(page).first()).toBeVisible({ timeout: LOAD_TIMEOUT });
+  await expect(page.getByTestId('preview-loading')).toHaveCount(0, { timeout: LOAD_TIMEOUT });
   await assertNoReactCrash(page);
 }
 
@@ -441,10 +499,11 @@ export async function hasVisibleData(page: Page): Promise<boolean> {
 }
 
 /** Assert the current view has loaded real dollar data, retrying until the
- *  cost cells actually paint. `waitForQuerySettle` only waits out the shared
- *  "Loading" text (driven by the dimensions query) plus a fixed 300ms, which
- *  can race the per-widget cost queries on a slow runner — so poll rather than
- *  snapshotting `hasVisibleData` once. */
+ *  cost cells actually paint. Past its page-wide "Loading" wait,
+ *  `waitForQuerySettle` only tracks dashboard widget slots, and the analysis
+ *  views (Trends, Tags) hold none — a query they start after that wait can
+ *  still be in flight when it returns. Poll rather than snapshotting
+ *  `hasVisibleData` once. */
 export async function expectVisibleData(page: Page): Promise<void> {
   await expect.poll(() => hasVisibleData(page), { timeout: LOAD_TIMEOUT }).toBe(true);
 }

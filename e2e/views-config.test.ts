@@ -1,11 +1,12 @@
-import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
+import { test, expect, type ElectronApplication, type Locator, type Page } from '@playwright/test';
+import type { OrgAccount, OrgSyncResult } from '../packages/core/src/types/api.js';
 import {
   launchAppWithCoverage,
   finishCoverage,
   screenshot,
   assertNoReactCrash,
-  waitForQuerySettle,
   waitForCostScopePreview,
+  costScopePreviewBars,
   navigateTo,
   clickNavButton,
   LOAD_TIMEOUT,
@@ -14,8 +15,34 @@ import {
 let app: ElectronApplication;
 let page: Page;
 
+/** A synthetic AWS Organizations sync over the fixture's eight accounts (ids
+ *  and names as in __fixtures__/setup.ts): five OUs, and three account tag
+ *  keys carried by 8, 6 and 4 accounts, so per-key coverage counts differ. */
+const orgAccount = (id: string, name: string, ouPath: string, tags: Readonly<Record<string, string>>): OrgAccount => ({
+  id, name, ouPath, tags,
+  email: `aws+${id}@example.com`,
+  status: 'ACTIVE',
+  joinedTimestamp: '2024-01-15T00:00:00Z',
+});
+const FIXTURE_ORG: OrgSyncResult = {
+  orgId: 'o-fixture0001',
+  syncedAt: '2026-03-01T09:00:00Z',
+  accounts: [
+    orgAccount('100000000000', 'Acme Corp Main', 'Root/Shared', { 'cost-center': 'CC-100', owner: 'finance' }),
+    orgAccount('100000000001', 'Payments Production', 'Root/Production', { 'cost-center': 'CC-200', environment: 'production', owner: 'payments' }),
+    orgAccount('100000000002', 'Cards Production', 'Root/Production', { 'cost-center': 'CC-200', environment: 'production' }),
+    orgAccount('100000000003', 'Identity Production', 'Root/Production', { 'cost-center': 'CC-300', environment: 'production', owner: 'identity' }),
+    orgAccount('100000000004', 'Platform Engineering', 'Root/Platform', { 'cost-center': 'CC-400', environment: 'staging', owner: 'platform' }),
+    orgAccount('100000000005', 'Security Operations', 'Root/Security', { 'cost-center': 'CC-500', environment: 'production' }),
+    orgAccount('100000000006', 'Data Analytics', 'Root/Data', { 'cost-center': 'CC-600', environment: 'staging' }),
+    orgAccount('100000000007', 'CI/CD Platform', 'Root/Platform', { 'cost-center': 'CC-400' }),
+  ],
+};
+
 test.beforeAll(async () => {
-  ({ app, page } = await launchAppWithCoverage());
+  // The org sync result lives in the state dir, where launchApp's
+  // stateFiles land before the app starts.
+  ({ app, page } = await launchAppWithCoverage({ stateFiles: { 'org-accounts.json': JSON.stringify(FIXTURE_ORG) } }));
 });
 
 test.afterAll(async () => {
@@ -47,80 +74,73 @@ test.describe('Data Management', () => {
     await expect(page.getByRole('button', { name: 'Toggle auto-prune' })).toBeVisible();
   });
 
-  test('org section is visible (either synced or prompt)', async () => {
-    const synced = page.getByText('AWS Organization').first();
-    const prompt = page.getByText('AWS Organizations not synced');
-    const hasSynced = await synced.isVisible().catch(() => false);
-    const hasPrompt = await prompt.isVisible().catch(() => false);
+  test('org section shows the synced organization and expands to what it pulled', async () => {
+    await expect(page.getByText('AWS Organizations not synced')).toHaveCount(0);
+    const header = page.getByRole('button').filter({ hasText: 'AWS Organization' });
+    const accounts = page.getByText('8 accounts', { exact: true });
+    await expect(accounts).toBeHidden();
 
-    expect(hasSynced || hasPrompt).toBe(true);
+    await header.click();
+    await expect(accounts).toBeVisible();
+    await expect(page.getByText('5 organizational units', { exact: true })).toBeVisible();
+    await expect(page.getByText(/^3 tag keys /)).toBeVisible();
+    await screenshot(page, 'data-management-org');
 
-    if (hasSynced && !hasPrompt) {
-      // click to expand
-      await synced.click();
-      await expect(page.getByText('Account ID').first()).toBeVisible({ timeout: 3000 });
-      await screenshot(page, 'data-management-org');
-
-      // collapse
-      await synced.click();
-    }
+    await header.click();
+    await expect(accounts).toBeHidden();
   });
 
-  test('tier panels load (Daily at minimum, possibly Hourly and Cost Optimization)', async () => {
-    // Wait for S3 inventory to finish checking
-    try {
-      await expect(page.getByText('Checking S3 for available data...')).toBeHidden({ timeout: LOAD_TIMEOUT });
-    } catch { /* may have already finished */ }
+  /** A tier panel, found from its <h3> title: the nearest rounded-xl card
+   *  around it (the panel itself, not the provider section holding all three). */
+  const tierPanel = (title: string): Locator =>
+    page.getByRole('heading', { name: title, exact: true })
+      .locator('xpath=ancestor::div[contains(concat(" ", normalize-space(@class), " "), " rounded-xl ")][1]');
 
-    // After loading, should see tier panels with either data or "Not configured" state
-    // The Daily panel should exist since config is present
-    const dailyTitle = page.locator('h3').filter({ hasText: 'Daily' });
-    const hasDailyPanel = await dailyTitle.isVisible().catch(() => false);
+  /** The fixture tree's local inventory: daily holds 2026-01..02, hourly and
+   *  cost optimization 2026-02 only. Nothing remote is reachable (no
+   *  credentials), so these come from the local scan alone. */
+  const FIXTURE_INVENTORY: readonly { title: string; months: string; from: string; periods: readonly string[] }[] = [
+    { title: 'Daily', months: '2 months', from: '2026-01', periods: ['Jan 2026', 'Feb 2026'] },
+    { title: 'Hourly', months: '1 months', from: '2026-02', periods: ['Feb 2026'] },
+    { title: 'Cost Optimization', months: '1 months', from: '2026-02', periods: ['Feb 2026'] },
+  ];
 
-    if (hasDailyPanel) {
-      await screenshot(page, 'data-management-tiers');
-    } else {
-      // might show an error (e.g., expired SSO)
-      await screenshot(page, 'data-management-error');
+  async function expectFixtureInventory(): Promise<void> {
+    await expect(page.getByText('Checking S3 for available data...')).toBeHidden({ timeout: LOAD_TIMEOUT });
+    for (const { title, months, from, periods } of FIXTURE_INVENTORY) {
+      const panel = tierPanel(title);
+      await expect(panel.getByText(months)).toBeVisible();
+      await expect(panel.getByText(from, { exact: true })).toBeVisible();
+      await expect(panel.getByText('to 2026-02', { exact: true })).toBeVisible();
+      await expect(panel.getByText('Downloaded', { exact: true })).toBeVisible();
+      for (const period of periods) {
+        await expect(panel.getByText(period, { exact: true })).toBeVisible();
+      }
     }
+  }
+
+  test('tier panels show local stats and downloaded periods for every tier', async () => {
+    await expectFixtureInventory();
+    await screenshot(page, 'data-management-tiers');
   });
 
-  test('tier panel shows local data stats when configured', async () => {
-    // "Local" and "Range" labels appear inside the tier panel grid
-    const localLabel = page.locator('text=/Local/').first();
-    const hasLocal = await localLabel.isVisible().catch(() => false);
-
-    if (hasLocal) {
-      await screenshot(page, 'data-management-local-stats');
-    }
-  });
-
-  test('downloaded periods list visible when data exists locally', async () => {
-    const downloaded = page.getByText('Downloaded').first();
-    const hasDownloaded = await downloaded.isVisible().catch(() => false);
-
-    if (hasDownloaded) {
-      await screenshot(page, 'data-management-downloaded');
-    }
-  });
-
-  test('available periods list with checkboxes when remote data exists', async () => {
-    const available = page.getByText('Available').first();
-    const hasAvailable = await available.isVisible().catch(() => false);
-
-    if (hasAvailable) {
-      // checkboxes for period selection
-      const checkboxes = page.locator('input[type="checkbox"]');
-      const checkCount = await checkboxes.count();
-      expect(checkCount).toBeGreaterThan(0);
-
-      await screenshot(page, 'data-management-available');
-    }
-  });
-
-  test('refresh button triggers reload', async () => {
+  test('Refresh reloads the inventory back into the same tier panels', async () => {
+    // Every inventory assert also holds on the pre-click panels, and the
+    // reload's "Checking S3…" state commits only after the click returns and
+    // can last a frame — too brief for a polled assertion. Record it from the
+    // page instead, so a Refresh that reloads nothing fails here.
+    await page.evaluate(() => {
+      const observer = new MutationObserver(() => {
+        if (!(document.body.textContent ?? '').includes('Checking S3 for available data...')) return;
+        document.body.dataset['inventoryReloaded'] = 'true';
+        observer.disconnect();
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    });
     await page.getByRole('button', { name: 'Refresh' }).click();
-    await waitForQuerySettle(page);
+    await expect(page.locator('body')).toHaveAttribute('data-inventory-reloaded', 'true');
+    // ...and the panels come back with the same local inventory.
+    await expectFixtureInventory();
     await screenshot(page, 'data-management-refreshed');
   });
 
@@ -128,31 +148,45 @@ test.describe('Data Management', () => {
     await page.getByRole('button', { name: 'Delete All Data' }).click();
 
     // confirmation modal
-    await expect(page.getByText('Delete all local data')).toBeVisible({ timeout: 3000 });
-    await expect(page.getByText('This will remove all downloaded')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Delete All', exact: true })).toBeVisible();
+    const confirm = page.getByRole('dialog', { name: 'Delete all local data' });
+    await expect(confirm).toBeVisible({ timeout: 3000 });
+    await expect(confirm).toHaveAccessibleDescription(/This will remove all downloaded/);
+    await expect(confirm.getByText('This will remove all downloaded')).toBeVisible();
+    await expect(confirm.getByRole('button', { name: 'Cancel' })).toBeVisible();
+    await expect(confirm.getByRole('button', { name: 'Delete All', exact: true })).toBeVisible();
 
     await screenshot(page, 'data-management-delete-confirm');
 
     // cancel — don't actually delete
-    await page.getByRole('button', { name: 'Cancel' }).click();
-    await expect(page.getByText('Delete all local data')).toBeHidden();
+    await confirm.getByRole('button', { name: 'Cancel' }).click();
+    await expect(confirm).toBeHidden();
   });
 
-  test('configure button opens setup wizard modal', async () => {
-    const configBtns = page.locator('button[title*="Configure"]');
-    const count = await configBtns.count();
+  test('Prune removes nothing: main measures retention from the pinned clock too', async () => {
+    // As of FIXTURE_NOW every fixture month is inside its tier's window
+    // (hourly 30d, cost-opt 90d, daily 365d), so the renderer counts nothing
+    // to prune and the button reads plain "Prune". Main must decide from the
+    // same date: on the wall clock it would delete the Feb-2026 hourly and
+    // cost-optimization months.
+    await page.getByRole('button', { name: 'Prune', exact: true }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Prune', exact: true }).click();
+    await expect(page.getByText('Nothing to prune — all local data is within retention.')).toBeVisible({ timeout: LOAD_TIMEOUT });
+  });
 
-    if (count > 0) {
-      await configBtns.first().click();
-
-      const closeBtn = page.locator('button[title="Close"]');
-      const isOpen = await closeBtn.isVisible().catch(() => false);
-      if (isOpen) {
-        await screenshot(page, 'data-management-configure-modal');
-        await closeBtn.click();
-      }
+  test('Add Provider and the tier gear open their setup wizard dialogs and Close dismisses them', async () => {
+    // Two different wizard dialogs behind two buttons: the header's Add
+    // Provider and the Daily panel's gear. Role queries reach them only
+    // because the dialogs are no longer inside an aria-hidden overlay.
+    for (const { trigger, dialogName, shot } of [
+      { trigger: 'Add Provider', dialogName: 'Add provider', shot: 'add-provider' },
+      { trigger: 'Configure daily', dialogName: /^Configure daily data source for /, shot: 'daily' },
+    ]) {
+      await page.getByRole('button', { name: trigger, exact: true }).first().click();
+      const dialog = page.getByRole('dialog', { name: dialogName });
+      await expect(dialog).toBeVisible();
+      await screenshot(page, `data-management-modal-${shot}`);
+      await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+      await expect(dialog).toBeHidden();
     }
   });
 });
@@ -179,29 +213,22 @@ test.describe('Dimensions', () => {
     await expect(page.getByRole('button', { name: '+ Add' })).toBeVisible();
   });
 
-  test('clicking a tag dimension opens the editor', async () => {
-    // find a tag dimension (not built-in) and click it
-    const editBtn = page.locator('button').filter({ hasText: 'Edit →' }).first();
-    const exists = await editBtn.isVisible().catch(() => false);
+  test('clicking a tag dimension opens the editor and Cancel closes it', async () => {
+    // The fixture's custom "Team" dimension; its row is one button that
+    // carries the tag key.
+    await page.getByRole('button').filter({ hasText: 'tag:team' }).click();
 
-    if (exists) {
-      await editBtn.click();
+    const concept = page.getByText('Concept', { exact: true });
+    await expect(concept).toBeVisible();
+    await expect(page.getByText('Display Label', { exact: true })).toBeVisible();
+    await expect(page.getByText('Normalization', { exact: true })).toBeVisible();
+    await expect(page.getByText('Resource Tag', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Save' })).toBeVisible();
 
-      // editor should show concept, label, normalization dropdowns
-      await expect(page.getByText('Concept')).toBeVisible();
-      await expect(page.getByText('Display Label')).toBeVisible();
-      await expect(page.getByText('Normalization')).toBeVisible();
-      await expect(page.getByText('Resource Tag', { exact: true })).toBeVisible();
+    await screenshot(page, 'dimensions-editor');
 
-      // Save and Cancel buttons
-      await expect(page.getByRole('button', { name: 'Save' })).toBeVisible();
-      await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible();
-
-      await screenshot(page, 'dimensions-editor');
-
-      // Cancel to close
-      await page.getByRole('button', { name: 'Cancel' }).click();
-    }
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    await expect(concept).toBeHidden();
   });
 
   test('Add opens editor with tag dropdown', async () => {
@@ -213,53 +240,71 @@ test.describe('Dimensions', () => {
 
     await screenshot(page, 'dimensions-add-new');
 
-    // Cancel and wait for editor to close
     await page.getByRole('button', { name: 'Cancel' }).click();
-    await page.waitForTimeout(300);
+    await expect(page.getByText('Resource Tag', { exact: true })).toBeHidden();
   });
 
-  test('Resource Tags section loads or shows loading/error state', async () => {
-    // Wait for either the table, loading, or error to appear
-    const hasTable = await page.getByText('Resource Tags').first().isVisible().catch(() => false);
-    const hasLoading = await page.getByText('Scanning billing data').isVisible().catch(() => false);
-    const hasError = await page.locator('.text-negative').first().isVisible().catch(() => false);
+  test('Account Tags panel lists the org tag keys and toggles their columns', async () => {
+    // A key count proves the org data loaded: the no-data subtitle is also
+    // what a loading or failed org request shows.
+    const header = page.getByRole('button').filter({ hasText: 'Account Tags' });
+    await expect(header).toContainText('3 keys · across 8 accounts');
+    await header.click();
 
-    expect(hasTable || hasLoading || hasError).toBe(true);
-    await screenshot(page, 'dimensions-resource-tags');
-  });
-
-  test('Account Tags table shows when org data exists', async () => {
-    const hasAccountTags = await page.getByText('Account Tags').isVisible().catch(() => false);
-
-    if (hasAccountTags) {
-      // badges should be visible
-      const badges = page.locator('button.rounded-full');
-      const badgeCount = await badges.count();
-      expect(badgeCount).toBeGreaterThan(0);
-
-      await screenshot(page, 'dimensions-account-tags');
+    // One column per key, headed by how many accounts carry it.
+    const panel = header.locator('xpath=..');
+    for (const { key, carriers } of [
+      { key: 'cost-center', carriers: 8 },
+      { key: 'environment', carriers: 6 },
+      { key: 'owner', carriers: 4 },
+    ]) {
+      await expect(panel.locator('th', { hasText: key })).toContainText(`${String(carriers)}/8 accts`);
     }
+
+    // A key's badge hides its column (struck through) and brings it back.
+    const badge = panel.getByRole('button', { name: 'owner', exact: true });
+    const column = panel.locator('th', { hasText: 'owner' });
+    await badge.click();
+    await expect(badge).toHaveClass(/\bline-through\b/);
+    await expect(column).toHaveCount(0);
+    await screenshot(page, 'dimensions-account-tags');
+
+    await badge.click();
+    await expect(badge).not.toHaveClass(/\bline-through\b/);
+    await expect(column).toHaveCount(1);
+    await header.click();
   });
 
-  test('tag table badges toggle columns', async () => {
-    const badges = page.locator('button.rounded-full.border-accent\\/40');
-    const count = await badges.count();
+  test('Resource Tags panel lists the fixture tag keys and toggles their columns', async () => {
+    // Discovery samples the 30 days before the main process's clock. The
+    // window's start date proves main honours COSTGOBLIN_NOW; on the wall
+    // clock the sample would hold no fixture rows and report 0 keys.
+    const header = page.getByRole('button').filter({ hasText: 'Resource Tags' });
+    await header.click();
+    await expect(header).toHaveAttribute('aria-expanded', 'true');
+    await expect(header).toContainText('3 keys · sampled from last 30 days (since 2026-01-31)', { timeout: LOAD_TIMEOUT });
 
-    if (count > 2) {
-      // click first badge to hide a column
-      const firstBadge = badges.first();
-      await firstBadge.click();
-
-      // it should now have strikethrough styling
-      await screenshot(page, 'dimensions-badge-toggled');
-
-      // click again to restore
-      const hiddenBadge = page.locator('button.rounded-full.line-through').first();
-      const isHidden = await hiddenBadge.isVisible().catch(() => false);
-      if (isHidden) {
-        await hiddenBadge.click();
-      }
+    // One badge and one sample-value column per discovered key.
+    const panel = header.locator('xpath=..');
+    for (const key of ['environment', 'team', 'system']) {
+      await expect(panel.getByRole('button', { name: key, exact: true })).toHaveAttribute('aria-pressed', 'true');
+      await expect(panel.locator('th', { hasText: key })).toHaveCount(1);
     }
+
+    // A key's badge hides its column and brings it back.
+    const badge = panel.getByRole('button', { name: 'team', exact: true });
+    const column = panel.locator('th', { hasText: 'team' });
+    await badge.click();
+    await expect(badge).toHaveAttribute('aria-pressed', 'false');
+    await expect(badge).toHaveClass(/\bline-through\b/);
+    await expect(column).toHaveCount(0);
+    await screenshot(page, 'dimensions-badge-toggled');
+
+    await badge.click();
+    await expect(badge).toHaveAttribute('aria-pressed', 'true');
+    await expect(column).toHaveCount(1);
+    await header.click();
+    await expect(header).toHaveAttribute('aria-expanded', 'false');
   });
 
   test('no React crash on Dimensions view', async () => {
@@ -325,10 +370,12 @@ test.describe('Views editor', () => {
 test.describe('Cost Scope', () => {
   test.beforeAll(async () => {
     // Click Cost Scope nav — if the Views editor has unsaved changes,
-    // a "Discard" confirm modal will appear. Dismiss it.
+    // a "Discard …?" confirm modal will appear. Dismiss it.
     await clickNavButton(page, 'Cost Scope');
-    const discardBtn = page.getByRole('button', { name: 'Discard' });
-    if (await discardBtn.isVisible({ timeout: 500 }).catch(() => false)) {
+    const discardBtn = page.getByRole('dialog', { name: /^Discard / }).getByRole('button', { name: 'Discard', exact: true });
+    // isVisible() ignores a timeout and answers at once; waitFor gives the
+    // modal its 500ms to appear.
+    if (await discardBtn.waitFor({ state: 'visible', timeout: 500 }).then(() => true, () => false)) {
       await discardBtn.click();
     }
     await expect(page.getByRole('heading', { name: 'Cost Scope', exact: true })).toBeVisible({ timeout: 5000 });
@@ -390,7 +437,7 @@ test.describe('Cost Scope', () => {
     await expect(card.getByText('After scope', { exact: true }).first()).toBeVisible();
     await expect(card.getByText('Excluded', { exact: true }).first()).toBeVisible();
 
-    // Daily cost label appears only when the histogram is rendered
+    // The histogram's label (rendered with or without preview data)
     await expect(card.getByText('Daily cost', { exact: true }).first()).toBeVisible();
 
     await screenshot(page, 'cost-scope-preview');
@@ -403,30 +450,34 @@ test.describe('Cost Scope', () => {
     await expect(card.getByRole('heading', { name: 'Line items' })).toBeVisible();
   });
 
-  test('preview histogram or empty state is shown', async () => {
-    const previewCard = page.getByTestId('cost-scope-preview').first();
-    const dayBars = previewCard.locator('div[title*="kept:"]');
-    const count = await dayBars.count();
+  test('preview histogram plots every day of the fixture window', async () => {
+    // Main computes the window from the pinned clock: the 30 days ending at
+    // the 2-day lag before FIXTURE_NOW, every one of them a fixture day.
+    const bars = costScopePreviewBars(page);
+    await expect(bars).toHaveCount(30);
+    await expect(bars.first()).toHaveAttribute('title', /^2026-01-30\nkept: /);
+    await expect(bars.last()).toHaveAttribute('title', /^2026-02-28\nkept: /);
+    const card = page.getByTestId('cost-scope-preview').filter({ visible: true });
+    await expect(card.getByText('2026-01-30', { exact: true })).toBeVisible();
+    await expect(card.getByText('2026-02-28', { exact: true })).toBeVisible();
 
-    if (count > 0) {
-      await dayBars.first().hover();
-      await screenshot(page, 'cost-scope-histogram-hover');
-    }
-    // No bars is acceptable — data might not cover current 30-day window
+    await bars.first().hover();
+    await screenshot(page, 'cost-scope-histogram-hover');
   });
 
-  test('line-items table renders rows when data exists', async () => {
+  test('line-items table renders the fixture window rows', async () => {
     const lineItemsCard = page.getByTestId('cost-scope-line-items');
     await lineItemsCard.scrollIntoViewIfNeeded();
+    // The preview window always holds fixture data (see the histogram test),
+    // so the table must render.
     const table = lineItemsCard.locator('table');
-    const tableVisible = await table.isVisible().catch(() => false);
+    await expect(table).toBeVisible();
 
-    if (!tableVisible) return; // No data in the current window
-
-    // Header columns we expect to see
-    for (const header of ['Date', 'Account', 'Region', 'Service', 'Cost', 'List']) {
-      await expect(table.getByRole('columnheader', { name: header, exact: true })).toBeVisible();
-    }
+    // Fixed columns lead in scan order; one column per tag dimension follows
+    // (the fixture's `system` tag is labelled "Service", so that name repeats).
+    const headers = await table.locator('thead th').allTextContents();
+    expect(headers.slice(0, 7)).toEqual(['Date', 'Cost', 'List', 'Service', 'Account', 'Charge category', 'Region']);
+    expect(headers).toEqual(expect.arrayContaining(['Team', 'Environment']));
 
     // At least one data row
     const rows = table.locator('tbody tr');
@@ -459,6 +510,14 @@ test.describe('Cost Scope', () => {
 
     // Save button should appear now (draft is dirty)
     await expect(page.getByRole('button', { name: /Save/ })).toBeVisible();
+
+    // The edit re-runs the debounced preview. An enabled rule's tally (the
+    // span beside its switch) leaves '—' only once that round trip resolves —
+    // nothing else waits for the preview, which would otherwise never fire
+    // before the next edit re-arms its debounce.
+    const tally = toggle.locator('xpath=../span');
+    if (nowChecked) await expect(tally).not.toHaveText('—');
+    else await expect(tally).toHaveText('—');
 
     // Cancel to keep the saved state untouched
     await page.getByRole('button', { name: 'Cancel' }).click();

@@ -12,6 +12,7 @@ import type {
   BaselineScope,
   BaselineSpec,
   BaselinesDiscoveryConfig,
+  Clock,
   CostScopeConfig,
   DimensionId,
   DimensionsConfig,
@@ -30,13 +31,17 @@ const FIXTURE_PROVIDER = asProviderName('aws-main');
 const GLOB = `read_parquet('${SYNTHETIC_DIR}/aws-main/raw/daily-*/*.parquet', union_by_name=true)`;
 
 // The fixture data spans 2026-01-01..2026-02-28. Discovery windows are anchored
-// on todayUtc(), so the suite fakes Date (and only Date — timers stay real for
-// DuckDB's async I/O) to a fixed day shortly after the fixture range.
+// on the store's clock, which most cases read from Date, so the suite fakes
+// Date (and only Date — timers stay real for DuckDB's async I/O) to a fixed day
+// shortly after the fixture range.
 const NOW_ISO = '2026-03-04T12:00:00.000Z';
 const TODAY = '2026-03-04';
 // end = today - default lagDays(2); trailing drift window = end - 29.
 const QUERY_END = '2026-03-02';
 const TRAILING_START = '2026-02-01';
+// Most cases read "now" from the faked Date, as if no COSTGOBLIN_NOW were set;
+// the 'injected clock' cases pin it independently of Date.
+const wallClock: Clock = () => Date.now();
 
 const EC2 = 'Amazon Elastic Compute Cloud';
 
@@ -124,12 +129,10 @@ function filterValues(scope: BaselineScope, dim: string): readonly string[] {
 }
 
 /** Reloaded specs re-validate their basis, which re-seeds built-in exclusion
- *  rules and the default marketplace attribution — drop the basis when
+ *  rules and the default marketplace attribution — blank the basis when
  *  comparing records across a persistence round-trip. */
-function withoutBasis(r: BaselineRecord): Omit<BaselineRecord, 'spec'> & { spec: Omit<BaselineSpec, 'basis'> } {
-  const { basis: dropped, ...spec } = r.spec;
-  void dropped;
-  return { ...r, spec };
+function withoutBasis(r: BaselineRecord): Omit<BaselineRecord, 'spec'> & { spec: Omit<BaselineSpec, 'basis'> & { basis: null } } {
+  return { ...r, spec: { ...r.spec, basis: null } };
 }
 
 describe('BaselineStore', () => {
@@ -177,7 +180,7 @@ describe('BaselineStore', () => {
 
     beforeAll(async () => {
       stateDir = await newStateDir();
-      store = new BaselineStore(stateDir);
+      store = new BaselineStore(stateDir, wallClock);
       deps = makeDeps(stateDir);
     });
 
@@ -207,7 +210,7 @@ describe('BaselineStore', () => {
       const set = await store.setConfig(custom);
       expect(set).toEqual({ config: custom, isCustom: true });
 
-      const reloaded = new BaselineStore(stateDir);
+      const reloaded = new BaselineStore(stateDir, wallClock);
       await reloaded.load(deps);
       expect(reloaded.getConfigState()).toEqual({ config: custom, isCustom: true });
 
@@ -228,7 +231,7 @@ describe('BaselineStore', () => {
     beforeAll(async () => {
       vi.setSystemTime(new Date(NOW_ISO));
       const stateDir = await newStateDir();
-      store = new BaselineStore(stateDir);
+      store = new BaselineStore(stateDir, wallClock);
       deps = makeDeps(stateDir);
       await store.setConfig(DISCOVERY_CONFIG);
       const [tuples] = await sql(`SELECT COUNT(*) AS n FROM (SELECT DISTINCT SubAccountId, COALESCE(ServiceName, '') FROM ${GLOB})`);
@@ -400,7 +403,7 @@ describe('BaselineStore', () => {
     it('surfaces the error, preserves the last successful run, and stops notifying unsubscribed listeners', async () => {
       vi.setSystemTime(new Date(NOW_ISO));
       const stateDir = await newStateDir();
-      const st = new BaselineStore(stateDir);
+      const st = new BaselineStore(stateDir, wallClock);
       const deps = makeDeps(stateDir);
       await st.setConfig({ ...DISCOVERY_CONFIG, grainDimensions: [asDimensionId('service')] });
       await st.recompute(deps);
@@ -427,7 +430,7 @@ describe('BaselineStore', () => {
     beforeAll(async () => {
       vi.setSystemTime(new Date(NOW_ISO));
       stateDir = await newStateDir();
-      store = new BaselineStore(stateDir);
+      store = new BaselineStore(stateDir, wallClock);
       deps = makeDeps(stateDir);
       await store.setConfig(DISCOVERY_CONFIG);
     });
@@ -516,7 +519,7 @@ describe('BaselineStore', () => {
       expect(Array.isArray(rec(dataDoc['snapshots'])[ec2Id])).toBe(true);
 
       const before = await store.list(deps, {});
-      const reloaded = new BaselineStore(stateDir);
+      const reloaded = new BaselineStore(stateDir, wallClock);
       const after = await reloaded.list(deps, {});
       expect(after.total).toBe(before.total);
       expect(after.counts).toEqual(before.counts);
@@ -535,7 +538,7 @@ describe('BaselineStore', () => {
       expect(rec(dataDoc['history'])[ec2Id]).toBeUndefined();
       expect(rec(dataDoc['snapshots'])[ec2Id]).toBeUndefined();
 
-      const reloaded = new BaselineStore(stateDir);
+      const reloaded = new BaselineStore(stateDir, wallClock);
       expect((await reloaded.list(deps, {})).total).toBe(1);
     });
   });
@@ -575,7 +578,7 @@ describe('BaselineStore', () => {
         join(stateDir, 'baselines-data.json'),
         JSON.stringify({ version: 1, history: { [SEED_ID]: [{ date: '2026-01-01', cost: 12 }] }, snapshots: { [SEED_ID]: snapshots } }),
       );
-      store = new BaselineStore(stateDir);
+      store = new BaselineStore(stateDir, wallClock);
     });
 
     it('recompute appends todays snapshot and enforces the MAX_SNAPSHOTS (365) cap', async () => {
@@ -615,7 +618,7 @@ describe('BaselineStore', () => {
     beforeAll(async () => {
       vi.setSystemTime(new Date(NOW_ISO));
       const stateDir = await newStateDir();
-      store = new BaselineStore(stateDir);
+      store = new BaselineStore(stateDir, wallClock);
       deps = makeDeps(stateDir);
       await store.setConfig(DISCOVERY_CONFIG);
       const created = await store.create(deps, { scope: svcScope(EC2) });
@@ -731,7 +734,7 @@ describe('BaselineStore', () => {
 
     it('routes a recompute through the rollup partitions instead of raw parquet', async () => {
       const stateDir = await newStateDir();
-      const store = new BaselineStore(stateDir);
+      const store = new BaselineStore(stateDir, wallClock);
       const { deps, resolveCalls, prepared } = makeCapturingDeps(stateDir);
       await store.setConfig({ ...DISCOVERY_CONFIG, lookbackDays: MAT_LOOKBACK });
 
@@ -766,7 +769,7 @@ describe('BaselineStore', () => {
 
     it('binds every filter column of a multi-dimension scope against the rollup', async () => {
       const stateDir = await newStateDir();
-      const store = new BaselineStore(stateDir);
+      const store = new BaselineStore(stateDir, wallClock);
       const { deps, resolveCalls, prepared } = makeCapturingDeps(stateDir);
       await store.setConfig({ ...DISCOVERY_CONFIG, lookbackDays: MAT_LOOKBACK });
 
@@ -802,6 +805,35 @@ describe('BaselineStore', () => {
       );
       expect(expectedDaily.length).toBeGreaterThan(0);
       expectDailyHistoryMatches(detail?.dailyHistory, expectedDaily);
+    });
+  });
+
+  describe('injected clock', () => {
+    // COSTGOBLIN_NOW pins the store's clock while the wall clock keeps moving.
+    // A wall clock this far past the fixture puts even the 365-day lookback
+    // after all its data, so only the injected clock can find it.
+    const WALL_ISO = '2027-06-01T09:00:00.000Z';
+
+    afterAll(() => { vi.setSystemTime(new Date(NOW_ISO)); });
+
+    it('anchors discovery windows and snapshot days on the injected clock; lastRun stays wall time', async () => {
+      vi.setSystemTime(new Date(WALL_ISO));
+      const stateDir = await newStateDir();
+      const pinned = new BaselineStore(stateDir, () => Date.parse(NOW_ISO));
+      const deps = makeDeps(stateDir);
+      await pinned.setConfig(DISCOVERY_CONFIG);
+      await pinned.recompute(deps);
+
+      const res = await pinned.list(deps, {});
+      expect(res.total).toBeGreaterThan(0);
+      const tracked = res.items.find((r) => r.triageStatus !== 'ignored');
+      if (tracked === undefined) throw new Error('expected a tracked baseline');
+      const detail = await pinned.getDetail(deps, tracked.spec.id);
+      expect(detail?.dailyHistory.length).toBeGreaterThan(0);
+      expect(detail?.dailyHistory.at(-1)?.date).toBeDefined();
+      expect(String(detail?.dailyHistory.at(-1)?.date) <= QUERY_END).toBe(true);
+      expect(detail?.snapshots.map((snap) => String(snap.date))).toEqual([TODAY]);
+      expect(pinned.getStatus()).toEqual({ state: 'idle', lastRun: WALL_ISO });
     });
   });
 });

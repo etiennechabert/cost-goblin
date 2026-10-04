@@ -1,13 +1,18 @@
-import type { CheckConfigBeaconParams, CheckConfigBeaconResult } from '@costgoblin/core/browser';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import type { CheckConfigBeaconParams, CheckConfigBeaconResult, CostGoblinConfig } from '@costgoblin/core/browser';
+import { asBucketPath } from '@costgoblin/core/browser';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
-import { MockCostApi } from '../__fixtures__/mock-api.js';
+import { MOCK_GCP_PROVIDER, MOCK_MIXED_PROVIDER_CONFIG, MockCostApi } from '../__fixtures__/mock-api.js';
 import { SetupWizard } from '../views/setup-wizard.js';
 
-function renderWizard(props?: { source?: 'daily' | 'hourly' | 'costOptimization'; profile?: string; mode?: 'add' }) {
+function renderWizard(props?: { source?: 'daily' | 'hourly' | 'costOptimization'; profile?: string; mode?: 'add'; config?: CostGoblinConfig; providerName?: string; gcpSource?: { bucket: string; prefix: string; impersonateServiceAccount?: string }; prepare?: (api: MockCostApi) => void }) {
   const api = new MockCostApi();
+  // Before render: the wizard reads the configured providers on mount.
+  if (props?.config !== undefined) vi.spyOn(api, 'getConfig').mockResolvedValue(props.config);
+  // Before render, for wizards that start loading on mount (per-tier Configure).
+  props?.prepare?.(api);
   const onComplete = vi.fn();
   const user = userEvent.setup();
   return {
@@ -16,7 +21,7 @@ function renderWizard(props?: { source?: 'daily' | 'hourly' | 'costOptimization'
     user,
     ...render(
       <CostApiProvider value={api}>
-        <SetupWizard onComplete={onComplete} source={props?.source} profile={props?.profile} mode={props?.mode} />
+        <SetupWizard onComplete={onComplete} source={props?.source} profile={props?.profile} mode={props?.mode} providerName={props?.providerName} gcpSource={props?.gcpSource} />
       </CostApiProvider>,
     ),
   };
@@ -354,9 +359,13 @@ describe('SetupWizard jump-back to existing workspaces', () => {
     await user.click(screen.getByText('prod'));
     await walkToConfirm(user);
 
-    const nameInput = screen.getByLabelText('Provider name');
-    // Empty name: cannot complete.
+    const nameInput = screen.getByLabelText<HTMLInputElement>('Provider name');
     const completeButton = screen.getByText('Complete Setup').closest('button');
+    // A free name is proposed: aws-main is taken in the mock config.
+    await waitFor(() => { expect(nameInput.value).toBe('aws-main-2'); });
+    expect(completeButton?.disabled).toBe(false);
+    // Empty name: cannot complete.
+    await user.clear(nameInput);
     expect(completeButton?.disabled).toBe(true);
 
     // The mock config already has a provider named aws-main — adding it again
@@ -489,10 +498,28 @@ function gcpExportLayout(api: MockCostApi): void {
   };
 }
 
+/** Bucket root → focus/daily → Use this location → Confirm (hourly is optional, one ← Back away). */
+async function walkGcpDailyToConfirm(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await userClickText(user, 'acme-focus-export');
+  await waitFor(() => { expect(screen.getByLabelText('Open folder focus')).toBeDefined(); });
+  await user.click(screen.getByLabelText('Open folder focus'));
+  await waitFor(() => { expect(screen.getByLabelText('Open folder daily')).toBeDefined(); });
+  await user.click(screen.getByLabelText('Open folder daily'));
+  await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
+  await userClickText(user, 'Use this location');
+  await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+}
+
+/** Opens the read-only service account field, which the intro keeps behind
+ *  "Change" while it holds the default. */
+async function openReaderField(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.click(screen.getByRole('button', { name: 'Change' }));
+}
+
 /** Hub → GCP intro → project → bucket → bucket root. */
 async function enterGcpBrowse(user: ReturnType<typeof userEvent.setup>): Promise<void> {
   await user.click(screen.getByLabelText('Set up from Google Cloud'));
-  await user.click(screen.getByText('Find my export'));
+  await user.click(screen.getByText('Choose from my projects'));
   await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
   await userClickText(user, 'Acme Production');
   await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
@@ -500,11 +527,214 @@ async function enterGcpBrowse(user: ReturnType<typeof userEvent.setup>): Promise
   await waitFor(() => { expect(screen.getByLabelText('Open folder focus')).toBeDefined(); });
 }
 
+describe('SetupWizard — optional tiers on Confirm', () => {
+  it('offers GCP hourly as an optional add, and brings the user back to Confirm', async () => {
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    await enterGcpBrowse(user);
+    await user.click(screen.getByLabelText('Open folder focus'));
+    await waitFor(() => { expect(screen.getByLabelText('Open folder daily')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder daily'));
+    await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
+    await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+    // No Cost Optimization on GCP.
+    expect(screen.queryByRole('button', { name: 'Add Cost Optimization data' })).toBeNull();
+
+    // Skipping the optional step returns to Confirm, still without hourly.
+    await user.click(screen.getByRole('button', { name: 'Add hourly export' }));
+    await waitFor(() => { expect(screen.getByText('Skip')).toBeDefined(); });
+    await userClickText(user, 'Skip');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+    expect(screen.getByRole('button', { name: 'Add hourly export' })).toBeDefined();
+
+    // Adding it lands back on Confirm with the hourly card and its picker.
+    await user.click(screen.getByRole('button', { name: 'Add hourly export' }));
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    await userClickText(user, 'acme-focus-export');
+    await waitFor(() => { expect(screen.getByLabelText('Open folder focus')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder focus'));
+    await waitFor(() => { expect(screen.getByLabelText('Open folder hourly')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder hourly'));
+    await waitFor(() => { expect(screen.getByText('FOCUS export detected')).toBeDefined(); });
+    await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByRole('group', { name: 'Hourly FOCUS export retention' })).toBeDefined(); });
+    expect(screen.queryByRole('button', { name: 'Add hourly export' })).toBeNull();
+  });
+
+  it('says a tier the provider already has is kept, rather than inviting an add', async () => {
+    const config: CostGoblinConfig = {
+      providers: [{
+        ...MOCK_GCP_PROVIDER,
+        sync: {
+          daily: { bucket: asBucketPath('gs://acme-focus-export/focus/daily/'), retentionDays: 365 },
+          hourly: { bucket: asBucketPath('gs://acme-focus-export/focus/hourly/'), retentionDays: 14 },
+          intervalMinutes: 60,
+        },
+      }],
+      defaults: { periodDays: 30, costMetric: 'effective', lagDays: 2 },
+    };
+    const { api, user } = renderWizard({ config });
+    gcpExportLayout(api);
+    await enterGcpBrowse(user);
+    await user.click(screen.getByLabelText('Open folder focus'));
+    await waitFor(() => { expect(screen.getByLabelText('Open folder daily')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder daily'));
+    await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
+    await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+    expect(screen.getByText('gs://acme-focus-export/focus/hourly/')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Change' })).toBeDefined();
+  });
+
+  it('offers AWS hourly and Cost Optimization, and Skip on hourly returns to Confirm', async () => {
+    const { user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from AWS'));
+    await waitFor(() => { expect(screen.getByText('prod')).toBeDefined(); });
+    await user.click(screen.getByText('prod'));
+    await walkToConfirm(user);
+    expect(screen.getByRole('button', { name: 'Add Cost Optimization data' })).toBeDefined();
+
+    // Skipping hourly used to chain on to the Cost Optimization step.
+    await user.click(screen.getByRole('button', { name: 'Add hourly export' }));
+    await waitFor(() => { expect(screen.getByText('Skip')).toBeDefined(); });
+    await userClickText(user, 'Skip');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+  });
+
+  it('shows a lone tier with its full location and no separate bucket row', async () => {
+    const { user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from AWS'));
+    await waitFor(() => { expect(screen.getByText('prod')).toBeDefined(); });
+    await user.click(screen.getByText('prod'));
+    await walkToConfirm(user);
+
+    expect(screen.queryByText('Bucket')).toBeNull();
+    const location = screen.getByText(/^s3:\/\/my-cur-bucket\//);
+    expect(location.getAttribute('title')).toBeNull();
+    // The profile now sits in the provider-name grid rather than its own card.
+    expect(screen.getByText('AWS Profile')).toBeDefined();
+    expect(screen.getByText('prod')).toBeDefined();
+  });
+
+  it('shows no optional tiers in per-tier Configure, which came for one tier', async () => {
+    const { user } = renderWizard({ source: 'daily', profile: 'prod' });
+    await walkToConfirm(user);
+    expect(screen.queryByText('Optional')).toBeNull();
+  });
+
+  it('proposes a GCP provider name in add mode, never an aws- one', async () => {
+    const { api, user } = renderWizard({ mode: 'add' });
+    gcpExportLayout(api);
+    await enterGcpBrowse(user);
+    await user.click(screen.getByLabelText('Open folder focus'));
+    await waitFor(() => { expect(screen.getByLabelText('Open folder daily')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder daily'));
+    await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
+    await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+    expect(screen.getByLabelText<HTMLInputElement>('Provider name').value).toBe('gcp-main');
+  });
+});
+
+describe('SetupWizard — per-tier Configure on a GCP provider', () => {
+  /** gcp-main with its daily tier only, as the wizard (hourly optional) leaves it. */
+  const dailyOnlyGcp: CostGoblinConfig = {
+    providers: [{
+      ...MOCK_GCP_PROVIDER,
+      sync: { daily: { bucket: asBucketPath('gs://acme-focus-export/focus/daily/'), retentionDays: 365 }, intervalMinutes: 60 },
+    }],
+    defaults: { periodDays: 30, costMetric: 'effective', lagDays: 2 },
+  };
+  const configureHourly = { source: 'hourly' as const, providerName: 'gcp-main', gcpSource: { bucket: 'acme-focus-export', prefix: 'focus/' }, config: dailyOnlyGcp, prepare: gcpExportLayout };
+
+  it('browses and keeps the provider s reader when a tier is configured later', async () => {
+    // A provider granted the bucket only through its reader: browsing as the
+    // plain sign-in would 403, and writing no reader would drop it.
+    const reader = 'costgoblin-reader@acme-prod.iam.gserviceaccount.com';
+    const { api, user } = renderWizard({ ...configureHourly, gcpSource: { ...configureHourly.gcpSource, impersonateServiceAccount: reader } });
+    await waitFor(() => { expect(screen.getByLabelText('Open folder hourly')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder hourly'));
+    await waitFor(() => { expect(screen.getByText('FOCUS export detected')).toBeDefined(); });
+    expect(api.gcsBrowsed.length).toBeGreaterThan(0);
+    expect(api.gcsBrowsed.every(b => b.impersonateServiceAccount === reader)).toBe(true);
+    await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+    expect(screen.getByText(reader)).toBeDefined();
+    await userClickText(user, 'Complete Setup');
+    await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
+    expect(api.writtenConfigs[0]?.impersonateServiceAccount).toBe(reader);
+  });
+
+  it('adds the hourly tier later, opening in the bucket the daily export lives in', async () => {
+    // The AWS tiers had this; on GCP the panel only said to edit the YAML, so
+    // skipping hourly during setup meant a hand edit to add it later.
+    const listedProjects: string[] = [];
+    const { api, user } = renderWizard({
+      ...configureHourly,
+      // Installed before mount, so a listing fired on mount would be caught.
+      prepare: (mock) => {
+        gcpExportLayout(mock);
+        const list = mock.listGcsBuckets.bind(mock);
+        mock.listGcsBuckets = (projectId) => { listedProjects.push(projectId); return list(projectId); };
+      },
+    });
+    // Opens on the daily export's parent — no project, no bucket listing.
+    await waitFor(() => { expect(screen.getByLabelText('Open folder hourly')).toBeDefined(); });
+    expect(listedProjects).toEqual([]);
+    await user.click(screen.getByLabelText('Open folder hourly'));
+    await waitFor(() => { expect(screen.getByText('FOCUS export detected')).toBeDefined(); });
+    await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+
+    // The config records no project, so there is none to show.
+    expect(screen.queryByText('Google Cloud project')).toBeNull();
+    expect(screen.queryByText('Daily FOCUS export')).toBeNull();
+    await userClickText(user, 'Complete Setup');
+    await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
+    const written = api.writtenConfigs[0];
+    expect(written?.type).toBe('gcp');
+    expect(written?.providerName).toBe('gcp-main');
+    // Daily absent from the payload: the writer keeps the configured one.
+    expect(written?.dailyBucket).toBe('');
+    expect(written?.hourlyBucket).toBe('gs://acme-focus-export/focus/hourly/');
+    expect(written?.hourlyRetentionDays).toBe(30);
+  });
+
+  it('goes ← Back from Confirm to the folder it opened on, with no Skip offered', async () => {
+    const { user } = renderWizard(configureHourly);
+    await waitFor(() => { expect(screen.getByLabelText('Open folder hourly')).toBeDefined(); });
+    // It came for this one tier; skipping it would only save an unchanged config.
+    expect(screen.queryByText('Skip')).toBeNull();
+    await user.click(screen.getByLabelText('Open folder hourly'));
+    await waitFor(() => { expect(screen.getByText('FOCUS export detected')).toBeDefined(); });
+    await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+    // A bucket step could not list without a project; the folder is where the user was.
+    await userClickText(user, '← Back');
+    await waitFor(() => { expect(screen.getByLabelText('Open folder hourly')).toBeDefined(); });
+  });
+
+  it('asks the "Signed in as" panel about the provider being configured', async () => {
+    // Its impersonateServiceAccount decides who downloads, so the panel has to
+    // name it rather than report the bare signed-in identity.
+    const { api } = renderWizard(configureHourly);
+    await waitFor(() => { expect(api.gcpIdentitiesRequestedFor).toContain('gcp-main'); });
+  });
+
+  it('refuses the configured daily folder as the hourly one', async () => {
+    const { user } = renderWizard(configureHourly);
+    await waitFor(() => { expect(screen.getByLabelText('Open folder daily')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder daily'));
+    await waitFor(() => { expect(screen.getByText('Already used by the daily tier')).toBeDefined(); });
+  });
+});
+
 describe('SetupWizard — GCP browse-and-pick', () => {
   it('lists projects from gcloud, since GCS has no account-wide bucket list', async () => {
     const { user } = renderWizard();
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     expect(screen.getByText('acme-prod')).toBeDefined();
     expect(screen.getByText('Acme Dev')).toBeDefined();
@@ -513,7 +743,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
   it('lists the chosen project s buckets', async () => {
     const { api, user } = renderWizard();
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Acme Production');
     await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
@@ -530,8 +760,9 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await enterGcpBrowse(user);
     await user.click(screen.getByLabelText('Open folder focus'));
     await waitFor(() => { expect(screen.getByText('This is the parent folder — go one level deeper')).toBeDefined(); });
-    const useIt = screen.getByRole('button', { name: 'Select an export folder' });
-    expect(useIt.hasAttribute('disabled')).toBe(true);
+    // Nothing to use until a folder is an export, so no disabled placeholder.
+    expect(screen.queryByRole('button', { name: 'Use this location' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Select an export folder' })).toBeNull();
   });
 
   it('accepts the tier folder and reports the periods it found', async () => {
@@ -556,10 +787,13 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
     await userClickText(user, 'Use this location');
 
-    // Daily lands on the hourly bucket step, mirroring the AWS chain. Skip it.
-    await waitFor(() => { expect(screen.getByText('Skip')).toBeDefined(); });
-    await userClickText(user, 'Skip');
+    // Daily lands straight on Confirm, mirroring the AWS chain: hourly is
+    // optional, not a step every user has to skip.
     await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+    // Hourly is offered, visibly optional, not collected.
+    expect(screen.queryByRole('group', { name: 'Hourly FOCUS export retention' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Add hourly export' })).toBeDefined();
+    expect(screen.getByText('Optional')).toBeDefined();
 
     // The credential card names the GCP project, not an AWS profile that
     // does not exist on this path.
@@ -578,17 +812,145 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     expect(written?.costOptBucket).toBeUndefined();
   });
 
-  it('collects the hourly tier when the exporter publishes one', async () => {
+  it('browses and writes as the read-only service account named on the intro step', async () => {
+    // ADC is one machine-wide login; the reader is per provider. Naming it
+    // here makes the wizard browse as exactly the identity the sync will use.
+    const reader = 'costgoblin-reader@acme-prod.iam.gserviceaccount.com';
     const { api, user } = renderWizard();
     gcpExportLayout(api);
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await openReaderField(user);
+    await user.clear(screen.getByLabelText('Read-only service account'));
+    await user.type(screen.getByLabelText('Read-only service account'), reader);
+    await user.click(screen.getByText('Choose from my projects'));
+    await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
+    await userClickText(user, 'Acme Production');
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    expect(api.gcsBucketsListedAs).toEqual([reader]);
+
+    await userClickText(user, 'acme-focus-export');
+    await waitFor(() => { expect(screen.getByLabelText('Open folder focus')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder focus'));
+    await waitFor(() => { expect(screen.getByLabelText('Open folder daily')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder daily'));
+    await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
+    expect(api.gcsBrowsed.map(b => b.impersonateServiceAccount)).toEqual([reader, reader, reader]);
+
+    await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+    expect(screen.getByText('Reads as')).toBeDefined();
+    expect(screen.getByText(reader)).toBeDefined();
+
+    await userClickText(user, 'Complete Setup');
+    await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
+    expect(api.writtenConfigs[0]?.impersonateServiceAccount).toBe(reader);
+  });
+
+  it('browses, checks and saves as the user s own login when the reader field is cleared', async () => {
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await openReaderField(user);
+    await user.clear(screen.getByLabelText('Read-only service account'));
+    await user.click(screen.getByText('Choose from my projects'));
+    await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
+    await userClickText(user, 'Acme Production');
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    await userClickText(user, 'acme-focus-export');
+    await waitFor(() => { expect(screen.getByLabelText('Open folder focus')).toBeDefined(); });
+    expect(api.gcsBucketsListedAs).toEqual([undefined]);
+    expect(api.gcsBrowsed.every(b => b.impersonateServiceAccount === undefined)).toBe(true);
+    await user.click(screen.getByLabelText('Open folder focus'));
+    await waitFor(() => { expect(screen.getByLabelText('Open folder daily')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder daily'));
+    await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
+    await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+    expect(screen.queryByText('Reads as')).toBeNull();
+    await waitFor(() => { expect(screen.getByText('gcloud can download the export as your gcloud account')).toBeDefined(); });
+    expect(api.gcsDownloadChecks).toEqual([{ bucketPath: 'gs://acme-focus-export/focus/daily/' }]);
+    await userClickText(user, 'Complete Setup');
+    await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
+    // '' — not omitted: the field showed the default reader and the user
+    // emptied it, which is a decision to read as themselves.
+    expect(api.writtenConfigs[0]?.impersonateServiceAccount).toBe('');
+  });
+
+  it('prefills the reader of the provider this run reconfigures, and clears it when emptied', async () => {
+    const reader = 'old-reader@acme-prod.iam.gserviceaccount.com';
+    const gcpMain = MOCK_GCP_PROVIDER;
+    if (gcpMain.type !== 'gcp') throw new Error('MOCK_GCP_PROVIDER must be a gcp provider');
+    const spy = vi.spyOn(MockCostApi.prototype, 'getConfig').mockResolvedValue({
+      ...MOCK_MIXED_PROVIDER_CONFIG,
+      providers: [{ ...gcpMain, impersonateServiceAccount: reader }],
+    });
+    try {
+      const { api, user } = renderWizard();
+      gcpExportLayout(api);
+      await user.click(screen.getByLabelText('Set up from Google Cloud'));
+      const field = screen.getByLabelText('Read-only service account');
+      await waitFor(() => { expect(screen.getByDisplayValue(reader)).toBe(field); });
+
+      await user.clear(field);
+      await user.click(screen.getByText('Choose from my projects'));
+      await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
+      await userClickText(user, 'Acme Production');
+      await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+      expect(api.gcsBucketsListedAs).toEqual([undefined]);
+
+      // Emptying a reader the wizard showed IS a decision: written as ''.
+      await walkGcpDailyToConfirm(user);
+      await userClickText(user, 'Complete Setup');
+      await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
+      expect(api.writtenConfigs[0]?.impersonateServiceAccount).toBe('');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('forgets the reader when the user abandons the run with the close button', async () => {
+    const { user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await openReaderField(user);
+    await user.clear(screen.getByLabelText('Read-only service account'));
+    await user.type(screen.getByLabelText('Read-only service account'), 'reader@acme-prod.iam.gserviceaccount.com');
+    await user.click(screen.getByText('Choose from my projects'));
+    await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Back to start'));
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    // Back to the default, not to the typed reader — and folded away again.
+    expect(screen.getByLabelText('Read-only service account')).toBe(screen.getByDisplayValue('costgoblin-reader'));
+    expect(screen.getByRole('button', { name: 'Change' })).toBeDefined();
+  });
+
+  it('holds the browse back on an address that is not a service account', async () => {
+    const { api, user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await openReaderField(user);
+    await user.clear(screen.getByLabelText('Read-only service account'));
+    await user.type(screen.getByLabelText('Read-only service account'), 'me@gmail.com');
+    expect(screen.getByText(/^Use an account name like costgoblin-reader, or .*name@project\.iam\.gserviceaccount\.com/)).toBeDefined();
+    const find = screen.getByRole('button', { name: 'Choose from my projects' });
+    expect(find.hasAttribute('disabled')).toBe(true);
+    await user.click(find);
+    // Nor through a typed project: Continue stays off, and Enter goes nowhere.
+    await user.type(screen.getByLabelText('Google Cloud project'), 'acme-prod{Enter}');
+    expect(screen.getByRole('button', { name: 'Continue' }).hasAttribute('disabled')).toBe(true);
+    expect(api.gcsBucketsListedFor).toEqual([]);
+  });
+
+  /** Walks the GCP flow through BOTH tiers to the Confirm step: daily lands
+   *  on Confirm, and ← Back from there is the way to the optional hourly
+   *  tier — the same shape as the AWS chain. */
+  async function walkGcpBothTiersToConfirm(user: ReturnType<typeof userEvent.setup>): Promise<void> {
     await enterGcpBrowse(user);
     await user.click(screen.getByLabelText('Open folder focus'));
     await waitFor(() => { expect(screen.getByLabelText('Open folder daily')).toBeDefined(); });
     await user.click(screen.getByLabelText('Open folder daily'));
     await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
     await userClickText(user, 'Use this location');
-
-    // Now on the hourly bucket step — pick the bucket and walk to hourly/.
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+    await userClickText(user, '← Back');
     await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
     await userClickText(user, 'acme-focus-export');
     await waitFor(() => { expect(screen.getByLabelText('Open folder focus')).toBeDefined(); });
@@ -597,14 +959,108 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await user.click(screen.getByLabelText('Open folder hourly'));
     await waitFor(() => { expect(screen.getByText('FOCUS export detected')).toBeDefined(); });
     await userClickText(user, 'Use this location');
-
     await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+  }
+
+  it('collects the hourly tier when the exporter publishes one', async () => {
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    await walkGcpBothTiersToConfirm(user);
     await userClickText(user, 'Complete Setup');
     await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
 
     const written = api.writtenConfigs[0];
     expect(written?.dailyBucket).toBe('gs://acme-focus-export/focus/daily/');
     expect(written?.hourlyBucket).toBe('gs://acme-focus-export/focus/hourly/');
+  });
+
+  it('prints a shared bucket once on Confirm, with each tier as its folder', async () => {
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    await walkGcpBothTiersToConfirm(user);
+
+    expect(screen.getByText('Bucket')).toBeDefined();
+    expect(screen.getByText('gs://acme-focus-export/')).toBeDefined();
+    // The folder alone fits one line; the full location stays on hover.
+    expect(screen.getByText('focus/daily/').getAttribute('title')).toBe('gs://acme-focus-export/focus/daily/');
+    expect(screen.getByText('focus/hourly/').getAttribute('title')).toBe('gs://acme-focus-export/focus/hourly/');
+    expect(screen.queryByText('gs://acme-focus-export/focus/daily/')).toBeNull();
+  });
+
+  it('sets each tier retention in its own picker instead of one shared one', async () => {
+    // One shared picker configured only the daily tier; hourly silently took
+    // its default, and the two need very different windows.
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    await walkGcpBothTiersToConfirm(user);
+
+    const daily = screen.getByRole('group', { name: 'Daily FOCUS export retention' });
+    const hourly = screen.getByRole('group', { name: 'Hourly FOCUS export retention' });
+    // Each tier starts on its own default, with its own range of choices.
+    expect(within(daily).getByRole('button', { name: '12 months', pressed: true })).toBeDefined();
+    expect(within(hourly).getByRole('button', { name: '30 days', pressed: true })).toBeDefined();
+    expect(within(hourly).queryByRole('button', { name: '2 years' })).toBeNull();
+
+    await user.click(within(daily).getByRole('button', { name: '2 years' }));
+    await user.click(within(hourly).getByRole('button', { name: '14 days' }));
+    await userClickText(user, 'Complete Setup');
+    await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
+
+    const written = api.writtenConfigs[0];
+    expect(written?.retentionDays).toBe(730);
+    expect(written?.hourlyRetentionDays).toBe(14);
+  });
+
+  /** A configured gcp-main the GCP walk lands on, with tuned retention
+   *  windows (hourly 60 is not one of the presets). */
+  function existingGcpConfig(): CostGoblinConfig {
+    return {
+      providers: [{
+        ...MOCK_GCP_PROVIDER,
+        sync: {
+          daily: { bucket: asBucketPath('gs://acme-focus-export/focus/daily/'), retentionDays: 730 },
+          hourly: { bucket: asBucketPath('gs://acme-focus-export/focus/hourly/'), retentionDays: 60 },
+          intervalMinutes: 60,
+        },
+      }],
+      defaults: { periodDays: 30, costMetric: 'effective', lagDays: 2 },
+    };
+  }
+
+  it('shows and keeps the retention windows a re-run provider already has', async () => {
+    // The pickers used to start on the defaults, so re-running setup silently
+    // cut a tuned hourly window to 30 days.
+    const { api, user } = renderWizard({ config: existingGcpConfig() });
+    gcpExportLayout(api);
+    await walkGcpBothTiersToConfirm(user);
+
+    const daily = screen.getByRole('group', { name: 'Daily FOCUS export retention' });
+    const hourly = screen.getByRole('group', { name: 'Hourly FOCUS export retention' });
+    expect(within(daily).getByRole('button', { name: '2 years', pressed: true })).toBeDefined();
+    // Off-preset, it still shows — pressed — rather than snapping to 30.
+    expect(within(hourly).getByRole('button', { name: '60 days', pressed: true })).toBeDefined();
+
+    await userClickText(user, 'Complete Setup');
+    await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
+    const written = api.writtenConfigs[0];
+    expect(written?.retentionDays).toBe(730);
+    expect(written?.hourlyRetentionDays).toBe(60);
+  });
+
+  it('keeps the retention picks across Back', async () => {
+    // ← Back is how an optional tier is added, and the picks lived in the
+    // Confirm step's own state, so going there and back reset them.
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    await walkGcpBothTiersToConfirm(user);
+
+    await user.click(within(screen.getByRole('group', { name: 'Daily FOCUS export retention' })).getByRole('button', { name: '2 years' }));
+    await userClickText(user, '← Back');
+    await waitFor(() => { expect(screen.getByText('Skip')).toBeDefined(); });
+    await userClickText(user, 'Skip');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+
+    expect(within(screen.getByRole('group', { name: 'Daily FOCUS export retention' })).getByRole('button', { name: '2 years', pressed: true })).toBeDefined();
   });
 
   it('refuses an hourly tier that overlaps the daily one', async () => {
@@ -618,8 +1074,10 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await user.click(screen.getByLabelText('Open folder daily'));
     await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
     await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
 
-    // Now browsing for hourly — walk back into the SAME daily folder.
+    // ← Back to the optional hourly leg, then walk into the SAME daily folder.
+    await userClickText(user, '← Back');
     await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
     await userClickText(user, 'acme-focus-export');
     await waitFor(() => { expect(screen.getByLabelText('Open folder focus')).toBeDefined(); });
@@ -628,7 +1086,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await user.click(screen.getByLabelText('Open folder daily'));
 
     await waitFor(() => { expect(screen.getByText('Already used by the daily tier')).toBeDefined(); });
-    expect(screen.getByRole('button', { name: 'Select an export folder' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Use this location' })).toBeNull();
   });
 
   it('defaults the provider name to the gcp arm, not aws-main', async () => {
@@ -640,8 +1098,6 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await user.click(screen.getByLabelText('Open folder daily'));
     await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
     await userClickText(user, 'Use this location');
-    await waitFor(() => { expect(screen.getByText('Skip')).toBeDefined(); });
-    await userClickText(user, 'Skip');
     await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
     await userClickText(user, 'Complete Setup');
     await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
@@ -661,14 +1117,14 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await waitFor(() => { expect(screen.getByLabelText('Open folder daily')).toBeDefined(); });
     await user.click(screen.getByLabelText('Open folder daily'));
     await waitFor(() => { expect(screen.getByText('No Parquet files in this export yet')).toBeDefined(); });
-    expect(screen.getByRole('button', { name: 'Select an export folder' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Use this location' })).toBeNull();
   });
 
   it('offers an inline sign-in when listing projects fails on credentials', async () => {
     const { api, user } = renderWizard();
     api.gcpProjectsResult = { projects: [], error: 'You do not currently have an active account' };
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('You do not currently have an active account')).toBeDefined(); });
     expect(screen.getByText('Sign in the gcloud CLI')).toBeDefined();
   });
@@ -677,7 +1133,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     const { api, user } = renderWizard();
     api.gcpProjectsResult = { projects: [], error: 'GCLOUD_CLI_NOT_FOUND' };
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText(/Google Cloud CLI \(gcloud\) is not installed/)).toBeDefined(); });
     expect(screen.queryByText('GCLOUD_CLI_NOT_FOUND')).toBeNull();
   });
@@ -694,7 +1150,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     // Walked by hand rather than via enterGcpBrowse: a failing browse renders
     // no folders, so that helper's wait for one would burn the test budget.
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Acme Production');
     await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
@@ -708,7 +1164,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
   it('keeps the hand-written config route available from the project step', async () => {
     const { api, user } = renderWizard();
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Write the config by hand instead');
     await screen.findByRole('link', { name: 'Google Cloud setup guide' });
@@ -738,8 +1194,6 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await user.click(screen.getByLabelText('Open folder daily'));
     await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
     await userClickText(user, 'Use this location');
-    await waitFor(() => { expect(screen.getByText('Skip')).toBeDefined(); });
-    await userClickText(user, 'Skip');
     await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
     await userClickText(user, 'Complete Setup');
     await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
@@ -762,6 +1216,8 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await user.click(screen.getByLabelText('Open folder daily'));
     await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
     await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+    await userClickText(user, '← Back');
 
     // Now on the hourly leg. The bucket root and focus/ are ancestors of the
     // daily path but are not themselves selectable exports.
@@ -789,6 +1245,8 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await user.click(screen.getByLabelText('Open folder daily'));
     await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
     await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+    await userClickText(user, '← Back');
     await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
     await userClickText(user, 'acme-focus-export');
     await waitFor(() => { expect(screen.getByLabelText('Open folder focus')).toBeDefined(); });
@@ -801,7 +1259,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     const { api, user } = renderWizard();
     api.gcpProjectsResult = { projects: [], error: 'GCLOUD_CLI_NOT_FOUND' };
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText(/is not installed/)).toBeDefined(); });
     // The login button cannot run a CLI that isn't installed; offering it made
     // the user click something guaranteed to fail to reach the real remedy.
@@ -816,7 +1274,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     gcpExportLayout(api);
     api.gcsBucketsResult = { buckets: [], error: 'does not have storage.buckets.list access' };
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Acme Production');
     await waitFor(() => { expect(screen.getByLabelText('Or enter a bucket name directly')).toBeDefined(); });
@@ -834,12 +1292,15 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     gcpExportLayout(api);
     api.gcsBucketsResult = { buckets: [], error: BUCKET_LIST_DENIED };
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Acme Production');
 
-    await waitFor(() => { expect(screen.getByText(/couldn't list the buckets in/i)).toBeDefined(); });
-    expect(screen.getByText(/least-privilege reader/i)).toBeDefined();
+    await waitFor(() => { expect(screen.getByText(/can't list the buckets in/i)).toBeDefined(); });
+    // One line naming the refused reader, not "this account".
+    expect(screen.getByRole('status').textContent).toMatch(/^costgoblin-reader can't list the buckets in acme-prod — enter the bucket name below\./);
+    // A status, not an alert: with the recommended reader this is the normal path.
+    expect(screen.queryByRole('alert')).toBeNull();
     // The fixture DOES contain the Troubleshooter URL — the point is that the
     // wall of text is demoted into the disclosure rather than deleted. GCP
     // returns this same denial when the credential has no access to the
@@ -847,7 +1308,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     // identity ADC resolved to, so it has to stay recoverable.
     const raw = screen.getByText(BUCKET_LIST_DENIED);
     expect(raw.closest('details')).not.toBeNull();
-    expect(screen.getByText('Details, and how to grant the listing permission')).toBeDefined();
+    expect(screen.getByText('Details')).toBeDefined();
     // The empty list must not be reported as a missing export...
     expect(screen.queryByText('No buckets found')).toBeNull();
     // ...and the grant the panel discloses is applied in a terminal, so the
@@ -867,16 +1328,16 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     gcpExportLayout(api);
     api.gcsBucketsResult = { buckets: [], error: BUCKET_LIST_DENIED };
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Acme Production');
 
-    await waitFor(() => { expect(screen.getByText(/couldn't list the buckets in/i)).toBeDefined(); });
-    await userClickText(user, 'Details, and how to grant the listing permission');
+    await waitFor(() => { expect(screen.getByText(/can't list the buckets in/i)).toBeDefined(); });
+    await userClickText(user, 'Details');
     expect(screen.getByText(BUCKET_LIST_DENIED).closest('details')?.open).toBe(true);
 
     await userClickText(user, 'Retry');
-    await waitFor(() => { expect(screen.getByText(/couldn't list the buckets in/i)).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByText(/can't list the buckets in/i)).toBeDefined(); });
     expect(screen.getByText(BUCKET_LIST_DENIED).closest('details')?.open).toBe(true);
   });
 
@@ -888,7 +1349,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     gcpExportLayout(api);
     api.gcsBucketsResult = { buckets: Array.from({ length: 6 }, (_, i) => ({ name: `acme-bucket-${String(i)}` })), error: '' };
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Acme Production');
 
@@ -915,7 +1376,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     gcpExportLayout(api);
     api.gcsBucketsResult = { buckets: [], error: 'connect ETIMEDOUT 142.250.74.208:443' };
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Acme Production');
 
@@ -931,10 +1392,10 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     // named gcp-main, which becomes its data folder and dimension label.
     const { api, user } = renderWizard();
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, '← Back');
-    await waitFor(() => { expect(screen.getByText('Find my export')).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByText('Choose from my projects')).toBeDefined(); });
     await userClickText(user, '← Back');
     await waitFor(() => { expect(screen.getByLabelText('Set up from AWS')).toBeDefined(); });
 
@@ -960,10 +1421,10 @@ describe('SetupWizard — GCP browse-and-pick', () => {
   it('walks back from the project step to the GCP intro', async () => {
     const { user, onComplete } = renderWizard();
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, '← Back');
-    await waitFor(() => { expect(screen.getByText('Find my export')).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByText('Choose from my projects')).toBeDefined(); });
     expect(onComplete).not.toHaveBeenCalled();
   });
 });
@@ -981,7 +1442,7 @@ describe('SetupWizard — GCP "Signed in as" panel', () => {
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
     await waitFor(() => { expect(signedInPanel()).not.toBeNull(); });
 
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     expect(signedInPanel()).not.toBeNull();
     await userClickText(user, 'Acme Production');
@@ -996,17 +1457,18 @@ describe('SetupWizard — GCP "Signed in as" panel', () => {
     await user.click(screen.getByLabelText('Open folder daily'));
     await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
     await userClickText(user, 'Use this location');
-    await waitFor(() => { expect(screen.getByText('Skip')).toBeDefined(); });
-    expect(signedInPanel()).not.toBeNull();
-    await userClickText(user, 'Skip');
     await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
     expect(signedInPanel()).toBeNull();
+    // ← Back opens the optional hourly leg, which touches credentials again.
+    await userClickText(user, '← Back');
+    await waitFor(() => { expect(screen.getByText('Skip')).toBeDefined(); });
+    expect(signedInPanel()).not.toBeNull();
   });
 
   it('asks without a provider name — none exists yet — and does not re-run gcloud per step', async () => {
     const { api, user } = renderWizard();
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Acme Production');
     await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
@@ -1015,8 +1477,8 @@ describe('SetupWizard — GCP "Signed in as" panel', () => {
   });
 
   it('never asks about an AWS provider s name after backing out of its Configure into Google Cloud', async () => {
-    // Per-tier Configure (source mode) is AWS-only and fixes the provider
-    // name; Back → Back still reaches the hub's Google Cloud tile.
+    // AWS per-tier Configure (source mode) fixes the provider name; Back →
+    // Back still reaches the hub's Google Cloud tile.
     const { api, user } = renderWizard({ source: 'daily', profile: 'default' });
     await waitFor(() => { expect(screen.getByText('my-cur-bucket')).toBeDefined(); });
     await userClickText(user, '← Back');
@@ -1035,11 +1497,12 @@ describe('SetupWizard — GCP "Signed in as" panel', () => {
       identities: {
         listing: { kind: 'user', file: { path: '/adc.json', origin: 'well-known' }, account: { status: 'known', email: 'alice@acme.com' } },
         download: { kind: 'gcloud', account: 'admin@acme.com', configuration: 'admin' },
+        reader: null,
         splitAccounts: { listingAccount: 'alice@acme.com', downloadAccount: 'admin@acme.com' },
       },
     };
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     const panel = await screen.findByRole('region', { name: 'Signed in as' });
     await waitFor(() => { expect(panel.textContent).toContain('admin@acme.com'); });
     expect(panel.textContent).toContain('Bucket access is signed in as alice@acme.com — a different account.');
@@ -1067,7 +1530,7 @@ describe('SetupWizard — GCP "Signed in as" panel', () => {
     const { api, user } = renderWizard();
     api.gcpProjectsResult = { projects: [], error: 'ERROR: (gcloud.projects.list) You do not currently have an active account selected.' };
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Retry')).toBeDefined(); });
     const before = api.gcpIdentitiesRequestedFor.length;
     await userClickText(user, 'Retry');
@@ -1078,14 +1541,14 @@ describe('SetupWizard — GCP "Signed in as" panel', () => {
 /** Hub → GCP intro → project step, waiting until the listing has settled. */
 async function enterGcpProjectStep(user: ReturnType<typeof userEvent.setup>): Promise<void> {
   await user.click(screen.getByLabelText('Set up from Google Cloud'));
-  await user.click(screen.getByText('Find my export'));
+  await user.click(screen.getByText('Choose from my projects'));
   await waitFor(() => { expect(screen.queryByText('Loading projects...')).toBeNull(); });
 }
 
 /** Hub → GCP intro → typed project ID → daily bucket step, never listing projects. */
 async function enterGcpBucketFromIntro(user: ReturnType<typeof userEvent.setup>, projectId: string): Promise<void> {
   await user.click(screen.getByLabelText('Set up from Google Cloud'));
-  await user.type(screen.getByLabelText('Already know the project ID? Skip the project list'), `${projectId}{Enter}`);
+  await user.type(screen.getByLabelText('Google Cloud project'), `${projectId}{Enter}`);
   await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
 }
 
@@ -1237,7 +1700,7 @@ describe('SetupWizard — GCP project typed by ID', () => {
     await user.type(screen.getByLabelText('Project not listed? Enter its ID'), 'acme-billing{Enter}');
     await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
     await user.click(screen.getByText('← Back'));
-    await waitFor(() => { expect(screen.getByText('Find my export')).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByText('Choose from my projects')).toBeDefined(); });
     expect(listSpy).not.toHaveBeenCalled();
   });
 });
@@ -1253,7 +1716,7 @@ describe('SetupWizard — GCP project ID before the listing', () => {
     expect(api.gcsBucketsListedFor).toEqual(['billing-504501']);
 
     await user.click(screen.getByText('← Back'));
-    await waitFor(() => { expect(screen.getByText('Find my export')).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByText('Choose from my projects')).toBeDefined(); });
     expect(listSpy).not.toHaveBeenCalled();
   });
 
@@ -1261,7 +1724,7 @@ describe('SetupWizard — GCP project ID before the listing', () => {
     const { api, user } = renderWizard();
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
 
-    await user.type(screen.getByLabelText('Already know the project ID? Skip the project list'), 'Acme Prod{Enter}');
+    await user.type(screen.getByLabelText('Google Cloud project'), 'Acme Prod{Enter}');
     expect(screen.getByRole('button', { name: 'Continue' }).hasAttribute('disabled')).toBe(true);
     expect(api.gcsBucketsListedFor).toEqual([]);
   });
@@ -1271,9 +1734,9 @@ describe('SetupWizard — GCP project ID before the listing', () => {
     const { api, user } = renderWizard();
     await enterGcpBucketFromIntro(user, 'billing-504501');
     await user.click(screen.getByText('← Back'));
-    await waitFor(() => { expect(screen.getByText('Find my export')).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByText('Choose from my projects')).toBeDefined(); });
 
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Acme Production');
     await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
@@ -1286,7 +1749,7 @@ describe('SetupWizard — GCP project ID before the listing', () => {
     const { api, user } = renderWizard();
     const listing = deferProjectListing(api);
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     expect(screen.getByText('Loading projects...')).toBeDefined();
 
     await user.type(screen.getByLabelText('Project not listed? Enter its ID'), 'billing-504501{Enter}');
@@ -1305,13 +1768,13 @@ describe('SetupWizard — GCP project ID before the listing', () => {
     const { api, user } = renderWizard();
     const listing = deferProjectListing(api);
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await user.click(screen.getByText('Write the config by hand instead'));
-    await waitFor(() => { expect(screen.getByText('Find my export')).toBeDefined(); });
-    await user.type(screen.getByLabelText('Already know the project ID? Skip the project list'), 'billing');
+    await waitFor(() => { expect(screen.getByText('Choose from my projects')).toBeDefined(); });
+    await user.type(screen.getByLabelText('Google Cloud project'), 'billing');
 
     await listing.settle();
-    expect(screen.getByText('Find my export')).toBeDefined();
+    expect(screen.getByText('Choose from my projects')).toBeDefined();
     expect(screen.queryByText('Acme Production')).toBeNull();
     expect(screen.getByDisplayValue('billing')).toBeDefined();
   });
@@ -1320,9 +1783,9 @@ describe('SetupWizard — GCP project ID before the listing', () => {
     const { api, user } = renderWizard();
     const listing = deferProjectListing(api);
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await user.click(screen.getByText('Write the config by hand instead'));
-    await waitFor(() => { expect(screen.getByText('Find my export')).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByText('Choose from my projects')).toBeDefined(); });
     await user.click(screen.getByText('← Back'));
     await waitFor(() => { expect(screen.getByLabelText('Set up from AWS')).toBeDefined(); });
 
@@ -1341,10 +1804,14 @@ describe('SetupWizard — GCP project ID before the listing', () => {
     await user.click(screen.getByLabelText('Open folder daily'));
     await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
 
-    // The hourly leg's bucket listing stays pending while the user skips it.
+    await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+
+    // ← Back opens the optional hourly leg, whose bucket listing stays
+    // pending while the user skips it.
     let resolveBuckets: ((r: { buckets: readonly { name: string }[] }) => void) | undefined;
     api.listGcsBuckets = () => new Promise((r) => { resolveBuckets = r; });
-    await userClickText(user, 'Use this location');
+    await userClickText(user, '← Back');
     await waitFor(() => { expect(screen.getByText('Skip')).toBeDefined(); });
     await userClickText(user, 'Skip');
     await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
@@ -1354,5 +1821,484 @@ describe('SetupWizard — GCP project ID before the listing', () => {
       await Promise.resolve();
     });
     expect(screen.getByText('Confirm Setup')).toBeDefined();
+  });
+});
+
+const DEFAULT_READER = 'costgoblin-reader@acme-prod.iam.gserviceaccount.com';
+const DAILY_EXPORT = 'gs://acme-focus-export/focus/daily/';
+const HOURLY_EXPORT = 'gs://acme-focus-export/focus/hourly/';
+
+function completeSetupButton(): HTMLElement {
+  return screen.getByRole('button', { name: 'Complete Setup' });
+}
+
+describe('SetupWizard — GCP default reader', () => {
+  it('prefills the account the setup guide creates, and says the project completes it', async () => {
+    const { user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    expect(screen.getByLabelText('Read-only service account')).toBe(screen.getByDisplayValue('costgoblin-reader'));
+    expect(screen.getByText('costgoblin-reader in the project you pick')).toBeDefined();
+    await openReaderField(user);
+    expect(screen.getByText(/^Completed with @<the project you pick>\.iam\.gserviceaccount\.com/)).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Choose from my projects' }).hasAttribute('disabled')).toBe(false);
+  });
+
+  it('lists, browses, verifies and writes as the default reader in the picked project', async () => {
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    await enterGcpBrowse(user);
+    expect(api.gcsBucketsListedAs).toEqual([DEFAULT_READER]);
+    await user.click(screen.getByLabelText('Open folder focus'));
+    await waitFor(() => { expect(screen.getByLabelText('Open folder daily')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder daily'));
+    await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
+    expect(api.gcsBrowsed.map(b => b.impersonateServiceAccount)).toEqual([DEFAULT_READER, DEFAULT_READER, DEFAULT_READER]);
+    await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+
+    // Confirm names the completed address, never the bare name.
+    expect(screen.getByText('Reads as')).toBeDefined();
+    expect(screen.getByText(DEFAULT_READER)).toBeDefined();
+    await waitFor(() => { expect(screen.getByText('gcloud can download the export')).toBeDefined(); });
+    expect(api.gcsDownloadChecks).toEqual([{ bucketPath: DAILY_EXPORT, impersonateServiceAccount: DEFAULT_READER }]);
+
+    await userClickText(user, 'Complete Setup');
+    await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
+    expect(api.writtenConfigs[0]?.impersonateServiceAccount).toBe(DEFAULT_READER);
+  });
+
+  it('completes a bare name with a project typed on the intro step', async () => {
+    const { api, user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await openReaderField(user);
+    await user.clear(screen.getByLabelText('Read-only service account'));
+    await user.type(screen.getByLabelText('Read-only service account'), 'billing-reader');
+    await user.type(screen.getByLabelText('Google Cloud project'), 'billing-504501{Enter}');
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    expect(api.gcsBucketsListedAs).toEqual(['billing-reader@billing-504501.iam.gserviceaccount.com']);
+  });
+
+  it('refuses a value that is neither an account name nor an address', async () => {
+    const { api, user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await openReaderField(user);
+    await user.clear(screen.getByLabelText('Read-only service account'));
+    await user.type(screen.getByLabelText('Read-only service account'), 'Costgoblin Reader');
+    expect(screen.getByText(/^Use an account name like costgoblin-reader/)).toBeDefined();
+    const find = screen.getByRole('button', { name: 'Choose from my projects' });
+    expect(find.hasAttribute('disabled')).toBe(true);
+    await user.click(find);
+    expect(api.gcsBucketsListedFor).toEqual([]);
+  });
+
+  it('keeps an existing provider without a reader reading as the user', async () => {
+    // Re-running setup must not quietly switch who an existing provider
+    // downloads as; only a new provider starts on the default.
+    const { user } = renderWizard({ config: MOCK_MIXED_PROVIDER_CONFIG });
+    await act(async () => { await Promise.resolve(); });
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    expect(screen.getByLabelText('Read-only service account')).toHaveProperty('value', '');
+    // Not the default, so the field is open from the start.
+    expect(screen.queryByRole('button', { name: 'Change' })).toBeNull();
+    expect(screen.getByText('your own Google account')).toBeDefined();
+  });
+
+  it('starts a new provider in add mode on the default even when others exist', async () => {
+    const { user } = renderWizard({ mode: 'add', config: MOCK_MIXED_PROVIDER_CONFIG });
+    await act(async () => { await Promise.resolve(); });
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    expect(screen.getByLabelText('Read-only service account')).toBe(screen.getByDisplayValue('costgoblin-reader'));
+  });
+});
+
+/** The disclosure region holding the reader field. */
+function readerRegion(): Element | null {
+  return screen.getByLabelText('Read-only service account').closest('#gcp-reader-field');
+}
+
+describe('SetupWizard — GCP intro: project first', () => {
+  it('asks for the project before the reader, and only continues on a valid project ID', async () => {
+    const { api, user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    const project = screen.getByLabelText('Google Cloud project');
+    const reader = screen.getByLabelText('Read-only service account');
+    expect(project.compareDocumentPosition(reader) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    const next = screen.getByRole('button', { name: 'Continue' });
+    expect(next.hasAttribute('disabled')).toBe(true);
+    await user.type(project, 'acme');
+    expect(next.hasAttribute('disabled')).toBe(true);
+    await user.type(project, '-prod');
+    expect(next.hasAttribute('disabled')).toBe(false);
+
+    await user.click(next);
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    expect(api.gcsBucketsListedFor).toEqual(['acme-prod']);
+    expect(api.gcsBucketsListedAs).toEqual([DEFAULT_READER]);
+  });
+
+  it('names the project rule once the field is left with a malformed ID', async () => {
+    const { user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    const project = screen.getByLabelText('Google Cloud project');
+    await user.type(project, 'Acme Prod');
+    expect(screen.queryByText(PROJECT_ID_RULES)).toBeNull();
+    await user.tab();
+    expect(screen.getByText(PROJECT_ID_RULES)).toBeDefined();
+    expect(project.getAttribute('aria-invalid')).toBe('true');
+    expect(project.getAttribute('aria-describedby')).toBe('gcp-project-id-error');
+  });
+
+  it('keeps the default reader folded into one line, resolved live against the typed project', async () => {
+    const { user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    const change = screen.getByRole('button', { name: 'Change' });
+    expect(change.getAttribute('aria-expanded')).toBe('false');
+    expect(change.getAttribute('aria-controls')).toBe('gcp-reader-field');
+    expect(readerRegion()?.hasAttribute('hidden')).toBe(true);
+    expect(screen.getByText('costgoblin-reader in the project you pick')).toBeDefined();
+
+    await user.type(screen.getByLabelText('Google Cloud project'), 'acme-prod');
+    expect(screen.getByText(DEFAULT_READER)).toBeDefined();
+    // Still folded — typing a project is not a reason to open it.
+    expect(readerRegion()?.hasAttribute('hidden')).toBe(true);
+  });
+
+  it('opens the reader field on Change, moves focus into it, and keeps it open', async () => {
+    const { user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await openReaderField(user);
+    const field = screen.getByLabelText('Read-only service account');
+    expect(readerRegion()?.hasAttribute('hidden')).toBe(false);
+    expect(document.activeElement).toBe(field);
+    expect(screen.queryByRole('button', { name: 'Change' })).toBeNull();
+
+    // Typing the default back must not fold the field out from under the cursor.
+    await user.clear(field);
+    await user.type(field, 'costgoblin-reader');
+    expect(readerRegion()?.hasAttribute('hidden')).toBe(false);
+    expect(document.activeElement).toBe(field);
+
+    await user.clear(field);
+    await user.type(field, 'reader@other-proj.iam.gserviceaccount.com');
+    await user.type(screen.getByLabelText('Google Cloud project'), 'acme-prod');
+    // A full address is used as typed, whatever the project.
+    expect(screen.getByText('reader@other-proj.iam.gserviceaccount.com')).toBeDefined();
+  });
+
+  it('starts with the reader field open for a reconfigured provider s own reader', async () => {
+    const reader = 'old-reader@acme-prod.iam.gserviceaccount.com';
+    const gcpMain = MOCK_GCP_PROVIDER;
+    if (gcpMain.type !== 'gcp') throw new Error('MOCK_GCP_PROVIDER must be a gcp provider');
+    const spy = vi.spyOn(MockCostApi.prototype, 'getConfig').mockResolvedValue({
+      ...MOCK_MIXED_PROVIDER_CONFIG,
+      providers: [{ ...gcpMain, impersonateServiceAccount: reader }],
+    });
+    try {
+      const { user } = renderWizard();
+      await act(async () => { await Promise.resolve(); });
+      await user.click(screen.getByLabelText('Set up from Google Cloud'));
+      await waitFor(() => { expect(screen.getByDisplayValue(reader)).toBe(screen.getByLabelText('Read-only service account')); });
+      expect(readerRegion()?.hasAttribute('hidden')).toBe(false);
+      expect(screen.queryByRole('button', { name: 'Change' })).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('reads as the user s own account once the reader is cleared', async () => {
+    const { api, user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await openReaderField(user);
+    await user.clear(screen.getByLabelText('Read-only service account'));
+    expect(screen.getByText('your own Google account')).toBeDefined();
+    await user.type(screen.getByLabelText('Google Cloud project'), 'acme-prod{Enter}');
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    expect(api.gcsBucketsListedAs).toEqual([undefined]);
+  });
+
+  it('opens the project list from "Choose from my projects"', async () => {
+    const { api, user } = renderWizard();
+    const listSpy = vi.spyOn(api, 'listGcpProjects');
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    expect(listSpy).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Choose from my projects' }));
+    await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
+    expect(listSpy).toHaveBeenCalledOnce();
+  });
+});
+
+describe('SetupWizard — GCP download check on Confirm', () => {
+  it('checks every collected tier as the reader before enabling Complete Setup', async () => {
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    await enterGcpBrowse(user);
+    await user.click(screen.getByLabelText('Open folder focus'));
+    await waitFor(() => { expect(screen.getByLabelText('Open folder daily')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder daily'));
+    await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
+    await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+    await userClickText(user, 'Add hourly export');
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    await userClickText(user, 'acme-focus-export');
+    await waitFor(() => { expect(screen.getByLabelText('Open folder focus')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder focus'));
+    await waitFor(() => { expect(screen.getByLabelText('Open folder hourly')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder hourly'));
+    await waitFor(() => { expect(screen.getByText('FOCUS export detected')).toBeDefined(); });
+    await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('gcloud can download the export')).toBeDefined(); });
+    expect(api.gcsDownloadChecks.slice(-2)).toEqual([
+      { bucketPath: DAILY_EXPORT, impersonateServiceAccount: DEFAULT_READER },
+      { bucketPath: HOURLY_EXPORT, impersonateServiceAccount: DEFAULT_READER },
+    ]);
+    expect(completeSetupButton().hasAttribute('disabled')).toBe(false);
+  });
+
+  it('groups project, reader and check in one card, and re-runs the check on demand', async () => {
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    await enterGcpBrowse(user);
+    await walkGcpFromBucketRootToConfirm(user);
+    await waitFor(() => { expect(screen.getByText('gcloud can download the export')).toBeDefined(); });
+    const card = screen.getByText('Download check').closest('div.rounded-lg');
+    expect(card?.contains(screen.getByText('Google Cloud project'))).toBe(true);
+    expect(card?.contains(screen.getByText(DEFAULT_READER))).toBe(true);
+
+    await userClickText(user, 'Check again');
+    await waitFor(() => { expect(api.gcsDownloadChecks).toHaveLength(2); });
+    await waitFor(() => { expect(screen.getByText('gcloud can download the export')).toBeDefined(); });
+  });
+
+  it('holds Complete Setup while the check runs', async () => {
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    let settle: ((r: { ok: true }) => void) | undefined;
+    api.verifyGcsDownload = () => new Promise((r) => { settle = r; });
+    await enterGcpBrowse(user);
+    await walkGcpFromBucketRootToConfirm(user);
+    expect(screen.getByText('Checking that gcloud can download the export…')).toBeDefined();
+    expect(completeSetupButton().hasAttribute('disabled')).toBe(true);
+    await act(async () => { settle?.({ ok: true }); await Promise.resolve(); });
+    await waitFor(() => { expect(completeSetupButton().hasAttribute('disabled')).toBe(false); });
+  });
+
+  it('blocks the save on a refusal, shows gcloud s error, and re-checks on Retry', async () => {
+    const denied = 'ERROR: (gcloud.storage.ls) HTTPError 403: alice@acme.com does not have storage.objects.list access to the Google Cloud Storage bucket.';
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    api.gcsDownloadCheckResult = { ok: false, error: denied };
+    await enterGcpBrowse(user);
+    await walkGcpFromBucketRootToConfirm(user);
+    await waitFor(() => { expect(screen.getByText(denied)).toBeDefined(); });
+    expect(screen.getByText("gcloud can't download the daily export, so syncing it would fail")).toBeDefined();
+    expect(completeSetupButton().hasAttribute('disabled')).toBe(true);
+    // Not a credential error: a plain Retry, no sign-in.
+    expect(screen.queryByText('Sign in the gcloud CLI')).toBeNull();
+
+    api.gcsDownloadCheckResult = { ok: true };
+    await userClickText(user, 'Retry');
+    await waitFor(() => { expect(screen.getByText('gcloud can download the export')).toBeDefined(); });
+    expect(api.gcsDownloadChecks).toHaveLength(2);
+    expect(completeSetupButton().hasAttribute('disabled')).toBe(false);
+    expect(screen.queryByText('Save anyway')).toBeNull();
+  });
+
+  it('offers Retry, not a sign-in, when gcloud could not reach Google', async () => {
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    api.gcsDownloadCheckResult = {
+      ok: false,
+      error: "ERROR: (gcloud.storage.ls) There was a problem refreshing your current auth tokens: HTTPSConnectionPool(host='oauth2.googleapis.com', port=443): "
+        + 'Failed to establish a new connection: [Errno 65] No route to host\nPlease run:\n  $ gcloud auth login',
+    };
+    await enterGcpBrowse(user);
+    await walkGcpFromBucketRootToConfirm(user);
+    await waitFor(() => { expect(screen.getByText('Retry')).toBeDefined(); });
+    expect(screen.queryByText('Sign in the gcloud CLI')).toBeNull();
+  });
+
+  it('offers the gcloud CLI sign-in when the download identity is signed out', async () => {
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    api.gcsDownloadCheckResult = { ok: false, error: 'ERROR: (gcloud.storage.ls) You do not currently have an active account selected. Please run:\n\n  $ gcloud auth login' };
+    await enterGcpBrowse(user);
+    await walkGcpFromBucketRootToConfirm(user);
+    await waitFor(() => { expect(screen.getByText('Sign in the gcloud CLI')).toBeDefined(); });
+  });
+
+  it('explains a missing gcloud CLI rather than showing the sentinel', async () => {
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    api.gcsDownloadCheckResult = { ok: false, error: 'GCLOUD_CLI_NOT_FOUND' };
+    await enterGcpBrowse(user);
+    await walkGcpFromBucketRootToConfirm(user);
+    await waitFor(() => { expect(screen.getByText('Install the gcloud CLI')).toBeDefined(); });
+    expect(screen.queryByText('GCLOUD_CLI_NOT_FOUND')).toBeNull();
+  });
+
+  it('saves anyway on an explicit request after a refusal', async () => {
+    const { api, user, onComplete } = renderWizard();
+    gcpExportLayout(api);
+    api.gcsDownloadCheckResult = { ok: false, error: 'Network is unreachable' };
+    await enterGcpBrowse(user);
+    await walkGcpFromBucketRootToConfirm(user);
+    await waitFor(() => { expect(screen.getByText('Save anyway')).toBeDefined(); });
+    await userClickText(user, 'Save anyway');
+    await waitFor(() => { expect(onComplete).toHaveBeenCalledOnce(); });
+    expect(api.writtenConfigs[0]?.dailyBucket).toBe(DAILY_EXPORT);
+    expect(api.writtenConfigs[0]?.impersonateServiceAccount).toBe(DEFAULT_READER);
+  });
+
+  it('names the tier that failed', async () => {
+    const { api, user } = renderWizard({ ...configureHourlyOnGcpMain(), prepare: gcpExportLayout });
+    api.gcsDownloadCheckByPath = { [HOURLY_EXPORT]: { ok: false, error: 'denied' } };
+    await waitFor(() => { expect(screen.getByLabelText('Open folder hourly')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder hourly'));
+    await waitFor(() => { expect(screen.getByText('FOCUS export detected')).toBeDefined(); });
+    await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText("gcloud can't download the hourly export as your gcloud account, so syncing it would fail")).toBeDefined(); });
+    // Per-tier Configure checks only the tier it came for.
+    expect(api.gcsDownloadChecks).toEqual([{ bucketPath: HOURLY_EXPORT }]);
+  });
+
+  it('checks a carried reader, and a key-file provider by name', async () => {
+    const gcpMain = MOCK_GCP_PROVIDER;
+    if (gcpMain.type !== 'gcp') throw new Error('MOCK_GCP_PROVIDER must be a gcp provider');
+    const carried = 'kept-reader@acme-prod.iam.gserviceaccount.com';
+    // A reader on the provider, none passed by per-tier Configure: the upsert
+    // carries it, so that is who the download — and the check — runs as.
+    const withReader = renderWizard({ ...configureHourlyOnGcpMain({ ...gcpMain, impersonateServiceAccount: carried }), prepare: gcpExportLayout });
+    await reachHourlyConfirm(withReader.user);
+    await waitFor(() => { expect(screen.getByText(`gcloud can download the export as ${carried}`)).toBeDefined(); });
+    expect(withReader.api.gcsDownloadChecks).toEqual([{ bucketPath: HOURLY_EXPORT, impersonateServiceAccount: carried }]);
+    cleanup();
+
+    const withKey = renderWizard({ ...configureHourlyOnGcpMain({ ...gcpMain, keyFile: '/keys/reader.json' }), prepare: gcpExportLayout });
+    await reachHourlyConfirm(withKey.user);
+    await waitFor(() => { expect(screen.getByText('gcloud can download the export as the provider’s service account key')).toBeDefined(); });
+    expect(withKey.api.gcsDownloadChecks).toEqual([{ bucketPath: HOURLY_EXPORT, keyFileProvider: 'gcp-main' }]);
+  });
+
+  it('does not run for an AWS provider', async () => {
+    const { api, user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from AWS'));
+    await waitFor(() => { expect(screen.getByText('default')).toBeDefined(); });
+    await userClickText(user, 'default');
+    await walkToConfirm(user);
+    expect(screen.queryByText('Download check')).toBeNull();
+    expect(api.gcsDownloadChecks).toEqual([]);
+    expect(completeSetupButton().hasAttribute('disabled')).toBe(false);
+  });
+});
+
+/** Bucket root → focus/daily → Use this location → Confirm. */
+async function walkGcpFromBucketRootToConfirm(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.click(screen.getByLabelText('Open folder focus'));
+  await waitFor(() => { expect(screen.getByLabelText('Open folder daily')).toBeDefined(); });
+  await user.click(screen.getByLabelText('Open folder daily'));
+  await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
+  await userClickText(user, 'Use this location');
+  await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+}
+
+/** Per-tier Configure of gcp-main's hourly tier, the provider as given. */
+function configureHourlyOnGcpMain(provider: CostGoblinConfig['providers'][number] = MOCK_GCP_PROVIDER) {
+  return {
+    source: 'hourly' as const,
+    providerName: 'gcp-main',
+    gcpSource: { bucket: 'acme-focus-export', prefix: 'focus/' },
+    config: {
+      providers: [{ ...provider, sync: { daily: { bucket: asBucketPath(DAILY_EXPORT), retentionDays: 365 }, intervalMinutes: 60 } }],
+      defaults: { periodDays: 30, costMetric: 'effective' as const, lagDays: 2 },
+    },
+  };
+}
+
+async function reachHourlyConfirm(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await waitFor(() => { expect(screen.getByLabelText('Open folder hourly')).toBeDefined(); });
+  await user.click(screen.getByLabelText('Open folder hourly'));
+  await waitFor(() => { expect(screen.getByText('FOCUS export detected')).toBeDefined(); });
+  await userClickText(user, 'Use this location');
+  await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+}
+
+/** What `setup:list-gcs-buckets` answers when the reader can't be minted:
+ *  `describeGcpImpersonationFailure` around google-auth-library's wrapper. */
+const READER_REFUSED =
+  'CostGoblin could not read as costgoblin-reader@acme-prod.iam.gserviceaccount.com. Check that the service account exists, '
+  + 'that your Google account has roles/iam.serviceAccountTokenCreator on it — Details: Could not refresh access token: '
+  + 'unable to impersonate: Failed to impersonate: PERMISSION_DENIED';
+
+describe('SetupWizard — GCP reader check on Continue', () => {
+  it('stays on the intro with one line when the reader cannot be read as', async () => {
+    const { api, user } = renderWizard();
+    api.gcsBucketsResult = { buckets: [], error: READER_REFUSED };
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.type(screen.getByLabelText('Google Cloud project'), 'acme-prod{Enter}');
+
+    await waitFor(() => { expect(screen.getByRole('alert')).toBeDefined(); });
+    expect(screen.getByRole('alert').textContent).toMatch(
+      /^Can't read as costgoblin-reader — it doesn't exist in acme-prod, or your Google account lacks the Token Creator role on it\./,
+    );
+    // Still the intro, checked as the completed default.
+    expect(screen.getByLabelText('Google Cloud project')).toBeDefined();
+    expect(api.gcsBucketsListedAs).toEqual([DEFAULT_READER]);
+    // The full remedy stays one click away, not on the page.
+    expect(screen.getByText(READER_REFUSED).closest('details')?.open).toBe(false);
+  });
+
+  it('drops the verdict once the reader is edited, and re-checks on Continue', async () => {
+    const { api, user } = renderWizard();
+    api.gcsBucketsResult = { buckets: [], error: READER_REFUSED };
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.type(screen.getByLabelText('Google Cloud project'), 'acme-prod{Enter}');
+    await waitFor(() => { expect(screen.getByRole('alert')).toBeDefined(); });
+
+    await openReaderField(user);
+    await user.clear(screen.getByLabelText('Read-only service account'));
+    await user.type(screen.getByLabelText('Read-only service account'), 'other-reader');
+    expect(screen.queryByRole('alert')).toBeNull();
+
+    api.gcsBucketsResult = { buckets: [{ name: 'acme-focus-export' }] };
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    expect(api.gcsBucketsListedAs).toEqual([DEFAULT_READER, 'other-reader@acme-prod.iam.gserviceaccount.com']);
+  });
+
+  it('says it is checking while the listing runs', async () => {
+    const { api, user } = renderWizard();
+    let resolveBuckets: ((r: { buckets: readonly { name: string }[] }) => void) | undefined;
+    api.listGcsBuckets = () => new Promise((r) => { resolveBuckets = r; });
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.type(screen.getByLabelText('Google Cloud project'), 'acme-prod{Enter}');
+
+    const checking = screen.getByRole('button', { name: 'Checking access…' });
+    expect(checking.hasAttribute('disabled')).toBe(true);
+    await act(async () => {
+      resolveBuckets?.({ buckets: [{ name: 'acme-focus-export' }] });
+      await Promise.resolve();
+    });
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+  });
+
+  it('shows the same line on the bucket step when the project was picked from the list', async () => {
+    const { api, user } = renderWizard();
+    api.gcsBucketsResult = { buckets: [], error: READER_REFUSED };
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.click(screen.getByText('Choose from my projects'));
+    await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
+    await userClickText(user, 'Acme Production');
+
+    await waitFor(() => { expect(screen.getByText(/^Can't read as/)).toBeDefined(); });
+    expect(screen.getByText(/^Can't read as/).textContent).toMatch(/costgoblin-reader — it doesn't exist in acme-prod/);
+    // Not offered as a sign-in: no login fixes a missing grant.
+    expect(screen.queryByText(/Sign in/)).toBeNull();
+
+    // The grant is applied in a terminal; Retry re-lists in place.
+    api.gcsBucketsResult = { buckets: [{ name: 'acme-focus-export' }] };
+    await userClickText(user, 'Retry');
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
   });
 });

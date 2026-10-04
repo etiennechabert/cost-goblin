@@ -1,4 +1,5 @@
-import { DEFAULT_RETENTION_DAYS, isStringRecord, parseProviderName } from '@costgoblin/core';
+import type { CostApi } from '@costgoblin/core';
+import { DEFAULT_RETENTION_DAYS, isStringRecord, parseProviderName, validateConfig } from '@costgoblin/core';
 
 /** Pure YAML-object transforms behind the two config-writing IPC handlers
  *  (`setup:write-config`, `config:update-aws-profile`). They operate on the
@@ -6,28 +7,11 @@ import { DEFAULT_RETENTION_DAYS, isStringRecord, parseProviderName } from '@cost
  *  upsert/targeting rules are unit-testable without touching the filesystem. */
 
 /** The subset of the setup wizard's payload that shapes the provider entry
- *  written to `costgoblin.yaml`. `type` defaults to `'aws'` so every
- *  pre-#517 call site keeps its meaning; `profile` (AWS) and `keyFile`
+ *  written to `costgoblin.yaml` — derived from `CostApi['writeConfig']` so the
+ *  copies cannot drift (field docs live there). `type` defaults to `'aws'` so
+ *  every pre-#517 call site keeps its meaning; `profile` (AWS) and `keyFile`
  *  (GCP) are each read only by their own arm. */
-export interface WizardProviderConfig {
-  readonly providerName: string;
-  readonly type?: 'aws' | 'gcp' | undefined;
-  readonly profile: string;
-  readonly keyFile?: string | undefined;
-  readonly dailyBucket: string;
-  /** Retention for the DAILY tier (the wizard's picker in daily mode). */
-  readonly retentionDays?: number | undefined;
-  /** Retention for the HOURLY tier (the wizard's picker in hourly-only mode).
-   *  Previously the hourly tier was hardcoded to 30 days regardless of what the
-   *  picker showed, so a user's choice was silently discarded and any
-   *  hand-configured hourly retention was reset on every re-run. */
-  readonly hourlyRetentionDays?: number | undefined;
-  /** Retention for the COST-OPTIMIZATION tier (the wizard's picker in a
-   *  cost-opt-only run). Same fix as hourly — it was hardcoded before. */
-  readonly costOptRetentionDays?: number | undefined;
-  readonly hourlyBucket?: string | undefined;
-  readonly costOptBucket?: string | undefined;
-}
+export type WizardProviderConfig = Readonly<Omit<Parameters<CostApi['writeConfig']>[0], 'tags'>>;
 
 function providerEntryName(entry: unknown): string | undefined {
   if (!isStringRecord(entry)) return undefined;
@@ -42,6 +26,23 @@ function existingTierRetention(existingSync: Readonly<Record<string, unknown>>, 
   const t: unknown = existingSync[tier];
   if (isStringRecord(t) && typeof t['retentionDays'] === 'number') return t['retentionDays'];
   return undefined;
+}
+
+/** The credential fields of a gcp entry. The payload's own credential wins.
+ *  `impersonateServiceAccount` is authoritative whenever present — '' is the
+ *  wizard saying it browsed as the ADC login — so the entry reads as the
+ *  identity the wizard browsed with. Absent (a caller that knows nothing of
+ *  it), the replaced entry's credentials are carried: rebuilding from the
+ *  payload alone silently deleted a hand-written one, and the sync fell back
+ *  to plain ADC, 403ing on a bucket granted only to the service account.
+ *  Never both: the validator rejects `keyFile` + `impersonateServiceAccount`. */
+function gcpCredentialFields(wizard: WizardProviderConfig, target: unknown): Record<string, unknown> {
+  const carried = (key: string): Record<string, unknown> =>
+    isStringRecord(target) && typeof target[key] === 'string' ? { [key]: target[key] } : {};
+  if (wizard.keyFile !== undefined && wizard.keyFile.length > 0) return { keyFile: wizard.keyFile };
+  const reader = wizard.impersonateServiceAccount;
+  if (reader === undefined) return { ...carried('keyFile'), ...carried('impersonateServiceAccount') };
+  return reader.length > 0 ? { impersonateServiceAccount: reader } : carried('keyFile');
 }
 
 /** Upsert the wizard's provider into the parsed config by exact name match:
@@ -83,13 +84,13 @@ export function upsertWizardProvider(
     );
   }
 
-  // `validateGcpSync` rejects `costOptimization` outright. Inheriting the
-  // previous entry's sync block — which is right for AWS, where a wizard run
-  // that didn't mention `hourly` must not drop it — would carry a stale
-  // `costOptimization:` onto a gcp entry and make the whole config fail to
-  // load on the next launch. So gcp starts from an empty sync.
+  // Both arms inherit the previous entry's sync block, so a wizard run that
+  // didn't mention a tier keeps it — hourly is optional in both wizards, and
+  // a GCP re-run that picked only daily used to delete the hourly tier.
+  // `validateGcpSync` rejects `costOptimization` outright, so a stale one is
+  // the one key never carried onto a gcp entry.
   const sync: Record<string, unknown> = type === 'gcp'
-    ? { intervalMinutes: 60 }
+    ? { ...Object.fromEntries(Object.entries(existingSync).filter(([key]) => key !== 'costOptimization')), intervalMinutes: 60 }
     : { ...existingSync, intervalMinutes: 60 };
 
   // Retention per tier: honour the wizard's picked value, else preserve what the
@@ -111,28 +112,13 @@ export function upsertWizardProvider(
     sync['costOptimization'] = { bucket: wizard.costOptBucket, retentionDays };
   }
 
-  // A string field carried over from the entry being replaced (empty when the
-  // old entry has none): the wizard payload has no field for these, so building
-  // the entry from the payload alone would silently delete a hand-written one.
-  const carriedString = (key: string): Record<string, unknown> =>
-    isStringRecord(target) && typeof target[key] === 'string' ? { [key]: target[key] } : {};
-
   const entry: Record<string, unknown> = type === 'gcp'
     ? {
         name: wizard.providerName,
         type: 'gcp',
         // Omitted rather than null when blank: absent means Application
         // Default Credentials, which is the documented default.
-        // Carried from the entry being replaced when the payload has none,
-        // exactly like `impersonateServiceAccount` below. The wizard never
-        // sends a keyFile, so without this a re-run silently deleted a
-        // hand-written one and the sync fell back to ADC — 403ing on a bucket
-        // granted only to the service account.
-        ...(wizard.keyFile !== undefined && wizard.keyFile.length > 0 ? { keyFile: wizard.keyFile } : carriedString('keyFile')),
-        // Carried unconditionally: without this the download half ran as the
-        // signed-in user and 403'd on a bucket granted only to the service
-        // account.
-        ...carriedString('impersonateServiceAccount'),
+        ...gcpCredentialFields(wizard, target),
         sync,
       }
     : {
@@ -146,13 +132,24 @@ export function upsertWizardProvider(
     ? [...providersRaw, entry]
     : providersRaw.map((p, i) => (i === targetIndex ? entry : p));
 
-  return {
+  const result = {
     ...existing,
     providers,
     defaults: typeof existing['defaults'] === 'object' && existing['defaults'] !== null
       ? existing['defaults']
       : { periodDays: 30, costMetric: 'effective', lagDays: 2 },
   };
+  // The loader is `parse` + `validateConfig`, so running it here is exactly
+  // "will the app open this file". Rules span fields — an inherited hourly
+  // tier must not overlap a newly picked daily one, names are unique
+  // case-insensitively — and breaking one used to save a config the app then
+  // refused to load.
+  try {
+    validateConfig(result);
+  } catch (err) {
+    throw new Error(`Setup would write a costgoblin.yaml the app can't load: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
+  }
+  return result;
 }
 
 /** Rewrite ONLY the targeted provider's `credentialsProfile` (default: the

@@ -14,11 +14,20 @@ export type { DuckDbSandboxOptions } from './query/duckdb-sandbox.js';
 export { validateViews } from './config/views-validator.js';
 export { widgetToYaml, viewToYaml, viewsConfigToYaml } from './config/views-serialize.js';
 export { ConfigValidationError } from './config/validator.js';
+// The wizard seeds its per-tier retention pickers from the same defaults the
+// writer and prune paths use. Pure leaf module (type-only import).
+export { DEFAULT_RETENTION_DAYS } from './sync/retention.js';
+// Data & Sync opens the GCP wizard on a tier inside the provider's own bucket.
+// Leaf module with no imports.
+export { splitGcsLocation } from './sync/gcs-bucket-name.js';
 // The editor validates strip patterns against the same caps the save handler
 // enforces. Pure leaf module: the bounded executor that RUNS the patterns
 // (normalize/strip-bounded.ts, node:vm) must never be exported from here.
 export { MAX_NAME_STRIP_PATTERNS, MAX_NAME_STRIP_PATTERN_LENGTH, nameStripPatternViolations } from './config/strip-pattern-limits.js';
 export { GCLOUD_ADC_LOGIN_COMMAND, GCLOUD_CLI_LOGIN_COMMAND } from './config/credential-commands.js';
+// The wizard checks the optional reader field with the validator's own rule.
+export { DEFAULT_READER_ACCOUNT_ID, SERVICE_ACCOUNT_EMAIL_RULE, isServiceAccountEmail, resolveReaderInput } from './config/service-account.js';
+export type { ReaderInput } from './config/service-account.js';
 // The wizard renders a GCS listing's classification and enforces the same
 // tier-overlap rule the config validator applies at load time. Imported from
 // the leaf module rather than the sync barrel, which pulls in node built-ins
@@ -28,7 +37,7 @@ export { gcsTiersOverlap } from './sync/gcs-export-layout.js';
 // The wizard classifies GCP errors to decide whether to offer an inline
 // sign-in. Same leaf-module reasoning: never re-export this from
 // `gcs-client.ts`, which imports node:fs and the Cloud Storage SDK.
-export { isGcpBucketListDeniedMessage, isGcpCredentialError } from './sync/gcp-credential-errors.js';
+export { isGcpBucketListDeniedMessage, isGcpCredentialError, isGcpImpersonationError, isGcpNetworkError } from './sync/gcp-credential-errors.js';
 export { GCP_PROJECT_ID_RULES, isValidGcpProjectId } from './config/gcp-project-id.js';
 export { isDiscoverableBeaconLocation, splitS3Location, suggestedConfigBeaconLocation } from './config/sharing-location.js';
 export { DEFAULT_COST_SCOPE, DEFAULT_MARKETPLACE_ATTRIBUTION, BUILTIN_EXCLUSION_RULES } from './config/cost-scope-seed.js';

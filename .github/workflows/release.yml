@@ -137,7 +137,7 @@ jobs:
           MAIN_VITE_SENTRY_DSN: ${{ vars.SENTRY_DSN }}
 
       # Every sentry-cli call below runs the lockfile-pinned @sentry/cli devDep
-      # by its path — never `npx @sentry/cli@^2`, which resolves (and runs) a
+      # by its path — never `npx @sentry/cli@^3`, which resolves (and runs) a
       # registry version at release time. The native binary comes from the
       # exact-pinned, script-free @sentry/cli-<platform> optional dependency, so
       # @sentry/cli's own install script is denied in package.json#allowScripts
@@ -224,7 +224,7 @@ jobs:
       # huge *-unpacked/ dirs or builder-*.yml. Globs that match nothing on a given
       # platform are silently skipped; every platform matches at least one file.
       - name: Upload dist artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dist-${{ matrix.platform }}-${{ matrix.arch }}
           if-no-files-found: error
@@ -268,7 +268,7 @@ jobs:
         run: bash .github/scripts/assert-npm-guards.sh
 
       # The manifest merge needs js-yaml. Install it from the lockfile — never a
-      # run-time `npm install js-yaml@^4`, which re-resolves against the registry
+      # run-time `npm install js-yaml@^5`, which re-resolves against the registry
       # in the job that rewrites the update manifests (the sha512 there is
       # electron-updater's only integrity check on the unsigned Win/Linux
       # builds). --ignore-scripts: nothing here needs an install script, so no
@@ -276,7 +276,7 @@ jobs:
       - run: npm ci --ignore-scripts
 
       - name: Download all dist artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: artifacts
 

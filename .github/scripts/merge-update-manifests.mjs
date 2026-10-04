@@ -18,7 +18,7 @@
 // Usage: node merge-update-manifests.mjs <out.yml> <x64.yml> <arm64.yml> [...]
 
 import { readFileSync, writeFileSync } from 'node:fs';
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 
 const [out, ...inputs] = process.argv.slice(2);
 if (!out || inputs.length < 2) {

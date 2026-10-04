@@ -18,6 +18,7 @@ import { useCostApi } from '../hooks/use-cost-api.js';
 import { formatBytes } from './format.js';
 import { ProfilePicker } from './profile-picker.js';
 import { autoStopLabel } from './sharing-auto-stop.js';
+import { TitledModal } from './titled-modal.js';
 import { Button } from './ui/button.js';
 
 const DATA_TIER_LABELS: Record<SharedDataTier, string> = {
@@ -77,57 +78,6 @@ export function BundleSummaryCard({ summary }: Readonly<{ summary: ConfigBundleS
         </SummaryRow>
       </div>
     </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Shared dialog chrome — same overlay pattern as ConfirmModal.
-// ---------------------------------------------------------------------------
-
-function SharingModal({ title, onClose, children, dismissable = true }: Readonly<{
-  title: string;
-  onClose: () => void;
-  children: React.ReactNode;
-  /** When false, the modal cannot be dismissed (no Escape, no backdrop click,
-   *  no ✕) — used to hold the window open during an in-progress pull. */
-  dismissable?: boolean;
-}>): React.JSX.Element {
-  useEffect(() => {
-    if (!dismissable) return undefined;
-    function handleKey(e: KeyboardEvent): void {
-      if (e.key === 'Escape') onClose();
-    }
-    document.addEventListener('keydown', handleKey);
-    return () => { document.removeEventListener('keydown', handleKey); };
-  }, [onClose, dismissable]);
-
-  return (
-    // no-drag: the modal can open above a window drag region (the standalone
-    // setup wizard's backdrop, or the app header) — without the opt-out,
-    // clicks there would drag the window instead of reaching the modal. (#317)
-    <dialog open className="fixed inset-0 z-[100] flex items-center justify-center bg-transparent m-0 p-0 max-w-none max-h-none w-full h-full border-none [-webkit-app-region:no-drag]" aria-modal="true">
-      <div
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-        {...(dismissable ? { onClick: onClose } : {})}
-        aria-hidden="true"
-      />
-      <div className="relative rounded-xl border border-border bg-bg-secondary p-6 shadow-2xl max-w-md w-full mx-4 max-h-[85vh] overflow-y-auto">
-        <div className="flex items-center justify-between">
-          <h3 className="text-base font-semibold text-text-primary">{title}</h3>
-          {dismissable && (
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-md px-2 py-1 text-sm text-text-muted hover:text-text-primary hover:bg-bg-tertiary transition-colors"
-              aria-label="Close"
-            >
-              ✕
-            </button>
-          )}
-        </div>
-        <div className="mt-4 flex flex-col gap-4">{children}</div>
-      </div>
-    </dialog>
   );
 }
 
@@ -742,9 +692,9 @@ export function ShareConfigPanel(): React.JSX.Element {
 
 export function ShareConfigDialog({ onClose }: Readonly<{ onClose: () => void }>): React.JSX.Element {
   return (
-    <SharingModal title="Share configuration" onClose={onClose}>
+    <TitledModal title="Share configuration" onClose={onClose}>
       <ShareConfigPanel />
-    </SharingModal>
+    </TitledModal>
   );
 }
 
@@ -1042,8 +992,8 @@ export function ImportConfigDialog({ onClose, onApplied }: Readonly<{
   const [pullBusy, setPullBusy] = useState(false);
   const [done, setDone] = useState(false);
   return (
-    <SharingModal title="Import configuration" onClose={done ? onApplied : onClose} dismissable={!pullBusy}>
+    <TitledModal title="Import configuration" onClose={done ? onApplied : onClose} dismissable={!pullBusy}>
       <ImportConfigPanel onApplied={onApplied} onClose={onClose} onBusyChange={setPullBusy} onDoneChange={setDone} />
-    </SharingModal>
+    </TitledModal>
   );
 }

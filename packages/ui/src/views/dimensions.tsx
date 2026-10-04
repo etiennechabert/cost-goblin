@@ -685,6 +685,7 @@ function DebugPanel({ title, subtitle, expanded, onToggle, children }: Readonly<
       <button
         type="button"
         onClick={onToggle}
+        aria-expanded={expanded}
         className="w-full flex items-center gap-3 px-5 py-3 text-left hover:bg-bg-tertiary/30 transition-colors"
       >
         <span className="text-text-muted text-xs">{expanded ? '▾' : '▸'}</span>
@@ -1353,6 +1354,7 @@ function ToggleButton({ itemKey, hidden, onToggle }: Readonly<{ itemKey: string;
       key={itemKey}
       type="button"
       onClick={onToggle}
+      aria-pressed={!hidden}
       className={[
         'rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors',
         hidden
