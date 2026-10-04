@@ -280,38 +280,20 @@ describe('DataManagement — GCP "Signed in as" panel', () => {
     expect(api.gcpIdentitiesRequestedFor).not.toContain('aws-main');
   });
 
-  it('surfaces the provider s warnings', async () => {
+  it('surfaces the provider s warning', async () => {
     const api = new MockCostApi();
     vi.spyOn(api, 'getConfig').mockResolvedValue(MOCK_MIXED_PROVIDER_CONFIG);
-    const sa = 'costgoblin-reader@acme-billing.iam.gserviceaccount.com';
-    const other = 'company-reader@corp.iam.gserviceaccount.com';
     api.gcpIdentitiesResult = {
       status: 'ok',
       identities: {
-        listing: {
-          kind: 'impersonated',
-          file: { path: '/adc.json', origin: 'well-known' },
-          target: other,
-          source: { kind: 'user', account: { status: 'known', email: 'alice@acme.com' } },
-        },
-        download: {
-          kind: 'gcloud',
-          principal: { kind: 'account', account: 'admin@acme.com', fromEnv: false },
-          impersonate: { target: sa, origin: 'provider' },
-          configuration: 'default',
-        },
-        adcLoginPath: null,
-        warnings: [
-          { kind: 'target-mismatch', listingTarget: other, download: { target: sa, origin: 'provider' } },
-          { kind: 'split-accounts', listingAccount: 'alice@acme.com', downloadAccount: 'admin@acme.com', listingKeyFile: null, downloadAccountFromEnv: false },
-        ],
-        notes: [],
+        listing: { kind: 'user', file: { path: '/adc.json', origin: 'well-known' }, account: { status: 'known', email: 'alice@acme.com' } },
+        download: { kind: 'gcloud', account: 'admin@acme.com', configuration: 'default' },
+        splitAccounts: { listingAccount: 'alice@acme.com', downloadAccount: 'admin@acme.com' },
       },
     };
     renderDataManagement(api);
-    const warnings = await screen.findByRole('list', { name: 'Credential warnings' });
-    expect(warnings.textContent).toContain(`Bucket listing impersonates ${other}, but this provider downloads as ${sa}`);
-    expect(warnings.textContent).toContain('Downloads run as admin@acme.com, but bucket listing runs as alice@acme.com');
+    const warning = await screen.findByRole('note', { name: 'Credential warning' });
+    expect(warning.textContent).toContain('Downloads run as admin@acme.com, but bucket listing runs as alice@acme.com');
   });
 
   it('re-reads every GCP provider s identities when one section is retried — they are machine-wide', async () => {

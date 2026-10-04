@@ -394,15 +394,8 @@ export class MockCostApi implements CostApi {
         file: { path: '/Users/test/.config/gcloud/application_default_credentials.json', origin: 'well-known' },
         account: { status: 'known', email: 'alice@acme.com' },
       },
-      download: {
-        kind: 'gcloud',
-        principal: { kind: 'account', account: 'alice@acme.com', fromEnv: false },
-        impersonate: null,
-        configuration: 'default',
-      },
-      adcLoginPath: null,
-      warnings: [],
-      notes: [],
+      download: { kind: 'gcloud', account: 'alice@acme.com', configuration: 'default' },
+      splitAccounts: null,
     },
   };
 

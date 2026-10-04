@@ -4,39 +4,31 @@ import type {
   GcpAccountLookup,
   GcpCredentialFile,
   GcpDownloadIdentity,
-  GcpDownloadPrincipal,
   GcpIdentities,
-  GcpIdentityNote,
-  GcpIdentityWarning,
-  GcpImpersonationSource,
   GcpListingIdentity,
+  GcpSplitAccounts,
 } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 
-type PanelContext = 'wizard' | 'provider';
-
-/** "Signed in as" — which Google identities a GCP setup runs as.
+/** "Signed in as" — which Google accounts a GCP setup runs as.
  *
  *  A GCP sync authenticates twice, through two stores that different commands
  *  change: bucket listing reads Application Default Credentials (or the
  *  provider's key file), while downloads (and the wizard's project list) run
- *  with gcloud's own credentials. Before this panel the only way to learn
- *  either was an error naming the denied principal. It shows both, and says
- *  in plain words when they disagree in a way that will break (or silently
- *  re-route) a sync. Read-only: every remedy is a command to run, never an
- *  action taken here.
+ *  as gcloud's account. Before this panel the only way to learn either was an
+ *  error naming the denied principal. Read-only: every remedy is a command to
+ *  run, never an action taken here.
  *
  *  `context: 'wizard'` renders the compact form: just the account gcloud is
  *  signed in as (it lists the projects the wizard offers), plus one line when
- *  something would stop the setup. Impersonation belongs to the provider —
- *  its service account is chosen later — so the wizard says nothing about
- *  it. `context: 'provider'` (Data Management) shows both paths in full. */
+ *  something would stop the setup. `context: 'provider'` (Data Management)
+ *  shows both paths. */
 export function GcpIdentityPanel({ providerName, context, refreshKey = 0 }: Readonly<{
-  /** Whose `impersonateServiceAccount` / `keyFile` to apply. Omitted in the
-   *  wizard, where no provider exists yet. */
+  /** Whose `keyFile` to apply. Omitted in the wizard, where no provider
+   *  exists yet. */
   providerName?: string | undefined;
-  context: PanelContext;
+  context: 'wizard' | 'provider';
   /** Bump to re-read, e.g. after a sign-in the parent ran. */
   refreshKey?: number;
 }>): React.JSX.Element {
@@ -80,103 +72,6 @@ export function GcpIdentityPanel({ providerName, context, refreshKey = 0 }: Read
   );
 }
 
-function Identities({ identities }: Readonly<{ identities: GcpIdentities }>): React.JSX.Element {
-  const adcRemedy = { target: adcRemedyTarget(identities), loginPath: identities.adcLoginPath };
-  return (
-    <>
-      <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
-        <dt className="text-text-muted">Bucket listing</dt>
-        <dd className="min-w-0"><ListingIdentity identity={identities.listing} remedy={adcRemedy} /></dd>
-        <dt className="text-text-muted">Downloads</dt>
-        <dd className="min-w-0"><DownloadIdentity identity={identities.download} /></dd>
-      </dl>
-      {identities.warnings.length > 0 && (
-        <ul aria-label="Credential warnings" className="mt-2 flex flex-col gap-1.5">
-          {identities.warnings.map(warning => (
-            <li
-              key={warning.kind}
-              className="rounded-md border border-warning/50 bg-warning/10 px-2.5 py-1.5 text-text-primary break-words"
-            >
-              <WarningText warning={warning} />
-            </li>
-          ))}
-        </ul>
-      )}
-      {identities.notes.length > 0 && (
-        <ul aria-label="Credential notes" className="mt-2 flex flex-col gap-1.5">
-          {identities.notes.map(note => (
-            <li key={note.kind} className="text-text-muted break-words">
-              <NoteText note={note} />
-            </li>
-          ))}
-        </ul>
-      )}
-    </>
-  );
-}
-
-/** The wizard's form: the one account the user is working as — gcloud's,
- *  which lists the projects on offer — and a single line only when the setup
- *  would stall: gcloud or bucket access not signed in, or bucket access signed
- *  in as someone else. */
-function CompactIdentities({ identities }: Readonly<{ identities: GcpIdentities }>): React.JSX.Element {
-  const { download, listing } = identities;
-  const split = identities.warnings.find(w => w.kind === 'split-accounts');
-  const adcFile = listing.kind === 'not-signed-in' || listing.kind === 'unreadable' ? listing.file : undefined;
-  return (
-    <>
-      <p className="mt-1 break-words">
-        <CompactAccount download={download} />
-      </p>
-      {adcFile !== undefined && (
-        <Detail>
-          Bucket access isn&apos;t signed in — <AdcRemedy file={adcFile} target={null} loginPath={identities.adcLoginPath} />
-        </Detail>
-      )}
-      {split !== undefined && (
-        <Detail>
-          Bucket access is signed in as <Principal>{split.listingAccount}</Principal> — a different account.
-        </Detail>
-      )}
-    </>
-  );
-}
-
-function CompactAccount({ download }: Readonly<{ download: GcpDownloadIdentity }>): React.JSX.Element {
-  switch (download.kind) {
-    case 'gcloud':
-      if (download.principal.kind === 'account' && download.principal.account === null) {
-        return <span className="text-negative">gcloud isn&apos;t signed in — run <Command>{GCLOUD_CLI_LOGIN_COMMAND}</Command></span>;
-      }
-      return (
-        <>
-          <DownloadPrincipalText principal={download.principal} />
-          <span className="text-text-muted"> · gcloud configuration &quot;{download.configuration}&quot;</span>
-        </>
-      );
-    case 'cli-missing':
-      return <span className="text-negative">The gcloud CLI is not installed</span>;
-    case 'cli-error':
-      return <span className="text-negative">gcloud couldn&apos;t report its configuration: {download.message}</span>;
-  }
-}
-
-/** The service account a fresh ADC sign-in should impersonate: the one the
- *  downloads use, else the one ADC impersonates today. A bare re-login would
- *  REPLACE an impersonating credential with a plain-user one — the remedy
- *  must never be the thing that bypasses the least-privilege reader. */
-function adcRemedyTarget(identities: GcpIdentities): string | null {
-  if (identities.download.kind === 'gcloud' && identities.download.impersonate !== null) return identities.download.impersonate.target;
-  const { listing } = identities;
-  return listing.kind === 'impersonated' ? listing.target : null;
-}
-
-function adcLoginCommand(target: string | null): string {
-  return target === null ? GCLOUD_ADC_LOGIN_COMMAND : `${GCLOUD_ADC_LOGIN_COMMAND} --impersonate-service-account=${target}`;
-}
-
-const isServiceAccount = (email: string): boolean => email.toLowerCase().endsWith('.gserviceaccount.com');
-
 function Principal({ children }: Readonly<{ children: string }>): React.JSX.Element {
   return <span className="font-mono text-text-primary break-all">{children}</span>;
 }
@@ -189,12 +84,10 @@ function Detail({ children }: Readonly<{ children: React.ReactNode }>): React.JS
   return <div className="text-[11px] text-text-muted break-words">{children}</div>;
 }
 
-function Impersonating({ target }: Readonly<{ target: string }>): React.JSX.Element {
-  return <> <span className="text-text-muted">impersonating</span> <Principal>{target}</Principal></>;
-}
-
-/** How to get a working ADC file, given which file the SDK reads. */
-function AdcRemedy({ file, target, loginPath }: Readonly<{ file: GcpCredentialFile | null; target: string | null; loginPath: string | null }>): React.JSX.Element {
+/** How to get a working ADC file, given which file the SDK reads. Signing in
+ *  again writes only gcloud's well-known file, so it cannot fix the one
+ *  `GOOGLE_APPLICATION_CREDENTIALS` names. */
+function AdcRemedy({ file }: Readonly<{ file: GcpCredentialFile | null }>): React.JSX.Element {
   if (file?.origin === 'env') {
     return (
       <>
@@ -204,36 +97,67 @@ function AdcRemedy({ file, target, loginPath }: Readonly<{ file: GcpCredentialFi
     );
   }
   if (file?.origin === 'key-file') return <>check the provider&apos;s <Command>keyFile</Command></>;
-  if (loginPath !== null) {
-    return (
-      <>
-        run <Command>{adcLoginCommand(target)}</Command> — but <Command>CLOUDSDK_CONFIG</Command> is set, so gcloud
-        writes <Command>{loginPath}</Command>, which CostGoblin doesn&apos;t read: unset{' '}
-        <Command>CLOUDSDK_CONFIG</Command>, or point <Command>GOOGLE_APPLICATION_CREDENTIALS</Command> at that file
-      </>
-    );
-  }
-  return <>run <Command>{adcLoginCommand(target)}</Command></>;
+  return <>run <Command>{GCLOUD_ADC_LOGIN_COMMAND}</Command></>;
 }
 
-interface AdcRemedyInputs { readonly target: string | null; readonly loginPath: string | null }
+/** The wizard's form: the one account the user is working as — gcloud's,
+ *  which lists the projects on offer — and a single line only when the setup
+ *  would stall: gcloud or bucket access not signed in, or bucket access signed
+ *  in as someone else. */
+function CompactIdentities({ identities }: Readonly<{ identities: GcpIdentities }>): React.JSX.Element {
+  const { listing, splitAccounts } = identities;
+  const adcFile = listing.kind === 'not-signed-in' || listing.kind === 'unreadable' ? listing.file : undefined;
+  return (
+    <>
+      <p className="mt-1 break-words">
+        <CompactAccount download={identities.download} />
+      </p>
+      {adcFile !== undefined && (
+        <Detail>Bucket access isn&apos;t signed in — <AdcRemedy file={adcFile} /></Detail>
+      )}
+      {splitAccounts !== null && (
+        <Detail>
+          Bucket access is signed in as <Principal>{splitAccounts.listingAccount}</Principal> — a different account.
+        </Detail>
+      )}
+    </>
+  );
+}
 
-function AccountText({ account, file, remedy }: Readonly<{ account: GcpAccountLookup; file: GcpCredentialFile; remedy: AdcRemedyInputs }>): React.JSX.Element {
-  if (account.status === 'known') return <Principal>{account.email}</Principal>;
-  switch (account.reason) {
-    case 'expired':
-      return <span className="text-text-secondary">a Google account whose sign-in has expired — <AdcRemedy file={file} {...remedy} /></span>;
-    case 'unreachable':
-      return <span className="text-text-secondary">a Google account (couldn&apos;t reach Google to check which)</span>;
-    case 'not-recorded':
-      return <span className="text-text-secondary">your Google account (the credential doesn&apos;t record which)</span>;
+function CompactAccount({ download }: Readonly<{ download: GcpDownloadIdentity }>): React.JSX.Element {
+  switch (download.kind) {
+    case 'gcloud':
+      return download.account === null
+        ? <span className="text-negative">gcloud isn&apos;t signed in — run <Command>{GCLOUD_CLI_LOGIN_COMMAND}</Command></span>
+        : (
+          <>
+            <Principal>{download.account}</Principal>
+            <span className="text-text-muted"> · gcloud configuration &quot;{download.configuration}&quot;</span>
+          </>
+        );
+    case 'key-file':
+      return download.email === null ? <span className="text-negative">An unreadable key file</span> : <Principal>{download.email}</Principal>;
+    case 'cli-missing':
+      return <span className="text-negative">The gcloud CLI is not installed</span>;
+    case 'cli-error':
+      return <span className="text-negative">gcloud couldn&apos;t report its configuration: {download.message}</span>;
   }
 }
 
-function SourceText({ source, file, remedy }: Readonly<{ source: GcpImpersonationSource; file: GcpCredentialFile; remedy: AdcRemedyInputs }>): React.JSX.Element {
-  if (source.kind === 'user') return <AccountText account={source.account} file={file} remedy={remedy} />;
-  if (source.kind === 'service-account') return <Principal>{source.email}</Principal>;
-  return <span className="text-text-secondary">an unrecognized credential{source.type === null ? '' : ` (${source.type})`}</span>;
+/** Data Management's form: both paths, and a warning when they are two
+ *  different people. */
+function Identities({ identities }: Readonly<{ identities: GcpIdentities }>): React.JSX.Element {
+  return (
+    <>
+      <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
+        <dt className="text-text-muted">Bucket listing</dt>
+        <dd className="min-w-0"><ListingIdentity identity={identities.listing} /></dd>
+        <dt className="text-text-muted">Downloads</dt>
+        <dd className="min-w-0"><DownloadIdentity identity={identities.download} /></dd>
+      </dl>
+      {identities.splitAccounts !== null && <SplitAccountsWarning split={identities.splitAccounts} />}
+    </>
+  );
 }
 
 function fileDetail(file: GcpCredentialFile): string {
@@ -244,35 +168,46 @@ function fileDetail(file: GcpCredentialFile): string {
   }
 }
 
-function ListingIdentity({ identity, remedy }: Readonly<{ identity: GcpListingIdentity; remedy: AdcRemedyInputs }>): React.JSX.Element {
+function AccountText({ account, file }: Readonly<{ account: GcpAccountLookup; file: GcpCredentialFile }>): React.JSX.Element {
+  if (account.status === 'known') return <Principal>{account.email}</Principal>;
+  switch (account.reason) {
+    case 'expired':
+      return <span className="text-text-secondary">a Google account whose sign-in has expired — <AdcRemedy file={file} /></span>;
+    case 'unreachable':
+      return <span className="text-text-secondary">a Google account (couldn&apos;t reach Google to check which)</span>;
+    case 'not-recorded':
+      return <span className="text-text-secondary">your Google account (the credential doesn&apos;t record which)</span>;
+  }
+}
+
+function ListingIdentity({ identity }: Readonly<{ identity: GcpListingIdentity }>): React.JSX.Element {
   switch (identity.kind) {
     case 'not-signed-in':
       return (
         <>
-          <span className="text-negative">Not signed in</span> — <AdcRemedy file={identity.file} {...remedy} />
+          <span className="text-negative">Not signed in</span> — <AdcRemedy file={identity.file} />
           {identity.file !== null && <Detail>No file at {identity.file.path}</Detail>}
         </>
       );
     case 'unreadable':
       return (
         <>
-          <span className="text-negative">Couldn&apos;t read the credential file</span> — <AdcRemedy file={identity.file} {...remedy} />
+          <span className="text-negative">Couldn&apos;t read the credential file</span> — <AdcRemedy file={identity.file} />
           <Detail>{identity.file.path}</Detail>
         </>
       );
     case 'user':
       return (
         <>
-          <AccountText account={identity.account} file={identity.file} remedy={remedy} />
+          <AccountText account={identity.account} file={identity.file} />
           <Detail>{fileDetail(identity.file)}</Detail>
         </>
       );
     case 'impersonated':
       return (
         <>
-          <SourceText source={identity.source} file={identity.file} remedy={remedy} />
-          <Impersonating target={identity.target} />
-          <Detail>{fileDetail(identity.file)}</Detail>
+          <Principal>{identity.target}</Principal>
+          <Detail>Service account, impersonated · {fileDetail(identity.file)}</Detail>
         </>
       );
     case 'service-account':
@@ -282,66 +217,36 @@ function ListingIdentity({ identity, remedy }: Readonly<{ identity: GcpListingId
           <Detail>{fileDetail(identity.file)}</Detail>
         </>
       );
-    case 'external':
+    case 'other':
       return (
         <>
-          <span className="text-text-secondary">Workload or workforce identity federation</span>
-          {identity.target !== null && <Impersonating target={identity.target} />}
+          <span className="text-text-secondary">A {identity.type ?? 'non-standard'} credential</span>
           <Detail>{fileDetail(identity.file)}</Detail>
         </>
       );
-    case 'unrecognized':
-      return (
-        <>
-          <span className="text-negative">A credential the Cloud Storage SDK can&apos;t use{identity.type === null ? '' : ` (${identity.type})`}</span>
-          <Detail>{fileDetail(identity.file)}</Detail>
-        </>
-      );
-  }
-}
-
-function DownloadPrincipalText({ principal }: Readonly<{ principal: GcpDownloadPrincipal }>): React.JSX.Element {
-  switch (principal.kind) {
-    case 'account':
-      return principal.account === null
-        ? <span className="text-negative">No active gcloud account</span>
-        : <Principal>{principal.account}</Principal>;
-    case 'key-file':
-      return principal.email === null
-        ? <span className="text-negative">a key file it can&apos;t name</span>
-        : <Principal>{principal.email}</Principal>;
-    case 'access-token-file':
-      return <span className="text-text-secondary">a pre-minted access token (gcloud doesn&apos;t say whose)</span>;
-  }
-}
-
-function principalDetail(principal: GcpDownloadPrincipal): string | null {
-  switch (principal.kind) {
-    case 'account': return principal.fromEnv ? 'account set by CLOUDSDK_CORE_ACCOUNT' : null;
-    case 'key-file': return principal.origin === 'provider' ? `Provider keyFile · ${principal.path}` : `gcloud's auth/credential_file_override · ${principal.path}`;
-    case 'access-token-file': return `gcloud's auth/access_token_file · ${principal.path}`;
   }
 }
 
 function DownloadIdentity({ identity }: Readonly<{ identity: GcpDownloadIdentity }>): React.JSX.Element {
   switch (identity.kind) {
-    case 'gcloud': {
-      const extra = principalDetail(identity.principal);
+    case 'gcloud':
       return (
         <>
-          <DownloadPrincipalText principal={identity.principal} />
-          {identity.impersonate !== null && <Impersonating target={identity.impersonate.target} />}
-          <Detail>
-            gcloud CLI · configuration &quot;{identity.configuration}&quot;
-            {identity.impersonate?.origin === 'gcloud-config' && ' · impersonation from gcloud\'s auth/impersonate_service_account'}
-          </Detail>
-          {extra !== null && <Detail>{extra}</Detail>}
-          {identity.principal.kind === 'account' && identity.principal.account === null && (
-            <Detail>Run <Command>{GCLOUD_CLI_LOGIN_COMMAND}</Command> to sign gcloud in.</Detail>
-          )}
+          {identity.account === null
+            ? <><span className="text-negative">No active gcloud account</span> — run <Command>{GCLOUD_CLI_LOGIN_COMMAND}</Command></>
+            : <Principal>{identity.account}</Principal>}
+          <Detail>gcloud CLI · configuration &quot;{identity.configuration}&quot;</Detail>
         </>
       );
-    }
+    case 'key-file':
+      return (
+        <>
+          {identity.email === null
+            ? <span className="text-negative">Couldn&apos;t read the service account key</span>
+            : <Principal>{identity.email}</Principal>}
+          <Detail>Provider keyFile · {identity.path}</Detail>
+        </>
+      );
     case 'cli-missing':
       return <span className="text-negative">The gcloud CLI is not installed — downloads need it</span>;
     case 'cli-error':
@@ -354,92 +259,13 @@ function DownloadIdentity({ identity }: Readonly<{ identity: GcpDownloadIdentity
   }
 }
 
-function SplitAccountsRemedy({ warning }: Readonly<{ warning: Extract<GcpIdentityWarning, { kind: 'split-accounts' }> }>): React.JSX.Element {
-  const onProvider = 'on this provider';
-  if (warning.downloadAccountFromEnv) {
-    return <>gcloud&apos;s account is set by <Command>CLOUDSDK_CORE_ACCOUNT</Command> in CostGoblin&apos;s environment — change or unset it there.</>;
-  }
-  if (warning.listingKeyFile !== null) {
-    return <>gcloud can only act as <Principal>{warning.listingAccount}</Principal> through its key: set <Command>{`keyFile: ${warning.listingKeyFile}`}</Command> {onProvider} so both halves use it.</>;
-  }
-  if (isServiceAccount(warning.listingAccount)) {
-    return <>gcloud can only act as <Principal>{warning.listingAccount}</Principal> through its key — set <Command>keyFile</Command> {onProvider} so both halves use it.</>;
-  }
+function SplitAccountsWarning({ split }: Readonly<{ split: GcpSplitAccounts }>): React.JSX.Element {
   return (
-    <>
-      To use one account for both, run <Command>{`gcloud config set account ${warning.listingAccount}`}</Command> — and if gcloud has
-      never signed in as that account, <Command>{`${GCLOUD_CLI_LOGIN_COMMAND} ${warning.listingAccount}`}</Command> first.
-    </>
-  );
-}
-
-function WarningText({ warning }: Readonly<{ warning: GcpIdentityWarning }>): React.JSX.Element {
-  switch (warning.kind) {
-    case 'target-mismatch':
-      return warning.download.origin === 'provider'
-        ? (
-          <>
-            Bucket listing impersonates <Principal>{warning.listingTarget}</Principal>, but this provider downloads
-            as <Principal>{warning.download.target}</Principal>. Application Default Credentials are machine-wide, so
-            they were last set up for a different service account. Run{' '}
-            <Command>{adcLoginCommand(warning.download.target)}</Command> — any other provider relying on{' '}
-            <Principal>{warning.listingTarget}</Principal> will switch too.
-          </>
-        )
-        : (
-          <>
-            Bucket listing impersonates <Principal>{warning.listingTarget}</Principal>, but gcloud is set to impersonate{' '}
-            <Principal>{warning.download.target}</Principal> (<Command>auth/impersonate_service_account</Command>), so{' '}
-            downloads run as that instead. Run <Command>gcloud config unset auth/impersonate_service_account</Command>,
-            or set <Command>{`impersonateServiceAccount: ${warning.listingTarget}`}</Command>{' '}
-            on this provider — it takes precedence.
-          </>
-        );
-    case 'listing-not-impersonated':
-      return warning.download.origin === 'provider'
-        ? (
-          <>
-            This provider downloads as <Principal>{warning.download.target}</Principal>, but bucket listing doesn&apos;t
-            impersonate it, so listing runs as the signed-in identity itself. Run{' '}
-            <Command>{adcLoginCommand(warning.download.target)}</Command>.
-          </>
-        )
-        : (
-          <>
-            gcloud is set to impersonate <Principal>{warning.download.target}</Principal>{' '}
-            (<Command>auth/impersonate_service_account</Command>), so downloads run as that, but bucket
-            listing doesn&apos;t impersonate it. If that setting isn&apos;t meant for CostGoblin, run{' '}
-            <Command>gcloud config unset auth/impersonate_service_account</Command>.
-          </>
-        );
-    case 'download-not-impersonated':
-      return (
-        <>
-          Bucket listing impersonates <Principal>{warning.listingTarget}</Principal>, but downloads don&apos;t impersonate
-          anything — they run as gcloud&apos;s own identity, bypassing that service account. Add{' '}
-          <Command>{`impersonateServiceAccount: ${warning.listingTarget}`}</Command> to the provider in{' '}
-          <Command>costgoblin.yaml</Command>.
-        </>
-      );
-    case 'split-accounts':
-      return (
-        <>
-          Downloads run as <Principal>{warning.downloadAccount}</Principal>, but bucket listing runs as{' '}
-          <Principal>{warning.listingAccount}</Principal> — two different accounts, and each needs its own
-          access. <SplitAccountsRemedy warning={warning} />
-        </>
-      );
-  }
-}
-
-function NoteText({ note }: Readonly<{ note: GcpIdentityNote }>): React.JSX.Element {
-  return (
-    <>
-      Google doesn&apos;t record which account signed in to Application Default Credentials, so this can&apos;t be
-      checked: downloads run as <Principal>{note.downloadAccount}</Principal>
-      {note.downloadTarget === null
-        ? ', which should be the account you signed in with.'
-        : <>, which should be the account you signed in with — and needs permission to impersonate <Principal>{note.downloadTarget}</Principal> too.</>}
-    </>
+    <p role="note" aria-label="Credential warning" className="mt-2 rounded-md border border-warning/50 bg-warning/10 px-2.5 py-1.5 text-text-primary break-words">
+      Downloads run as <Principal>{split.downloadAccount}</Principal>, but bucket listing runs as{' '}
+      <Principal>{split.listingAccount}</Principal> — two different accounts, and each needs its own access. To use one
+      account for both, run <Command>{`gcloud config set account ${split.listingAccount}`}</Command> — and if gcloud has
+      never signed in as that account, <Command>{`${GCLOUD_CLI_LOGIN_COMMAND} ${split.listingAccount}`}</Command> first.
+    </p>
   );
 }
