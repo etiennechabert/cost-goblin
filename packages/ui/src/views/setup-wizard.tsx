@@ -1,5 +1,6 @@
 import type { ConfigBundleSummary, GcpProject, GcsDownloadCheckResult, GcsFolderKind, ProviderConfig } from '@costgoblin/core/browser';
 import { DEFAULT_READER_ACCOUNT_ID, DEFAULT_RETENTION_DAYS, GCP_PROJECT_ID_RULES, gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isGcpImpersonationError, isValidGcpProjectId, isValidWorkspaceName, parseProviderName, resolveReaderInput, SERVICE_ACCOUNT_EMAIL_RULE } from '@costgoblin/core/browser';
+import { Check, Loader2, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { Card, CardContent } from '../components/ui/card.js';
@@ -1713,14 +1714,6 @@ const OPTIONAL_TIER_ADD_LABEL: Readonly<Record<DataSource, string>> = {
   costOptimization: 'Add Cost Optimization data',
 };
 
-/** The Confirm step's credential card: the AWS profile, or the GCP project —
- *  none for per-tier Configure on a GCP provider, whose config records no
- *  project. */
-function credentialCard(state: Extract<WizardStep, { step: 'confirm' }>): { label: string; value: string } | null {
-  if (state.cloud === 'aws') return { label: 'AWS Profile', value: state.profile };
-  return state.project === null ? null : { label: 'Google Cloud project', value: state.project.id };
-}
-
 /** A tier this run has not collected, offered on Confirm as an optional add. */
 interface OptionalTier {
   readonly tier: DataSource;
@@ -1759,31 +1752,74 @@ const CHECKED_TIER_LABELS: Readonly<Record<DataSource, string>> = {
   costOptimization: 'Cost Optimization data',
 };
 
-/** The Confirm step's "Download check" card. Failures render through
- *  `GcpError` in gcloud-CLI mode — the download's own credential — so a
- *  signed-out gcloud gets its sign-in button and anything else a Retry. */
-function DownloadCheckCard({ check, readsAs, onRetry }: Readonly<{
+/** The Confirm step's Google Cloud card: the project, the reader and the
+ *  download check as rows of one card, so the three facts about one identity
+ *  read together. The check's failure renders through `GcpError` in gcloud-CLI
+ *  mode — the download's own credential — so a signed-out gcloud gets its
+ *  sign-in button and anything else a Retry. */
+function GcpAccessCard({ project, reader, check, readsAs, onRecheck }: Readonly<{
+  project: string | undefined;
+  /** '' when the download runs as the gcloud account or a key file. */
+  reader: string;
   check: DownloadCheck;
+  /** Who the check ran as; named in its row only when no Reads as row does. */
   readsAs: string;
-  onRetry: () => void;
+  onRecheck: () => void;
 }>) {
-  if (check.status === 'not-needed') return null;
+  const as = reader === '' ? ` as ${readsAs}` : '';
+  const label = 'text-xs text-text-muted uppercase tracking-wider whitespace-nowrap';
   return (
-    <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3" aria-live="polite">
-      <p className="text-xs text-text-muted uppercase tracking-wider">Download check</p>
-      {check.status === 'checking' && (
-        <p className="text-sm text-text-secondary mt-0.5">Checking that gcloud can read this export as {readsAs}…</p>
-      )}
-      {check.status === 'ok' && (
-        <p className="text-sm text-text-primary mt-0.5 break-words">gcloud can read this export as {readsAs}</p>
-      )}
+    <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
+      <dl className="m-0 grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-4 gap-y-1.5">
+        {project !== undefined && (
+          <>
+            <dt className={label}>Google Cloud project</dt>
+            <dd className="m-0 text-sm font-mono text-text-primary break-all">{project}</dd>
+          </>
+        )}
+        {reader !== '' && (
+          <>
+            <dt className={label}>Reads as</dt>
+            <dd className="m-0 text-sm font-mono text-text-primary break-all">{reader}</dd>
+          </>
+        )}
+        {check.status !== 'not-needed' && (
+          <>
+            <dt className={label}>Download check</dt>
+            <dd className="m-0 flex items-center gap-1.5 text-sm" aria-live="polite">
+              {check.status === 'checking' && (
+                <>
+                  <Loader2 aria-hidden="true" className="h-3.5 w-3.5 shrink-0 animate-spin motion-reduce:animate-none text-text-muted" />
+                  <span className="text-text-secondary break-words">Checking that gcloud can download the export{as}…</span>
+                </>
+              )}
+              {check.status === 'ok' && (
+                <>
+                  <Check aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-accent" />
+                  <span className="text-text-primary break-words">gcloud can download the export{as}</span>
+                  <button
+                    type="button"
+                    onClick={onRecheck}
+                    className="ml-auto shrink-0 text-xs text-text-muted underline underline-offset-2 hover:text-text-secondary"
+                  >
+                    Check again
+                  </button>
+                </>
+              )}
+              {check.status === 'failed' && (
+                <>
+                  <X aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-negative" />
+                  <span className="text-text-secondary break-words">
+                    gcloud can&apos;t download the {CHECKED_TIER_LABELS[check.tier]}{as}, so syncing it would fail
+                  </span>
+                </>
+              )}
+            </dd>
+          </>
+        )}
+      </dl>
       {check.status === 'failed' && (
-        <div className="mt-1.5 flex flex-col gap-2">
-          <p className="text-sm text-text-secondary break-words">
-            gcloud could not read the {CHECKED_TIER_LABELS[check.tier]} as {readsAs}, so syncing it would fail.
-          </p>
-          <GcpError message={check.error} mode="cli" onRetry={onRetry} />
-        </div>
+        <div className="mt-2"><GcpError message={check.error} mode="cli" onRetry={onRecheck} /></div>
       )}
     </div>
   );
@@ -1816,12 +1852,6 @@ function ConfirmStep({ state, providerNaming, existing, retention, optionalTiers
     return retention.picks[tier] ?? existing?.sync[tier]?.retentionDays ?? DEFAULT_RETENTION_DAYS[tier];
   }
 
-  // The credential card names whichever store this provider authenticates
-  // through. Hardcoding "AWS Profile" here was fine while the wizard only
-  // built AWS providers; a GCP run has no profile at all.
-  // A per-tier Configure on a GCP provider has no project (the config records
-  // none), so there is no card to show.
-  const credential = credentialCard(state);
   const reader = state.cloud === 'gcp' ? state.reader : '';
 
   // Primitives, so the check below re-runs only when what it checks changes.
@@ -1945,21 +1975,20 @@ function ConfirmStep({ state, providerNaming, existing, retention, optionalTiers
           )}
         </div>
 
-        {credential !== null && (
+        {state.cloud === 'aws' ? (
           <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
-            <p className="text-xs text-text-muted uppercase tracking-wider">{credential.label}</p>
-            <p className="text-sm font-mono text-text-primary mt-0.5">{credential.value}</p>
+            <p className="text-xs text-text-muted uppercase tracking-wider">AWS Profile</p>
+            <p className="text-sm font-mono text-text-primary mt-0.5">{state.profile}</p>
           </div>
+        ) : (
+          <GcpAccessCard
+            project={state.project?.id}
+            reader={reader}
+            check={check}
+            readsAs={readsAs}
+            onRecheck={() => { setCheckRun(n => n + 1); }}
+          />
         )}
-
-        {reader !== '' && (
-          <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
-            <p className="text-xs text-text-muted uppercase tracking-wider">Reads as</p>
-            <p className="text-sm font-mono text-text-primary mt-0.5 break-all">{reader}</p>
-          </div>
-        )}
-
-        <DownloadCheckCard check={check} readsAs={readsAs} onRetry={() => { setCheckRun(n => n + 1); }} />
 
         {paths.map(({ value, tier }) => {
           const label = SOURCE_LABELS[tier].title;
@@ -1970,10 +1999,11 @@ function ConfirmStep({ state, providerNaming, existing, retention, optionalTiers
             ? RETENTION_OPTIONS[tier]
             : [...RETENTION_OPTIONS[tier], { days: selected, label: `${String(selected)} days` }].sort((x, y) => x.days - y.days);
           return (
-          <div key={tier} className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
+          <div key={tier} className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-2.5">
             <p className="text-xs text-text-muted uppercase tracking-wider">{label}</p>
-            <p className="text-sm font-mono text-text-primary mt-0.5">{value}</p>
-            <fieldset aria-label={`${label} retention`} className="m-0 min-w-0 border-0 p-0 flex flex-wrap gap-2 mt-2.5">
+            <p className="text-sm font-mono text-text-primary mt-0.5 break-all">{value}</p>
+            <fieldset aria-label={`${label} retention`} className="m-0 min-w-0 border-0 p-0 flex flex-wrap items-center gap-1.5 mt-2">
+              <span aria-hidden="true" className="mr-1 text-xs text-text-muted">Keep</span>
               {options.map(opt => (
                 <button
                   key={opt.days}
@@ -1981,7 +2011,7 @@ function ConfirmStep({ state, providerNaming, existing, retention, optionalTiers
                   aria-pressed={selected === opt.days}
                   onClick={() => { retention.onPick(tier, opt.days); }}
                   className={[
-                    'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                    'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
                     selected === opt.days
                       ? 'bg-accent text-bg-primary'
                       : 'bg-bg-tertiary/50 text-text-secondary hover:text-text-primary',
@@ -1991,7 +2021,6 @@ function ConfirmStep({ state, providerNaming, existing, retention, optionalTiers
                 </button>
               ))}
             </fieldset>
-            <p className="text-xs text-text-muted mt-1.5">How far back to keep this tier</p>
           </div>
           );
         })}

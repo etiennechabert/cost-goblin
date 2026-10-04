@@ -254,7 +254,7 @@ test.describe('mixed AWS + GCP workspace', () => {
     await expect(dailyRetention.getByRole('button', { name: '2 years' })).toHaveAttribute('aria-pressed', 'true');
     // Both tiers were checked for download as gcloud's own account before
     // Complete Setup unlocked.
-    await expect(page.getByText('gcloud can read this export as your gcloud account')).toBeVisible();
+    await expect(page.getByText('gcloud can download the export as your gcloud account')).toBeVisible();
     const checks = await app.evaluate((): unknown => {
       const recorded: unknown = Reflect.get(globalThis, '__gcsDownloadChecks');
       return recorded;

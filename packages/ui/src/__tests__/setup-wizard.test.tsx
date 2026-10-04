@@ -856,7 +856,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await userClickText(user, 'Use this location');
     await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
     expect(screen.queryByText('Reads as')).toBeNull();
-    await waitFor(() => { expect(screen.getByText('gcloud can read this export as your gcloud account')).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByText('gcloud can download the export as your gcloud account')).toBeDefined(); });
     expect(api.gcsDownloadChecks).toEqual([{ bucketPath: 'gs://acme-focus-export/focus/daily/' }]);
     await userClickText(user, 'Complete Setup');
     await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
@@ -1837,7 +1837,7 @@ describe('SetupWizard — GCP default reader', () => {
     // Confirm names the completed address, never the bare name.
     expect(screen.getByText('Reads as')).toBeDefined();
     expect(screen.getByText(DEFAULT_READER)).toBeDefined();
-    await waitFor(() => { expect(screen.getByText(`gcloud can read this export as ${DEFAULT_READER}`)).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByText('gcloud can download the export')).toBeDefined(); });
     expect(api.gcsDownloadChecks).toEqual([{ bucketPath: DAILY_EXPORT, impersonateServiceAccount: DEFAULT_READER }]);
 
     await userClickText(user, 'Complete Setup');
@@ -2026,12 +2026,27 @@ describe('SetupWizard — GCP download check on Confirm', () => {
     await user.click(screen.getByLabelText('Open folder hourly'));
     await waitFor(() => { expect(screen.getByText('FOCUS export detected')).toBeDefined(); });
     await userClickText(user, 'Use this location');
-    await waitFor(() => { expect(screen.getByText(`gcloud can read this export as ${DEFAULT_READER}`)).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByText('gcloud can download the export')).toBeDefined(); });
     expect(api.gcsDownloadChecks.slice(-2)).toEqual([
       { bucketPath: DAILY_EXPORT, impersonateServiceAccount: DEFAULT_READER },
       { bucketPath: HOURLY_EXPORT, impersonateServiceAccount: DEFAULT_READER },
     ]);
     expect(completeSetupButton().hasAttribute('disabled')).toBe(false);
+  });
+
+  it('groups project, reader and check in one card, and re-runs the check on demand', async () => {
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    await enterGcpBrowse(user);
+    await walkGcpFromBucketRootToConfirm(user);
+    await waitFor(() => { expect(screen.getByText('gcloud can download the export')).toBeDefined(); });
+    const card = screen.getByText('Download check').closest('div.rounded-lg');
+    expect(card?.contains(screen.getByText('Google Cloud project'))).toBe(true);
+    expect(card?.contains(screen.getByText(DEFAULT_READER))).toBe(true);
+
+    await userClickText(user, 'Check again');
+    await waitFor(() => { expect(api.gcsDownloadChecks).toHaveLength(2); });
+    await waitFor(() => { expect(screen.getByText('gcloud can download the export')).toBeDefined(); });
   });
 
   it('holds Complete Setup while the check runs', async () => {
@@ -2041,7 +2056,7 @@ describe('SetupWizard — GCP download check on Confirm', () => {
     api.verifyGcsDownload = () => new Promise((r) => { settle = r; });
     await enterGcpBrowse(user);
     await walkGcpFromBucketRootToConfirm(user);
-    expect(screen.getByText(/^Checking that gcloud can read this export as/)).toBeDefined();
+    expect(screen.getByText('Checking that gcloud can download the export…')).toBeDefined();
     expect(completeSetupButton().hasAttribute('disabled')).toBe(true);
     await act(async () => { settle?.({ ok: true }); await Promise.resolve(); });
     await waitFor(() => { expect(completeSetupButton().hasAttribute('disabled')).toBe(false); });
@@ -2055,14 +2070,14 @@ describe('SetupWizard — GCP download check on Confirm', () => {
     await enterGcpBrowse(user);
     await walkGcpFromBucketRootToConfirm(user);
     await waitFor(() => { expect(screen.getByText(denied)).toBeDefined(); });
-    expect(screen.getByText(`gcloud could not read the daily export as ${DEFAULT_READER}, so syncing it would fail.`)).toBeDefined();
+    expect(screen.getByText("gcloud can't download the daily export, so syncing it would fail")).toBeDefined();
     expect(completeSetupButton().hasAttribute('disabled')).toBe(true);
     // Not a credential error: a plain Retry, no sign-in.
     expect(screen.queryByText('Sign in the gcloud CLI')).toBeNull();
 
     api.gcsDownloadCheckResult = { ok: true };
     await userClickText(user, 'Retry');
-    await waitFor(() => { expect(screen.getByText(`gcloud can read this export as ${DEFAULT_READER}`)).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByText('gcloud can download the export')).toBeDefined(); });
     expect(api.gcsDownloadChecks).toHaveLength(2);
     expect(completeSetupButton().hasAttribute('disabled')).toBe(false);
     expect(screen.queryByText('Save anyway')).toBeNull();
@@ -2107,7 +2122,7 @@ describe('SetupWizard — GCP download check on Confirm', () => {
     await user.click(screen.getByLabelText('Open folder hourly'));
     await waitFor(() => { expect(screen.getByText('FOCUS export detected')).toBeDefined(); });
     await userClickText(user, 'Use this location');
-    await waitFor(() => { expect(screen.getByText('gcloud could not read the hourly export as your gcloud account, so syncing it would fail.')).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByText("gcloud can't download the hourly export as your gcloud account, so syncing it would fail")).toBeDefined(); });
     // Per-tier Configure checks only the tier it came for.
     expect(api.gcsDownloadChecks).toEqual([{ bucketPath: HOURLY_EXPORT }]);
   });
@@ -2120,13 +2135,13 @@ describe('SetupWizard — GCP download check on Confirm', () => {
     // carries it, so that is who the download — and the check — runs as.
     const withReader = renderWizard({ ...configureHourlyOnGcpMain({ ...gcpMain, impersonateServiceAccount: carried }), prepare: gcpExportLayout });
     await reachHourlyConfirm(withReader.user);
-    await waitFor(() => { expect(screen.getByText(`gcloud can read this export as ${carried}`)).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByText(`gcloud can download the export as ${carried}`)).toBeDefined(); });
     expect(withReader.api.gcsDownloadChecks).toEqual([{ bucketPath: HOURLY_EXPORT, impersonateServiceAccount: carried }]);
     cleanup();
 
     const withKey = renderWizard({ ...configureHourlyOnGcpMain({ ...gcpMain, keyFile: '/keys/reader.json' }), prepare: gcpExportLayout });
     await reachHourlyConfirm(withKey.user);
-    await waitFor(() => { expect(screen.getByText('gcloud can read this export as the provider’s service account key')).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByText('gcloud can download the export as the provider’s service account key')).toBeDefined(); });
     expect(withKey.api.gcsDownloadChecks).toEqual([{ bucketPath: HOURLY_EXPORT, keyFileProvider: 'gcp-main' }]);
   });
 
