@@ -7,7 +7,7 @@ import {
   parseS3Path,
   isStringRecord,
 } from '@costgoblin/core';
-import type { GcpIdentityResult, GcpProject, GcsBrowseResult } from '@costgoblin/core';
+import type { GcpIdentityResult, GcpProject, GcsBrowseResult, GcsDownloadCheckResult } from '@costgoblin/core';
 import { loadSharedConfigFiles } from '@smithy/shared-ini-file-loader';
 import { awsProfileNames } from '../aws-profiles.js';
 import { upsertWizardProvider } from '../config-upsert.js';
@@ -16,7 +16,7 @@ import { classifyManifestColumns, parseManifestColumnNames, selectManifestKey } 
 import { runGcloudCapture } from '../gcloud-capture.js';
 import { createGcpIdentityResolver, defaultIdentityDeps, gcpIdentitiesFor } from '../gcp-identity.js';
 import type { GcpIdentityResolver } from '../gcp-identity.js';
-import { collectGcsPrefixes, gcloudProjectsOutcome, gcsNextPageToken, listGcsBucketsAs, parseWizardReader, wizardGcsErrorMessage, wizardWriteReader } from '../setup-gcp.js';
+import { collectGcsPrefixes, gcloudProjectsOutcome, gcsNextPageToken, listGcsBucketsAs, parseWizardReader, verifyGcsDownloadAs, wizardGcsErrorMessage, wizardWriteReader } from '../setup-gcp.js';
 import type { DetectedReportType } from '../setup-manifest.js';
 import type { AppContext } from './context.js';
 
@@ -301,6 +301,22 @@ export function registerSetupHandlers(app: AppContext): void {
       return { prefixes: [], folder: { kind: 'unknown' }, hasParquet: false, truncated: false, error: message };
     }
   });
+
+  // The other half of "browse as the identity the sync uses": listing and
+  // browsing above run through the Storage SDK, but the provider's downloads
+  // run through `gcloud storage rsync` as gcloud's own active account. A
+  // folder the wizard browsed can still refuse the download (403 on
+  // storage.objects.get), so the Confirm step asks gcloud itself — through
+  // the rsync's binary resolution, spawn shape and child PATH — before saving.
+  ipcMain.handle('setup:verify-gcs-download', (_event, rawParams: unknown): Promise<GcsDownloadCheckResult> =>
+    verifyGcsDownloadAs(rawParams, {
+      run: runGcloudCapture,
+      keyFileOf: async (name) => {
+        const config = await app.getConfig().catch(() => null);
+        const provider = config?.providers.find(p => String(p.name) === name);
+        return provider?.type === 'gcp' ? provider.keyFile : undefined;
+      },
+    }));
 
   ipcMain.handle('setup:write-config', async (_event, wizardConfig: {
     providerName: string;

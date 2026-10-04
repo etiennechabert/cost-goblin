@@ -1,4 +1,5 @@
 import {
+  assertValidGcsBucketName,
   describeGcpImpersonationFailure,
   isGcpImpersonationError,
   SERVICE_ACCOUNT_EMAIL_RULE,
@@ -6,8 +7,9 @@ import {
   isStringRecord,
   logger,
   parseJsonArray,
+  splitGcsLocation,
 } from '@costgoblin/core';
-import type { GcpProject, GcsStorageOptions } from '@costgoblin/core';
+import type { GcpProject, GcsDownloadCheckResult, GcsStorageOptions } from '@costgoblin/core';
 import type { GcloudCaptureResult } from './gcloud-capture.js';
 
 /** Pure parsers behind the GCP setup handlers, kept out of `handlers/setup.ts`
@@ -226,4 +228,116 @@ export function gcloudProjectsOutcome(result: GcloudCaptureResult): { projects: 
   // sign-in button then performs.
   const stderr = result.stderr.trim();
   return { projects: [], error: stderr.length > 0 ? stderr : `gcloud projects list failed (exit ${String(result.code)})` };
+}
+
+/** Ceiling on the wizard's download check. One non-recursive `ls` of a tier
+ *  folder answers in a second or two; the ceiling is for a gcloud sitting on a
+ *  re-auth prompt it will never get input for (stdin is ignored). */
+export const GCS_DOWNLOAD_CHECK_TIMEOUT_MS = 30_000;
+
+/** Characters that would stop the checked folder being the literal one the
+ *  export lives in: control characters, and the wildcards `gcloud storage`
+ *  expands (`*`, `?`, `[…]`) — a wildcard would list some OTHER match and
+ *  could pass for a folder the download then cannot read. */
+function hasUnsafeLocationChar(value: string): boolean {
+  for (const ch of value) {
+    const code = ch.charCodeAt(0);
+    if (code < 0x20 || code === 0x7f || ch === '*' || ch === '?' || ch === '[' || ch === ']') return true;
+  }
+  return false;
+}
+
+/** The argv for the wizard's download check: `gcloud storage ls` of the
+ *  export folder, as the identity the provider's `gcloud storage rsync` will
+ *  run as — `--impersonate-service-account` exactly when the sync passes it.
+ *
+ *  Non-recursive on purpose: a tier folder holds one `billing_period=` entry
+ *  per month, so the listing stays small without a flag to bound it. Throws
+ *  before anything is spawned when the location is not a `gs://` path on a
+ *  legal bucket — the same rules the config loader and the rsync sink hold
+ *  the bucket to, since this argv reaches a cmd.exe line on Windows too. */
+export function gcsDownloadCheckArgs(bucketPath: string, reader: string | undefined): string[] {
+  if (!bucketPath.startsWith('gs://')) {
+    throw new Error(`The export location must be a gs:// path, not ${JSON.stringify(bucketPath)}`);
+  }
+  const { bucket, prefix } = splitGcsLocation(bucketPath);
+  assertValidGcsBucketName(bucket);
+  if (hasUnsafeLocationChar(prefix)) {
+    throw new Error(`The export folder ${JSON.stringify(prefix)} contains characters gcloud would treat as a pattern`);
+  }
+  const folder = prefix.length === 0 || prefix.endsWith('/') ? prefix : `${prefix}/`;
+  const args = ['storage', 'ls', `gs://${bucket}/${folder}`];
+  if (reader !== undefined) args.push(`--impersonate-service-account=${reader}`);
+  return args;
+}
+
+/** What the wizard shows for one download-check run. `GCLOUD_CLI_NOT_FOUND`
+ *  is the sentinel the wizard renders as "install the gcloud CLI". gcloud's
+ *  stderr passes through otherwise — it names the denied principal and
+ *  permission, the evidence of which identity actually ran — except an
+ *  impersonation refusal, rewritten into the Token Creator remedy the raw
+ *  IAM sentence never names (the same rewrite the bucket listing gets). */
+export function gcsDownloadCheckOutcome(result: GcloudCaptureResult, reader: string | undefined): GcsDownloadCheckResult {
+  switch (result.kind) {
+    case 'missing':
+      return { ok: false, error: 'GCLOUD_CLI_NOT_FOUND' };
+    case 'timeout':
+      // No `gcloud auth login` in the copy: the wizard keys its sign-in
+      // button on that phrase, and a slow network is not fixed by one.
+      return { ok: false, error: `gcloud did not answer within ${String(GCS_DOWNLOAD_CHECK_TIMEOUT_MS / 1000)} seconds. Check your connection, then Retry.` };
+    case 'failed':
+      return { ok: false, error: result.message };
+    case 'exited':
+      break;
+  }
+  if (result.code === 0) return { ok: true };
+  const stderr = result.stderr.trim();
+  if (stderr.length === 0) return { ok: false, error: `gcloud storage ls failed (exit ${String(result.code)})` };
+  return isGcpImpersonationError(new Error(stderr))
+    ? { ok: false, error: describeGcpImpersonationFailure(reader, stderr) }
+    : { ok: false, error: stderr };
+}
+
+/** The side effects `verifyGcsDownloadAs` needs — injected so the request
+ *  parsing and the refuse-before-spawn rules are testable without gcloud. */
+export interface GcsDownloadCheckDeps {
+  /** `runGcloudCapture` in the app: trusted binary, `gcloudSpawnShape`,
+   *  trusted-first child PATH — the rsync download's own recipe. */
+  readonly run: (args: readonly string[], timeoutMs: number, extraEnv: Readonly<Record<string, string>>) => Promise<GcloudCaptureResult>;
+  /** The configured `keyFile` of the named GCP provider, if it has one. */
+  readonly keyFileOf: (providerName: string) => Promise<string | undefined>;
+}
+
+/** `setup:verify-gcs-download`: can the provider's DOWNLOAD identity read the
+ *  export folder? Everything arriving over IPC is re-checked here — the
+ *  location by `gcsDownloadCheckArgs`, the reader by `parseWizardReader` —
+ *  before gcloud is spawned. A named key-file provider's key is applied only
+ *  when no reader is given, mirroring the upsert (a reader replaces the key,
+ *  and the validator refuses both at once). */
+export async function verifyGcsDownloadAs(raw: unknown, deps: GcsDownloadCheckDeps): Promise<GcsDownloadCheckResult> {
+  if (!isStringRecord(raw)) return { ok: false, error: 'The download check needs an export location.' };
+  const bucketPath: unknown = raw['bucketPath'];
+  if (typeof bucketPath !== 'string') return { ok: false, error: 'The download check needs an export location.' };
+  const parsed = parseWizardReader(raw['impersonateServiceAccount']);
+  if (!parsed.ok) return { ok: false, error: parsed.error };
+
+  let args: string[];
+  try {
+    args = gcsDownloadCheckArgs(bucketPath, parsed.reader);
+  } catch (err: unknown) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+
+  const extraEnv: Record<string, string> = {};
+  const keyFileProvider: unknown = raw['keyFileProvider'];
+  if (parsed.reader === undefined && typeof keyFileProvider === 'string' && keyFileProvider.length > 0) {
+    const keyFile = await deps.keyFileOf(keyFileProvider);
+    // The sync's rsync points gcloud at the key the same way, without
+    // touching the user's global credential store.
+    if (keyFile !== undefined) extraEnv['CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE'] = keyFile;
+  }
+
+  const outcome = gcsDownloadCheckOutcome(await deps.run(args, GCS_DOWNLOAD_CHECK_TIMEOUT_MS, extraEnv), parsed.reader);
+  if (!outcome.ok) logger.info('setup:verify-gcs-download failed', { error: outcome.error });
+  return outcome;
 }

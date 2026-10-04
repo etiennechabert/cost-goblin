@@ -1,5 +1,5 @@
-import type { ConfigBundleSummary, GcpProject, GcsFolderKind, ProviderConfig } from '@costgoblin/core/browser';
-import { DEFAULT_RETENTION_DAYS, GCP_PROJECT_ID_RULES, gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isServiceAccountEmail, isValidGcpProjectId, isValidWorkspaceName, parseProviderName, SERVICE_ACCOUNT_EMAIL_RULE } from '@costgoblin/core/browser';
+import type { ConfigBundleSummary, GcpProject, GcsDownloadCheckResult, GcsFolderKind, ProviderConfig } from '@costgoblin/core/browser';
+import { DEFAULT_READER_ACCOUNT_ID, DEFAULT_RETENTION_DAYS, GCP_PROJECT_ID_RULES, gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isValidGcpProjectId, isValidWorkspaceName, parseProviderName, resolveReaderInput, SERVICE_ACCOUNT_EMAIL_RULE } from '@costgoblin/core/browser';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { Card, CardContent } from '../components/ui/card.js';
@@ -380,9 +380,24 @@ const GCP_SETUP_GUIDE = 'https://costgoblin.com/#get-started-gcp';
  * takes a typed ID, so nobody has to wait the listing out). Hand-editing survives as the escape hatch for setups the wizard
  * can't browse at all.
  */
+/** The reader field's help line for what was typed. */
+function readerHelp(input: ReturnType<typeof resolveReaderInput>): string {
+  switch (input.kind) {
+    case 'invalid':
+      return `Use an account name like ${DEFAULT_READER_ACCOUNT_ID}, or ${SERVICE_ACCOUNT_EMAIL_RULE}.`;
+    case 'needs-project':
+      return 'Completed with @<the project you pick>.iam.gserviceaccount.com — the account the setup guide creates. Your Google account needs the Service Account Token Creator role on it. Clear it to read as yourself.';
+    case 'address':
+    case 'none':
+      return 'Your Google account needs the Service Account Token Creator role on it. Leave blank to read as yourself.';
+  }
+}
+
 function GcpIntroStep({ state, reader, onReaderChange, onBrowse, onProjectId, onScaffold, onDone, onBack }: Readonly<{
   state: { scaffolded: boolean; error: string };
-  /** The read-only service account to browse and sync as; '' for none. */
+  /** The read-only service account to browse and sync as: a full address,
+   *  or a bare account name completed with the project picked next; '' for
+   *  none. */
   reader: string;
   onReaderChange: (reader: string) => void;
   onBrowse: () => void;
@@ -392,8 +407,10 @@ function GcpIntroStep({ state, reader, onReaderChange, onBrowse, onProjectId, on
   onDone: () => void;
   onBack: () => void;
 }>) {
-  const trimmedReader = reader.trim();
-  const readerInvalid = trimmedReader.length > 0 && !isServiceAccountEmail(trimmedReader);
+  // No project yet — the user picks it next — so a bare name is checked as a
+  // name here and completed with that project at every later use.
+  const readerInput = resolveReaderInput(reader, undefined);
+  const readerInvalid = readerInput.kind === 'invalid';
   return (
     <div className="flex flex-col items-center gap-5 text-center">
       <span className="text-2xl font-bold text-accent tracking-wider">Set up from Google Cloud</span>
@@ -414,14 +431,14 @@ function GcpIntroStep({ state, reader, onReaderChange, onBrowse, onProjectId, on
       </p>
       <div className="flex w-full max-w-md flex-col gap-1.5 text-left">
         <label htmlFor="gcp-reader" className="text-xs text-text-muted">
-          Read-only service account (optional)
+          Read-only service account
         </label>
         <input
           id="gcp-reader"
           type="text"
           value={reader}
           onChange={(e) => { onReaderChange(e.target.value); }}
-          placeholder="costgoblin-reader@PROJECT.iam.gserviceaccount.com"
+          placeholder="costgoblin-reader or name@project.iam.gserviceaccount.com"
           spellCheck={false}
           autoComplete="off"
           aria-invalid={readerInvalid}
@@ -429,9 +446,7 @@ function GcpIntroStep({ state, reader, onReaderChange, onBrowse, onProjectId, on
           className="h-9 rounded-md border border-border bg-bg-primary px-3 font-mono text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent"
         />
         <p id="gcp-reader-help" className={readerInvalid ? 'text-xs text-negative' : 'text-xs text-text-muted'}>
-          {readerInvalid
-            ? `Use ${SERVICE_ACCOUNT_EMAIL_RULE}.`
-            : 'Your Google account needs the Service Account Token Creator role on it. Leave blank to read as yourself.'}
+          {readerHelp(readerInput)}
         </p>
       </div>
       <div className="flex w-full max-w-xs flex-col gap-3">
@@ -1557,6 +1572,68 @@ interface OptionalTier {
   readonly onAdd: () => void;
 }
 
+/** The identity the saved GCP provider's DOWNLOADS will run as, mirroring the
+ *  config upsert: the reader this run sends; else — unless the user cleared
+ *  it — the reader the replaced entry already has; and that entry's key file
+ *  only when no reader is left (the validator refuses both at once). */
+function gcpDownloadIdentity(
+  state: Extract<WizardStep, { step: 'confirm'; cloud: 'gcp' }>,
+  existing: ProviderConfig | undefined,
+): { readonly reader: string | undefined; readonly keyFileProvider: string | undefined } {
+  if (state.reader !== '') return { reader: state.reader, keyFileProvider: undefined };
+  const replaced = existing?.type === 'gcp' ? existing : undefined;
+  const carried = state.clearsReader ? undefined : replaced?.impersonateServiceAccount;
+  if (carried !== undefined) return { reader: carried, keyFileProvider: undefined };
+  return { reader: undefined, keyFileProvider: replaced?.keyFile === undefined ? undefined : String(replaced.name) };
+}
+
+/** Whether the collected GCP folders can be DOWNLOADED, not just browsed:
+ *  browsing runs through the Cloud Storage SDK, downloading through `gcloud
+ *  storage rsync` as gcloud's own active account — two identities that
+ *  routinely differ, so a folder the wizard listed can still 403 on
+ *  `storage.objects.get` once the sync runs. Not run for AWS. */
+type DownloadCheck =
+  | { readonly status: 'not-needed' }
+  | { readonly status: 'checking' }
+  | { readonly status: 'ok' }
+  | { readonly status: 'failed'; readonly tier: DataSource; readonly error: string };
+
+const CHECKED_TIER_LABELS: Readonly<Record<DataSource, string>> = {
+  daily: 'daily export',
+  hourly: 'hourly export',
+  costOptimization: 'Cost Optimization data',
+};
+
+/** The Confirm step's "Download check" card. Failures render through
+ *  `GcpError` in gcloud-CLI mode — the download's own credential — so a
+ *  signed-out gcloud gets its sign-in button and anything else a Retry. */
+function DownloadCheckCard({ check, readsAs, onRetry }: Readonly<{
+  check: DownloadCheck;
+  readsAs: string;
+  onRetry: () => void;
+}>) {
+  if (check.status === 'not-needed') return null;
+  return (
+    <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3" aria-live="polite">
+      <p className="text-xs text-text-muted uppercase tracking-wider">Download check</p>
+      {check.status === 'checking' && (
+        <p className="text-sm text-text-secondary mt-0.5">Checking that gcloud can read this export as {readsAs}…</p>
+      )}
+      {check.status === 'ok' && (
+        <p className="text-sm text-text-primary mt-0.5 break-words">gcloud can read this export as {readsAs}</p>
+      )}
+      {check.status === 'failed' && (
+        <div className="mt-1.5 flex flex-col gap-2">
+          <p className="text-sm text-text-secondary break-words">
+            gcloud could not read the {CHECKED_TIER_LABELS[check.tier]} as {readsAs}, so syncing it would fail.
+          </p>
+          <GcpError message={check.error} mode="cli" onRetry={onRetry} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ConfirmStep({ state, providerNaming, existing, retention, optionalTiers, onComplete, onBack }: Readonly<{
   state: Extract<WizardStep, { step: 'confirm' }>;
   providerNaming: ProviderNaming;
@@ -1592,8 +1669,54 @@ function ConfirmStep({ state, providerNaming, existing, retention, optionalTiers
   const credential = credentialCard(state);
   const reader = state.cloud === 'gcp' ? state.reader : '';
 
+  // Primitives, so the check below re-runs only when what it checks changes.
+  const identity = state.cloud === 'gcp' ? gcpDownloadIdentity(state, existing) : null;
+  const checkReader = identity?.reader;
+  const checkKeyFileProvider = identity?.keyFileProvider;
+  const checksDownload = state.cloud === 'gcp';
+  const dailyPath = state.s3Path;
+  const hourlyPath = state.hourlyPath;
+  const readsAs = checkReader ?? (checkKeyFileProvider === undefined ? 'your gcloud account' : 'the provider\u2019s service account key');
+  const [check, setCheck] = useState<DownloadCheck>(() => checksDownload ? { status: 'checking' } : { status: 'not-needed' });
+  const [checkRun, setCheckRun] = useState(0);
+  // Token-guarded like the wizard's step loaders: a gcloud answer for an
+  // earlier identity or path — or one landing after ← Back — must not
+  // overwrite the current check.
+  const checkTokenRef = useRef(0);
+  useEffect(() => {
+    if (!checksDownload) return;
+    const token = ++checkTokenRef.current;
+    setCheck({ status: 'checking' });
+    const targets: { tier: DataSource; path: string }[] = [];
+    if (dailyPath.length > 0) targets.push({ tier: 'daily', path: dailyPath });
+    if (hourlyPath.length > 0) targets.push({ tier: 'hourly', path: hourlyPath });
+    // One tier at a time, stopping at the first refusal: each is a gcloud
+    // spawn, and one failure already blocks the save.
+    const run = async (): Promise<DownloadCheck> => {
+      for (const { tier, path } of targets) {
+        let result: GcsDownloadCheckResult;
+        try {
+          result = await api.verifyGcsDownload({
+            bucketPath: path,
+            ...(checkReader === undefined ? {} : { impersonateServiceAccount: checkReader }),
+            ...(checkKeyFileProvider === undefined ? {} : { keyFileProvider: checkKeyFileProvider }),
+          });
+        } catch (err: unknown) {
+          result = { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+        if (!result.ok) return { status: 'failed', tier, error: result.error };
+      }
+      return { status: 'ok' };
+    };
+    void run().then(next => {
+      if (checkTokenRef.current === token) setCheck(next);
+    });
+    return () => { checkTokenRef.current += 1; };
+  }, [api, checksDownload, dailyPath, hourlyPath, checkReader, checkKeyFileProvider, checkRun]);
+  const checkBlocksSave = check.status === 'checking' || check.status === 'failed';
+
   function handleSave() {
-    if (nameError !== null) return;
+    if (nameError !== null || saving) return;
     setSaving(true);
     setSaveError(null);
     api.writeConfig({
@@ -1681,6 +1804,8 @@ function ConfirmStep({ state, providerNaming, existing, retention, optionalTiers
           </div>
         )}
 
+        <DownloadCheckCard check={check} readsAs={readsAs} onRetry={() => { setCheckRun(n => n + 1); }} />
+
         {paths.map(({ value, tier }) => {
           const label = SOURCE_LABELS[tier].title;
           const selected = tierRetention(tier);
@@ -1747,13 +1872,27 @@ function ConfirmStep({ state, providerNaming, existing, retention, optionalTiers
 
       <div className="flex items-center justify-between pt-2">
         <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
-        <Button
-          onClick={handleSave}
-          disabled={saving || nameError !== null}
-          className="bg-accent hover:bg-accent-hover text-white px-8"
-        >
-          {saving ? 'Saving...' : 'Complete Setup'}
-        </Button>
+        <div className="flex items-center gap-3">
+          {/* Only after a refusal, and deliberately small: for a setup that is
+              genuinely offline now, or a check that misreads a working grant. */}
+          {check.status === 'failed' && (
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving || nameError !== null}
+              className="text-xs text-text-muted underline underline-offset-2 hover:text-text-secondary disabled:opacity-50"
+            >
+              Save anyway
+            </button>
+          )}
+          <Button
+            onClick={handleSave}
+            disabled={saving || nameError !== null || checkBlocksSave}
+            className="bg-accent hover:bg-accent-hover text-white px-8"
+          >
+            {saving ? 'Saving...' : 'Complete Setup'}
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -1877,7 +2016,9 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   }, [initialWorkspaceName]);
   const [wizard, setWizard] = useState<WizardStep>(() => initialWizardStep(sourceMode, workspaceNaming !== undefined));
   const [collectedPaths, setCollectedPaths] = useState(EMPTY_PATHS);
-  // The GCP chain's optional reader. Every bucket listing and browse below
+  // The GCP chain's optional reader, as typed: a full address, or a bare
+  // account name (the default, `costgoblin-reader`) completed with the project
+  // the user picks — see `gcpReaderFor`. Every bucket listing and browse below
   // runs as it, and it is written as the provider's `impersonateServiceAccount`
   // — so the wizard sees exactly what the sync will. '' means the ADC login.
   // Seeded from a per-tier Configure's provider, which never passes the intro.
@@ -1885,7 +2026,13 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   // The reader the field was prefilled with, so emptying it reads as a
   // decision to clear rather than "nothing known".
   const [gcpReaderSeed, setGcpReaderSeed] = useState(gcpSource?.impersonateServiceAccount ?? '');
-  const gcpReaderArg = gcpReader.trim() === '' ? undefined : gcpReader.trim();
+  /** The reader's full address once `project` completes a bare name; undefined
+   *  for none (the ADC login). A per-tier Configure (no project) is seeded
+   *  with the provider's full address, so it resolves without one. */
+  function gcpReaderFor(project: GcpProjectChoice | null): string | undefined {
+    const resolved = resolveReaderInput(gcpReader, project?.id);
+    return resolved.kind === 'address' ? resolved.address : undefined;
+  }
   // Monotonic token for every step loader, AWS and GCP alike. Each resolver
   // rebuilds a whole step object from captured args, so without this a slow
   // response (a cold ADC token refresh, gcloud sitting on a re-auth prompt
@@ -1988,7 +2135,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
       return;
     }
     setWizard({ step: 'gcp-bucket', project, source, buckets: [], loading: true, selected: '', error: '' });
-    api.listGcsBuckets(project.id, gcpReaderArg).then(result => {
+    api.listGcsBuckets(project.id, gcpReaderFor(project)).then(result => {
       if (stepRequestRef.current !== token) return;
       setWizard({ step: 'gcp-bucket', project, source, buckets: result.buckets, loading: false, selected: '', error: result.error ?? '' });
     }).catch((err: unknown) => {
@@ -2002,7 +2149,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     const token = ++stepRequestRef.current;
     setWizard({ step: 'gcp-browse', project, source, bucket, prefix, prefixes: [], loading: true, folder: { kind: 'unknown' }, hasParquet: false, truncated: false, error: '', path });
     // Listing a bucket's objects needs no project; '' leaves the SDK to skip it.
-    api.browseGcs({ projectId: project?.id ?? '', bucket, prefix, impersonateServiceAccount: gcpReaderArg }).then(result => {
+    api.browseGcs({ projectId: project?.id ?? '', bucket, prefix, impersonateServiceAccount: gcpReaderFor(project) }).then(result => {
       if (stepRequestRef.current !== token) return;
       setWizard({ step: 'gcp-browse', project, source, bucket, prefix, prefixes: result.prefixes, loading: false, folder: result.folder, hasParquet: result.hasParquet, truncated: result.truncated, error: result.error ?? '', path });
     }).catch((err: unknown) => {
@@ -2046,12 +2193,14 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
       step: 'confirm',
       cloud: 'gcp',
       project,
-      reader: gcpReaderArg ?? '',
+      // The full address, completed with the chosen project — what the
+      // sync will read as, and what Confirm shows and verifies.
+      reader: gcpReaderFor(project) ?? '',
       // Clearing is only ever sent for a reader the user saw and removed. A
       // blank field with nothing prefilled is ambiguous — config not loaded
       // yet, or a rename at Confirm onto an existing provider — so the
       // upsert carries that entry's reader instead of dropping it.
-      clearsReader: gcpReaderArg === undefined && gcpReaderSeed !== '',
+      clearsReader: gcpReader.trim() === '' && gcpReaderSeed !== '',
       s3Path: p.daily,
       hourlyPath: p.hourly,
       // GCP never collects a cost-optimization path; carrying one here would
@@ -2113,16 +2262,20 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     // those are also reached by ← Back mid-flow, where clearing a name the
     // user has already typed would be the more surprising behaviour.
     setProviderNameEdited(false);
-    setGcpReader('');
-    setGcpReaderSeed('');
+    setGcpReader(DEFAULT_READER_ACCOUNT_ID);
+    setGcpReaderSeed(DEFAULT_READER_ACCOUNT_ID);
     setWizard({ step: 'start' });
   }
 
   /** Enter the GCP chain, seeding the reader from the provider this run would
-   *  write — its fixed or typed name, else the GCP default. */
+   *  write — its fixed or typed name, else the GCP default. A provider that
+   *  already exists keeps its own reader, or its lack of one (re-running setup
+   *  must not quietly switch who it downloads as); a new one starts on the
+   *  account the setup guide creates, completed with the project picked next. */
   function enterGcp(): void {
     const name = providerNameFixed || providerNameEdited || mode === 'add' ? providerName : defaultProviderName('gcp');
-    const seed = existingGcpReaders.get(name) ?? '';
+    const existingGcp = existingConfigs.some(p => p.type === 'gcp' && String(p.name) === name);
+    const seed = existingGcp ? existingGcpReaders.get(name) ?? '' : DEFAULT_READER_ACCOUNT_ID;
     setGcpReader(seed);
     setGcpReaderSeed(seed);
     setWizard({ step: 'gcp', scaffolded: false, error: '' });

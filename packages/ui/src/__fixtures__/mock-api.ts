@@ -16,6 +16,8 @@ import {
   type GcpIdentityResult,
   type GcpProject,
   type GcsBrowseResult,
+  type GcsDownloadCheckParams,
+  type GcsDownloadCheckResult,
   type Dimension,
   type EntityDetailResult,
   type MissingTagsResult,
@@ -419,6 +421,18 @@ export class MockCostApi implements CostApi {
     // `focus/daily/` (the export) and assert the wizard reacts to each.
     return Promise.resolve(this.gcsBrowseByPrefix[params.prefix] ?? this.gcsBrowseResult);
   }
+
+  verifyGcsDownload(params: GcsDownloadCheckParams): Promise<GcsDownloadCheckResult> {
+    this.gcsDownloadChecks.push(params);
+    return Promise.resolve(this.gcsDownloadCheckByPath[params.bucketPath] ?? this.gcsDownloadCheckResult);
+  }
+
+  /** Overridable download-check answers: one for every folder, or keyed by
+   *  the checked `gs://` path so a test can fail a single tier. */
+  gcsDownloadCheckResult: GcsDownloadCheckResult = { ok: true };
+  gcsDownloadCheckByPath: Record<string, GcsDownloadCheckResult> = {};
+  /** Every download check the wizard ran, oldest first. */
+  readonly gcsDownloadChecks: GcsDownloadCheckParams[] = [];
 
   /** Overridable GCP browse fixtures — the defaults describe the layout
    *  `scripts/gcp-focus-exporter` produces with TIERS=daily. */

@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { isGcpCredentialError } from '@costgoblin/core';
-import type { GcsPrefixPage } from '../main/setup-gcp.js';
-import { collectGcsPrefixes, extractGcsPrefixNames, gcloudProjectsOutcome, gcsNextPageToken, listGcsBucketsAs, parseGcloudProjects, parseWizardReader, wizardGcsErrorMessage, wizardWriteReader } from '../main/setup-gcp.js';
+import type { GcloudCaptureResult } from '../main/gcloud-capture.js';
+import type { GcsDownloadCheckDeps, GcsPrefixPage } from '../main/setup-gcp.js';
+import { collectGcsPrefixes, extractGcsPrefixNames, gcloudProjectsOutcome, GCS_DOWNLOAD_CHECK_TIMEOUT_MS, gcsDownloadCheckArgs, gcsDownloadCheckOutcome, gcsNextPageToken, listGcsBucketsAs, parseGcloudProjects, parseWizardReader, verifyGcsDownloadAs, wizardGcsErrorMessage, wizardWriteReader } from '../main/setup-gcp.js';
 
 describe('parseGcloudProjects', () => {
   it('reads the shape `gcloud projects list --format=json` emits', () => {
@@ -298,5 +299,144 @@ describe('gcloudProjectsOutcome', () => {
     expect(gcloudProjectsOutcome({ kind: 'missing' })).toEqual({ projects: [], error: 'GCLOUD_CLI_NOT_FOUND' });
     expect(gcloudProjectsOutcome({ kind: 'timeout' })).toEqual({ projects: [], error: 'GCLOUD_PROJECTS_TIMEOUT' });
     expect(gcloudProjectsOutcome({ kind: 'failed', message: 'EACCES' })).toEqual({ projects: [], error: 'EACCES' });
+  });
+});
+
+describe('gcsDownloadCheckArgs', () => {
+  const READER = 'costgoblin-reader@acme-prod.iam.gserviceaccount.com';
+
+  it('lists the export folder as gcloud\'s own account when no reader is set', () => {
+    expect(gcsDownloadCheckArgs('gs://acme-focus-export/focus/daily/', undefined))
+      .toEqual(['storage', 'ls', 'gs://acme-focus-export/focus/daily/']);
+  });
+
+  it('impersonates the reader exactly as the sync\'s rsync does', () => {
+    expect(gcsDownloadCheckArgs('gs://acme-focus-export/focus/daily/', READER))
+      .toEqual(['storage', 'ls', 'gs://acme-focus-export/focus/daily/', `--impersonate-service-account=${READER}`]);
+  });
+
+  it('lists the folder, not a same-prefixed sibling, when the trailing slash is missing', () => {
+    expect(gcsDownloadCheckArgs('gs://acme-focus-export/focus/daily', undefined)[2]).toBe('gs://acme-focus-export/focus/daily/');
+    expect(gcsDownloadCheckArgs('gs://acme-focus-export', undefined)[2]).toBe('gs://acme-focus-export/');
+  });
+
+  it('refuses a location that is not gs://, an illegal bucket, or a gcloud wildcard', () => {
+    expect(() => gcsDownloadCheckArgs('s3://acme/focus/daily/', undefined)).toThrow(/gs:\/\//);
+    expect(() => gcsDownloadCheckArgs('acme-focus-export/focus/daily/', undefined)).toThrow(/gs:\/\//);
+    expect(() => gcsDownloadCheckArgs('gs://Bad_Bucket!/focus/', undefined)).toThrow(/Invalid GCS bucket name/);
+    expect(() => gcsDownloadCheckArgs('gs://acme-focus-export/focus/*/', undefined)).toThrow(/pattern/);
+    expect(() => gcsDownloadCheckArgs('gs://acme-focus-export/focus/da[iy]ly/', undefined)).toThrow(/pattern/);
+    expect(() => gcsDownloadCheckArgs('gs://acme-focus-export/focus\n/', undefined)).toThrow(/pattern/);
+  });
+});
+
+describe('gcsDownloadCheckOutcome', () => {
+  const READER = 'costgoblin-reader@acme-prod.iam.gserviceaccount.com';
+
+  it('passes a clean listing', () => {
+    expect(gcsDownloadCheckOutcome({ kind: 'exited', code: 0, stdout: 'gs://b/focus/daily/billing_period=2026-07/\n', stderr: '' }, READER)).toEqual({ ok: true });
+  });
+
+  it('maps a missing CLI to the sentinel the wizard renders as "install gcloud"', () => {
+    expect(gcsDownloadCheckOutcome({ kind: 'missing' }, undefined)).toEqual({ ok: false, error: 'GCLOUD_CLI_NOT_FOUND' });
+  });
+
+  it('words a timeout without the sign-in phrase the wizard keys its login button on', () => {
+    const outcome = gcsDownloadCheckOutcome({ kind: 'timeout' }, undefined);
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.error).toContain(`${String(GCS_DOWNLOAD_CHECK_TIMEOUT_MS / 1000)} seconds`);
+      expect(outcome.error).not.toContain('gcloud auth login');
+    }
+  });
+
+  it('reports a spawn failure as is', () => {
+    expect(gcsDownloadCheckOutcome({ kind: 'failed', message: 'EACCES' }, undefined)).toEqual({ ok: false, error: 'EACCES' });
+  });
+
+  it('passes a 403 through verbatim — it names the principal that was denied', () => {
+    const stderr = 'ERROR: (gcloud.storage.ls) [alice@acme.com] does not have permission to access b instance [acme-focus-export] (or it may not exist): alice@acme.com does not have storage.objects.list access to the Google Cloud Storage bucket. Permission \'storage.objects.list\' denied on resource (or it may not exist). This command is authenticated as alice@acme.com which is the active account specified by the [core/account] property.';
+    expect(gcsDownloadCheckOutcome({ kind: 'exited', code: 1, stdout: '', stderr: `${stderr}\n` }, undefined)).toEqual({ ok: false, error: stderr });
+  });
+
+  it('rewrites an impersonation refusal into the Token Creator remedy, naming the reader', () => {
+    const stderr = "ERROR: (gcloud.storage.ls) Failed to impersonate [costgoblin-reader@acme-prod.iam.gserviceaccount.com]. Make sure the account that's trying to impersonate it has access to the service account itself and the \"roles/iam.serviceAccountTokenCreator\" role.";
+    const outcome = gcsDownloadCheckOutcome({ kind: 'exited', code: 1, stdout: '', stderr }, READER);
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.error).toMatch(/^CostGoblin could not read as costgoblin-reader@acme-prod/);
+      expect(outcome.error).toContain('gcloud iam service-accounts add-iam-policy-binding costgoblin-reader@acme-prod.iam.gserviceaccount.com');
+      // A sign-in cannot grant the role, so the login button must not fire.
+      expect(isGcpCredentialError(new Error(outcome.error))).toBe(false);
+    }
+  });
+
+  it('names the exit code when gcloud printed nothing', () => {
+    expect(gcsDownloadCheckOutcome({ kind: 'exited', code: 2, stdout: '', stderr: '  ' }, undefined))
+      .toEqual({ ok: false, error: 'gcloud storage ls failed (exit 2)' });
+  });
+});
+
+describe('verifyGcsDownloadAs', () => {
+  const READER = 'costgoblin-reader@acme-prod.iam.gserviceaccount.com';
+
+  function recordingDeps(result: GcloudCaptureResult, keyFiles: Readonly<Record<string, string>> = {}) {
+    const runs: { args: readonly string[]; timeoutMs: number; extraEnv: Readonly<Record<string, string>> }[] = [];
+    const keyLookups: string[] = [];
+    const deps: GcsDownloadCheckDeps = {
+      run: (args, timeoutMs, extraEnv) => { runs.push({ args, timeoutMs, extraEnv }); return Promise.resolve(result); },
+      keyFileOf: (name) => { keyLookups.push(name); return Promise.resolve(keyFiles[name]); },
+    };
+    return { deps, runs, keyLookups };
+  }
+  const CLEAN: GcloudCaptureResult = { kind: 'exited', code: 0, stdout: '', stderr: '' };
+
+  it('runs the listing as the reader, with the check\'s timeout and no credential override', async () => {
+    const { deps, runs } = recordingDeps(CLEAN);
+    const outcome = await verifyGcsDownloadAs({ bucketPath: 'gs://acme-focus-export/focus/daily/', impersonateServiceAccount: ` ${READER} ` }, deps);
+    expect(outcome).toEqual({ ok: true });
+    expect(runs).toEqual([{
+      args: ['storage', 'ls', 'gs://acme-focus-export/focus/daily/', `--impersonate-service-account=${READER}`],
+      timeoutMs: GCS_DOWNLOAD_CHECK_TIMEOUT_MS,
+      extraEnv: {},
+    }]);
+  });
+
+  it('refuses a malformed request before spawning gcloud', async () => {
+    for (const bad of [
+      null,
+      { bucketPath: 42 },
+      { bucketPath: 'gs://Bad_Bucket!/focus/' },
+      { bucketPath: 'gs://acme-focus-export/focus/daily/', impersonateServiceAccount: 'someone@gmail.com' },
+      { bucketPath: 'gs://acme-focus-export/focus/daily/', impersonateServiceAccount: '--impersonate-service-account=x' },
+    ]) {
+      const { deps, runs } = recordingDeps(CLEAN);
+      const outcome = await verifyGcsDownloadAs(bad, deps);
+      expect(outcome.ok, JSON.stringify(bad)).toBe(false);
+      expect(runs, JSON.stringify(bad)).toEqual([]);
+    }
+  });
+
+  it('applies a key-file provider\'s key when no reader is given, as the rsync does', async () => {
+    const { deps, runs } = recordingDeps(CLEAN, { 'gcp-main': '/keys/reader.json' });
+    await verifyGcsDownloadAs({ bucketPath: 'gs://acme-focus-export/focus/daily/', keyFileProvider: 'gcp-main' }, deps);
+    expect(runs[0]?.extraEnv).toEqual({ CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE: '/keys/reader.json' });
+  });
+
+  it('ignores the key when a reader replaces it, and when the provider has none', async () => {
+    const withReader = recordingDeps(CLEAN, { 'gcp-main': '/keys/reader.json' });
+    await verifyGcsDownloadAs({ bucketPath: 'gs://acme-focus-export/focus/daily/', impersonateServiceAccount: READER, keyFileProvider: 'gcp-main' }, withReader.deps);
+    expect(withReader.keyLookups).toEqual([]);
+    expect(withReader.runs[0]?.extraEnv).toEqual({});
+
+    const noKey = recordingDeps(CLEAN);
+    await verifyGcsDownloadAs({ bucketPath: 'gs://acme-focus-export/focus/daily/', keyFileProvider: 'gcp-other' }, noKey.deps);
+    expect(noKey.runs[0]?.extraEnv).toEqual({});
+  });
+
+  it('returns gcloud\'s refusal for the wizard to show', async () => {
+    const stderr = 'ERROR: (gcloud.storage.ls) HTTPError 403: alice@acme.com does not have storage.objects.list access to the Google Cloud Storage bucket.';
+    const { deps } = recordingDeps({ kind: 'exited', code: 1, stdout: '', stderr });
+    expect(await verifyGcsDownloadAs({ bucketPath: 'gs://acme-focus-export/focus/daily/' }, deps)).toEqual({ ok: false, error: stderr });
   });
 });

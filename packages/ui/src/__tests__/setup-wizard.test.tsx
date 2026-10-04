@@ -797,7 +797,8 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     const { api, user } = renderWizard();
     gcpExportLayout(api);
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.type(screen.getByLabelText('Read-only service account (optional)'), reader);
+    await user.clear(screen.getByLabelText('Read-only service account'));
+    await user.type(screen.getByLabelText('Read-only service account'), reader);
     await user.click(screen.getByText('Find my export'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Acme Production');
@@ -822,10 +823,17 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     expect(api.writtenConfigs[0]?.impersonateServiceAccount).toBe(reader);
   });
 
-  it('browses as the ADC login and names no reader when the field is left blank', async () => {
+  it('browses, checks and saves as the user s own login when the reader field is cleared', async () => {
     const { api, user } = renderWizard();
     gcpExportLayout(api);
-    await enterGcpBrowse(user);
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.clear(screen.getByLabelText('Read-only service account'));
+    await user.click(screen.getByText('Find my export'));
+    await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
+    await userClickText(user, 'Acme Production');
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    await userClickText(user, 'acme-focus-export');
+    await waitFor(() => { expect(screen.getByLabelText('Open folder focus')).toBeDefined(); });
     expect(api.gcsBucketsListedAs).toEqual([undefined]);
     expect(api.gcsBrowsed.every(b => b.impersonateServiceAccount === undefined)).toBe(true);
     await user.click(screen.getByLabelText('Open folder focus'));
@@ -835,12 +843,13 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await userClickText(user, 'Use this location');
     await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
     expect(screen.queryByText('Reads as')).toBeNull();
+    await waitFor(() => { expect(screen.getByText('gcloud can read this export as your gcloud account')).toBeDefined(); });
+    expect(api.gcsDownloadChecks).toEqual([{ bucketPath: 'gs://acme-focus-export/focus/daily/' }]);
     await userClickText(user, 'Complete Setup');
     await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
-    // Omitted, not '': with nothing prefilled the wizard cannot tell "no
-    // reader" from "reader not loaded yet / provider renamed at Confirm", so
-    // an existing entry's reader is carried rather than silently dropped.
-    expect(api.writtenConfigs[0]?.impersonateServiceAccount).toBeUndefined();
+    // '' — not omitted: the field showed the default reader and the user
+    // emptied it, which is a decision to read as themselves.
+    expect(api.writtenConfigs[0]?.impersonateServiceAccount).toBe('');
   });
 
   it('prefills the reader of the provider this run reconfigures, and clears it when emptied', async () => {
@@ -855,7 +864,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
       const { api, user } = renderWizard();
       gcpExportLayout(api);
       await user.click(screen.getByLabelText('Set up from Google Cloud'));
-      const field = screen.getByLabelText('Read-only service account (optional)');
+      const field = screen.getByLabelText('Read-only service account');
       await waitFor(() => { expect(screen.getByDisplayValue(reader)).toBe(field); });
 
       await user.clear(field);
@@ -878,20 +887,22 @@ describe('SetupWizard — GCP browse-and-pick', () => {
   it('forgets the reader when the user abandons the run with the close button', async () => {
     const { user } = renderWizard();
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.type(screen.getByLabelText('Read-only service account (optional)'), 'reader@acme-prod.iam.gserviceaccount.com');
+    await user.clear(screen.getByLabelText('Read-only service account'));
+    await user.type(screen.getByLabelText('Read-only service account'), 'reader@acme-prod.iam.gserviceaccount.com');
     await user.click(screen.getByText('Find my export'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await user.click(screen.getByLabelText('Back to start'));
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    expect(screen.getByLabelText('Read-only service account (optional)')).toBeDefined();
-    expect(screen.queryByDisplayValue('reader@acme-prod.iam.gserviceaccount.com')).toBeNull();
+    // Back to the default, not to the typed reader.
+    expect(screen.getByLabelText('Read-only service account')).toBe(screen.getByDisplayValue('costgoblin-reader'));
   });
 
   it('holds the browse back on an address that is not a service account', async () => {
     const { api, user } = renderWizard();
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.type(screen.getByLabelText('Read-only service account (optional)'), 'me@gmail.com');
-    expect(screen.getByText(/name@project\.iam\.gserviceaccount\.com/)).toBeDefined();
+    await user.clear(screen.getByLabelText('Read-only service account'));
+    await user.type(screen.getByLabelText('Read-only service account'), 'me@gmail.com');
+    expect(screen.getByText(/^Use an account name like costgoblin-reader, or .*name@project\.iam\.gserviceaccount\.com/)).toBeDefined();
     const find = screen.getByRole('button', { name: 'Find my export' });
     expect(find.hasAttribute('disabled')).toBe(true);
     await user.click(find);
@@ -1768,3 +1779,250 @@ describe('SetupWizard — GCP project ID before the listing', () => {
     expect(screen.getByText('Confirm Setup')).toBeDefined();
   });
 });
+
+const DEFAULT_READER = 'costgoblin-reader@acme-prod.iam.gserviceaccount.com';
+const DAILY_EXPORT = 'gs://acme-focus-export/focus/daily/';
+const HOURLY_EXPORT = 'gs://acme-focus-export/focus/hourly/';
+
+function completeSetupButton(): HTMLElement {
+  return screen.getByRole('button', { name: 'Complete Setup' });
+}
+
+describe('SetupWizard — GCP default reader', () => {
+  it('prefills the account the setup guide creates, and says the project completes it', async () => {
+    const { user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    expect(screen.getByLabelText('Read-only service account')).toBe(screen.getByDisplayValue('costgoblin-reader'));
+    expect(screen.getByText(/^Completed with @<the project you pick>\.iam\.gserviceaccount\.com/)).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Find my export' }).hasAttribute('disabled')).toBe(false);
+  });
+
+  it('lists, browses, verifies and writes as the default reader in the picked project', async () => {
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    await enterGcpBrowse(user);
+    expect(api.gcsBucketsListedAs).toEqual([DEFAULT_READER]);
+    await user.click(screen.getByLabelText('Open folder focus'));
+    await waitFor(() => { expect(screen.getByLabelText('Open folder daily')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder daily'));
+    await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
+    expect(api.gcsBrowsed.map(b => b.impersonateServiceAccount)).toEqual([DEFAULT_READER, DEFAULT_READER, DEFAULT_READER]);
+    await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+
+    // Confirm names the completed address, never the bare name.
+    expect(screen.getByText('Reads as')).toBeDefined();
+    expect(screen.getByText(DEFAULT_READER)).toBeDefined();
+    await waitFor(() => { expect(screen.getByText(`gcloud can read this export as ${DEFAULT_READER}`)).toBeDefined(); });
+    expect(api.gcsDownloadChecks).toEqual([{ bucketPath: DAILY_EXPORT, impersonateServiceAccount: DEFAULT_READER }]);
+
+    await userClickText(user, 'Complete Setup');
+    await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
+    expect(api.writtenConfigs[0]?.impersonateServiceAccount).toBe(DEFAULT_READER);
+  });
+
+  it('completes a bare name with a project typed on the intro step', async () => {
+    const { api, user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.clear(screen.getByLabelText('Read-only service account'));
+    await user.type(screen.getByLabelText('Read-only service account'), 'billing-reader');
+    await user.type(screen.getByLabelText('Already know the project ID? Skip the project list'), 'billing-504501{Enter}');
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    expect(api.gcsBucketsListedAs).toEqual(['billing-reader@billing-504501.iam.gserviceaccount.com']);
+  });
+
+  it('refuses a value that is neither an account name nor an address', async () => {
+    const { api, user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.clear(screen.getByLabelText('Read-only service account'));
+    await user.type(screen.getByLabelText('Read-only service account'), 'Costgoblin Reader');
+    expect(screen.getByText(/^Use an account name like costgoblin-reader/)).toBeDefined();
+    const find = screen.getByRole('button', { name: 'Find my export' });
+    expect(find.hasAttribute('disabled')).toBe(true);
+    await user.click(find);
+    expect(api.gcsBucketsListedFor).toEqual([]);
+  });
+
+  it('keeps an existing provider without a reader reading as the user', async () => {
+    // Re-running setup must not quietly switch who an existing provider
+    // downloads as; only a new provider starts on the default.
+    const { user } = renderWizard({ config: MOCK_MIXED_PROVIDER_CONFIG });
+    await act(async () => { await Promise.resolve(); });
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    expect(screen.getByLabelText('Read-only service account')).toHaveProperty('value', '');
+  });
+
+  it('starts a new provider in add mode on the default even when others exist', async () => {
+    const { user } = renderWizard({ mode: 'add', config: MOCK_MIXED_PROVIDER_CONFIG });
+    await act(async () => { await Promise.resolve(); });
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    expect(screen.getByLabelText('Read-only service account')).toBe(screen.getByDisplayValue('costgoblin-reader'));
+  });
+});
+
+describe('SetupWizard — GCP download check on Confirm', () => {
+  it('checks every collected tier as the reader before enabling Complete Setup', async () => {
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    await enterGcpBrowse(user);
+    await user.click(screen.getByLabelText('Open folder focus'));
+    await waitFor(() => { expect(screen.getByLabelText('Open folder daily')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder daily'));
+    await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
+    await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+    await userClickText(user, 'Add hourly export');
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    await userClickText(user, 'acme-focus-export');
+    await waitFor(() => { expect(screen.getByLabelText('Open folder focus')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder focus'));
+    await waitFor(() => { expect(screen.getByLabelText('Open folder hourly')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder hourly'));
+    await waitFor(() => { expect(screen.getByText('FOCUS export detected')).toBeDefined(); });
+    await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText(`gcloud can read this export as ${DEFAULT_READER}`)).toBeDefined(); });
+    expect(api.gcsDownloadChecks.slice(-2)).toEqual([
+      { bucketPath: DAILY_EXPORT, impersonateServiceAccount: DEFAULT_READER },
+      { bucketPath: HOURLY_EXPORT, impersonateServiceAccount: DEFAULT_READER },
+    ]);
+    expect(completeSetupButton().hasAttribute('disabled')).toBe(false);
+  });
+
+  it('holds Complete Setup while the check runs', async () => {
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    let settle: ((r: { ok: true }) => void) | undefined;
+    api.verifyGcsDownload = () => new Promise((r) => { settle = r; });
+    await enterGcpBrowse(user);
+    await walkGcpFromBucketRootToConfirm(user);
+    expect(screen.getByText(/^Checking that gcloud can read this export as/)).toBeDefined();
+    expect(completeSetupButton().hasAttribute('disabled')).toBe(true);
+    await act(async () => { settle?.({ ok: true }); await Promise.resolve(); });
+    await waitFor(() => { expect(completeSetupButton().hasAttribute('disabled')).toBe(false); });
+  });
+
+  it('blocks the save on a refusal, shows gcloud s error, and re-checks on Retry', async () => {
+    const denied = 'ERROR: (gcloud.storage.ls) HTTPError 403: alice@acme.com does not have storage.objects.list access to the Google Cloud Storage bucket.';
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    api.gcsDownloadCheckResult = { ok: false, error: denied };
+    await enterGcpBrowse(user);
+    await walkGcpFromBucketRootToConfirm(user);
+    await waitFor(() => { expect(screen.getByText(denied)).toBeDefined(); });
+    expect(screen.getByText(`gcloud could not read the daily export as ${DEFAULT_READER}, so syncing it would fail.`)).toBeDefined();
+    expect(completeSetupButton().hasAttribute('disabled')).toBe(true);
+    // Not a credential error: a plain Retry, no sign-in.
+    expect(screen.queryByText('Sign in the gcloud CLI')).toBeNull();
+
+    api.gcsDownloadCheckResult = { ok: true };
+    await userClickText(user, 'Retry');
+    await waitFor(() => { expect(screen.getByText(`gcloud can read this export as ${DEFAULT_READER}`)).toBeDefined(); });
+    expect(api.gcsDownloadChecks).toHaveLength(2);
+    expect(completeSetupButton().hasAttribute('disabled')).toBe(false);
+    expect(screen.queryByText('Save anyway')).toBeNull();
+  });
+
+  it('offers the gcloud CLI sign-in when the download identity is signed out', async () => {
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    api.gcsDownloadCheckResult = { ok: false, error: 'ERROR: (gcloud.storage.ls) You do not currently have an active account selected. Please run:\n\n  $ gcloud auth login' };
+    await enterGcpBrowse(user);
+    await walkGcpFromBucketRootToConfirm(user);
+    await waitFor(() => { expect(screen.getByText('Sign in the gcloud CLI')).toBeDefined(); });
+  });
+
+  it('explains a missing gcloud CLI rather than showing the sentinel', async () => {
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    api.gcsDownloadCheckResult = { ok: false, error: 'GCLOUD_CLI_NOT_FOUND' };
+    await enterGcpBrowse(user);
+    await walkGcpFromBucketRootToConfirm(user);
+    await waitFor(() => { expect(screen.getByText('Install the gcloud CLI')).toBeDefined(); });
+    expect(screen.queryByText('GCLOUD_CLI_NOT_FOUND')).toBeNull();
+  });
+
+  it('saves anyway on an explicit request after a refusal', async () => {
+    const { api, user, onComplete } = renderWizard();
+    gcpExportLayout(api);
+    api.gcsDownloadCheckResult = { ok: false, error: 'Network is unreachable' };
+    await enterGcpBrowse(user);
+    await walkGcpFromBucketRootToConfirm(user);
+    await waitFor(() => { expect(screen.getByText('Save anyway')).toBeDefined(); });
+    await userClickText(user, 'Save anyway');
+    await waitFor(() => { expect(onComplete).toHaveBeenCalledOnce(); });
+    expect(api.writtenConfigs[0]?.dailyBucket).toBe(DAILY_EXPORT);
+    expect(api.writtenConfigs[0]?.impersonateServiceAccount).toBe(DEFAULT_READER);
+  });
+
+  it('names the tier that failed', async () => {
+    const { api, user } = renderWizard({ ...configureHourlyOnGcpMain(), prepare: gcpExportLayout });
+    api.gcsDownloadCheckByPath = { [HOURLY_EXPORT]: { ok: false, error: 'denied' } };
+    await waitFor(() => { expect(screen.getByLabelText('Open folder hourly')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder hourly'));
+    await waitFor(() => { expect(screen.getByText('FOCUS export detected')).toBeDefined(); });
+    await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('gcloud could not read the hourly export as your gcloud account, so syncing it would fail.')).toBeDefined(); });
+    // Per-tier Configure checks only the tier it came for.
+    expect(api.gcsDownloadChecks).toEqual([{ bucketPath: HOURLY_EXPORT }]);
+  });
+
+  it('checks a carried reader, and a key-file provider by name', async () => {
+    const gcpMain = MOCK_GCP_PROVIDER;
+    if (gcpMain.type !== 'gcp') throw new Error('MOCK_GCP_PROVIDER must be a gcp provider');
+    const carried = 'kept-reader@acme-prod.iam.gserviceaccount.com';
+    // A reader on the provider, none passed by per-tier Configure: the upsert
+    // carries it, so that is who the download — and the check — runs as.
+    const withReader = renderWizard({ ...configureHourlyOnGcpMain({ ...gcpMain, impersonateServiceAccount: carried }), prepare: gcpExportLayout });
+    await reachHourlyConfirm(withReader.user);
+    await waitFor(() => { expect(screen.getByText(`gcloud can read this export as ${carried}`)).toBeDefined(); });
+    expect(withReader.api.gcsDownloadChecks).toEqual([{ bucketPath: HOURLY_EXPORT, impersonateServiceAccount: carried }]);
+    cleanup();
+
+    const withKey = renderWizard({ ...configureHourlyOnGcpMain({ ...gcpMain, keyFile: '/keys/reader.json' }), prepare: gcpExportLayout });
+    await reachHourlyConfirm(withKey.user);
+    await waitFor(() => { expect(screen.getByText('gcloud can read this export as the provider’s service account key')).toBeDefined(); });
+    expect(withKey.api.gcsDownloadChecks).toEqual([{ bucketPath: HOURLY_EXPORT, keyFileProvider: 'gcp-main' }]);
+  });
+
+  it('does not run for an AWS provider', async () => {
+    const { api, user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from AWS'));
+    await waitFor(() => { expect(screen.getByText('default')).toBeDefined(); });
+    await userClickText(user, 'default');
+    await walkToConfirm(user);
+    expect(screen.queryByText('Download check')).toBeNull();
+    expect(api.gcsDownloadChecks).toEqual([]);
+    expect(completeSetupButton().hasAttribute('disabled')).toBe(false);
+  });
+});
+
+/** Bucket root → focus/daily → Use this location → Confirm. */
+async function walkGcpFromBucketRootToConfirm(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.click(screen.getByLabelText('Open folder focus'));
+  await waitFor(() => { expect(screen.getByLabelText('Open folder daily')).toBeDefined(); });
+  await user.click(screen.getByLabelText('Open folder daily'));
+  await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
+  await userClickText(user, 'Use this location');
+  await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+}
+
+/** Per-tier Configure of gcp-main's hourly tier, the provider as given. */
+function configureHourlyOnGcpMain(provider: CostGoblinConfig['providers'][number] = MOCK_GCP_PROVIDER) {
+  return {
+    source: 'hourly' as const,
+    providerName: 'gcp-main',
+    gcpSource: { bucket: 'acme-focus-export', prefix: 'focus/' },
+    config: {
+      providers: [{ ...provider, sync: { daily: { bucket: asBucketPath(DAILY_EXPORT), retentionDays: 365 }, intervalMinutes: 60 } }],
+      defaults: { periodDays: 30, costMetric: 'effective' as const, lagDays: 2 },
+    },
+  };
+}
+
+async function reachHourlyConfirm(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await waitFor(() => { expect(screen.getByLabelText('Open folder hourly')).toBeDefined(); });
+  await user.click(screen.getByLabelText('Open folder hourly'));
+  await waitFor(() => { expect(screen.getByText('FOCUS export detected')).toBeDefined(); });
+  await userClickText(user, 'Use this location');
+  await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+}

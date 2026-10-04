@@ -28,6 +28,8 @@ import type {
   GcpIdentityResult,
   GcpProject,
   GcsBrowseResult,
+  GcsDownloadCheckParams,
+  GcsDownloadCheckResult,
   AccountMappingStatus,
   SavingsPreferences,
   UIPreferences,
@@ -230,6 +232,9 @@ const api: CostApi = {
   },
   browseGcs(params: Parameters<CostApi['browseGcs']>[0]): Promise<GcsBrowseResult> {
     return invoke<GcsBrowseResult>('setup:browse-gcs', params);
+  },
+  verifyGcsDownload(params: GcsDownloadCheckParams): Promise<GcsDownloadCheckResult> {
+    return invoke<GcsDownloadCheckResult>('setup:verify-gcs-download', params);
   },
   scaffoldConfig(providerType?: 'aws' | 'gcp'): Promise<void> {
     return invoke<undefined>('setup:scaffold-config', providerType).then(() => undefined);

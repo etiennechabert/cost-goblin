@@ -424,7 +424,11 @@ not listed? Enter its ID**, usable while the list is still loading.
 The wizard's **Read-only service account** field writes the provider's
 `impersonateServiceAccount` (see [Credentials](#credentials)); leave it empty
 and both halves run as you — the download as your own gcloud account, which is
-refused on a bucket granted only to the reader. The wizard never writes a
+refused on a bucket granted only to the reader. For a new provider the field
+starts on `costgoblin-reader`, completed to
+`costgoblin-reader@<the project you pick>.iam.gserviceaccount.com`, and before
+saving the wizard checks that the download (`gcloud storage ls` as that
+identity) can read the export. The wizard never writes a
 `keyFile`: add one to the provider by hand if you use it.
 
 To write the entry by hand instead — a bare service-account key the wizard

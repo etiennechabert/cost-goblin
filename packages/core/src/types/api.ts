@@ -195,6 +195,27 @@ export interface GcsBrowseResult {
   readonly error?: string | undefined;
 }
 
+/** What the setup wizard asks before saving a GCP provider: can the identity
+ *  the provider's DOWNLOADS run as — gcloud's active account, impersonating
+ *  `impersonateServiceAccount` when set — read this export folder? Listing
+ *  runs through the Cloud Storage SDK and downloading through the gcloud CLI,
+ *  so a folder the wizard could browse can still refuse the download. */
+export interface GcsDownloadCheckParams {
+  /** A `gs://bucket/prefix/` export folder, as the wizard collected it. */
+  readonly bucketPath: string;
+  /** The reader the provider will be saved with; omitted for none. */
+  readonly impersonateServiceAccount?: string | undefined;
+  /** The configured provider this run replaces, when it authenticates with a
+   *  `keyFile` and no reader: the download runs with that key, so the check
+   *  must too. Only ever names a provider — never a path. */
+  readonly keyFileProvider?: string | undefined;
+}
+
+/** No secrets either way: `error` is gcloud's stderr or a remedy. */
+export type GcsDownloadCheckResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly error: string };
+
 export interface DataInventoryResult {
   /** Which configured provider this inventory describes. */
   readonly provider?: string | undefined;
@@ -324,6 +345,10 @@ export interface CostApi {
    *  then exactly the identity the provider will sync as. */
   listGcsBuckets(projectId: string, impersonateServiceAccount?: string): Promise<{ buckets: readonly { name: string }[]; error?: string | undefined }>;
   browseGcs(params: { projectId: string; bucket: string; prefix: string; impersonateServiceAccount?: string | undefined }): Promise<GcsBrowseResult>;
+  /** Runs `gcloud storage ls` on one export folder as the identity the
+   *  provider's downloads will run as (see `GcsDownloadCheckParams`), so the
+   *  wizard proves the saved config can actually download before saving it. */
+  verifyGcsDownload(params: GcsDownloadCheckParams): Promise<GcsDownloadCheckResult>;
   /** Write starter `costgoblin.yaml` / `dimensions.yaml` (only where absent)
    *  and reveal the config folder. `providerType` selects which arm is active
    *  in the template and which the other is commented out beside — a GCP user
