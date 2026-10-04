@@ -1028,7 +1028,7 @@ describe('SetupWizard — GCP "Signed in as" panel', () => {
     expect(api.gcpIdentitiesRequestedFor[0]).toBeUndefined();
   });
 
-  it('warns on the project step when gcloud was switched to another account', async () => {
+  it('flags, in one line, gcloud being switched to another account on the project step', async () => {
     const { api, user } = renderWizard();
     api.gcpIdentitiesResult = {
       status: 'ok',
@@ -1042,9 +1042,9 @@ describe('SetupWizard — GCP "Signed in as" panel', () => {
     };
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
     await user.click(screen.getByText('Find my export'));
-    const warnings = await screen.findByRole('list', { name: 'Credential warnings' });
-    expect(warnings.textContent).toContain('Downloads and the project list run as admin@acme.com');
-    expect(warnings.textContent).toContain('switch it back before syncing');
+    const panel = await screen.findByRole('region', { name: 'Signed in as' });
+    await waitFor(() => { expect(panel.textContent).toContain('admin@acme.com'); });
+    expect(panel.textContent).toContain('Bucket access is signed in as alice@acme.com — a different account.');
   });
 
   it('re-reads the identities when the browse step is retried after a sign-in', async () => {

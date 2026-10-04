@@ -132,9 +132,6 @@ describe('GcpIdentityPanel', () => {
       const text = await warningsOf(panel);
       expect(text).toContain(`Bucket listing impersonates ${SA}, but downloads don't impersonate anything`);
       expect(text).toContain(`Add impersonateServiceAccount: ${SA} to the provider in costgoblin.yaml`);
-      cleanup();
-      const wizard = renderPanel(result, { context: 'wizard' });
-      expect(await warningsOf(wizard.panel)).toContain(`The wizard doesn't set this, so after setup add impersonateServiceAccount: ${SA}`);
     });
 
     it('downloads and listing running as different people', async () => {
@@ -150,18 +147,6 @@ describe('GcpIdentityPanel', () => {
       expect(text).toContain('gcloud auth login alice@acme.com first');
       expect(text).not.toContain('project list');
       expect(within(panel).getByText('gcloud CLI · configuration "acme-admin"')).toBeDefined();
-    });
-
-    it('explains the project-list trap in the wizard', async () => {
-      const { panel } = renderPanel(ok({
-        listing: user(),
-        download: gcloud(account('admin@acme.com')),
-        warnings: [{ kind: 'split-accounts', listingAccount: 'alice@acme.com', downloadAccount: 'admin@acme.com', listingKeyFile: null, downloadAccountFromEnv: false }],
-      }), { context: 'wizard' });
-      const text = await warningsOf(panel);
-      expect(text).toContain('Downloads and the project list run as admin@acme.com');
-      expect(text).toContain('switch it back before syncing');
-      expect(within(panel).getByText('Downloads & projects')).toBeDefined();
     });
 
     it('never tells a CLOUDSDK_CORE_ACCOUNT user to run `config set`, which cannot win', async () => {
@@ -246,6 +231,42 @@ describe('GcpIdentityPanel', () => {
       await waitFor(() => { expect(within(panel).getByText('No active gcloud account')).toBeDefined(); });
       const command = within(panel).getByText('gcloud auth login');
       expect(command.parentElement?.textContent).toBe('Run gcloud auth login to sign gcloud in.');
+    });
+  });
+
+  describe('in the wizard', () => {
+    it('shows only the account gcloud is signed in as — impersonation is the provider s business', async () => {
+      const { panel } = renderPanel(ok({
+        listing: impersonated(SA, { status: 'unknown', reason: 'not-recorded' }),
+        download: gcloud(account('admin@acme.com'), null, 'acme-admin'),
+        warnings: [{ kind: 'download-not-impersonated', listingTarget: SA }],
+        notes: [{ kind: 'listing-account-unrecorded', downloadAccount: 'admin@acme.com', downloadTarget: null }],
+      }), { context: 'wizard' });
+      await waitFor(() => { expect(within(panel).getByText('admin@acme.com')).toBeDefined(); });
+      expect(panel.textContent).toContain('gcloud configuration "acme-admin"');
+      expect(panel.textContent).not.toContain(SA);
+      expect(panel.textContent).not.toContain('impersonat');
+      expect(within(panel).queryByRole('list')).toBeNull();
+    });
+
+    it('adds one line when bucket access is signed in as someone else', async () => {
+      const { panel } = renderPanel(ok({
+        listing: user(),
+        download: gcloud(account('admin@acme.com')),
+        warnings: [{ kind: 'split-accounts', listingAccount: 'alice@acme.com', downloadAccount: 'admin@acme.com', listingKeyFile: null, downloadAccountFromEnv: false }],
+      }), { context: 'wizard' });
+      await waitFor(() => { expect(panel.textContent).toContain('Bucket access is signed in as alice@acme.com — a different account.'); });
+    });
+
+    it('says what to run when gcloud or bucket access is not signed in', async () => {
+      const { panel } = renderPanel(ok({ listing: { kind: 'not-signed-in', file: ADC }, download: gcloud(account(null)) }), { context: 'wizard' });
+      await waitFor(() => { expect(panel.textContent).toContain('gcloud isn\'t signed in — run gcloud auth login'); });
+      expect(panel.textContent).toContain('Bucket access isn\'t signed in — run gcloud auth application-default login');
+    });
+
+    it('reports a missing CLI', async () => {
+      const { panel } = renderPanel(ok({ listing: user(), download: { kind: 'cli-missing' } }), { context: 'wizard' });
+      await waitFor(() => { expect(within(panel).getByText('The gcloud CLI is not installed')).toBeDefined(); });
     });
   });
 

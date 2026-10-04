@@ -27,9 +27,11 @@ type PanelContext = 'wizard' | 'provider';
  *  re-route) a sync. Read-only: every remedy is a command to run, never an
  *  action taken here.
  *
- *  `context` only changes copy: in the wizard the gcloud identity also lists
- *  projects, which is the usual reason someone switches it, and there is no
- *  provider yet to edit. */
+ *  `context: 'wizard'` renders the compact form: just the account gcloud is
+ *  signed in as (it lists the projects the wizard offers), plus one line when
+ *  something would stop the setup. Impersonation belongs to the provider —
+ *  its service account is chosen later — so the wizard says nothing about
+ *  it. `context: 'provider'` (Data Management) shows both paths in full. */
 export function GcpIdentityPanel({ providerName, context, refreshKey = 0 }: Readonly<{
   /** Whose `impersonateServiceAccount` / `keyFile` to apply. Omitted in the
    *  wizard, where no provider exists yet. */
@@ -70,20 +72,22 @@ export function GcpIdentityPanel({ providerName, context, refreshKey = 0 }: Read
         <p className="mt-1.5 text-text-muted break-words">Couldn&apos;t check credentials: {query.data.reason}</p>
       )}
       {query.status === 'success' && query.data.status === 'ok' && (
-        <Identities identities={query.data.identities} context={context} />
+        context === 'wizard'
+          ? <CompactIdentities identities={query.data.identities} />
+          : <Identities identities={query.data.identities} />
       )}
     </section>
   );
 }
 
-function Identities({ identities, context }: Readonly<{ identities: GcpIdentities; context: PanelContext }>): React.JSX.Element {
+function Identities({ identities }: Readonly<{ identities: GcpIdentities }>): React.JSX.Element {
   const adcRemedy = { target: adcRemedyTarget(identities), loginPath: identities.adcLoginPath };
   return (
     <>
       <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
         <dt className="text-text-muted">Bucket listing</dt>
         <dd className="min-w-0"><ListingIdentity identity={identities.listing} remedy={adcRemedy} /></dd>
-        <dt className="text-text-muted">{context === 'wizard' ? 'Downloads & projects' : 'Downloads'}</dt>
+        <dt className="text-text-muted">Downloads</dt>
         <dd className="min-w-0"><DownloadIdentity identity={identities.download} /></dd>
       </dl>
       {identities.warnings.length > 0 && (
@@ -93,7 +97,7 @@ function Identities({ identities, context }: Readonly<{ identities: GcpIdentitie
               key={warning.kind}
               className="rounded-md border border-warning/50 bg-warning/10 px-2.5 py-1.5 text-text-primary break-words"
             >
-              <WarningText warning={warning} context={context} />
+              <WarningText warning={warning} />
             </li>
           ))}
         </ul>
@@ -102,13 +106,59 @@ function Identities({ identities, context }: Readonly<{ identities: GcpIdentitie
         <ul aria-label="Credential notes" className="mt-2 flex flex-col gap-1.5">
           {identities.notes.map(note => (
             <li key={note.kind} className="text-text-muted break-words">
-              <NoteText note={note} context={context} />
+              <NoteText note={note} />
             </li>
           ))}
         </ul>
       )}
     </>
   );
+}
+
+/** The wizard's form: the one account the user is working as — gcloud's,
+ *  which lists the projects on offer — and a single line only when the setup
+ *  would stall: gcloud or bucket access not signed in, or bucket access signed
+ *  in as someone else. */
+function CompactIdentities({ identities }: Readonly<{ identities: GcpIdentities }>): React.JSX.Element {
+  const { download, listing } = identities;
+  const split = identities.warnings.find(w => w.kind === 'split-accounts');
+  const adcFile = listing.kind === 'not-signed-in' || listing.kind === 'unreadable' ? listing.file : undefined;
+  return (
+    <>
+      <p className="mt-1 break-words">
+        <CompactAccount download={download} />
+      </p>
+      {adcFile !== undefined && (
+        <Detail>
+          Bucket access isn&apos;t signed in — <AdcRemedy file={adcFile} target={null} loginPath={identities.adcLoginPath} />
+        </Detail>
+      )}
+      {split !== undefined && (
+        <Detail>
+          Bucket access is signed in as <Principal>{split.listingAccount}</Principal> — a different account.
+        </Detail>
+      )}
+    </>
+  );
+}
+
+function CompactAccount({ download }: Readonly<{ download: GcpDownloadIdentity }>): React.JSX.Element {
+  switch (download.kind) {
+    case 'gcloud':
+      if (download.principal.kind === 'account' && download.principal.account === null) {
+        return <span className="text-negative">gcloud isn&apos;t signed in — run <Command>{GCLOUD_CLI_LOGIN_COMMAND}</Command></span>;
+      }
+      return (
+        <>
+          <DownloadPrincipalText principal={download.principal} />
+          <span className="text-text-muted"> · gcloud configuration &quot;{download.configuration}&quot;</span>
+        </>
+      );
+    case 'cli-missing':
+      return <span className="text-negative">The gcloud CLI is not installed</span>;
+    case 'cli-error':
+      return <span className="text-negative">gcloud couldn&apos;t report its configuration: {download.message}</span>;
+  }
 }
 
 /** The service account a fresh ADC sign-in should impersonate: the one the
@@ -304,12 +354,8 @@ function DownloadIdentity({ identity }: Readonly<{ identity: GcpDownloadIdentity
   }
 }
 
-function runsAs(context: PanelContext): string {
-  return context === 'wizard' ? 'Downloads and the project list run' : 'Downloads run';
-}
-
-function SplitAccountsRemedy({ warning, context }: Readonly<{ warning: Extract<GcpIdentityWarning, { kind: 'split-accounts' }>; context: PanelContext }>): React.JSX.Element {
-  const onProvider = context === 'wizard' ? 'on the provider after setup' : 'on this provider';
+function SplitAccountsRemedy({ warning }: Readonly<{ warning: Extract<GcpIdentityWarning, { kind: 'split-accounts' }> }>): React.JSX.Element {
+  const onProvider = 'on this provider';
   if (warning.downloadAccountFromEnv) {
     return <>gcloud&apos;s account is set by <Command>CLOUDSDK_CORE_ACCOUNT</Command> in CostGoblin&apos;s environment — change or unset it there.</>;
   }
@@ -321,14 +367,13 @@ function SplitAccountsRemedy({ warning, context }: Readonly<{ warning: Extract<G
   }
   return (
     <>
-      {context === 'wizard' && 'If you switched gcloud to another account just to list projects, switch it back before syncing. '}
       To use one account for both, run <Command>{`gcloud config set account ${warning.listingAccount}`}</Command> — and if gcloud has
       never signed in as that account, <Command>{`${GCLOUD_CLI_LOGIN_COMMAND} ${warning.listingAccount}`}</Command> first.
     </>
   );
 }
 
-function WarningText({ warning, context }: Readonly<{ warning: GcpIdentityWarning; context: PanelContext }>): React.JSX.Element {
+function WarningText({ warning }: Readonly<{ warning: GcpIdentityWarning }>): React.JSX.Element {
   switch (warning.kind) {
     case 'target-mismatch':
       return warning.download.origin === 'provider'
@@ -345,9 +390,9 @@ function WarningText({ warning, context }: Readonly<{ warning: GcpIdentityWarnin
           <>
             Bucket listing impersonates <Principal>{warning.listingTarget}</Principal>, but gcloud is set to impersonate{' '}
             <Principal>{warning.download.target}</Principal> (<Command>auth/impersonate_service_account</Command>), so{' '}
-            {runsAs(context).toLowerCase()} as that instead. Run <Command>gcloud config unset auth/impersonate_service_account</Command>,
+            downloads run as that instead. Run <Command>gcloud config unset auth/impersonate_service_account</Command>,
             or set <Command>{`impersonateServiceAccount: ${warning.listingTarget}`}</Command>{' '}
-            {context === 'wizard' ? 'on the provider after setup' : 'on this provider'} — it takes precedence.
+            on this provider — it takes precedence.
           </>
         );
     case 'listing-not-impersonated':
@@ -362,7 +407,7 @@ function WarningText({ warning, context }: Readonly<{ warning: GcpIdentityWarnin
         : (
           <>
             gcloud is set to impersonate <Principal>{warning.download.target}</Principal>{' '}
-            (<Command>auth/impersonate_service_account</Command>), so {runsAs(context).toLowerCase()} as that, but bucket
+            (<Command>auth/impersonate_service_account</Command>), so downloads run as that, but bucket
             listing doesn&apos;t impersonate it. If that setting isn&apos;t meant for CostGoblin, run{' '}
             <Command>gcloud config unset auth/impersonate_service_account</Command>.
           </>
@@ -371,10 +416,7 @@ function WarningText({ warning, context }: Readonly<{ warning: GcpIdentityWarnin
       return (
         <>
           Bucket listing impersonates <Principal>{warning.listingTarget}</Principal>, but downloads don&apos;t impersonate
-          anything — they run as gcloud&apos;s own identity, bypassing that service account.{' '}
-          {context === 'wizard'
-            ? 'The wizard doesn\'t set this, so after setup add '
-            : 'Add '}
+          anything — they run as gcloud&apos;s own identity, bypassing that service account. Add{' '}
           <Command>{`impersonateServiceAccount: ${warning.listingTarget}`}</Command> to the provider in{' '}
           <Command>costgoblin.yaml</Command>.
         </>
@@ -382,19 +424,19 @@ function WarningText({ warning, context }: Readonly<{ warning: GcpIdentityWarnin
     case 'split-accounts':
       return (
         <>
-          {runsAs(context)} as <Principal>{warning.downloadAccount}</Principal>, but bucket listing runs as{' '}
+          Downloads run as <Principal>{warning.downloadAccount}</Principal>, but bucket listing runs as{' '}
           <Principal>{warning.listingAccount}</Principal> — two different accounts, and each needs its own
-          access. <SplitAccountsRemedy warning={warning} context={context} />
+          access. <SplitAccountsRemedy warning={warning} />
         </>
       );
   }
 }
 
-function NoteText({ note, context }: Readonly<{ note: GcpIdentityNote; context: PanelContext }>): React.JSX.Element {
+function NoteText({ note }: Readonly<{ note: GcpIdentityNote }>): React.JSX.Element {
   return (
     <>
       Google doesn&apos;t record which account signed in to Application Default Credentials, so this can&apos;t be
-      checked: {runsAs(context).toLowerCase()} as <Principal>{note.downloadAccount}</Principal>
+      checked: downloads run as <Principal>{note.downloadAccount}</Principal>
       {note.downloadTarget === null
         ? ', which should be the account you signed in with.'
         : <>, which should be the account you signed in with — and needs permission to impersonate <Principal>{note.downloadTarget}</Principal> too.</>}

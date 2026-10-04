@@ -561,15 +561,17 @@ secret to leak or rotate.
 #### Checking which identities are in play
 
 Because the two halves read two different credential stores, CostGoblin shows
-both in a **Signed in as** panel — on the Google Cloud steps of the setup
-wizard, and on each GCP provider under **Data Management**:
+both in a **Signed in as** panel on each GCP provider under **Data Management**.
+(The setup wizard shows the short form: the account gcloud is signed in as,
+plus one line if gcloud or bucket access isn't signed in, or bucket access is
+signed in as a different account.)
 
 - **Bucket listing** — the credential the Cloud Storage SDK reads: the
   provider's `keyFile`, or else Application Default Credentials (the account
   you signed in with, and the service account it impersonates, if any). The
   file it was read from is shown too — `GOOGLE_APPLICATION_CREDENTIALS` when
   set, otherwise gcloud's `application_default_credentials.json`.
-- **Downloads** (and, in the wizard, the project list) — what
+- **Downloads** — what
   `gcloud storage rsync` authenticates as: gcloud's active account and
   configuration (or the provider's `keyFile`), impersonating the provider's
   `impersonateServiceAccount`. gcloud's own `auth/impersonate_service_account`,
