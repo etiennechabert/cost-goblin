@@ -1,9 +1,10 @@
 import type { WorkspaceSummary, WorkspacesInfo } from '@costgoblin/core/browser';
 import { WORKSPACE_NAME_PATTERN, WorkspaceNameError, isValidWorkspaceName, parseWorkspaceName } from '@costgoblin/core/browser';
 import { Boxes, Info, Plus } from 'lucide-react';
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ConfirmModal } from '../components/confirm-modal.js';
 import { formatBytes } from '../components/format.js';
+import { TitledModal } from '../components/titled-modal.js';
 import { Button } from '../components/ui/button.js';
 import { useCostApi } from '../hooks/use-cost-api.js';
 
@@ -64,52 +65,6 @@ function deleteMessage(ws: WorkspaceSummary): string {
 }
 
 // ---------------------------------------------------------------------------
-// Shared dialog chrome — same overlay pattern as ConfirmModal / SharingModal.
-// ---------------------------------------------------------------------------
-
-function WorkspaceModal({ title, onClose, children }: Readonly<{
-  title: string;
-  onClose: () => void;
-  children: React.ReactNode;
-}>): React.JSX.Element {
-  const titleId = useId();
-  useEffect(() => {
-    function handleKey(e: KeyboardEvent): void {
-      if (e.key === 'Escape') onClose();
-    }
-    document.addEventListener('keydown', handleKey);
-    return () => { document.removeEventListener('keydown', handleKey); };
-  }, [onClose]);
-
-  return (
-    // no-drag: the modal can open above a window drag region (the app header) —
-    // without the opt-out, clicks there would drag the window instead of
-    // reaching the modal.
-    <dialog open className="fixed inset-0 z-[100] flex items-center justify-center bg-transparent m-0 p-0 max-w-none max-h-none w-full h-full border-none [-webkit-app-region:no-drag]" aria-modal="true" aria-labelledby={titleId}>
-      <div
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-        onClick={onClose}
-        aria-hidden="true"
-      />
-      <div className="relative rounded-xl border border-border bg-bg-secondary p-6 shadow-2xl max-w-md w-full mx-4 max-h-[85vh] overflow-y-auto">
-        <div className="flex items-center justify-between">
-          <h3 id={titleId} className="text-base font-semibold text-text-primary">{title}</h3>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-md px-2 py-1 text-sm text-text-muted hover:text-text-primary hover:bg-bg-tertiary transition-colors"
-            aria-label="Close"
-          >
-            ✕
-          </button>
-        </div>
-        <div className="mt-4 flex flex-col gap-4">{children}</div>
-      </div>
-    </dialog>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // New workspace — name only. Creation always restarts into the new (empty)
 // workspace, where the setup wizard takes over (set up from S3, import from a
 // teammate, or jump back to an existing workspace).
@@ -143,7 +98,7 @@ function CreateWorkspaceModal({ existing, onClose, onCreated }: Readonly<{
   }
 
   return (
-    <WorkspaceModal title="New workspace" onClose={onClose}>
+    <TitledModal title="New workspace" onClose={onClose}>
       <div className="flex flex-col gap-1.5">
         <label htmlFor="new-workspace-name" className="text-xs text-text-muted uppercase tracking-wider">
           Workspace name
@@ -191,7 +146,7 @@ function CreateWorkspaceModal({ existing, onClose, onCreated }: Readonly<{
           {creating ? 'Creating…' : 'Create & Restart'}
         </Button>
       </div>
-    </WorkspaceModal>
+    </TitledModal>
   );
 }
 
@@ -228,7 +183,7 @@ function RenameWorkspaceModal({ target, existing, onClose, onRenamed }: Readonly
   }
 
   return (
-    <WorkspaceModal title="Rename workspace" onClose={onClose}>
+    <TitledModal title="Rename workspace" onClose={onClose}>
       <div className="flex flex-col gap-1.5">
         <label htmlFor="rename-workspace-name" className="text-xs text-text-muted uppercase tracking-wider">
           New name
@@ -265,7 +220,7 @@ function RenameWorkspaceModal({ target, existing, onClose, onRenamed }: Readonly
           {renaming ? 'Renaming…' : 'Rename'}
         </Button>
       </div>
-    </WorkspaceModal>
+    </TitledModal>
   );
 }
 

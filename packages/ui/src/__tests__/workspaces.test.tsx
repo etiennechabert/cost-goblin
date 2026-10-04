@@ -124,6 +124,21 @@ describe('WorkspacesView', () => {
     expect(screen.queryByRole('dialog', { name: 'New workspace' })).toBeNull();
   });
 
+  // The name is announced only when focus enters the dialog; left on the
+  // trigger, focus would sit on the page aria-modal declares inert.
+  it('moves focus into the New workspace dialog on open and back to its trigger on close', async () => {
+    const user = userEvent.setup();
+    renderView(apiWith(TWO_WORKSPACES));
+    const trigger = await screen.findByRole('button', { name: 'New workspace' });
+
+    await user.click(trigger);
+    const dialog = screen.getByRole('dialog', { name: 'New workspace' });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    await user.keyboard('{Escape}');
+    expect(document.activeElement).toBe(trigger);
+  });
+
   it('creates a fresh workspace and restarts into it', async () => {
     const api = apiWith(TWO_WORKSPACES);
     const createSpy = vi.spyOn(api, 'createWorkspace');

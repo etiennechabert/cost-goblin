@@ -131,6 +131,7 @@ test.describe('Data Management', () => {
     const confirm = page.getByRole('dialog', { name: 'Delete all local data' });
     await expect(confirm).toBeVisible({ timeout: 3000 });
     await expect(confirm).toHaveAccessibleDescription(/This will remove all downloaded/);
+    await expect(confirm.getByText('This will remove all downloaded')).toBeVisible();
     await expect(confirm.getByRole('button', { name: 'Cancel' })).toBeVisible();
     await expect(confirm.getByRole('button', { name: 'Delete All', exact: true })).toBeVisible();
 
@@ -330,7 +331,9 @@ test.describe('Cost Scope', () => {
     // a "Discard …?" confirm modal will appear. Dismiss it.
     await clickNavButton(page, 'Cost Scope');
     const discardBtn = page.getByRole('dialog', { name: /^Discard / }).getByRole('button', { name: 'Discard', exact: true });
-    if (await discardBtn.isVisible({ timeout: 500 }).catch(() => false)) {
+    // isVisible() ignores a timeout and answers at once; waitFor gives the
+    // modal its 500ms to appear.
+    if (await discardBtn.waitFor({ state: 'visible', timeout: 500 }).then(() => true, () => false)) {
       await discardBtn.click();
     }
     await expect(page.getByRole('heading', { name: 'Cost Scope', exact: true })).toBeVisible({ timeout: 5000 });

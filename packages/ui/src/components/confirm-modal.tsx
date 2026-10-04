@@ -23,9 +23,14 @@ export function ConfirmModal({
   const titleId = useId();
   const messageId = useId();
 
+  // Mount only: callers pass an inline onCancel, so an effect keyed on it
+  // re-runs on every parent render (the app re-renders on each sync poll) and
+  // would pull focus back to Cancel off the button the user tabbed to.
   useEffect(() => {
     cancelRef.current?.focus();
+  }, []);
 
+  useEffect(() => {
     function handleKey(e: KeyboardEvent) {
       if (e.key === 'Escape') onCancel();
     }

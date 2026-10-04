@@ -149,6 +149,7 @@ test.describe('Workspaces (workspace mode)', () => {
     await page.getByTestId('workspace-row-client-c').getByRole('button', { name: 'Delete' }).click();
     const confirm = page.getByRole('dialog', { name: 'Delete workspace' });
     await expect(confirm).toHaveAccessibleDescription(/permanently deletes/i);
+    await expect(confirm.getByText(/permanently deletes/i)).toBeVisible();
     await confirm.getByRole('button', { name: 'Delete Workspace' }).click();
     await expect(confirm).toHaveCount(0);
     await expect(page.getByTestId('workspace-row-client-c')).toHaveCount(0);

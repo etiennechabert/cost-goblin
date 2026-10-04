@@ -30,6 +30,36 @@ describe('ViewYamlModal', () => {
     expect(dialog.getAttribute('aria-modal')).toBe('true');
   });
 
+  // The app re-renders on every sync poll, handing the modal a fresh props
+  // object: that must not pull focus off the textarea mid-paste.
+  it('keeps focus in the import textarea when a parent re-render passes new props', async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <ViewYamlModal mode="import" existingIds={new Set()} onImport={vi.fn()} onClose={() => undefined} />,
+    );
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close' }));
+    const textarea = screen.getByRole('textbox');
+    await user.click(textarea);
+
+    const onClose = vi.fn();
+    rerender(<ViewYamlModal mode="import" existingIds={new Set()} onImport={vi.fn()} onClose={onClose} />);
+    expect(document.activeElement).toBe(textarea);
+    // …and Escape reaches the latest handler.
+    await user.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('announces an import error', async () => {
+    const user = userEvent.setup();
+    const onImport = vi.fn();
+    render(<ViewYamlModal mode="import" existingIds={new Set()} onImport={onImport} onClose={vi.fn()} />);
+    await user.click(screen.getByRole('textbox'));
+    await user.paste('- not\n- a view\n');
+    await user.click(screen.getByRole('button', { name: 'Import' }));
+    expect(screen.getByRole('alert').textContent).not.toBe('');
+    expect(onImport).not.toHaveBeenCalled();
+  });
+
   it('closes from the Close button, Escape and the aria-hidden backdrop', async () => {
     const onClose = vi.fn();
     const user = userEvent.setup();

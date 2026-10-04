@@ -39,14 +39,22 @@ export function ViewYamlModal(props: ViewYamlModalProps): React.JSX.Element {
   const [copied, setCopied] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
 
+  const { onClose } = props;
+
+  // Mount only: `props` is a fresh object on every parent render (the app
+  // re-renders on each sync poll), so focusing in an effect keyed on it would
+  // yank focus out of the import textarea mid-paste.
   useEffect(() => {
     closeRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
     function handleKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') props.onClose();
+      if (e.key === 'Escape') onClose();
     }
     document.addEventListener('keydown', handleKey);
     return () => { document.removeEventListener('keydown', handleKey); };
-  }, [props]);
+  }, [onClose]);
 
   async function handleCopy(): Promise<void> {
     await navigator.clipboard.writeText(text);
@@ -88,7 +96,7 @@ export function ViewYamlModal(props: ViewYamlModalProps): React.JSX.Element {
     <dialog open className="fixed inset-0 z-[100] flex items-center justify-center bg-transparent m-0 p-0 max-w-none max-h-none w-full h-full border-none" aria-modal="true" aria-labelledby={titleId} aria-describedby={hintId}>
       <div
         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-        onClick={props.onClose}
+        onClick={onClose}
         aria-hidden="true"
       />
 
@@ -111,7 +119,7 @@ export function ViewYamlModal(props: ViewYamlModalProps): React.JSX.Element {
         />
 
         {importError !== null && (
-          <div className="rounded-md border border-negative/50 bg-negative-muted px-3 py-2 text-xs text-negative">
+          <div role="alert" className="rounded-md border border-negative/50 bg-negative-muted px-3 py-2 text-xs text-negative">
             {importError}
           </div>
         )}
@@ -120,7 +128,7 @@ export function ViewYamlModal(props: ViewYamlModalProps): React.JSX.Element {
           <button
             ref={closeRef}
             type="button"
-            onClick={props.onClose}
+            onClick={onClose}
             className="rounded-md px-3 py-1.5 text-sm font-medium text-text-secondary hover:bg-bg-tertiary transition-colors"
           >
             Close

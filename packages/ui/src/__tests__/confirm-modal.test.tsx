@@ -39,6 +39,27 @@ describe('ConfirmModal', () => {
     expect(onCancel).toHaveBeenCalledOnce();
   });
 
+  // Callers pass inline arrows, and the app re-renders on every sync poll: a
+  // fresh onCancel must not pull focus back to Cancel off the button the user
+  // tabbed to.
+  it('keeps focus where the user moved it when a parent re-render passes a new onCancel', async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <ConfirmModal title="Test" message="msg" onConfirm={vi.fn()} onCancel={() => undefined} />,
+    );
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Cancel' }));
+    await user.tab();
+    const confirm = screen.getByRole('button', { name: 'Confirm' });
+    expect(document.activeElement).toBe(confirm);
+
+    const onCancel = vi.fn();
+    rerender(<ConfirmModal title="Test" message="msg" onConfirm={vi.fn()} onCancel={onCancel} />);
+    expect(document.activeElement).toBe(confirm);
+    // …and Escape reaches the latest handler.
+    await user.keyboard('{Escape}');
+    expect(onCancel).toHaveBeenCalledOnce();
+  });
+
   it('renders custom button labels', () => {
     render(
       <ConfirmModal title="Test" message="msg" confirmLabel="Yes" cancelLabel="No" onConfirm={vi.fn()} onCancel={vi.fn()} />,

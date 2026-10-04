@@ -52,6 +52,12 @@ describe('ShareConfigDialog', () => {
     expect(dialog.getAttribute('aria-modal')).toBe('true');
   });
 
+  it('moves focus into the dialog on open', () => {
+    renderWithApi(new MockCostApi(), <ShareConfigDialog onClose={() => undefined} />);
+    const dialog = screen.getByRole('dialog', { name: 'Share configuration' });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+  });
+
   it('closes from the named ✕, Escape and the aria-hidden backdrop', async () => {
     const onClose = vi.fn();
     const user = userEvent.setup();
