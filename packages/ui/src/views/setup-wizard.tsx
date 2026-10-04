@@ -1,6 +1,6 @@
 import type { ConfigBundleSummary, GcpProject, GcsFolderKind, ProviderConfig } from '@costgoblin/core/browser';
 import { DEFAULT_RETENTION_DAYS, GCP_PROJECT_ID_RULES, gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isServiceAccountEmail, isValidGcpProjectId, isValidWorkspaceName, parseProviderName, SERVICE_ACCOUNT_EMAIL_RULE } from '@costgoblin/core/browser';
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { Card, CardContent } from '../components/ui/card.js';
 import { Button } from '../components/ui/button.js';
@@ -1843,8 +1843,8 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   const [retentionPicks, setRetentionPicks] = useState<Partial<Record<DataSource, number>>>({});
   // Each configured GCP provider's reader, to prefill the field when the run
   // reconfigures that provider — so it browses as what the sync will use.
-  const existingGcpReaders: ReadonlyMap<string, string> = new Map(existingConfigs.flatMap(p =>
-    p.type === 'gcp' && p.impersonateServiceAccount !== undefined ? [[String(p.name), p.impersonateServiceAccount]] : []));
+  const existingGcpReaders = useMemo<ReadonlyMap<string, string>>(() => new Map(existingConfigs.flatMap(p =>
+    p.type === 'gcp' && p.impersonateServiceAccount !== undefined ? [[String(p.name), p.impersonateServiceAccount]] : [])), [existingConfigs]);
   // Whether the user has typed a name. Until they do, the default is DERIVED
   // from the cloud they picked rather than written into state on entry — a
   // one-way `setProviderName('gcp-main')` survived backing out of the GCP

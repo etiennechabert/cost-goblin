@@ -84,6 +84,15 @@ describe('GcpIdentityPanel', () => {
     expect(within(panel).queryByRole('list', { name: 'Credential warnings' })).toBeNull();
   });
 
+  it('does not say the provider ignores an old sign-in that impersonates its own reader', async () => {
+    const { panel } = renderPanel(ok({
+      listing: reader(SA, { status: 'unknown', reason: 'not-recorded' }, SA),
+      download: gcloud(account('alice@acme.com'), viaProvider(SA)),
+    }));
+    await waitFor(() => { expect(panel.textContent).toContain('impersonate this same account themselves'); });
+    expect(panel.textContent).not.toContain('doesn\'t use that');
+  });
+
   it('says a legacy impersonated ADC is unwrapped, not chained through, for a provider with a reader', async () => {
     const { panel } = renderPanel(ok({
       listing: reader(SA, { status: 'unknown', reason: 'not-recorded' }, OTHER_SA),

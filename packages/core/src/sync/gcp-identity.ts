@@ -714,5 +714,14 @@ export function adcLoginImpersonationToKeep(
   if (legacy.kind !== 'impersonated') return null;
   if (!providers.some(p => p.impersonateServiceAccount === undefined && p.keyFile === undefined)) return null;
   const chain = [...legacy.delegates, legacy.target];
-  return chain.every(isServiceAccountEmail) ? chain.join(',') : null;
+  return chain.every(isArgvSafeServiceAccount) ? chain.join(',') : null;
+}
+
+/** Any Google service-account address — user-created (`*.iam`) or
+ *  Google-managed (`*-compute@developer`, `*@appspot`) — and nothing an argv
+ *  entry or a Windows shell could misread. Looser than `isServiceAccountEmail`
+ *  (the reader a provider may NAME) on purpose: refusing a managed account
+ *  here would fall back to a plain sign-in and widen the provider. */
+function isArgvSafeServiceAccount(value: string): boolean {
+  return /^[a-z0-9][a-z0-9-]*@[a-z0-9][a-z0-9.-]*\.gserviceaccount\.com$/.test(value);
 }

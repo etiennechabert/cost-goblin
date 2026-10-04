@@ -206,6 +206,11 @@ describe('impersonationTargetFromUrl', () => {
     expect(impersonationTargetFromUrl(long)).toBeNull();
   });
 
+  it('accepts any URL the SDK accepts, so the listing client never refuses a file the SDK loads', () => {
+    // google-auth-library's own pattern needs only `<target>:<verb>` at the end.
+    expect(impersonationTargetFromUrl('https://iamcredentials.googleapis.com/v1/sa@p.iam.gserviceaccount.com:generateAccessToken')).toBe('sa@p.iam.gserviceaccount.com');
+  });
+
   it('rejects non-strings and unrelated URLs', () => {
     expect(impersonationTargetFromUrl(undefined)).toBeNull();
     expect(impersonationTargetFromUrl('https://example.com/serviceAccounts/x')).toBeNull();
@@ -783,6 +788,18 @@ describe('adcLoginImpersonationToKeep', () => {
     expect(adcLoginImpersonationToKeep(USER_ADC, [readerless])).toBeNull();
     expect(adcLoginImpersonationToKeep(null, [readerless])).toBeNull();
     expect(adcLoginImpersonationToKeep(without(IMPERSONATED_ADC, 'source_credentials'), [readerless])).toBeNull();
+  });
+
+  it('keeps Google-managed default service accounts too, which a provider cannot name as its reader', () => {
+    // Falling back to a plain sign-in here would widen the provider to the
+    // user's own access — the very thing keeping the impersonation prevents.
+    for (const managed of ['123456789012-compute@developer.gserviceaccount.com', 'my-app@appspot.gserviceaccount.com']) {
+      const adc = {
+        ...IMPERSONATED_ADC,
+        service_account_impersonation_url: `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${managed}:generateAccessToken`,
+      };
+      expect(adcLoginImpersonationToKeep(adc, [readerless]), managed).toBe(managed);
+    }
   });
 
   it('keeps a delegation chain whole, and passes only well-formed service-account addresses to argv', () => {

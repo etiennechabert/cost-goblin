@@ -307,7 +307,7 @@ function SourceText({ source }: Readonly<{ source: GcpImpersonationSource }>): R
 
 /** Where listing's impersonation comes from: the provider's read-only
  *  service account, or (no reader) a legacy impersonated ADC file itself. */
-function ImpersonationDetail({ via }: Readonly<{ via: GcpListingImpersonationVia }>): React.JSX.Element {
+function ImpersonationDetail({ via, target }: Readonly<{ via: GcpListingImpersonationVia; target: string }>): React.JSX.Element {
   if (via.kind === 'credential') {
     return <Detail>Impersonated by the credential itself (an <Command>--impersonate-service-account</Command> sign-in) — this provider names no read-only service account</Detail>;
   }
@@ -315,10 +315,19 @@ function ImpersonationDetail({ via }: Readonly<{ via: GcpListingImpersonationVia
     <>
       <Detail>This provider&apos;s read-only service account (<Command>impersonateServiceAccount</Command>), minted from your sign-in</Detail>
       {via.adcTarget !== null && (
-        <Detail>
-          Your Application Default Credentials impersonate <Principal>{via.adcTarget}</Principal> themselves; this provider
-          doesn&apos;t use that — it mints its reader from the sign-in underneath
-        </Detail>
+        via.adcTarget.toLowerCase() === target.toLowerCase()
+          ? (
+            <Detail>
+              Your Application Default Credentials impersonate this same account themselves; this provider mints it from
+              the sign-in underneath rather than through them
+            </Detail>
+          )
+          : (
+            <Detail>
+              Your Application Default Credentials impersonate <Principal>{via.adcTarget}</Principal> themselves; this provider
+              doesn&apos;t use that — it mints its reader from the sign-in underneath
+            </Detail>
+          )
       )}
     </>
   );
@@ -361,7 +370,7 @@ function ListingIdentity({ identity, adc }: Readonly<{ identity: GcpListingIdent
         <>
           <SourceText source={identity.source} />
           <Impersonating target={identity.target} />
-          <ImpersonationDetail via={identity.via} />
+          <ImpersonationDetail via={identity.via} target={identity.target} />
           <Detail>{fileDetail(identity.file)}</Detail>
           {identity.source.kind === 'user' && <ExpiredRemedy account={identity.source.account} file={identity.file} adc={adc} />}
         </>

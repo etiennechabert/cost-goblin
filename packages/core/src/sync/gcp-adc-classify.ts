@@ -13,10 +13,12 @@ import { isStringRecord } from '../utils/json.js';
 const MAX_IMPERSONATION_URL_LENGTH = 256;
 
 /** The target service account of an IAM Credentials impersonation URL — the
- *  same extraction `GoogleAuth.fromImpersonatedJSON` performs. */
+ *  same extraction `GoogleAuth.fromImpersonatedJSON` performs, with its exact
+ *  pattern: anything stricter would make the listing client refuse a file the
+ *  SDK loads. */
 export function impersonationTargetFromUrl(url: unknown): string | null {
   if (typeof url !== 'string' || url.length > MAX_IMPERSONATION_URL_LENGTH) return null;
-  const match = /\/serviceAccounts\/([^/]+):(?:generateAccessToken|generateIdToken)$/.exec(url);
+  const match = /([^/]+):(?:generateAccessToken|generateIdToken)$/.exec(url);
   return match?.[1] ?? null;
 }
 
