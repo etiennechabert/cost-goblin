@@ -301,7 +301,12 @@ jobs:
           cp artifacts/dist-linux-x64/latest-linux.yml upload/
           cp artifacts/dist-linux-arm64/latest-linux-arm64.yml upload/
 
-          node .github/scripts/merge-update-manifests.mjs upload/latest-mac.yml \
+          # Electron 44 needs macOS 13 (its LSMinimumSystemVersion is 13.0), and
+          # electron-updater compares minimumSystemVersion with the Darwin kernel
+          # version (macOS 13 = Darwin 22). This keeps macOS 12 installs on the
+          # build they can run instead of updating them to one that won't launch.
+          # Raise it whenever an Electron major raises its macOS floor.
+          node .github/scripts/merge-update-manifests.mjs --minimum-system-version 22.0.0 upload/latest-mac.yml \
             artifacts/dist-mac-x64/latest-mac.yml \
             artifacts/dist-mac-arm64/latest-mac.yml
           node .github/scripts/merge-update-manifests.mjs upload/latest.yml \
