@@ -1,4 +1,4 @@
-import type { Table } from '@tanstack/react-table';
+import type { RowData, Table, TableFeatures } from '@tanstack/react-table';
 import { Download } from 'lucide-react';
 
 // A leading =, +, -, @, tab, or CR makes Excel/Sheets evaluate the cell as a
@@ -22,21 +22,18 @@ export function escapeCsv(value: unknown): string {
   return str;
 }
 
-export function CsvExportButton<TData>({ table, filename }: Readonly<{ table: Table<TData>; filename: string }>) {
+export function CsvExportButton<TFeatures extends TableFeatures, TData extends RowData>({ table, filename }: Readonly<{ table: Table<TFeatures, TData>; filename: string }>) {
   function handleExport() {
-    const visibleColumns = table.getVisibleLeafColumns();
-    const headers = visibleColumns.map(col => {
+    // Every leaf column: callers hand DataTable only the columns on screen.
+    const columns = table.getAllLeafColumns();
+    const headers = columns.map(col => {
       const header = col.columnDef.header;
       return typeof header === 'string' ? header : col.id;
     });
 
     const csvRows = [headers.map(escapeCsv).join(',')];
     for (const row of table.getSortedRowModel().rows) {
-      const cells = visibleColumns.map(col => {
-        const cell = row.getAllCells().find(c => c.column.id === col.id);
-        return escapeCsv(cell?.getValue());
-      });
-      csvRows.push(cells.join(','));
+      csvRows.push(columns.map(col => escapeCsv(row.getValue(col.id))).join(','));
     }
 
     const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });

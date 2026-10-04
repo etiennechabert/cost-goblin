@@ -1,17 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  useReactTable,
-  getCoreRowModel,
-  getSortedRowModel,
-  flexRender,
-} from '@tanstack/react-table';
-import type { SortingState, Row, Cell } from '@tanstack/react-table';
+import { flexRender, functionalUpdate, useTable } from '@tanstack/react-table';
+import type { Cell, Row, RowData, SortingState, TableOptions } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { ExplorerTagColumn } from '@costgoblin/core/browser';
 import { CoinRainLoader } from './coin-rain-loader.js';
 import { CsvExportButton } from './table-csv-export.js';
-import type { TableColumn } from '../lib/table-types.js';
-import { toColumnDefs } from '../lib/table-types.js';
+import type { DataTableFeatures, TableColumn } from '../lib/table-types.js';
+import { dataTableFeatures, toColumnDefs } from '../lib/table-types.js';
 
 // ---------------------------------------------------------------------------
 // ColumnSpec (backward compat — used by table-widget and explorer)
@@ -236,7 +231,7 @@ interface DataTableProps<TData> {
   readonly headerRight?: React.ReactNode;
 }
 
-export function DataTable<TData>({
+export function DataTable<TData extends RowData>({
   data,
   columns,
   sorting,
@@ -262,33 +257,27 @@ export function DataTable<TData>({
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
 
   const columnDefs = useMemo(() => toColumnDefs(columns), [columns]);
-  const mutableData = useMemo(() => data.slice(), [data]);
 
-  const tableOptions = useMemo(() => {
-    const base = {
-      data: mutableData,
+  // The sorted row model is registered statically in dataTableFeatures; a
+  // table without an onSortingChange owner keeps v8's behaviour by switching
+  // it off with manualSorting (rows render in the order they were passed).
+  // The handler is always set: useTable merges each render's options into the
+  // previous ones, so leaving it out would keep an earlier owner's handler.
+  const tableOptions = useMemo((): TableOptions<DataTableFeatures, TData> => {
+    const currentSorting = sorting ?? [];
+    return {
+      features: dataTableFeatures,
+      data,
       columns: columnDefs,
-      state: { sorting: sorting ?? [] },
-      getCoreRowModel: getCoreRowModel<TData>(),
-      enableMultiSort: true,
+      state: { sorting: currentSorting },
       manualSorting: onSortingChange === undefined,
+      onSortingChange: (updater) => {
+        onSortingChange?.(functionalUpdate(updater, currentSorting));
+      },
     };
-    if (onSortingChange !== undefined) {
-      const handler = onSortingChange;
-      const currentSorting = sorting ?? [];
-      return {
-        ...base,
-        getSortedRowModel: getSortedRowModel<TData>(),
-        onSortingChange: (updater: SortingState | ((prev: SortingState) => SortingState)) => {
-          const next = typeof updater === 'function' ? updater(currentSorting) : updater;
-          handler(next);
-        },
-      };
-    }
-    return base;
-  }, [mutableData, columnDefs, sorting, onSortingChange]);
+  }, [data, columnDefs, sorting, onSortingChange]);
 
-  const table = useReactTable(tableOptions);
+  const table = useTable(tableOptions);
   const rows = table.getRowModel().rows;
 
   const virtualizer = useVirtualizer({
@@ -415,9 +404,9 @@ export function DataTable<TData>({
 
 import type { Virtualizer } from '@tanstack/react-virtual';
 
-function TableBody<TData>({ virtualizer, rows, expandedIdx, setExpandedIdx, onCellClick, renderExpandedRow }: Readonly<{
+function TableBody<TData extends RowData>({ virtualizer, rows, expandedIdx, setExpandedIdx, onCellClick, renderExpandedRow }: Readonly<{
   virtualizer: Virtualizer<HTMLDivElement, Element>;
-  rows: Row<TData>[];
+  rows: Row<DataTableFeatures, TData>[];
   expandedIdx: number | null;
   setExpandedIdx: (fn: (prev: number | null) => number | null) => void;
   onCellClick?: ((row: TData, columnId: string, value: unknown) => void) | undefined;
@@ -472,8 +461,8 @@ function TableBody<TData>({ virtualizer, rows, expandedIdx, setExpandedIdx, onCe
 // TableRow + TableCell
 // ---------------------------------------------------------------------------
 
-function TableRow<TData>({ row, expanded, canExpand, onToggle, onCellClick, renderExpandedRow }: Readonly<{
-  row: Row<TData>;
+function TableRow<TData extends RowData>({ row, expanded, canExpand, onToggle, onCellClick, renderExpandedRow }: Readonly<{
+  row: Row<DataTableFeatures, TData>;
   expanded: boolean;
   canExpand: boolean;
   onToggle: () => void;
@@ -497,13 +486,13 @@ function TableRow<TData>({ row, expanded, canExpand, onToggle, onCellClick, rend
         tabIndex={canExpand ? 0 : undefined}
         role="row"
       >
-        {row.getVisibleCells().map(cell => (
+        {row.getAllCells().map(cell => (
           <TableCell key={cell.id} cell={cell} row={row} onCellClick={onCellClick} />
         ))}
       </tr>
       {expanded && renderExpandedRow !== undefined && (
         <tr className="bg-bg-tertiary/20">
-          <td colSpan={row.getVisibleCells().length} className="px-3 py-2">
+          <td colSpan={row.getAllCells().length} className="px-3 py-2">
             {renderExpandedRow(row.original)}
           </td>
         </tr>
@@ -512,9 +501,9 @@ function TableRow<TData>({ row, expanded, canExpand, onToggle, onCellClick, rend
   );
 }
 
-function TableCell<TData>({ cell, row, onCellClick }: Readonly<{
-  cell: Cell<TData, unknown>;
-  row: Row<TData>;
+function TableCell<TData extends RowData>({ cell, row, onCellClick }: Readonly<{
+  cell: Cell<DataTableFeatures, TData>;
+  row: Row<DataTableFeatures, TData>;
   onCellClick?: ((row: TData, columnId: string, value: unknown) => void) | undefined;
 }>) {
   const meta = cell.column.columnDef.meta;

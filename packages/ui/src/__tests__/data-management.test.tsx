@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within, cleanup } from '@testing-library/react';
+import { act, render, screen, waitFor, within, cleanup } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
@@ -258,9 +258,106 @@ describe('DataManagement', () => {
     });
     await user.click(screen.getByText('Add Provider'));
     // Add-mode wizard starts at the get-started hub.
-    await waitFor(() => {
-      expect(screen.getByLabelText('Set up from AWS')).toBeDefined();
-    });
+    const dialog = await screen.findByRole('dialog', { name: 'Add provider' });
+    expect(within(dialog).getByLabelText('Set up from AWS')).toBeDefined();
+  });
+});
+
+// The wizard modals and the profile swap used to sit inside an
+// aria-hidden="true" overlay, which hid them — controls included — from
+// assistive tech, so none of these role queries could reach them.
+describe('DataManagement — modal dialogs', () => {
+  async function openAddProvider() {
+    const rendered = renderDataManagement();
+    const trigger = await screen.findByRole('button', { name: 'Add Provider' });
+    await rendered.user.click(trigger);
+    const dialog = await screen.findByRole('dialog', { name: 'Add provider' });
+    return { ...rendered, trigger, dialog };
+  }
+
+  it('Add Provider is a modal dialog whose Close button is named and dismisses it', async () => {
+    const { user, dialog } = await openAddProvider();
+    expect(dialog.getAttribute('aria-modal')).toBe('true');
+    await user.click(within(dialog).getByRole('button', { name: 'Close' }));
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Add provider' })).toBeNull(); });
+  });
+
+  it('moves focus into the dialog on open and returns it to the trigger on close', async () => {
+    const { user, trigger, dialog } = await openAddProvider();
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    await user.keyboard('{Escape}');
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Add provider' })).toBeNull(); });
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it('pulls focus that lands on the page behind back into the dialog', async () => {
+    // aria-modal declares the page inert — Tab must not walk onto it.
+    const { dialog } = await openAddProvider();
+    act(() => { screen.getByRole('button', { name: 'Refresh' }).focus(); });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+  });
+
+  it('ignores an Escape a nested layer already consumed, or one that cancels an IME composition', async () => {
+    const { user } = await openAddProvider();
+    // A layer above it (e.g. a Radix popover) handles Escape in the capture
+    // phase and marks it consumed.
+    const consume = (e: KeyboardEvent) => { e.preventDefault(); };
+    document.addEventListener('keydown', consume, { capture: true });
+    await user.keyboard('{Escape}');
+    document.removeEventListener('keydown', consume, { capture: true });
+    expect(screen.getByRole('dialog', { name: 'Add provider' })).toBeDefined();
+
+    act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', isComposing: true, bubbles: true })); });
+    expect(screen.getByRole('dialog', { name: 'Add provider' })).toBeDefined();
+  });
+
+  it('closes on a backdrop click but not on a click inside the wizard', async () => {
+    const { user, dialog } = await openAddProvider();
+    await user.click(within(dialog).getByText('Which cloud are you billing on?'));
+    expect(screen.getByRole('dialog', { name: 'Add provider' })).toBeDefined();
+    await user.click(within(dialog).getByTestId('modal-backdrop'));
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Add provider' })).toBeNull(); });
+  });
+
+  it('Escape closes only the topmost dialog when the wizard opened the Import dialog', async () => {
+    const { user, dialog } = await openAddProvider();
+    await user.click(within(dialog).getByRole('button', { name: 'Import from a teammate' }));
+    // The Import dialog renders inside the wizard (it is not portalled).
+    await within(dialog).findByText('Import configuration');
+
+    await user.keyboard('{Escape}');
+    await waitFor(() => { expect(screen.queryByText('Import configuration')).toBeNull(); });
+    expect(screen.getByRole('dialog', { name: 'Add provider' })).toBeDefined();
+
+    await user.keyboard('{Escape}');
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Add provider' })).toBeNull(); });
+  });
+
+  it('the tier gear opens a Configure dialog named for the tier and provider', async () => {
+    const { user } = renderDataManagement();
+    const section = await screen.findByRole('region', { name: 'Provider aws-main' });
+    const gear = await within(section).findByTitle('Configure daily');
+    await user.click(gear);
+    const dialog = await screen.findByRole('dialog', { name: 'Configure daily data source for aws-main' });
+    expect(dialog.getAttribute('aria-modal')).toBe('true');
+    await user.click(within(dialog).getByRole('button', { name: 'Close' }));
+    await waitFor(() => { expect(screen.queryByRole('dialog')).toBeNull(); });
+  });
+
+  it('Change AWS Profile opens a named dialog that Escape and Cancel dismiss', async () => {
+    const { user } = renderDataManagement();
+    const swap = await screen.findByRole('button', { name: 'Change AWS Profile' });
+
+    await user.click(swap);
+    const dialog = await screen.findByRole('dialog', { name: 'Change AWS Profile' });
+    await within(dialog).findByRole('group', { name: 'AWS profiles' });
+    await user.keyboard('{Escape}');
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Change AWS Profile' })).toBeNull(); });
+
+    await user.click(swap);
+    const reopened = await screen.findByRole('dialog', { name: 'Change AWS Profile' });
+    await user.click(within(reopened).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Change AWS Profile' })).toBeNull(); });
   });
 });
 

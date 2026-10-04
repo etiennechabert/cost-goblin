@@ -62,7 +62,7 @@ Follow this sequence for EVERY feature:
 8. Run: npm run check → full verification (MUST pass before moving on)
 9. If working on UI: npm run dev in desktop/ to visually verify
 10. After pushing & opening the PR — close the review loop (see "After pushing"):
-    - Run `/code-review max --fix` yourself (via the `Skill` tool), review the fixes it applies, and re-run npm run check
+    - Run `/code-review xhigh --fix` yourself (via the `Skill` tool), review the fixes it applies, and re-run npm run check
     - Address every sentry[bot] review comment on the PR
 ```
 
@@ -136,7 +136,7 @@ No Electron, no DuckDB, no file system.
 Full app launch pinned to fixture data via `COSTGOBLIN_DATA_DIR` / `COSTGOBLIN_CONFIG_DIR` env vars (see `e2e/helpers.ts`).
 Slow (seconds). Run before commits, always in CI.
 
-The window is hidden by default (`COSTGOBLIN_HEADLESS=1`, set by `launchApp`) so a run can't steal focus or be clicked/closed by accident mid-test. Screenshots and every assertion work unchanged. To watch a run: `COSTGOBLIN_HEADLESS=0 npx playwright test e2e/<suite>.test.ts`.
+The window is hidden by default (`COSTGOBLIN_HEADLESS=1`, set by `launchApp`) so a run can't steal focus or be clicked/closed by accident mid-test. Screenshots and every assertion work unchanged. To watch a run: `COSTGOBLIN_HEADLESS=0 npx playwright test e2e/<suite>.test.ts`. **On Linux, never run hidden.** A never-shown window gets ~1-5 frames/s there, so every Playwright click waits 1-2s on animation frames (views-core: 3.4 min hidden vs 28s shown). CI therefore runs with `COSTGOBLIN_HEADLESS=0` under `xvfb-run`, whose virtual display is the isolation. That setting is pinned by `workflow-policy.test.mjs`. On a Linux desktop, do the same: `COSTGOBLIN_HEADLESS=0 xvfb-run npx playwright test …`. The suites' debug screenshots (`screenshot()` in `e2e/helpers.ts`) are opt-in: `COSTGOBLIN_E2E_SCREENSHOTS=1` writes them to `$TMPDIR/costgoblin-e2e`.
 
 **No cloud credentials:** every launch goes through `launchElectron` in `e2e/helpers.ts` — the only `_electron` use in `e2e/` — which strips all cloud-SDK env vars from the runner's env, points AWS/GCP credential discovery (SDKs and the gcloud/aws CLIs) at an empty per-launch sandbox, and refuses to spawn if the merged env re-adds a cloud var or overrides a pin. `packages/core/src/e2e-harness/cloud-sandbox.ts` documents which variable blocks which lookup; its rules are keyed on the provider type union, so a new provider type fails `tsc` until its SDK is covered. It covers *ambient* credentials only: a credential a config names itself (a GCP `keyFile`) is used as named, and the fixture configs name none. The policy test in `e2e-cloud-sandbox.test.ts` fails on any other `_electron` use; `expectCloudSandboxed(app)` asserts the live main-process env and the sandbox's contents. Tear down with `closeApp`/`finishCoverage`, which delete the sandbox, not a bare `app.close()`.
 
@@ -225,14 +225,14 @@ So the lifecycle is: tag `v0.2.6` released → first PR bumps both to `0.2.7` �
 
 A development cycle isn't done when the code is pushed. Once the changes are pushed and the PR is open, run BOTH of the following before considering the work finished.
 
-### 1. `/code-review max --fix`
+### 1. `/code-review xhigh --fix`
 
-At the end of a dev cycle (changes just pushed), run `/code-review max --fix` — a deep, multi-agent review that applies its findings to the working tree.
+At the end of a dev cycle (changes just pushed), run `/code-review xhigh --fix` — a deep, multi-agent review that applies its findings to the working tree.
 
 - **Run it yourself via the `Skill` tool** when a cycle wraps; you don't need to wait for the user to trigger it.
-- `max` reviews the current branch; `/code-review max <PR#>` reviews a specific GitHub PR. `--fix` applies the review's findings to the working tree after it completes (use `--comment` instead to post them as inline PR comments).
+- `xhigh` reviews the current branch; `/code-review xhigh <PR#>` reviews a specific GitHub PR. `--fix` applies the review's findings to the working tree after it completes (use `--comment` instead to post them as inline PR comments).
 - After it applies fixes: review the resulting diff, run `npm run check` (build the worker first — see the versioning note above), then commit and push. Treat anything it changed as a normal change that must pass verification.
-- The lighter effort levels (`/code-review` at low…high, optionally `--fix` / `--comment`) run faster for a quick pass mid-development; `max` is the thorough end-of-cycle pass.
+- The lighter effort levels (`/code-review` at low…high, optionally `--fix` / `--comment`) run faster for a quick pass mid-development; `xhigh` is the end-of-cycle pass. Run `max` only when the user explicitly asks for it.
 
 ### 2. Sentry comments
 
@@ -281,7 +281,7 @@ Keep replies professional and free of any AI attribution (see global git rules).
 ## What NOT To Do
 
 - Do NOT skip `npm run check`. Every change must pass before moving on.
-- Do NOT consider a pushed change "done" until `/code-review max --fix` has been run on it and every `sentry[bot]` comment is addressed.
+- Do NOT consider a pushed change "done" until `/code-review xhigh --fix` has been run on it and every `sentry[bot]` comment is addressed.
 - Do NOT add `any`, `@ts-ignore`, or `eslint-disable` to make code compile.
 - Do NOT write tests after implementation. Write them before or alongside.
 - Do NOT import from `core` into `ui` for anything except types.

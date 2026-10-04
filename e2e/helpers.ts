@@ -14,7 +14,12 @@ export const ROOT = join(import.meta.dirname, '..');
 const DESKTOP_DIR = join(ROOT, 'packages', 'desktop');
 export const SCREENSHOT_DIR = join(tmpdir(), 'costgoblin-e2e');
 export const V8_DIR = join(tmpdir(), 'costgoblin-e2e-v8');
-mkdirSync(SCREENSHOT_DIR, { recursive: true });
+/** Debug screenshots from {@link screenshot} are opt-in. Nothing reads them:
+ *  CI doesn't upload SCREENSHOT_DIR, and the homepage images come from
+ *  homepage-screenshots.ts, which takes its own. Taking them on every run
+ *  cost a capture per call (~50 calls across the suites). */
+const SCREENSHOTS = process.env['COSTGOBLIN_E2E_SCREENSHOTS'] === '1';
+if (SCREENSHOTS) mkdirSync(SCREENSHOT_DIR, { recursive: true });
 mkdirSync(V8_DIR, { recursive: true });
 
 export const LOAD_TIMEOUT = 5_000;
@@ -39,6 +44,15 @@ export const FIXTURE_MULTI_CONFIG_DIR = join(ROOT, 'packages', 'core', 'src', '_
  *  would make an empty string — what a YAML `env:` entry fed by an unset input
  *  produces — and the natural guesses `true`/`yes` all silently show the
  *  window, the opposite of what they read like. Only an explicit '0' opts out.
+ *
+ *  CI opts out (ci.yml sets '0'), because hiding costs a lot there and buys
+ *  nothing. On Linux a never-shown window gets ~1-5 compositor frames per
+ *  second, so requestAnimationFrame starves. Playwright's actionability checks
+ *  wait on animation frames, so every click took 1-2s, and the suites ran ~8x
+ *  slower than with the window shown on xvfb's virtual display, which nobody
+ *  can see or click anyway. macOS keeps rendering a hidden window at full rate,
+ *  so the hidden default stays fast for local runs. On a Linux desktop, run
+ *  under `xvfb-run` with '0' rather than hidden.
  *
  *  See CLAUDE.md's Layer 4 section for the developer-facing version. */
 export const HEADLESS = process.env['COSTGOBLIN_HEADLESS'] === '0' ? '0' : '1';
@@ -385,7 +399,9 @@ export async function finishCoverage(
   }
 }
 
+/** Save a debug PNG to SCREENSHOT_DIR, only when COSTGOBLIN_E2E_SCREENSHOTS=1. */
 export async function screenshot(page: Page, name: string): Promise<void> {
+  if (!SCREENSHOTS) return;
   await page.screenshot({ path: join(SCREENSHOT_DIR, `${name}.png`) });
 }
 

@@ -4,6 +4,7 @@ import { GCLOUD_ADC_LOGIN_COMMAND, GCLOUD_CLI_LOGIN_COMMAND, splitGcsLocation } 
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { ConfirmModal } from '../components/confirm-modal.js';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '../components/ui/dialog.js';
 import { ProfilePicker } from '../components/profile-picker.js';
 import { SetupWizard } from './setup-wizard.js';
 import { OrgAccountsSection } from './data-management-org.js';
@@ -426,17 +427,12 @@ export function DataManagement() {
       )}
 
       {addProviderOpen && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={(e) => { if (e.target === e.currentTarget) setAddProviderOpen(false); }} aria-hidden="true">
-          <div className="relative">
-            <button type="button" onClick={() => { setAddProviderOpen(false); }} className="absolute -top-2 -right-2 z-10 rounded-full bg-bg-tertiary border border-border w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-bg-secondary transition-colors" title="Close">
-              &#10005;
-            </button>
-            <SetupWizard
-              mode="add"
-              onComplete={() => { setAddProviderOpen(false); onConfigChanged(); }}
-            />
-          </div>
-        </div>
+        <WizardModal label="Add provider" onClose={() => { setAddProviderOpen(false); }}>
+          <SetupWizard
+            mode="add"
+            onComplete={() => { setAddProviderOpen(false); onConfigChanged(); }}
+          />
+        </WizardModal>
       )}
     </div>
   );
@@ -537,7 +533,7 @@ function ProviderSection({ provider, soleProvider, refreshSignal, gcpIdentityRef
   const [hourlySyncState, setHourlySyncState] = useState<SyncState>({ status: 'idle' });
   const [costOptSyncState, setCostOptSyncState] = useState<SyncState>({ status: 'idle' });
 
-  const [configureSource, setConfigureSource] = useState<'daily' | 'hourly' | 'costOptimization' | null>(null);
+  const [configureSource, setConfigureSource] = useState<ConfigureSource | null>(null);
   // Lightweight profile-only swap: a tiny modal that lists ~/.aws profiles
   // and rewrites only THIS provider's credentialsProfile in costgoblin.yaml.
   const [showProfileSwap, setShowProfileSwap] = useState(false);
@@ -881,20 +877,15 @@ function ProviderSection({ provider, soleProvider, refreshSignal, gcpIdentityRef
       )}
 
       {configureSource !== null && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={(e) => { if (e.target === e.currentTarget) setConfigureSource(null); }} aria-hidden="true">
-          <div className="relative">
-            <button type="button" onClick={() => { setConfigureSource(null); }} className="absolute -top-2 -right-2 z-10 rounded-full bg-bg-tertiary border border-border w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-bg-secondary transition-colors" title="Close">
-              &#10005;
-            </button>
-            <SetupWizard
-              source={configureSource}
-              profile={awsProfile ?? 'default'}
-              providerName={name}
-              gcpSource={provider.type === 'gcp' ? gcpConfigureLocation(dailyBucket, provider.impersonateServiceAccount) : undefined}
-              onComplete={() => { setConfigureSource(null); onConfigChanged(); }}
-            />
-          </div>
-        </div>
+        <WizardModal label={`Configure ${CONFIGURE_TIER_LABEL[configureSource]} data source for ${name}`} onClose={() => { setConfigureSource(null); }}>
+          <SetupWizard
+            source={configureSource}
+            profile={awsProfile ?? 'default'}
+            providerName={name}
+            gcpSource={provider.type === 'gcp' ? gcpConfigureLocation(dailyBucket, provider.impersonateServiceAccount) : undefined}
+            onComplete={() => { setConfigureSource(null); onConfigChanged(); }}
+          />
+        </WizardModal>
       )}
 
       {showProfileSwap && awsProfile !== null && (
@@ -919,6 +910,89 @@ function ProviderSection({ provider, soleProvider, refreshSignal, gcpIdentityRef
         />
       )}
     </section>
+  );
+}
+
+type ConfigureSource = 'daily' | 'hourly' | 'costOptimization';
+
+/** The tier as the Configure dialog's accessible name words it. */
+const CONFIGURE_TIER_LABEL: Record<ConfigureSource, string> = {
+  daily: 'daily',
+  hourly: 'hourly',
+  costOptimization: 'cost optimization',
+};
+
+/** Modal chrome for a SetupWizard opened over the page (Add Provider, a
+ *  tier's Configure).
+ *
+ *  A native `<dialog open aria-modal>`, like ConfirmModal, not the Radix
+ *  Dialog: Radix centres its content with a transform, and a transformed
+ *  element becomes the containing block of every `position: fixed`
+ *  descendant — the wizard's own Import dialog would be clipped to the card
+ *  instead of covering the window.
+ *
+ *  Escape closes only the topmost dialog. While the wizard has one of its own
+ *  open (Import, which also locks itself shut during a pull), the key is that
+ *  dialog's to handle, and a key a nested layer already consumed
+ *  (`defaultPrevented`) is left alone. Focus moves in on open, stays inside
+ *  while open, and returns to the opener on close. */
+function WizardModal({ label, onClose, children }: Readonly<{
+  label: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}>): React.JSX.Element {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  // Captured during the first render: by the time an effect runs, a wizard
+  // step that autofocuses an input has already moved focus off the opener.
+  const [opener] = useState(() => document.activeElement);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (dialog !== null && !dialog.contains(document.activeElement)) dialog.focus();
+    // aria-modal tells assistive tech the page behind is inert, so focus must
+    // not reach it: anything Tab (or a click) moves out is pulled back in.
+    function keepFocusInside(e: FocusEvent): void {
+      const current = dialogRef.current;
+      if (current !== null && e.target instanceof Node && !current.contains(e.target)) current.focus();
+    }
+    document.addEventListener('focusin', keepFocusInside);
+    return () => {
+      document.removeEventListener('focusin', keepFocusInside);
+      if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+    };
+  }, [opener]);
+
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent): void {
+      // isComposing: that Escape cancels an IME candidate, not the wizard.
+      if (e.key !== 'Escape' || e.isComposing || e.defaultPrevented) return;
+      const dialog = dialogRef.current;
+      if (dialog === null || dialog.querySelector('dialog[open], [role="dialog"]') !== null) return;
+      onClose();
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => { document.removeEventListener('keydown', handleKey); };
+  }, [onClose]);
+
+  return (
+    // no-drag: the modal opens over the app header, a window drag region —
+    // without the opt-out, clicks there would drag the window. (#317)
+    <dialog
+      ref={dialogRef}
+      open
+      aria-modal="true"
+      aria-label={label}
+      tabIndex={-1}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-transparent m-0 p-4 max-w-none max-h-none w-full h-full border-none outline-none [-webkit-app-region:no-drag]"
+    >
+      <div data-testid="modal-backdrop" className="absolute inset-0 bg-black/50" onClick={onClose} aria-hidden="true" />
+      <div className="relative">
+        <button type="button" onClick={onClose} className="absolute -top-2 -right-2 z-10 rounded-full bg-bg-tertiary border border-border w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-bg-secondary transition-colors" aria-label="Close">
+          &#10005;
+        </button>
+        {children}
+      </div>
+    </dialog>
   );
 }
 
@@ -950,12 +1024,12 @@ function ProfileSwapModal({ currentProfile, providerName, onClose, onSaved }: Re
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }} aria-hidden="true">
-      <div className="relative rounded-xl border border-border bg-bg-secondary p-6 shadow-2xl max-w-md w-full">
-        <h3 className="text-base font-semibold text-text-primary">Change AWS Profile</h3>
-        <p className="text-xs text-text-muted mt-1">
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent>
+        <DialogTitle className="text-base">Change AWS Profile</DialogTitle>
+        <DialogDescription className="text-xs text-text-muted mt-1">
           Buckets and other config stay as-is — this only swaps the profile <span className="font-mono">{providerName}</span> uses to talk to AWS.
-        </p>
+        </DialogDescription>
 
         {profilesQuery.status === 'loading' && (
           <p className="text-sm text-text-secondary mt-4">Loading profiles…</p>
@@ -1000,7 +1074,7 @@ function ProfileSwapModal({ currentProfile, providerName, onClose, onSaved }: Re
             {saving ? 'Saving…' : 'Save'}
           </button>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
