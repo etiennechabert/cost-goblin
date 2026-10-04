@@ -400,27 +400,24 @@ describe('SetupWizard — GCP', () => {
     expect(screen.getByLabelText('Set up from AWS')).toBeDefined();
   });
 
-  it('states the exporter prerequisite before offering to write anything', async () => {
+  it('sends first-time users to the setup guide before offering to write anything', async () => {
     const { user } = renderWizard();
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await waitFor(() => { expect(screen.getByText('scripts/gcp-focus-exporter')).toBeDefined(); });
-    expect(screen.getByText('gcloud auth application-default login')).toBeDefined();
+    const guide = await screen.findByRole('link', { name: 'Google Cloud setup guide' });
+    expect(guide.getAttribute('href')).toBe('https://costgoblin.com/#get-started-gcp');
     // Nothing to restart into yet — the confirm button appears only once the
     // template has actually been written.
     expect(screen.queryByText(/I've saved it/)).toBeNull();
   });
 
-  it('describes what the GCP sign-in can reach without overstating it', async () => {
-    // Approvers read this screen to decide whether a read-only service account
-    // is required. On the default sign-in CostGoblin acts with all of the
-    // user's permissions, so it must not claim it can't reach BigQuery — only
-    // that it never calls it — and it must point at the confined alternative.
+  it('does not overstate what the GCP sign-in can reach', async () => {
+    // Approvers decide on a read-only service account from what they read.
+    // The full statement lives in the guide; this screen must not contradict
+    // it by claiming CostGoblin cannot reach BigQuery.
     const { user } = renderWizard();
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await waitFor(() => { expect(screen.getByText('scripts/gcp-focus-exporter')).toBeDefined(); });
-    expect(screen.queryByText(/credentials that can reach BigQuery/i)).toBeNull();
-    expect(screen.getByText(/never calls BigQuery/i)).toBeDefined();
-    expect(screen.getByText(/read-only service account/i)).toBeDefined();
+    await screen.findByRole('link', { name: 'Google Cloud setup guide' });
+    expect(screen.queryByText(/reach BigQuery/i)).toBeNull();
   });
 
   it('scaffolds the GCP arm, not the AWS one', async () => {
@@ -714,7 +711,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await user.click(screen.getByText('Find my export'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Write the config by hand instead');
-    await waitFor(() => { expect(screen.getByText('scripts/gcp-focus-exporter')).toBeDefined(); });
+    await screen.findByRole('link', { name: 'Google Cloud setup guide' });
     await userClickText(user, 'Write the config by hand instead');
     await waitFor(() => { expect(api.scaffoldedFor).toEqual(['gcp']); });
   });
@@ -968,6 +965,113 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await userClickText(user, '← Back');
     await waitFor(() => { expect(screen.getByText('Find my export')).toBeDefined(); });
     expect(onComplete).not.toHaveBeenCalled();
+  });
+});
+
+describe('SetupWizard — GCP "Signed in as" panel', () => {
+  function signedInPanel(): HTMLElement | null {
+    return screen.queryByRole('region', { name: 'Signed in as' });
+  }
+
+  it('shows on every GCP step that touches credentials, and nowhere else', async () => {
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    expect(signedInPanel()).toBeNull();
+
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await waitFor(() => { expect(signedInPanel()).not.toBeNull(); });
+
+    await user.click(screen.getByText('Find my export'));
+    await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
+    expect(signedInPanel()).not.toBeNull();
+    await userClickText(user, 'Acme Production');
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    expect(signedInPanel()).not.toBeNull();
+    await userClickText(user, 'acme-focus-export');
+    await waitFor(() => { expect(screen.getByLabelText('Open folder focus')).toBeDefined(); });
+    expect(signedInPanel()).not.toBeNull();
+
+    await user.click(screen.getByLabelText('Open folder focus'));
+    await waitFor(() => { expect(screen.getByLabelText('Open folder daily')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder daily'));
+    await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
+    await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('Skip')).toBeDefined(); });
+    expect(signedInPanel()).not.toBeNull();
+    await userClickText(user, 'Skip');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+    expect(signedInPanel()).toBeNull();
+  });
+
+  it('asks without a provider name — none exists yet — and does not re-run gcloud per step', async () => {
+    const { api, user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.click(screen.getByText('Find my export'));
+    await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
+    await userClickText(user, 'Acme Production');
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    expect(api.gcpIdentitiesRequestedFor).toHaveLength(1);
+    expect(api.gcpIdentitiesRequestedFor[0]).toBeUndefined();
+  });
+
+  it('never asks about an AWS provider s name after backing out of its Configure into Google Cloud', async () => {
+    // Per-tier Configure (source mode) is AWS-only and fixes the provider
+    // name; Back → Back still reaches the hub's Google Cloud tile.
+    const { api, user } = renderWizard({ source: 'daily', profile: 'default' });
+    await waitFor(() => { expect(screen.getByText('my-cur-bucket')).toBeDefined(); });
+    await userClickText(user, '← Back');
+    await waitFor(() => { expect(screen.queryByText('my-cur-bucket')).toBeNull(); });
+    await userClickText(user, '← Back');
+    await user.click(await screen.findByLabelText('Set up from Google Cloud'));
+    await waitFor(() => { expect(signedInPanel()).not.toBeNull(); });
+    await waitFor(() => { expect(api.gcpIdentitiesRequestedFor).toHaveLength(1); });
+    expect(api.gcpIdentitiesRequestedFor[0]).toBeUndefined();
+  });
+
+  it('flags, in one line, gcloud being switched to another account on the project step', async () => {
+    const { api, user } = renderWizard();
+    api.gcpIdentitiesResult = {
+      status: 'ok',
+      identities: {
+        listing: { kind: 'user', file: { path: '/adc.json', origin: 'well-known' }, account: { status: 'known', email: 'alice@acme.com' } },
+        download: { kind: 'gcloud', account: 'admin@acme.com', configuration: 'admin' },
+        splitAccounts: { listingAccount: 'alice@acme.com', downloadAccount: 'admin@acme.com' },
+      },
+    };
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.click(screen.getByText('Find my export'));
+    const panel = await screen.findByRole('region', { name: 'Signed in as' });
+    await waitFor(() => { expect(panel.textContent).toContain('admin@acme.com'); });
+    expect(panel.textContent).toContain('Bucket access is signed in as alice@acme.com — a different account.');
+  });
+
+  it('re-reads the identities when the browse step is retried after a sign-in', async () => {
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    await enterGcpBrowse(user);
+    api.gcsBrowseByPrefix = {
+      ...api.gcsBrowseByPrefix,
+      'focus/': { prefixes: [], folder: { kind: 'unknown' }, hasParquet: false, truncated: false, error: 'Could not load the default credentials.' },
+    };
+    await user.click(screen.getByLabelText('Open folder focus'));
+    await waitFor(() => { expect(screen.getByText('Could not load the default credentials.')).toBeDefined(); });
+    const before = api.gcpIdentitiesRequestedFor.length;
+    // Plain navigation never re-reads the panel...
+    expect(before).toBe(1);
+    await user.click(screen.getByRole('button', { name: /Retry/ }));
+    // ...a Retry does: it usually follows the sign-in the error offered.
+    await waitFor(() => { expect(api.gcpIdentitiesRequestedFor).toHaveLength(before + 1); });
+  });
+
+  it('re-reads the identities when a step is retried', async () => {
+    const { api, user } = renderWizard();
+    api.gcpProjectsResult = { projects: [], error: 'ERROR: (gcloud.projects.list) You do not currently have an active account selected.' };
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.click(screen.getByText('Find my export'));
+    await waitFor(() => { expect(screen.getByText('Retry')).toBeDefined(); });
+    const before = api.gcpIdentitiesRequestedFor.length;
+    await userClickText(user, 'Retry');
+    await waitFor(() => { expect(api.gcpIdentitiesRequestedFor).toHaveLength(before + 1); });
   });
 });
 
