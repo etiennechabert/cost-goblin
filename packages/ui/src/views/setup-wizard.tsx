@@ -1,5 +1,5 @@
 import type { ConfigBundleSummary, GcpProject, GcsDownloadCheckResult, GcsFolderKind, ProviderConfig } from '@costgoblin/core/browser';
-import { DEFAULT_READER_ACCOUNT_ID, DEFAULT_RETENTION_DAYS, GCP_PROJECT_ID_RULES, gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isValidGcpProjectId, isValidWorkspaceName, parseProviderName, resolveReaderInput, SERVICE_ACCOUNT_EMAIL_RULE } from '@costgoblin/core/browser';
+import { DEFAULT_READER_ACCOUNT_ID, DEFAULT_RETENTION_DAYS, GCP_PROJECT_ID_RULES, gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isGcpImpersonationError, isValidGcpProjectId, isValidWorkspaceName, parseProviderName, resolveReaderInput, SERVICE_ACCOUNT_EMAIL_RULE } from '@costgoblin/core/browser';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { Card, CardContent } from '../components/ui/card.js';
@@ -31,10 +31,19 @@ interface GcpProjectChoice { readonly id: string; readonly typed: boolean }
 // a GCP provider, which knows its bucket but no project (the config records
 // none, and browsing a bucket needs none). Listing buckets does need one.
 
+/** Continue on the GCP intro proves the reader can be read as before moving
+ *  on: the project's bucket listing runs as it, and an impersonation refusal
+ *  (no such account in the project, or no Token Creator on it) stays on the
+ *  intro, beside the field that names it. Keyed by the reader and project it
+ *  ran for, so editing either drops a stale verdict. */
+type GcpReaderCheck =
+  | { readonly status: 'checking' }
+  | { readonly status: 'denied'; readonly reader: string; readonly project: string; readonly message: string };
+
 type WizardStep =
   | { step: 'welcome' }
   | { step: 'start' }
-  | { step: 'gcp'; scaffolded: boolean; error: string }
+  | { step: 'gcp'; scaffolded: boolean; error: string; check?: GcpReaderCheck }
   | { step: 'gcp-project'; projects: readonly GcpProject[]; loading: boolean; selected: string; error: string }
   | { step: 'gcp-bucket'; project: GcpProjectChoice | null; source: GcpSource; buckets: readonly { name: string }[]; loading: boolean; selected: string; error: string }
   | { step: 'gcp-browse'; project: GcpProjectChoice | null; source: GcpSource; bucket: string; prefix: string; prefixes: readonly string[]; loading: boolean; folder: GcsFolderKind; hasParquet: boolean; truncated: boolean; error: string; path: string[] }
@@ -417,14 +426,14 @@ function readerSummary(input: ReturnType<typeof resolveReaderInput>): string | u
  * can't browse at all.
  */
 function GcpIntroStep({ state, reader, onReaderChange, onBrowse, onProjectId, onScaffold, onDone, onBack }: Readonly<{
-  state: { scaffolded: boolean; error: string };
+  state: Extract<WizardStep, { step: 'gcp' }>;
   /** The read-only service account to browse and sync as: a full address,
    *  or a bare account name completed with the project; '' for none. */
   reader: string;
   onReaderChange: (reader: string) => void;
   /** Opens the `gcloud projects list` picker. */
   onBrowse: () => void;
-  /** Continue with the typed project ID — straight to its buckets. */
+  /** Continue with the typed project ID: checks the reader, then its buckets. */
   onProjectId: (projectId: string) => void;
   onScaffold: () => void;
   onDone: () => void;
@@ -444,7 +453,9 @@ function GcpIntroStep({ state, reader, onReaderChange, onBrowse, onProjectId, on
   const readerInvalid = readerInput.kind === 'invalid';
   // The picker path resolves later, against the project picked there.
   const readerNameInvalid = resolveReaderInput(reader, undefined).kind === 'invalid';
-  const canContinue = projectValid && !readerInvalid;
+  const checking = state.check?.status === 'checking';
+  const canContinue = projectValid && !readerInvalid && !checking;
+  const denial = readerDenialFor(state.check, readerInput, trimmedProject);
 
   // A latch, adjusted during render: opens for a non-default or invalid value
   // (including one prefilled after mount), and is never cleared here — typing
@@ -536,6 +547,7 @@ function GcpIntroStep({ state, reader, onReaderChange, onBrowse, onProjectId, on
             </button>
           )}
         </div>
+        {denial !== undefined && <GcpReaderDenied reader={denial.reader} project={denial.project} message={denial.message} />}
         <div id="gcp-reader-field" hidden={!readerOpen} className="flex flex-col gap-1.5">
           <label htmlFor="gcp-reader" className="text-xs text-text-muted">
             Read-only service account
@@ -560,7 +572,7 @@ function GcpIntroStep({ state, reader, onReaderChange, onBrowse, onProjectId, on
       </div>
       <div className="flex w-full max-w-xs flex-col gap-3">
         <Button onClick={submit} disabled={!canContinue} className="bg-accent hover:bg-accent-hover text-white">
-          Continue
+          {checking ? 'Checking access…' : 'Continue'}
         </Button>
         <button
           type="button"
@@ -587,6 +599,43 @@ function GcpIntroStep({ state, reader, onReaderChange, onBrowse, onProjectId, on
       <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">
         ← Back
       </button>
+    </div>
+  );
+}
+
+/** `name@project.iam.gserviceaccount.com` → `name`: the project is on screen
+ *  beside it, and the full address wraps the one-line messages. */
+function accountName(address: string): string {
+  return address.split('@')[0] ?? address;
+}
+
+/** The intro's reader refusal, while the field and project still say what it
+ *  was checked against — an edit to either makes it stale. */
+function readerDenialFor(
+  check: GcpReaderCheck | undefined,
+  input: ReturnType<typeof resolveReaderInput>,
+  project: string,
+): Extract<GcpReaderCheck, { status: 'denied' }> | undefined {
+  if (check?.status !== 'denied' || input.kind !== 'address') return undefined;
+  return check.reader === input.address && check.project === project ? check : undefined;
+}
+
+/** The impersonation refusal in one line. IAM answers a missing account and a
+ *  missing Token Creator grant identically, so the line names both; the
+ *  rewritten message — the grant command and the raw denial — is one click
+ *  away. */
+function GcpReaderDenied({ reader, project, message }: Readonly<{ reader: string; project: string | undefined; message: string }>) {
+  return (
+    <div role="alert" className="text-left">
+      <p className="text-xs text-negative">
+        Can&apos;t read as <code>{accountName(reader)}</code> — it doesn&apos;t exist
+        {project === undefined ? '' : <> in <code>{project}</code></>}, or your Google account lacks
+        the Token Creator role on it.
+      </p>
+      <details className="mt-1">
+        <summary className="text-xs text-text-muted cursor-pointer hover:text-text-secondary">Details</summary>
+        <p className="mt-1.5 whitespace-pre-wrap break-words font-mono text-[11px] text-text-muted">{message}</p>
+      </details>
     </div>
   );
 }
@@ -690,7 +739,9 @@ function GcpError({ message, mode, onRetry }: Readonly<{
  *  the wizard's place. `role="alert"` for the same reason it uses one: this
  *  panel is inserted already-populated, and a polite region added that way is
  *  inconsistently announced. */
-function GcpBucketListDenied({ project, message, detailsOpen, onToggleDetails, onRetry }: Readonly<{
+function GcpBucketListDenied({ reader, project, message, detailsOpen, onToggleDetails, onRetry }: Readonly<{
+  /** The service account that was refused; undefined for the user's own login. */
+  reader: string | undefined;
   project: string;
   message: string;
   detailsOpen: boolean;
@@ -706,8 +757,8 @@ function GcpBucketListDenied({ project, message, detailsOpen, onToggleDetails, o
     // `aria-atomic="false"` so opening Details announces only what it reveals.
     <div role="status" aria-atomic="false">
       <p className="text-xs text-text-secondary">
-        This account can&apos;t list the buckets in <code className="text-text-secondary">{project}</code> — enter the
-        bucket name below, or grant it bucket listing (see Details).
+        {reader === undefined ? 'Your account' : <code className="text-text-secondary">{accountName(reader)}</code>}{' '}
+        can&apos;t list the buckets in <code className="text-text-secondary">{project}</code> — enter the bucket name below.
       </p>
       <details
         className="mt-1"
@@ -937,8 +988,10 @@ function GcpProjectStep({ state, onSelect, onTyped, onManual, onBack, onRetry }:
 }
 
 /** Step 2b-ii — pick the bucket. Sister of `BucketStep`, against GCS. */
-function GcpBucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
+function GcpBucketStep({ state, reader, onSelect, onSkip, onBack, onRetry }: Readonly<{
   state: Extract<WizardStep, { step: 'gcp-bucket' }>;
+  /** Who the listing ran as — the full address, or undefined for the ADC login. */
+  reader: string | undefined;
   onSelect: (bucket: string) => void;
   onSkip?: (() => void) | undefined;
   onBack: () => void;
@@ -962,6 +1015,8 @@ function GcpBucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
   const sourceLabel = SOURCE_LABELS[state.source];
   // Only a listing can be denied, and only a project can be listed.
   const deniedProject = state.project !== null && isGcpBucketListDeniedMessage(state.error) ? state.project.id : null;
+  // The project picker reaches here without the intro's reader check.
+  const readerRefused = reader !== undefined && isGcpImpersonationError(new Error(state.error));
 
   return (
     <div className="flex flex-col gap-5">
@@ -978,6 +1033,7 @@ function GcpBucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
       {deniedProject !== null
         ? (
           <GcpBucketListDenied
+            reader={reader}
             project={deniedProject}
             message={state.error}
             detailsOpen={detailsOpen}
@@ -985,7 +1041,9 @@ function GcpBucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
             onRetry={onRetry}
           />
         )
-        : <GcpError message={state.error} mode="adc" onRetry={onRetry} />}
+        : readerRefused
+          ? <GcpReaderDenied reader={reader} project={state.project?.id} message={state.error} />
+          : <GcpError message={state.error} mode="adc" onRetry={onRetry} />}
 
       {state.loading ? (
         <div className="flex items-center justify-center py-8">
@@ -1174,14 +1232,22 @@ function GcpBrowseStep({ state, conflictsWith, onNavigate, onRetry, onConfirm, o
         </div>
       )}
 
+      {/* The action sits on the verdict that enables it: until a folder is an
+          export there is nothing to use, so no button at all — a disabled one
+          in the footer read as a step the user was missing. */}
       {selectable && state.folder.kind === 'export' && (
-        <div className="rounded-lg border border-accent/40 bg-accent/5 px-4 py-3">
-          <p className="text-sm font-medium text-accent">FOCUS export detected</p>
-          <p className="text-xs text-text-secondary mt-0.5">
-            Found {state.folder.periods.length} billing{' '}
-            {state.folder.periods.length === 1 ? 'period' : 'periods'} ({state.folder.periods[0]}
-            {state.folder.periods.length > 1 ? ` – ${String(state.folder.periods[state.folder.periods.length - 1])}` : ''})
-          </p>
+        <div className="flex items-center justify-between gap-4 rounded-lg border border-accent/40 bg-accent/5 px-4 py-3">
+          <div>
+            <p className="text-sm font-medium text-accent">FOCUS export detected</p>
+            <p className="text-xs text-text-secondary mt-0.5">
+              Found {state.folder.periods.length} billing{' '}
+              {state.folder.periods.length === 1 ? 'period' : 'periods'} ({state.folder.periods[0]}
+              {state.folder.periods.length > 1 ? ` – ${String(state.folder.periods[state.folder.periods.length - 1])}` : ''})
+            </p>
+          </div>
+          <Button onClick={onConfirm} className="shrink-0 bg-accent hover:bg-accent-hover text-white">
+            Use this location
+          </Button>
         </div>
       )}
 
@@ -1224,18 +1290,9 @@ function GcpBrowseStep({ state, conflictsWith, onNavigate, onRetry, onConfirm, o
 
       <div className="flex items-center justify-between pt-2">
         <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
-        <div className="flex items-center gap-3">
-          {onSkip !== undefined && (
-            <button type="button" onClick={onSkip} className="text-xs text-text-muted hover:text-text-secondary underline underline-offset-2">Skip</button>
-          )}
-          <Button
-            onClick={onConfirm}
-            disabled={!selectable}
-            className="bg-accent hover:bg-accent-hover text-white px-8"
-          >
-            {selectable ? 'Use this location' : 'Select an export folder'}
-          </Button>
-        </div>
+        {onSkip !== undefined && (
+          <button type="button" onClick={onSkip} className="text-xs text-text-muted hover:text-text-secondary underline underline-offset-2">Skip</button>
+        )}
       </div>
     </div>
   );
@@ -2202,11 +2259,34 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     reloadGcpProjects();
   }
 
-  /** Enter the GCP browse flow with a typed project ID — straight to the
-   *  bucket step, never running `gcloud projects list`. */
+  /** Enter the GCP browse flow with a typed project ID, never running
+   *  `gcloud projects list`. The bucket listing runs while the intro is still
+   *  on screen, so a reader that can't be read as is reported there — beside
+   *  the field to fix — instead of one step later. Any other outcome (buckets,
+   *  a listing denial, a sign-in) is the bucket step's to show. */
   function startGcpFromTypedProject(projectId: string): void {
     setCollectedPaths(EMPTY_PATHS);
-    startGcpBucketStep({ id: projectId, typed: true }, 'daily');
+    const project: GcpProjectChoice = { id: projectId, typed: true };
+    const reader = gcpReaderFor(project);
+    const token = ++stepRequestRef.current;
+    const toBucketStep = (buckets: readonly { name: string }[], error: string): void => {
+      setWizard({ step: 'gcp-bucket', project, source: 'daily', buckets, loading: false, selected: '', error });
+    };
+    setWizard(prev => prev.step === 'gcp' ? { ...prev, check: { status: 'checking' } } : prev);
+    api.listGcsBuckets(projectId, reader).then(result => {
+      if (stepRequestRef.current !== token) return;
+      const error = result.error ?? '';
+      if (reader !== undefined && isGcpImpersonationError(new Error(error))) {
+        setWizard(prev => prev.step === 'gcp'
+          ? { ...prev, check: { status: 'denied', reader, project: projectId, message: error } }
+          : prev);
+        return;
+      }
+      toBucketStep(result.buckets, error);
+    }).catch((err: unknown) => {
+      if (stepRequestRef.current !== token) return;
+      toBucketStep([], err instanceof Error ? err.message : String(err));
+    });
   }
 
   /** The listing half of `goToGcpProjectStep`, without the `collectedPaths`
@@ -2633,6 +2713,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
           {wizard.step === 'gcp-bucket' && (
             <GcpBucketStep
               state={wizard}
+              reader={gcpReaderFor(wizard.project)}
               onSelect={(bucket) => { gcpBrowseTo(wizard.project, wizard.source, bucket, ''); }}
               // Per-tier Configure came for this one tier; ✕ is the way out.
               onSkip={wizard.source === 'daily' || gcpSourceMode !== undefined ? undefined : handleGcpSkip}

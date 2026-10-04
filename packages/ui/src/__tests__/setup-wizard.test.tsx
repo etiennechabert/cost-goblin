@@ -745,8 +745,10 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await enterGcpBrowse(user);
     await user.click(screen.getByLabelText('Open folder focus'));
     await waitFor(() => { expect(screen.getByText('This is the parent folder — go one level deeper')).toBeDefined(); });
-    const useIt = screen.getByRole('button', { name: 'Select an export folder' });
-    expect(useIt.hasAttribute('disabled')).toBe(true);
+    // Nothing to use until a folder is an export: the action lives on the
+    // "FOCUS export detected" card, not as a disabled footer button.
+    expect(screen.queryByRole('button', { name: 'Use this location' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Select an export folder' })).toBeNull();
   });
 
   it('accepts the tier folder and reports the periods it found', async () => {
@@ -758,7 +760,10 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await user.click(screen.getByLabelText('Open folder daily'));
     await waitFor(() => { expect(screen.getByText('FOCUS export detected')).toBeDefined(); });
     expect(screen.getByText('Found 2 billing periods (2026-06 – 2026-07)')).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Use this location' }).hasAttribute('disabled')).toBe(false);
+    const useIt = screen.getByRole('button', { name: 'Use this location' });
+    expect(useIt.hasAttribute('disabled')).toBe(false);
+    // On the verdict card that enables it.
+    expect(screen.getByText('FOCUS export detected').closest('div.rounded-lg')?.contains(useIt)).toBe(true);
   });
 
   it('writes a gcp provider with a gs:// path and no AWS profile', async () => {
@@ -1057,7 +1062,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await user.click(screen.getByLabelText('Open folder daily'));
 
     await waitFor(() => { expect(screen.getByText('Already used by the daily tier')).toBeDefined(); });
-    expect(screen.getByRole('button', { name: 'Select an export folder' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Use this location' })).toBeNull();
   });
 
   it('defaults the provider name to the gcp arm, not aws-main', async () => {
@@ -1088,7 +1093,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await waitFor(() => { expect(screen.getByLabelText('Open folder daily')).toBeDefined(); });
     await user.click(screen.getByLabelText('Open folder daily'));
     await waitFor(() => { expect(screen.getByText('No Parquet files in this export yet')).toBeDefined(); });
-    expect(screen.getByRole('button', { name: 'Select an export folder' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Use this location' })).toBeNull();
   });
 
   it('offers an inline sign-in when listing projects fails on credentials', async () => {
@@ -1268,6 +1273,8 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await userClickText(user, 'Acme Production');
 
     await waitFor(() => { expect(screen.getByText(/can't list the buckets in/i)).toBeDefined(); });
+    // One line naming the refused reader, not "this account".
+    expect(screen.getByRole('status').textContent).toMatch(/^costgoblin-reader can't list the buckets in acme-prod — enter the bucket name below\./);
     // A status, not an alert: with the recommended reader this is the normal path.
     expect(screen.queryByRole('alert')).toBeNull();
     // The fixture DOES contain the Troubleshooter URL — the point is that the
@@ -2165,3 +2172,77 @@ async function reachHourlyConfirm(user: ReturnType<typeof userEvent.setup>): Pro
   await userClickText(user, 'Use this location');
   await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
 }
+
+/** What `setup:list-gcs-buckets` answers when the reader can't be minted:
+ *  `describeGcpImpersonationFailure` around google-auth-library's wrapper. */
+const READER_REFUSED =
+  'CostGoblin could not read as costgoblin-reader@acme-prod.iam.gserviceaccount.com. Check that the service account exists, '
+  + 'that your Google account has roles/iam.serviceAccountTokenCreator on it — Details: Could not refresh access token: '
+  + 'unable to impersonate: Failed to impersonate: PERMISSION_DENIED';
+
+describe('SetupWizard — GCP reader check on Continue', () => {
+  it('stays on the intro with one line when the reader cannot be read as', async () => {
+    const { api, user } = renderWizard();
+    api.gcsBucketsResult = { buckets: [], error: READER_REFUSED };
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.type(screen.getByLabelText('Google Cloud project'), 'acme-prod{Enter}');
+
+    await waitFor(() => { expect(screen.getByRole('alert')).toBeDefined(); });
+    expect(screen.getByRole('alert').textContent).toMatch(
+      /^Can't read as costgoblin-reader — it doesn't exist in acme-prod, or your Google account lacks the Token Creator role on it\./,
+    );
+    // Still the intro, checked as the completed default.
+    expect(screen.getByLabelText('Google Cloud project')).toBeDefined();
+    expect(api.gcsBucketsListedAs).toEqual([DEFAULT_READER]);
+    // The full remedy stays one click away, not on the page.
+    expect(screen.getByText(READER_REFUSED).closest('details')?.open).toBe(false);
+  });
+
+  it('drops the verdict once the reader is edited, and re-checks on Continue', async () => {
+    const { api, user } = renderWizard();
+    api.gcsBucketsResult = { buckets: [], error: READER_REFUSED };
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.type(screen.getByLabelText('Google Cloud project'), 'acme-prod{Enter}');
+    await waitFor(() => { expect(screen.getByRole('alert')).toBeDefined(); });
+
+    await openReaderField(user);
+    await user.clear(screen.getByLabelText('Read-only service account'));
+    await user.type(screen.getByLabelText('Read-only service account'), 'other-reader');
+    expect(screen.queryByRole('alert')).toBeNull();
+
+    api.gcsBucketsResult = { buckets: [{ name: 'acme-focus-export' }] };
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    expect(api.gcsBucketsListedAs).toEqual([DEFAULT_READER, 'other-reader@acme-prod.iam.gserviceaccount.com']);
+  });
+
+  it('says it is checking while the listing runs', async () => {
+    const { api, user } = renderWizard();
+    let resolveBuckets: ((r: { buckets: readonly { name: string }[] }) => void) | undefined;
+    api.listGcsBuckets = () => new Promise((r) => { resolveBuckets = r; });
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.type(screen.getByLabelText('Google Cloud project'), 'acme-prod{Enter}');
+
+    const checking = screen.getByRole('button', { name: 'Checking access…' });
+    expect(checking.hasAttribute('disabled')).toBe(true);
+    await act(async () => {
+      resolveBuckets?.({ buckets: [{ name: 'acme-focus-export' }] });
+      await Promise.resolve();
+    });
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+  });
+
+  it('shows the same line on the bucket step when the project was picked from the list', async () => {
+    const { api, user } = renderWizard();
+    api.gcsBucketsResult = { buckets: [], error: READER_REFUSED };
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.click(screen.getByText('Choose from my projects'));
+    await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
+    await userClickText(user, 'Acme Production');
+
+    await waitFor(() => { expect(screen.getByText(/^Can't read as/)).toBeDefined(); });
+    expect(screen.getByText(/^Can't read as/).textContent).toMatch(/costgoblin-reader — it doesn't exist in acme-prod/);
+    // Not offered as a sign-in: no login fixes a missing grant.
+    expect(screen.queryByText(/Sign in/)).toBeNull();
+  });
+});
