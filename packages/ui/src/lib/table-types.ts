@@ -1,33 +1,55 @@
-import type { ColumnDef, CellContext, RowData } from '@tanstack/react-table';
+import {
+  createSortedRowModel,
+  metaHelper,
+  rowSortingFeature,
+  sortFn_alphanumeric,
+  sortFn_datetime,
+  sortFn_text,
+  tableFeatures,
+} from '@tanstack/react-table';
+import type { CellContext, ColumnDef, RowData } from '@tanstack/react-table';
 
-declare module '@tanstack/react-table' {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  interface ColumnMeta<TData extends RowData, TValue> {
-    align?: 'left' | 'right' | undefined;
-    mono?: boolean | undefined;
-    truncate?: boolean | undefined;
-    dimId?: string | null | undefined;
-    clickable?: boolean | undefined;
-  }
-}
-
-export interface TableColumn<TData> {
-  readonly id: string;
-  readonly header: string;
-  readonly accessorFn?: ((row: TData) => unknown) | undefined;
-  readonly cell?: ((value: unknown, row: TData) => React.ReactNode) | undefined;
+/** Per-column metadata read by DataTable's header/cell renderers. Declared
+ *  through the per-table `columnMeta` slot below rather than a global
+ *  `declare module` merge on `ColumnMeta`. */
+export interface DataTableColumnMeta {
   readonly align?: 'left' | 'right' | undefined;
   readonly mono?: boolean | undefined;
   readonly truncate?: boolean | undefined;
   readonly dimId?: string | null | undefined;
   readonly clickable?: boolean | undefined;
-  readonly sortable?: boolean | undefined;
-  readonly hideable?: boolean | undefined;
-  readonly pinnable?: boolean | undefined;
 }
 
-export function toColumnDefs<TData>(columns: readonly TableColumn<TData>[]): ColumnDef<TData>[] {
-  return columns.map((col): ColumnDef<TData> => {
+/** The TanStack v9 feature set every DataTable is built with. v9 bundles no
+ *  features by default: sorting state/APIs, the client-side sorted row model
+ *  and the sort functions `sortFn: 'auto'` may pick are all opt-in. The
+ *  registered sortFns are exactly the ones v8's auto-sort chose between
+ *  (`basic` is the built-in fallback and needs no registration). */
+export const dataTableFeatures = tableFeatures({
+  rowSortingFeature,
+  sortedRowModel: createSortedRowModel(),
+  sortFns: {
+    alphanumeric: sortFn_alphanumeric,
+    datetime: sortFn_datetime,
+    text: sortFn_text,
+  },
+  columnMeta: metaHelper<DataTableColumnMeta>(),
+});
+
+export type DataTableFeatures = typeof dataTableFeatures;
+
+export interface TableColumn<TData> extends DataTableColumnMeta {
+  readonly id: string;
+  readonly header: string;
+  readonly accessorFn?: ((row: TData) => unknown) | undefined;
+  readonly cell?: ((value: unknown, row: TData) => React.ReactNode) | undefined;
+  readonly sortable?: boolean | undefined;
+}
+
+export function toColumnDefs<TData extends RowData>(
+  columns: readonly TableColumn<TData>[],
+): ColumnDef<DataTableFeatures, TData>[] {
+  return columns.map((col): ColumnDef<DataTableFeatures, TData> => {
     const base = {
       id: col.id,
       header: col.header,
@@ -39,8 +61,6 @@ export function toColumnDefs<TData>(columns: readonly TableColumn<TData>[]): Col
         clickable: col.clickable,
       },
       enableSorting: col.sortable !== false,
-      enableHiding: col.hideable !== false,
-      enablePinning: col.pinnable === true,
     };
 
     if (col.accessorFn !== undefined) {
@@ -50,7 +70,7 @@ export function toColumnDefs<TData>(columns: readonly TableColumn<TData>[]): Col
         return {
           ...base,
           accessorFn: fn,
-          cell: (info: CellContext<TData, unknown>) => cellRenderer(info.getValue(), info.row.original),
+          cell: (info: CellContext<DataTableFeatures, TData>) => cellRenderer(info.getValue(), info.row.original),
         };
       }
       return { ...base, accessorFn: fn };

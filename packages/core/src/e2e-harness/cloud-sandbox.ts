@@ -25,7 +25,7 @@
  * none, so pointing a launch at a real config means accepting that.
  *
  * Checked against the SDKs and CLIs the app ships (google-auth-library 9,
- * gcp-metadata 6, @google-cloud/storage 7, @aws-sdk credential-provider-node
+ * gcp-metadata 6, @google-cloud/storage 8, @aws-sdk credential-provider-node
  * 3, the gcloud CLI):
  *
  * - `GOOGLE_APPLICATION_CREDENTIALS` must be SET, not merely unset. Unset (or
