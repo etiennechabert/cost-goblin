@@ -54,11 +54,10 @@ Release builds check GitHub Releases for a new version once at launch and prompt
 ## Quick Start
 
 ```bash
-npm install
 make dev
 ```
 
-On first launch, the setup wizard guides you through connecting to your AWS billing data.
+`make dev` installs dependencies with `npm ci` on its first run, and again whenever `package-lock.json` changes (after a pull or a branch switch). On first launch, the setup wizard guides you through connecting to your AWS billing data.
 
 ## Prerequisites
 
@@ -221,7 +220,7 @@ The app data directory of a release build is:
 | Windows | `%APPDATA%\costgoblin\` |
 | Linux | `~/.config/costgoblin/` (or `$XDG_CONFIG_HOME/costgoblin/`) |
 
-A development run (`make dev` / `npm run dev`) uses a folder named `@costgoblin/desktop` in place of `costgoblin`. `COSTGOBLIN_USER_DATA_DIR` moves the whole directory elsewhere, and `COSTGOBLIN_DATA_DIR` / `COSTGOBLIN_CONFIG_DIR` switch to a pinned, non-workspace layout; everything below applies wherever the data ends up.
+A development run (`make dev`, `make prod` or `npm run dev`) uses a folder named `@costgoblin/desktop` in place of `costgoblin`. `COSTGOBLIN_USER_DATA_DIR` moves the whole directory elsewhere, and `COSTGOBLIN_DATA_DIR` / `COSTGOBLIN_CONFIG_DIR` switch to a pinned, non-workspace layout; everything below applies wherever the data ends up.
 
 What protects that data is the operating system, so treat these as requirements:
 
@@ -253,6 +252,8 @@ packages/
 ```bash
 make help       # show available commands
 make dev        # launch Electron in dev mode
+make prod       # build, then launch the production bundle
+make deps       # reinstall dependencies if package-lock.json changed
 make test       # run vitest
 make lint       # run tsc + eslint
 make reset      # wipe app data, restart with wizard

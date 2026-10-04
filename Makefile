@@ -1,54 +1,66 @@
-.PHONY: dev prod reset test e2e e2e-core e2e-config e2e-stress perf lint dist dist-mac dist-win dist-linux release help
+.PHONY: deps dev prod reset test e2e e2e-core e2e-config e2e-stress perf perf-queries lint dist dist-mac dist-win dist-linux release help
 .DEFAULT_GOAL := help
 
 BUILD = npm run build --workspace=packages/desktop
+INSTALLED_LOCK = node_modules/.installed-package-lock.json
 
-dev: ## Launch Electron in dev mode
+# A pull or branch switch can change package-lock.json without reinstalling.
+# Compare contents, not mtimes: a checkout rewrites the lockfile even when it
+# is unchanged.
+deps: ## Install dependencies when package-lock.json differs from the last install
+	@cmp -s package-lock.json $(INSTALLED_LOCK) 2>/dev/null || \
+		{ echo "package-lock.json differs from the last install: running npm ci"; \
+		  npm ci && cp package-lock.json $(INSTALLED_LOCK); }
+
+dev: deps ## Launch Electron in dev mode
 	cd packages/desktop && npm run dev
 
-prod: ## Build and launch Electron in production mode
+# Launch the package directory, not out/main/main.js: Electron names the app
+# from its package.json, so userData matches `make dev` (@costgoblin/desktop)
+# instead of a generic "Electron" folder with no workspaces.
+prod: deps ## Build and launch Electron in production mode
 	$(BUILD)
-	npx electron packages/desktop/out/main/main.js
+	npx electron packages/desktop
 
 reset: ## Wipe app data and config — next launch shows wizard
 	rm -rf "$(HOME)/Library/Application Support/@costgoblin"
 	@echo "Cleared app data and config — next launch will show the wizard"
 
-test: ## Run vitest
+test: deps ## Run vitest
 	npx vitest run
 
-e2e: ## Build and run all E2E tests
+e2e: deps ## Build and run all E2E tests
 	$(BUILD)
 	npx playwright test e2e/views-core.test.ts e2e/views-config.test.ts e2e/stress.test.ts
 	npx tsx e2e/collect-coverage.ts
 
-e2e-core: ## Build and run core views E2E (Overview, Trends, etc.)
+e2e-core: deps ## Build and run core views E2E (Overview, Trends, etc.)
 	$(BUILD)
 	npx playwright test e2e/views-core.test.ts
 	npx tsx e2e/collect-coverage.ts
 
-e2e-config: ## Build and run config views E2E (Sync, Dims, Scope)
+e2e-config: deps ## Build and run config views E2E (Sync, Dims, Scope)
 	$(BUILD)
 	npx playwright test e2e/views-config.test.ts
 	npx tsx e2e/collect-coverage.ts
 
-e2e-stress: ## Build and run widget growth stress tests
+e2e-stress: deps ## Build and run widget growth stress tests
 	$(BUILD)
 	npx playwright test e2e/stress.test.ts
 
-dist: ## Build distributable installer for current platform
+dist: deps ## Build distributable installer for current platform
 	npm run build --workspaces
 	npx --no-install electron-builder --publish never
 
-dist-mac: ## Build macOS .dmg and .zip (current arch only)
+dist-mac: deps ## Build macOS .dmg and .zip (current arch only)
 	npm run build --workspaces
 	npx --no-install electron-builder --mac --arm64 --publish never
 
-dist-win: ## Build Windows .exe installer
+dist-win: deps ## Build Windows .exe installer
 	npm run build --workspaces
 	npx --no-install electron-builder --win --publish never
 
-dist-linux: ## Build Linux .AppImage and .deb
+dist-linux: deps ## Build Linux .AppImage and .deb
 	npm run build --workspaces
 	npx --no-install electron-builder --linux --publish never
 
@@ -76,15 +88,15 @@ release: ## Bump version (patch/minor/major), tag, and push to trigger release
 	echo "Tagged v$$version — push with:" && \
 	echo "  git push origin main --tags"
 
-perf: ## Build and run performance benchmarks
+perf: deps ## Build and run performance benchmarks
 	$(BUILD)
 	npx playwright test e2e/perf.test.ts
 
-perf-queries: ## Build and run query performance diagnostics
+perf-queries: deps ## Build and run query performance diagnostics
 	$(BUILD)
 	npx playwright test e2e/perf-queries.test.ts
 
-lint: ## Run tsc + eslint
+lint: deps ## Run tsc + eslint
 	npx tsc --noEmit -p packages/core/tsconfig.json
 	npx tsc --noEmit -p packages/ui/tsconfig.json
 	npx tsc --noEmit -p packages/desktop/tsconfig.json
