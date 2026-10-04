@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { clockFromEnv, daysBefore, parseFixedNow, trailingWindow } from '../utils/clock.js';
+import { clockPinnedTo, daysBefore, parseFixedNow, trailingWindow } from '../utils/clock.js';
 
 const FIXTURE_NOW_MS = Date.UTC(2026, 2, 2, 12);
 
@@ -21,21 +21,19 @@ describe('parseFixedNow', () => {
   });
 });
 
-describe('clockFromEnv', () => {
-  it('pins the clock to COSTGOBLIN_NOW when it parses', () => {
-    const now = clockFromEnv('2026-03-02T12:00:00Z');
+describe('clockPinnedTo', () => {
+  it('stays frozen at the pinned instant', () => {
+    const now = clockPinnedTo(FIXTURE_NOW_MS);
     expect(now()).toBe(FIXTURE_NOW_MS);
     expect(now()).toBe(FIXTURE_NOW_MS);
   });
 
-  it('falls back to the real clock when unset or unparseable', () => {
-    for (const raw of [undefined, '', 'garbage']) {
-      const now = clockFromEnv(raw);
-      const before = Date.now();
-      const read = now();
-      expect(read).toBeGreaterThanOrEqual(before);
-      expect(read).toBeLessThanOrEqual(Date.now());
-    }
+  it('reads the real clock when nothing is pinned', () => {
+    const now = clockPinnedTo(null);
+    const before = Date.now();
+    const read = now();
+    expect(read).toBeGreaterThanOrEqual(before);
+    expect(read).toBeLessThanOrEqual(Date.now());
   });
 });
 

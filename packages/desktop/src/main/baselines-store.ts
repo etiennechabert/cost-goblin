@@ -182,10 +182,6 @@ export class BaselineStore {
     this.now = now;
   }
 
-  private todayUtc(): string {
-    return daysBefore(this.now(), 0);
-  }
-
   // --- persistence ------------------------------------------------------------
 
   private specsPath(): string { return join(this.stateDir, 'baselines.json'); }
@@ -590,7 +586,7 @@ export class BaselineStore {
     const cfg = this.effectiveConfig();
     const dimensions = await deps.getQueryDimensions();
     const costScope = await deps.getCostScope();
-    const end = dateNDaysAgo(this.todayUtc(), costScope.lagDays ?? 2);
+    const end = daysBefore(this.now(), costScope.lagDays ?? 2);
     const start = dateNDaysAgo(end, cfg.lookbackDays);
     const dateRange = { start: asDateString(start), end: asDateString(end) };
     const providers = await deps.getQueryProviders('daily');
@@ -748,7 +744,7 @@ export class BaselineStore {
   private async recomputeOne(deps: BaselineEngineDeps, spec: BaselineSpec): Promise<void> {
     const cfg = this.effectiveConfig();
     const dimensions = await deps.getQueryDimensions();
-    const end = dateNDaysAgo(this.todayUtc(), spec.basis.lagDays ?? 2);
+    const end = daysBefore(this.now(), spec.basis.lagDays ?? 2);
     const start = dateNDaysAgo(end, cfg.lookbackDays);
     const dateRange = { start: asDateString(start), end: asDateString(end) };
     const providers = await deps.getQueryProviders('daily');
@@ -807,7 +803,7 @@ export class BaselineStore {
       if (prevBest === undefined || curDaily < prevBest) this.bestAchieved.set(spec.id, curDaily);
     }
     const snap: BaselineSnapshot = {
-      date: asDateString(this.todayUtc()),
+      date: asDateString(daysBefore(this.now(), 0)),
       lower: eff.lower,
       upper: eff.upper,
       current: asDollars(curDaily),
@@ -827,7 +823,7 @@ export class BaselineStore {
     const cfg = this.effectiveConfig();
     const dimensions = await deps.getQueryDimensions();
     const basisScope = basisToCostScope(spec.basis);
-    const end = dateNDaysAgo(this.todayUtc(), spec.basis.lagDays ?? 2);
+    const end = daysBefore(this.now(), spec.basis.lagDays ?? 2);
     // `dateNDaysAgo(end, N)` then an inclusive BETWEEN spans N+1 calendar days;
     // subtract one so each window is exactly windowDays/lookbackDays days — matching
     // the divisors below.

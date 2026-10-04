@@ -31,8 +31,9 @@ const FIXTURE_PROVIDER = asProviderName('aws-main');
 const GLOB = `read_parquet('${SYNTHETIC_DIR}/aws-main/raw/daily-*/*.parquet', union_by_name=true)`;
 
 // The fixture data spans 2026-01-01..2026-02-28. Discovery windows are anchored
-// on todayUtc(), so the suite fakes Date (and only Date — timers stay real for
-// DuckDB's async I/O) to a fixed day shortly after the fixture range.
+// on the store's clock, which most cases read from Date, so the suite fakes
+// Date (and only Date — timers stay real for DuckDB's async I/O) to a fixed day
+// shortly after the fixture range.
 const NOW_ISO = '2026-03-04T12:00:00.000Z';
 const TODAY = '2026-03-04';
 // end = today - default lagDays(2); trailing drift window = end - 29.

@@ -20,12 +20,11 @@ export function parseFixedNow(raw: string | undefined): number | null {
   return Number.isNaN(ms) ? null : ms;
 }
 
-/** A clock frozen at COSTGOBLIN_NOW when it parses (as the renderer's patched
- *  Date is), else the real clock. */
-export function clockFromEnv(raw: string | undefined): Clock {
-  const fixed = parseFixedNow(raw);
-  if (fixed === null) return () => Date.now();
-  return () => fixed;
+/** A clock frozen at `fixedMs` (a parsed COSTGOBLIN_NOW, matching the
+ *  renderer's patched Date), or the real clock when null. */
+export function clockPinnedTo(fixedMs: number | null): Clock {
+  if (fixedMs === null) return () => Date.now();
+  return () => fixedMs;
 }
 
 /** The UTC calendar day (YYYY-MM-DD) `days` days before `nowMs`. */
