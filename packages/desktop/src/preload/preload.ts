@@ -25,6 +25,7 @@ import type {
   SavingsResult,
   DataInventoryResult,
   DataTier,
+  GcpIdentityResult,
   GcpProject,
   GcsBrowseResult,
   AccountMappingStatus,
@@ -220,6 +221,9 @@ const api: CostApi = {
   },
   listGcpProjects(): Promise<{ projects: readonly GcpProject[]; error?: string | undefined }> {
     return invoke<{ projects: readonly GcpProject[]; error?: string | undefined }>('setup:list-gcp-projects');
+  },
+  getGcpIdentities(providerName?: string): Promise<GcpIdentityResult> {
+    return invoke<GcpIdentityResult>('data:gcp-identities', providerName);
   },
   listGcsBuckets(projectId: string): Promise<{ buckets: readonly { name: string }[]; error?: string | undefined }> {
     return invoke<{ buckets: readonly { name: string }[]; error?: string | undefined }>('setup:list-gcs-buckets', projectId);

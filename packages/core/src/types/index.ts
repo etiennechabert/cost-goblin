@@ -74,6 +74,17 @@ export type {
 } from './query.js';
 export { DEFAULT_PLACEHOLDER_PATTERNS } from './query.js';
 
+export type {
+  GcpAccountLookup,
+  GcpAccountLookupFailure,
+  GcpCredentialFile,
+  GcpDownloadIdentity,
+  GcpIdentities,
+  GcpIdentityResult,
+  GcpListingIdentity,
+  GcpSplitAccounts,
+} from './gcp-identity.js';
+
 export type { Dimension, CostApi, ColumnValuesPreview, StripPatternIssues, DataInventoryResult, DataTier, GcloudLoginMode, GcpProject, GcsBrowseResult, PruneResult, ProviderSyncError, AccountMappingStatus, AccountMappingEntry, SavingsPreferences, UIPreferences, PerformanceSettings, PerformanceInfo, AutoSyncStatus, OrgAccount, OrgSyncResult, OrgSyncProgress, UpdateInfo, UpdateLogEntry, UpdateStage, UpdateStatus, UpdateSnapshot, UpdateApi, RollupStatus, RollupApi, RollupStats, BaselinesApi, WorkspaceSummary, WorkspacesInfo, CreateWorkspaceSource } from './api.js';
 
 export type {
