@@ -4,11 +4,27 @@ import { useWidgetSlot } from './widget-load-scheduler.js';
 
 const MAX_CANCEL_RETRIES = 2;
 
+export interface UseQueryOptions {
+  /** Commit the settled result as an urgent update instead of a transition.
+   *  For small results the rest of a view waits on, such as the dimensions a
+   *  dashboard's filter bar and default filters come from. Since React 19.3
+   *  each transition renders on its own, so a transition-applied result can
+   *  queue behind a burst of widget renders: seconds on a loaded machine,
+   *  with the view showing "Loading..." and its widgets querying unfiltered
+   *  until it commits. */
+  readonly urgent?: boolean | undefined;
+}
+
 function handleFetchSuccess<T>(
   data: T,
   cancelled: { current: boolean },
+  urgent: boolean,
   setState: (s: QueryState<T>) => void,
 ): void {
+  if (urgent) {
+    if (!cancelled.current) setState({ status: 'success', data });
+    return;
+  }
   // Apply the result inside a transition so the (potentially heavy) render it
   // triggers — visx charts, large tables — stays interruptible. When a view
   // mounts many widgets, their results arrive in a burst; without this, React
@@ -44,7 +60,9 @@ function handleFetchError<T>(
 export function useQuery<T>(
   fetcher: () => Promise<T>,
   deps: unknown[],
+  options?: UseQueryOptions,
 ): QueryState<T> {
+  const urgent = options?.urgent === true;
   const [state, setState] = useState<QueryState<T>>({ status: 'idle' });
   const [retryCount, setRetryCount] = useState(0);
 
@@ -76,7 +94,7 @@ export function useQuery<T>(
     const delay = retryCount > 0 ? 150 : 0;
     const timer = setTimeout(() => {
       fetcher()
-        .then((data) => { handleFetchSuccess(data, cancelled, setState); })
+        .then((data) => { handleFetchSuccess(data, cancelled, urgent, setState); })
         .catch((err: unknown) => { handleFetchError(err, cancelled, retryCount, setState, setRetryCount); });
     }, delay);
 

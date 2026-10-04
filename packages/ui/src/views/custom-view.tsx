@@ -133,7 +133,9 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
   const defaultsAppliedRef = useRef(initialFilter !== undefined);
   const [hourlyHint, setHourlyHint] = useState(false);
 
-  const dimensionsQuery = useQuery(() => api.getDimensions(), [api]);
+  // Urgent: the filter bar and the default filters below wait on this, and as
+  // a transition it could queue behind the widgets' render burst.
+  const dimensionsQuery = useQuery(() => api.getDimensions(), [api], { urgent: true });
   const rawDimensions: Dimension[] = dimensionsQuery.status === 'success' ? dimensionsQuery.data : [];
   const dimensions = useMemo(
     () => [...rawDimensions].sort((a, b) => priorityFor(a) - priorityFor(b)),
