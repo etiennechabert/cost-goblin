@@ -349,12 +349,6 @@ describe('SetupWizard jump-back to existing workspaces', () => {
     expect(writeSpy).toHaveBeenCalledWith(expect.objectContaining({ providerName: 'aws-main', profile: 'prod' }));
   });
 
-  it('offers no impersonation field for an AWS provider', async () => {
-    const { user } = renderWizard({ source: 'daily', profile: 'prod' });
-    await walkToConfirm(user);
-    expect(screen.queryByLabelText('Impersonate service account')).toBeNull();
-  });
-
   it('add mode requires a fresh provider name and rejects duplicates', async () => {
     const { api, user, onComplete } = renderWizard({ mode: 'add' });
     const writeSpy = vi.spyOn(api, 'writeConfig');
@@ -568,10 +562,10 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
     await userClickText(user, 'Use this location');
 
-    // Daily lands on the hourly bucket step, mirroring the AWS chain. Skip it.
-    await waitFor(() => { expect(screen.getByText('Skip')).toBeDefined(); });
-    await userClickText(user, 'Skip');
+    // Daily lands straight on Confirm, mirroring the AWS chain: hourly is
+    // optional, not a step every user has to skip.
     await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+    expect(screen.queryByText('Hourly FOCUS export')).toBeNull();
 
     // The credential card names the GCP project, not an AWS profile that
     // does not exist on this path.
@@ -590,7 +584,9 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     expect(written?.costOptBucket).toBeUndefined();
   });
 
-  /** Walks the GCP flow through BOTH tiers to the Confirm step. */
+  /** Walks the GCP flow through BOTH tiers to the Confirm step: daily lands
+   *  on Confirm, and ← Back from there is the way to the optional hourly
+   *  tier — the same shape as the AWS chain. */
   async function walkGcpBothTiersToConfirm(user: ReturnType<typeof userEvent.setup>): Promise<void> {
     await enterGcpBrowse(user);
     await user.click(screen.getByLabelText('Open folder focus'));
@@ -598,6 +594,8 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await user.click(screen.getByLabelText('Open folder daily'));
     await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
     await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+    await userClickText(user, '← Back');
     await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
     await userClickText(user, 'acme-focus-export');
     await waitFor(() => { expect(screen.getByLabelText('Open folder focus')).toBeDefined(); });
@@ -645,50 +643,12 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     expect(written?.hourlyRetentionDays).toBe(14);
   });
 
-  it('writes the impersonated service account typed on the Confirm step', async () => {
-    const { api, user } = renderWizard();
-    gcpExportLayout(api);
-    await walkGcpBothTiersToConfirm(user);
-
-    await user.type(screen.getByLabelText('Impersonate service account'), 'costgoblin-reader@acme-prod.iam.gserviceaccount.com');
-    await userClickText(user, 'Complete Setup');
-    await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
-    expect(api.writtenConfigs[0]?.impersonateServiceAccount).toBe('costgoblin-reader@acme-prod.iam.gserviceaccount.com');
-  });
-
-  it('leaves the impersonation target out when the field is blank', async () => {
-    const { api, user } = renderWizard();
-    gcpExportLayout(api);
-    await walkGcpBothTiersToConfirm(user);
-    await userClickText(user, 'Complete Setup');
-    await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
-    expect(api.writtenConfigs[0]?.impersonateServiceAccount).toBeUndefined();
-  });
-
-  it('blocks Complete Setup on a malformed impersonation target', async () => {
-    const { api, user } = renderWizard();
-    gcpExportLayout(api);
-    await walkGcpBothTiersToConfirm(user);
-
-    const field = screen.getByLabelText('Impersonate service account');
-    await user.type(field, 'me@gmail.com');
-    expect(screen.getByText(/Must be a service-account address/)).toBeDefined();
-    expect(field.getAttribute('aria-invalid')).toBe('true');
-    expect(field.getAttribute('aria-describedby')).toBe('impersonate-sa-hint');
-    const complete = screen.getByText('Complete Setup').closest('button');
-    expect(complete?.disabled).toBe(true);
-    // Clicking it must not write anything.
-    if (complete !== null) await user.click(complete);
-    expect(api.writtenConfigs).toHaveLength(0);
-  });
-
-  /** A configured gcp-main the GCP walk lands on, with a tuned retention
-   *  (hourly 60 is not one of the presets) and an impersonation target. */
-  function existingGcpConfig(extra?: { keyFile?: string; impersonateServiceAccount?: string }): CostGoblinConfig {
+  /** A configured gcp-main the GCP walk lands on, with tuned retention
+   *  windows (hourly 60 is not one of the presets). */
+  function existingGcpConfig(): CostGoblinConfig {
     return {
       providers: [{
         ...MOCK_GCP_PROVIDER,
-        ...extra,
         sync: {
           daily: { bucket: asBucketPath('gs://acme-focus-export/focus/daily/'), retentionDays: 730 },
           hourly: { bucket: asBucketPath('gs://acme-focus-export/focus/hourly/'), retentionDays: 60 },
@@ -699,12 +659,10 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     };
   }
 
-  it('shows and keeps the retention and impersonation target a re-run provider already has', async () => {
-    // The pickers used to start on the defaults, so re-running setup (e.g. to
-    // add the impersonation target) silently cut a tuned hourly window to 30.
-    const { api, user } = renderWizard({
-      config: existingGcpConfig({ impersonateServiceAccount: 'old-reader@acme-prod.iam.gserviceaccount.com' }),
-    });
+  it('shows and keeps the retention windows a re-run provider already has', async () => {
+    // The pickers used to start on the defaults, so re-running setup silently
+    // cut a tuned hourly window to 30 days.
+    const { api, user } = renderWizard({ config: existingGcpConfig() });
     gcpExportLayout(api);
     await walkGcpBothTiersToConfirm(user);
 
@@ -713,59 +671,27 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     expect(within(daily).getByRole('button', { name: '2 years', pressed: true })).toBeDefined();
     // Off-preset, it still shows — pressed — rather than snapping to 30.
     expect(within(hourly).getByRole('button', { name: '60 days', pressed: true })).toBeDefined();
-    expect(screen.getByLabelText<HTMLInputElement>('Impersonate service account').value)
-      .toBe('old-reader@acme-prod.iam.gserviceaccount.com');
 
     await userClickText(user, 'Complete Setup');
     await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
     const written = api.writtenConfigs[0];
     expect(written?.retentionDays).toBe(730);
     expect(written?.hourlyRetentionDays).toBe(60);
-    // Untouched: absent, so the writer keeps the current target.
-    expect(written?.impersonateServiceAccount).toBeUndefined();
   });
 
-  it('removes the impersonation target when the user clears the field', async () => {
-    // "Leave blank to use your own sign-in" has to be true on a re-run too.
-    const { api, user } = renderWizard({
-      config: existingGcpConfig({ impersonateServiceAccount: 'old-reader@acme-prod.iam.gserviceaccount.com' }),
-    });
-    gcpExportLayout(api);
-    await walkGcpBothTiersToConfirm(user);
-
-    await user.clear(screen.getByLabelText('Impersonate service account'));
-    expect(screen.getByText(/Leave blank to use your own sign-in/)).toBeDefined();
-    await userClickText(user, 'Complete Setup');
-    await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
-    expect(api.writtenConfigs[0]?.impersonateServiceAccount).toBe('');
-  });
-
-  it('says a typed impersonation target replaces the key file the provider uses', async () => {
-    const { api, user } = renderWizard({ config: existingGcpConfig({ keyFile: '/home/me/sa.json' }) });
-    gcpExportLayout(api);
-    await walkGcpBothTiersToConfirm(user);
-
-    expect(screen.getByText(/Leave blank to keep using the key file \/home\/me\/sa\.json/)).toBeDefined();
-    await user.type(screen.getByLabelText('Impersonate service account'), 'costgoblin-reader@acme-prod.iam.gserviceaccount.com');
-    expect(screen.getByText(/Replaces the key file this provider uses now/)).toBeDefined();
-  });
-
-  it('keeps the typed impersonation target and retention picks across Back', async () => {
-    // They lived in the Confirm step's own state, so ← Back and forward again
-    // rebuilt it blank — and a quick Complete wrote no impersonation target.
+  it('keeps the retention picks across Back', async () => {
+    // ← Back is how an optional tier is added, and the picks lived in the
+    // Confirm step's own state, so going there and back reset them.
     const { api, user } = renderWizard();
     gcpExportLayout(api);
     await walkGcpBothTiersToConfirm(user);
 
-    await user.type(screen.getByLabelText('Impersonate service account'), 'costgoblin-reader@acme-prod.iam.gserviceaccount.com');
     await user.click(within(screen.getByRole('group', { name: 'Daily FOCUS export retention' })).getByRole('button', { name: '2 years' }));
     await userClickText(user, '← Back');
     await waitFor(() => { expect(screen.getByText('Skip')).toBeDefined(); });
     await userClickText(user, 'Skip');
     await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
 
-    expect(screen.getByLabelText<HTMLInputElement>('Impersonate service account').value)
-      .toBe('costgoblin-reader@acme-prod.iam.gserviceaccount.com');
     expect(within(screen.getByRole('group', { name: 'Daily FOCUS export retention' })).getByRole('button', { name: '2 years', pressed: true })).toBeDefined();
   });
 
@@ -780,8 +706,10 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await user.click(screen.getByLabelText('Open folder daily'));
     await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
     await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
 
-    // Now browsing for hourly — walk back into the SAME daily folder.
+    // ← Back to the optional hourly leg, then walk into the SAME daily folder.
+    await userClickText(user, '← Back');
     await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
     await userClickText(user, 'acme-focus-export');
     await waitFor(() => { expect(screen.getByLabelText('Open folder focus')).toBeDefined(); });
@@ -802,8 +730,6 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await user.click(screen.getByLabelText('Open folder daily'));
     await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
     await userClickText(user, 'Use this location');
-    await waitFor(() => { expect(screen.getByText('Skip')).toBeDefined(); });
-    await userClickText(user, 'Skip');
     await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
     await userClickText(user, 'Complete Setup');
     await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
@@ -900,8 +826,6 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await user.click(screen.getByLabelText('Open folder daily'));
     await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
     await userClickText(user, 'Use this location');
-    await waitFor(() => { expect(screen.getByText('Skip')).toBeDefined(); });
-    await userClickText(user, 'Skip');
     await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
     await userClickText(user, 'Complete Setup');
     await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
@@ -924,6 +848,8 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await user.click(screen.getByLabelText('Open folder daily'));
     await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
     await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+    await userClickText(user, '← Back');
 
     // Now on the hourly leg. The bucket root and focus/ are ancestors of the
     // daily path but are not themselves selectable exports.
@@ -951,6 +877,8 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await user.click(screen.getByLabelText('Open folder daily'));
     await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
     await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+    await userClickText(user, '← Back');
     await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
     await userClickText(user, 'acme-focus-export');
     await waitFor(() => { expect(screen.getByLabelText('Open folder focus')).toBeDefined(); });
@@ -1396,10 +1324,14 @@ describe('SetupWizard — GCP project ID before the listing', () => {
     await user.click(screen.getByLabelText('Open folder daily'));
     await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
 
-    // The hourly leg's bucket listing stays pending while the user skips it.
+    await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+
+    // ← Back opens the optional hourly leg, whose bucket listing stays
+    // pending while the user skips it.
     let resolveBuckets: ((r: { buckets: readonly { name: string }[] }) => void) | undefined;
     api.listGcsBuckets = () => new Promise((r) => { resolveBuckets = r; });
-    await userClickText(user, 'Use this location');
+    await userClickText(user, '← Back');
     await waitFor(() => { expect(screen.getByText('Skip')).toBeDefined(); });
     await userClickText(user, 'Skip');
     await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });

@@ -231,8 +231,8 @@ const api: CostApi = {
     return invoke<undefined>('setup:scaffold-config', providerType).then(() => undefined);
   },
   // Typed from CostApi rather than hand-copied: a copy here once lacked `type`
-  // (blocking gcp writes) and later the per-tier retentions and the
-  // impersonation target, with no compiler error either time.
+  // (blocking gcp writes) and later the hourly / cost-opt retention fields,
+  // with no compiler error either time.
   writeConfig(config: Parameters<CostApi['writeConfig']>[0]): Promise<void> {
     return invoke<undefined>('setup:write-config', config).then(() => undefined);
   },

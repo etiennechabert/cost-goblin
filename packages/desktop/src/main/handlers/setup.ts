@@ -8,11 +8,12 @@ import {
   gcloudSpawnShape,
   logger,
   parseS3Path,
+  isStringRecord,
 } from '@costgoblin/core';
-import type { CostApi, GcpProject, GcsBrowseResult } from '@costgoblin/core';
+import type { GcpProject, GcsBrowseResult } from '@costgoblin/core';
 import { loadSharedConfigFiles } from '@smithy/shared-ini-file-loader';
 import { awsProfileNames } from '../aws-profiles.js';
-import { parseExistingConfig, upsertWizardProvider } from '../config-upsert.js';
+import { upsertWizardProvider } from '../config-upsert.js';
 import { buildConfigTemplate, buildDimensionsTemplate, PROVIDER_ABSENT_DIMENSIONS } from '../config-templates.js';
 import { classifyManifestColumns, parseManifestColumnNames, selectManifestKey } from '../setup-manifest.js';
 import { collectGcsPrefixes, gcsNextPageToken, parseGcloudProjects } from '../setup-gcp.js';
@@ -51,10 +52,6 @@ export const POST_SETUP_FLAG = '--post-setup';
 // reload (e.g. config import calls location.reload) can't re-fire the redirect —
 // the CLI flag stays in argv for the whole session, so argv alone isn't one-shot.
 let postSetupConsumed = false;
-
-function isEnoent(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && 'code' in err && err.code === 'ENOENT';
-}
 
 export function registerSetupHandlers(app: AppContext): void {
   const { ctx, invalidateConfig, invalidateDimensions } = app;
@@ -370,10 +367,19 @@ export function registerSetupHandlers(app: AppContext): void {
     }
   });
 
-  // The payload type is CostApi's own, so a field added there reaches here
-  // without another hand copy. upsertWizardProvider validates the result with
-  // the loader before anything is written.
-  ipcMain.handle('setup:write-config', async (_event, wizardConfig: Parameters<CostApi['writeConfig']>[0]): Promise<void> => {
+  ipcMain.handle('setup:write-config', async (_event, wizardConfig: {
+    providerName: string;
+    type?: 'aws' | 'gcp' | undefined;
+    profile: string;
+    keyFile?: string | undefined;
+    dailyBucket: string;
+    retentionDays?: number | undefined;
+    hourlyRetentionDays?: number | undefined;
+    costOptRetentionDays?: number | undefined;
+    hourlyBucket?: string | undefined;
+    costOptBucket?: string | undefined;
+    tags?: { tagName: string; label: string; concept?: string | undefined }[] | undefined;
+  }): Promise<void> => {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
     const { stringify, parse: parseYaml } = await import('yaml');
@@ -381,16 +387,16 @@ export function registerSetupHandlers(app: AppContext): void {
     const configDir = path.dirname(ctx.configPath);
     await fs.mkdir(configDir, { recursive: true });
 
-    // Only a missing file means "no existing config". Treating a read or YAML
-    // parse error the same way rewrote the file with just the wizard's
-    // provider, silently dropping every other entry — so refuse instead.
-    let raw: string | undefined;
+    let existing: Readonly<Record<string, unknown>> = {};
     try {
-      raw = await fs.readFile(ctx.configPath, 'utf-8');
-    } catch (err) {
-      if (!isEnoent(err)) throw err;
+      const raw = await fs.readFile(ctx.configPath, 'utf-8');
+      const parsed: unknown = parseYaml(raw);
+      if (isStringRecord(parsed)) {
+        existing = parsed;
+      }
+    } catch {
+      // no existing config
     }
-    const existing = parseExistingConfig(raw, parseYaml);
 
     // UPSERT by provider name: replace the matching entry in place, append a
     // new one otherwise; other providers and unknown top-level keys are

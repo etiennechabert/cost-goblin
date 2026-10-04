@@ -417,10 +417,6 @@ export interface CostApi {
     costOptRetentionDays?: number | undefined;
     hourlyBucket?: string | undefined;
     costOptBucket?: string | undefined;
-    /** GCP only: the read-only service account the provider impersonates.
-     *  Omitted keeps whatever the existing entry has; `''` removes it; an
-     *  address sets it and replaces any `keyFile` (the two are exclusive). */
-    impersonateServiceAccount?: string | undefined;
     tags?: { tagName: string; label: string; concept?: string | undefined }[] | undefined;
   }): Promise<void>;
   /** Swap the AWS credentials profile of one provider (default: the first),

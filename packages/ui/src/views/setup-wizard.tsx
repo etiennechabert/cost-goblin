@@ -1,5 +1,5 @@
 import type { ConfigBundleSummary, GcpProject, GcsFolderKind, ProviderConfig } from '@costgoblin/core/browser';
-import { DEFAULT_RETENTION_DAYS, GCP_PROJECT_ID_RULES, SERVICE_ACCOUNT_EMAIL_EXAMPLE, SERVICE_ACCOUNT_EMAIL_HINT, gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isServiceAccountEmail, isValidGcpProjectId, isValidWorkspaceName, parseProviderName } from '@costgoblin/core/browser';
+import { DEFAULT_RETENTION_DAYS, GCP_PROJECT_ID_RULES, gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isValidGcpProjectId, isValidWorkspaceName, parseProviderName } from '@costgoblin/core/browser';
 import { useState, useEffect, useRef } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { Card, CardContent } from '../components/ui/card.js';
@@ -1473,24 +1473,22 @@ interface ProviderNaming {
   readonly onChange: (value: string) => void;
 }
 
-/** The Confirm step's choices that are not the provider's name. Held by the
- *  wizard, not the step, so Back and forward again keeps them. `picks` holds
- *  only tiers the user clicked and `impersonate` is `undefined` until typed
- *  in: untouched, each shows (and writes) the provider's current value. */
-interface ConfirmChoices {
+/** The Confirm step's retention picks. Held by the wizard, not the step, so
+ *  ← Back (to add an optional tier) and forward again keeps them. Only tiers
+ *  the user clicked are present: an untouched tier shows, and writes, the
+ *  provider's current window. */
+interface RetentionChoices {
   readonly picks: Readonly<Partial<Record<DataSource, number>>>;
   readonly onPick: (tier: DataSource, days: number) => void;
-  readonly impersonate: string | undefined;
-  readonly onImpersonateChange: (value: string) => void;
 }
 
-function ConfirmStep({ state, providerNaming, existing, choices, onComplete, onBack }: Readonly<{
+function ConfirmStep({ state, providerNaming, existing, retention, onComplete, onBack }: Readonly<{
   state: Extract<WizardStep, { step: 'confirm' }>;
   providerNaming: ProviderNaming;
   /** The configured provider this run will replace (same name and cloud),
-   *  whose values seed the pickers and the impersonation field. */
+   *  whose retention windows seed the pickers. */
   existing: ProviderConfig | undefined;
-  choices: ConfirmChoices;
+  retention: RetentionChoices;
   onComplete: () => void;
   onBack: () => void;
 }>) {
@@ -1506,24 +1504,8 @@ function ConfirmStep({ state, providerNaming, existing, choices, onComplete, onB
   // replaced already has (a re-run must not quietly reset a tuned window),
   // else the shared default the prune paths also use.
   function tierRetention(tier: DataSource): number {
-    return choices.picks[tier] ?? existing?.sync[tier]?.retentionDays ?? DEFAULT_RETENTION_DAYS[tier];
+    return retention.picks[tier] ?? existing?.sync[tier]?.retentionDays ?? DEFAULT_RETENTION_DAYS[tier];
   }
-
-  const existingGcp = existing?.type === 'gcp' ? existing : undefined;
-  const existingKeyFile = existingGcp?.keyFile;
-  // Blank is allowed (Application Default Credentials, or the key file the
-  // provider already has); anything typed must be a service-account address,
-  // the same check the config loader runs.
-  const impersonateValue = choices.impersonate ?? existingGcp?.impersonateServiceAccount ?? '';
-  const impersonate = impersonateValue.trim();
-  const impersonateError = state.cloud === 'gcp' && impersonate.length > 0 && !isServiceAccountEmail(impersonate)
-    ? `Must be ${SERVICE_ACCOUNT_EMAIL_HINT}.`
-    : null;
-  const impersonateHint = existingKeyFile === undefined
-    ? 'The read-only reader to act as for downloads. Leave blank to use your own sign-in.'
-    : impersonate.length > 0
-      ? `The read-only reader to act as for downloads. Replaces the key file this provider uses now (${existingKeyFile}).`
-      : `Leave blank to keep using the key file ${existingKeyFile}, or enter the read-only reader to act as instead.`;
 
   // The credential card names whichever store this provider authenticates
   // through. Hardcoding "AWS Profile" here was fine while the wizard only
@@ -1533,7 +1515,7 @@ function ConfirmStep({ state, providerNaming, existing, choices, onComplete, onB
     : { label: 'AWS Profile', value: state.profile };
 
   function handleSave() {
-    if (nameError !== null || impersonateError !== null) return;
+    if (nameError !== null) return;
     setSaving(true);
     setSaveError(null);
     api.writeConfig({
@@ -1553,9 +1535,6 @@ function ConfirmStep({ state, providerNaming, existing, choices, onComplete, onB
       ...(state.cloud !== 'gcp' && state.costOptPath.length > 0
         ? { costOptBucket: state.costOptPath, costOptRetentionDays: tierRetention('costOptimization') }
         : {}),
-      // Untouched means "keep the provider's current value" (absent); once
-      // edited the field is the truth, so blank is sent as '' and removes it.
-      ...(state.cloud === 'gcp' && choices.impersonate !== undefined ? { impersonateServiceAccount: impersonate } : {}),
     }).then(() => {
       onComplete();
     }).catch((err: unknown) => {
@@ -1610,28 +1589,6 @@ function ConfirmStep({ state, providerNaming, existing, choices, onComplete, onB
           <p className="text-sm font-mono text-text-primary mt-0.5">{credential.value}</p>
         </div>
 
-        {state.cloud === 'gcp' && (
-          <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
-            <label htmlFor="impersonate-sa" className="text-xs text-text-muted uppercase tracking-wider">Impersonate service account</label>
-            <input
-              id="impersonate-sa"
-              value={impersonateValue}
-              onChange={(e) => { choices.onImpersonateChange(e.target.value); }}
-              placeholder={SERVICE_ACCOUNT_EMAIL_EXAMPLE}
-              spellCheck={false}
-              aria-invalid={impersonateError !== null}
-              aria-describedby="impersonate-sa-hint"
-              className={[
-                'mt-1 w-full rounded-md border bg-bg-primary px-3 py-1.5 text-sm font-mono text-text-primary focus:outline-none focus-visible:ring-2',
-                impersonateError === null ? 'border-border focus-visible:ring-accent' : 'border-negative focus-visible:ring-negative',
-              ].join(' ')}
-            />
-            <p id="impersonate-sa-hint" className={`text-xs mt-1 ${impersonateError === null ? 'text-text-muted' : 'text-negative'}`}>
-              {impersonateError ?? impersonateHint}
-            </p>
-          </div>
-        )}
-
         {paths.map(({ value, tier }) => {
           const label = SOURCE_LABELS[tier].title;
           const selected = tierRetention(tier);
@@ -1650,7 +1607,7 @@ function ConfirmStep({ state, providerNaming, existing, choices, onComplete, onB
                   key={opt.days}
                   type="button"
                   aria-pressed={selected === opt.days}
-                  onClick={() => { choices.onPick(tier, opt.days); }}
+                  onClick={() => { retention.onPick(tier, opt.days); }}
                   className={[
                     'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
                     selected === opt.days
@@ -1679,7 +1636,7 @@ function ConfirmStep({ state, providerNaming, existing, choices, onComplete, onB
         <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
         <Button
           onClick={handleSave}
-          disabled={saving || nameError !== null || impersonateError !== null}
+          disabled={saving || nameError !== null}
           className="bg-accent hover:bg-accent-hover text-white px-8"
         >
           {saving ? 'Saving...' : 'Complete Setup'}
@@ -1700,10 +1657,9 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   // The full configured providers, so a re-run's Confirm step can show (and
   // keep) the retention windows and credential the target already has.
   const [existingConfigs, setExistingConfigs] = useState<readonly ProviderConfig[]>([]);
-  // Confirm-step choices. Wizard-level, like `providerName`, so ← Back and
-  // forward again keeps them; cleared when a cloud chain starts over.
+  // Confirm-step retention picks. Wizard-level, like `providerName`, so ← Back
+  // and forward again keeps them; cleared when a cloud chain starts over.
   const [retentionPicks, setRetentionPicks] = useState<Partial<Record<DataSource, number>>>({});
-  const [impersonateInput, setImpersonateInput] = useState<string | undefined>(undefined);
   // Whether the user has typed a name. Until they do, the default is DERIVED
   // from the cloud they picked rather than written into state on entry — a
   // one-way `setProviderName('gcp-main')` survived backing out of the GCP
@@ -1809,7 +1765,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   function goToGcpProjectStep(): void {
     // See `goToProfileStep`: the two chains share `collectedPaths`.
     setCollectedPaths(EMPTY_PATHS);
-    resetConfirmChoices();
+    resetRetentionPicks();
     reloadGcpProjects();
   }
 
@@ -1866,17 +1822,15 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     const gcsPath = `gs://${bucket}/${prefix}`;
     const updated = { ...collectedPaths };
 
+    // Daily straight to Confirm, exactly as the AWS chain does: hourly is
+    // optional (the exporter publishes it only when deployed with
+    // TIERS=daily,hourly), so it sits one ← Back away on Confirm rather than
+    // being a step every user has to skip.
     if (source === 'daily') {
       updated.daily = gcsPath;
-      setCollectedPaths(updated);
-      // Offer the hourly tier next, exactly as the AWS chain does. Skipping
-      // it lands on Confirm — the exporter publishes hourly only when it was
-      // deployed with TIERS=daily,hourly.
-      startGcpBucketStep(project, 'hourly');
-      return;
+    } else {
+      updated.hourly = gcsPath;
     }
-
-    updated.hourly = gcsPath;
     setCollectedPaths(updated);
     goToGcpConfirm(project, updated);
   }
@@ -1905,9 +1859,8 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     });
   }
 
-  function resetConfirmChoices(): void {
+  function resetRetentionPicks(): void {
     setRetentionPicks({});
-    setImpersonateInput(undefined);
   }
 
   // Goes through `startBucketStep` rather than repeating its body, so the
@@ -1925,7 +1878,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     // the AWS leg survived a ← Back to the hub and was written into a gcp
     // provider, whose loader then refuses the config on the next launch.
     setCollectedPaths(EMPTY_PATHS);
-    resetConfirmChoices();
+    resetRetentionPicks();
     // Token-guarded like the other step loaders: a slow profile listing landing
     // after the user navigated on would otherwise teleport them back here.
     const token = ++stepRequestRef.current;
@@ -2269,11 +2222,9 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
               // Only a same-cloud entry: a different-cloud one is refused by
               // the writer, so its values must not seed anything.
               existing={existingConfigs.find(c => String(c.name) === confirmProviderName && c.type === wizard.cloud)}
-              choices={{
+              retention={{
                 picks: retentionPicks,
                 onPick: (tier, days) => { setRetentionPicks(prev => ({ ...prev, [tier]: days })); },
-                impersonate: impersonateInput,
-                onImpersonateChange: setImpersonateInput,
               }}
               onComplete={finish}
               onBack={handleBack}

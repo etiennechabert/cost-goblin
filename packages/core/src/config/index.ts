@@ -2,7 +2,6 @@ export { loadConfig, loadDimensions, loadOrgTree, loadViews, loadCostScope } fro
 export { validateConfig, validateDimensions, validateOrgTree, ConfigValidationError, assertObject, assertArray, assertString, assertNumber, hasControlChar } from './validator.js';
 export type { StripPatternLimitMode, ValidateDimensionsOptions } from './validator.js';
 export { MAX_NAME_STRIP_PATTERNS, MAX_NAME_STRIP_PATTERN_LENGTH, nameStripPatternViolations } from './strip-pattern-limits.js';
-export { SERVICE_ACCOUNT_EMAIL_EXAMPLE, SERVICE_ACCOUNT_EMAIL_HINT, isServiceAccountEmail } from './service-account.js';
 export { validateViews } from './views-validator.js';
 export { LEGACY_DIMENSION_ID_RENAMES, dimensionIdSet, migrateLegacyDimensionId } from './legacy-renames.js';
 export { validateCostScope } from './cost-scope-validator.js';

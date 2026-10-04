@@ -114,7 +114,7 @@ test.describe('mixed AWS + GCP workspace', () => {
   });
 
   // Last on purpose: Complete Setup rewrites this launch's costgoblin.yaml.
-  test('re-running setup keeps the tuned hourly retention and writes the impersonation target', async () => {
+  test('re-running setup goes straight from daily to Confirm and keeps the tuned hourly retention', async () => {
     // The wizard's GCS discovery needs credentials, and this launch has none
     // by design (see expectCloudSandboxed). Stub just the two discovery
     // channels in the main process; everything after them — the Confirm step,
@@ -133,33 +133,39 @@ test.describe('mixed AWS + GCP workspace', () => {
       });
     });
 
+    const pickTier = async (tier: 'daily' | 'hourly'): Promise<void> => {
+      await page.getByText('test-focus-export', { exact: true }).click();
+      await page.getByLabel(/^Open folder focus\/?$/).click();
+      await page.getByLabel(new RegExp(`^Open folder ${tier}\\/?$`)).click();
+      await page.getByRole('button', { name: 'Use this location' }).click();
+    };
+    const confirm = page.getByRole('heading', { name: 'Confirm Setup' });
+    const dailyRetention = page.getByRole('group', { name: 'Daily FOCUS export retention' });
+    const hourlyRetention = page.getByRole('group', { name: 'Hourly FOCUS export retention' });
+
     await clickNavButton(page, 'General');
     await page.getByRole('button', { name: 'Run setup again' }).click();
     await page.getByLabel('Set up from Google Cloud').click();
     await page.getByLabel('Already know the project ID? Skip the project list').fill('test-project');
     await page.getByLabel('Already know the project ID? Skip the project list').press('Enter');
 
-    // Daily, then hourly, each from the bucket root down to its tier folder.
-    for (const tier of ['daily', 'hourly']) {
-      await page.getByText('test-focus-export', { exact: true }).click();
-      await page.getByLabel(/^Open folder focus\/?$/).click();
-      await page.getByLabel(new RegExp(`^Open folder ${tier}\\/?$`)).click();
-      await page.getByRole('button', { name: 'Use this location' }).click();
-    }
-    await expect(page.getByRole('heading', { name: 'Confirm Setup' })).toBeVisible();
+    // Daily lands straight on Confirm, as on AWS — hourly is optional.
+    await pickTier('daily');
+    await expect(confirm).toBeVisible();
+    await expect(hourlyRetention).toHaveCount(0);
 
-    // The fixture's gcp-main keeps 14 days of hourly. The pickers used to
-    // start on the 30-day default, so this re-run silently cut it.
-    const hourly = page.getByRole('group', { name: 'Hourly FOCUS export retention' });
-    await expect(hourly.getByRole('button', { name: '14 days' })).toHaveAttribute('aria-pressed', 'true');
-
-    const field = page.getByLabel('Impersonate service account');
-    await field.fill('not-an-address');
-    await expect(page.getByRole('button', { name: 'Complete Setup' })).toBeDisabled();
-    await field.fill('costgoblin-reader@test-project.iam.gserviceaccount.com');
+    // ← Back is the way to the optional hourly tier. The fixture's gcp-main
+    // keeps 14 days of it; the pickers used to start on the 30-day default.
+    await dailyRetention.getByRole('button', { name: '2 years' }).click();
+    await page.getByRole('button', { name: '← Back' }).click();
+    await pickTier('hourly');
+    await expect(confirm).toBeVisible();
+    await expect(hourlyRetention.getByRole('button', { name: '14 days' })).toHaveAttribute('aria-pressed', 'true');
+    // The daily pick survived the round trip.
+    await expect(dailyRetention.getByRole('button', { name: '2 years' })).toHaveAttribute('aria-pressed', 'true');
     await screenshot(page, 'gcp-rerun-confirm');
     await page.getByRole('button', { name: 'Complete Setup' }).click();
-    await expect(page.getByRole('heading', { name: 'Confirm Setup' })).toBeHidden();
+    await expect(confirm).toBeHidden();
 
     const configDir = await app.evaluate(() => process.env['COSTGOBLIN_CONFIG_DIR'] ?? '');
     const written: unknown = parseYaml(readFileSync(join(configDir, 'costgoblin.yaml'), 'utf-8'));
@@ -169,9 +175,8 @@ test.describe('mixed AWS + GCP workspace', () => {
         {
           name: 'gcp-main',
           type: 'gcp',
-          impersonateServiceAccount: 'costgoblin-reader@test-project.iam.gserviceaccount.com',
           sync: {
-            daily: { bucket: 'gs://test-focus-export/focus/daily/', retentionDays: 365 },
+            daily: { bucket: 'gs://test-focus-export/focus/daily/', retentionDays: 730 },
             hourly: { bucket: 'gs://test-focus-export/focus/hourly/', retentionDays: 14 },
           },
         },
@@ -180,4 +185,3 @@ test.describe('mixed AWS + GCP workspace', () => {
     await assertNoReactCrash(page);
   });
 });
-
