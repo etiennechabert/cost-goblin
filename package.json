@@ -37,7 +37,7 @@
     "@sentry/electron": "^7.20.0",
     "@smithy/shared-ini-file-loader": "^4.7.2",
     "electron-updater": "^6.8.10",
-    "google-auth-library": "^9.15.1",
+    "google-auth-library": "^11.1.0",
     "yaml": "^2.9.1"
   },
   "devDependencies": {
@@ -50,20 +50,20 @@
     "@types/node": "^26.6.3",
     "@typescript-eslint/eslint-plugin": "^8.70.1",
     "@typescript-eslint/parser": "^8.70.1",
-    "@vitest/coverage-v8": "^4.1.11",
+    "@vitest/coverage-v8": "^5.0.2",
     "ast-v8-to-istanbul": "^1.0.7",
     "audit-ci": "^7.1.0",
     "electron-builder": "^26.17.0",
     "eslint": "^10.11.0",
     "husky": "^9.1.7",
-    "js-yaml": "^4.3.2",
+    "js-yaml": "^5.4.2",
     "jsdom": "^30.1.1",
     "postcss": "^8.5.28",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
     "v8-to-istanbul": "^9.3.0",
     "vite": "7.3.6",
-    "vitest": "^4.1.11"
+    "vitest": "^5.0.2"
   },
   "engines": {
     "node": ">=24",
