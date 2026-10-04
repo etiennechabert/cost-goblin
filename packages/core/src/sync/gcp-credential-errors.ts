@@ -10,6 +10,24 @@
  *  screen whose purpose is offering it.
  */
 
+/** A failure of the user's own login — the one thing a sign-in repairs. */
+const SOURCE_LOGIN_MARKERS = [
+  'Could not load the default credentials',
+  // ADC consented without cloud-platform: re-consenting is the fix.
+  'ACCESS_TOKEN_SCOPE_INSUFFICIENT',
+  'invalid_grant',
+  'invalid_rapt',
+  'Token has been expired or revoked',
+  'Reauthentication failed',
+];
+
+/** The wrappers both halves put around a failed impersonation: the listing
+ *  SDK's `Impersonated` (`unable to impersonate: …`) and the gcloud CLI the
+ *  download runs (`Failed to impersonate [sa]…`). */
+function isImpersonationFailure(msg: string): boolean {
+  return msg.includes('unable to impersonate') || msg.includes('Failed to impersonate');
+}
+
 /** Whether an error indicates missing or expired GCP credentials rather than
  *  a genuine storage/network failure. Mirrors `isCredentialError` on the AWS
  *  side and covers both shapes the app sees: google-auth-library failures
@@ -24,21 +42,57 @@
 export function isGcpCredentialError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const msg = err.message;
+  // An impersonation failure carries `Could not refresh access token` too
+  // (google-auth-library prefixes every 403/404 from the mint), so inside one
+  // only a failure of the USER's own login counts — a missing IAM grant or a
+  // mistyped reader is `isGcpImpersonationError`, which no sign-in fixes.
+  if (isImpersonationFailure(msg)) return SOURCE_LOGIN_MARKERS.some(m => msg.includes(m));
   return (
     // google-auth-library: no ADC file, no metadata server, malformed key.
-    msg.includes('Could not load the default credentials') ||
     msg.includes('Could not refresh access token') ||
     msg.includes('Unable to detect a Project Id') ||
-    msg.includes('invalid_grant') ||
-    msg.includes('invalid_rapt') ||
-    msg.includes('Token has been expired or revoked') ||
     // `gcloud` CLI stderr, both the reauth and the never-authed cases.
     msg.includes('gcloud auth application-default login') ||
     msg.includes('gcloud auth login') ||
     msg.includes('Your credentials are invalid') ||
-    msg.includes('Reauthentication failed') ||
-    msg.includes('does not have any valid credentials')
+    msg.includes('does not have any valid credentials') ||
+    SOURCE_LOGIN_MARKERS.some(m => msg.includes(m))
   );
+}
+
+/** Minting a token for the provider's `impersonateServiceAccount` was refused
+ *  on the IAM side: the user lacks `roles/iam.serviceAccountTokenCreator`, the
+ *  reader does not exist (a typo reads as NOT_FOUND), or the quota project the
+ *  mint is billed to refuses it (API disabled, no serviceusage permission).
+ *
+ *  Disjoint from `isGcpCredentialError` — signing in again cannot grant a
+ *  role — but it still blocks the sync, so the gates that decide whether to
+ *  surface a listing failure (`isAnyCredentialError`, the auto-sync scheduler)
+ *  must test both. Matches the rewritten message too
+ *  (`describeGcpImpersonationFailure` keeps the raw text), because the
+ *  scheduler classifies the error AFTER the handler has rewritten it. */
+export function isGcpImpersonationError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message;
+  if (!isImpersonationFailure(msg) || SOURCE_LOGIN_MARKERS.some(m => msg.includes(m))) return false;
+  // The SDK wraps EVERY mint failure — offline, 5xx, rate limits included —
+  // so only an IAM-side refusal counts; the rest stays a transient failure.
+  return msg.includes('Failed to impersonate') || IAM_REFUSAL_MARKERS.some(m => msg.includes(m));
+}
+
+/** The statuses IAM answers a refused mint with: a missing grant, a quota
+ *  project that refuses the call (API disabled / no serviceusage), or a reader
+ *  that does not exist. */
+const IAM_REFUSAL_MARKERS = ['PERMISSION_DENIED', 'NOT_FOUND'];
+
+/** The remedy for `isGcpImpersonationError`, in words. Deliberately free of
+ *  the `GCP credentials` marker and the `Run: ` clause the sync toolbar keys
+ *  its sign-in button on. The raw denial is kept — it says which cause
+ *  applies. */
+export function describeGcpImpersonationFailure(serviceAccount: string | undefined, rawMessage: string): string {
+  const reader = serviceAccount ?? 'the service account your credentials impersonate';
+  const commandTarget = serviceAccount ?? '<service-account>';
+  return `CostGoblin could not read as ${reader}. Check that the service account exists, that your Google account has roles/iam.serviceAccountTokenCreator on it, and that the IAM Service Account Credentials API (iamcredentials.googleapis.com) is enabled in your Application Default Credentials quota project. Grant the role with: gcloud iam service-accounts add-iam-policy-binding ${commandTarget} --member=user:<your-email> --role=roles/iam.serviceAccountTokenCreator — Details: ${rawMessage}`;
 }
 
 /** The principal authenticated fine but cannot ENUMERATE buckets.
@@ -104,6 +158,36 @@ export function isGcloudCliAccountError(err: unknown): boolean {
     // matches only gcloud's own advice to re-authenticate the CLI.
     msg.includes('gcloud auth login')
   );
+}
+
+/** The machine could not reach Google at all — no route, no DNS, refused —
+ *  as opposed to Google refusing the credential. Checked before every
+ *  credential classifier: gcloud wraps a token refresh that never left the
+ *  machine in "There was a problem refreshing your current auth tokens …
+ *  Please run: gcloud auth login", so without this a dropped Wi-Fi or VPN read
+ *  as an expired sign-in and sent the user to re-authenticate. Seen live:
+ *  `[Errno 65] No route to host` against oauth2 and iamcredentials while the
+ *  very same command succeeded a minute later.
+ *
+ *  Markers are the socket-level failures only — Python's (gcloud) and Node's
+ *  (the listing SDK) — never an HTTP status, which means Google answered. */
+const NETWORK_FAILURE_MARKERS = [
+  'No route to host',
+  'Network is unreachable',
+  'Failed to establish a new connection',
+  'Temporary failure in name resolution',
+  'nodename nor servname provided',
+  'Name or service not known',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'ECONNREFUSED',
+];
+
+export function isGcpNetworkError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return NETWORK_FAILURE_MARKERS.some(m => err.message.includes(m));
 }
 
 /** A `gcloud storage rsync` download that failed without an explicit

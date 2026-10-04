@@ -27,9 +27,12 @@ import {
   GCLOUD_ADC_LOGIN_COMMAND,
   GCLOUD_CLI_LOGIN_COMMAND,
   isCredentialError,
+  describeGcpImpersonationFailure,
   isGcloudDownloadFailure,
   isGcloudCliAccountError,
   isGcpCredentialError,
+  isGcpImpersonationError,
+  isGcpNetworkError,
   isS3SyncDownloadFailure,
 } from '@costgoblin/core';
 import { buildAccountReverseMap } from './query-utils.js';
@@ -711,6 +714,11 @@ export { isCredentialError };
  *  an IAM permission error must not be dressed up as "log in again". */
 export function toUserFriendlyError(err: unknown, auth: ProviderAuth): Error {
   if (auth.kind === 'gcp') {
+    // First: gcloud wraps an unreachable token endpoint in "Please run:
+    // gcloud auth login", and a dropped connection is no sign-in problem.
+    if (isGcpNetworkError(err)) {
+      return new Error('Couldn\'t reach Google Cloud — this machine has no network route to googleapis.com. Check your connection or VPN, then retry.');
+    }
     // BEFORE the ADC check, whose markers this shares. A GCP sync spans two
     // credential stores — the listing SDK reads ADC, `gcloud storage rsync`
     // runs as gcloud's active account — and only re-running the matching one
@@ -719,6 +727,11 @@ export function toUserFriendlyError(err: unknown, auth: ProviderAuth): Error {
     // have looped forever.
     if (isGcloudCliAccountError(err)) {
       return new Error(`The gcloud CLI is signed in as a different account than CostGoblin's credentials, or its session expired. Run: ${GCLOUD_CLI_LOGIN_COMMAND}`);
+    }
+    // An impersonation the IAM side refuses is a missing grant or a wrong
+    // reader; the text carries no sign-in marker, since signing in would loop.
+    if (isGcpImpersonationError(err) && err instanceof Error) {
+      return new Error(describeGcpImpersonationFailure(auth.impersonateServiceAccount, err.message));
     }
     if (isGcpCredentialError(err)) {
       return new Error(`GCP credentials are missing or expired. Run: ${GCLOUD_ADC_LOGIN_COMMAND}`);
@@ -738,9 +751,11 @@ export function toUserFriendlyError(err: unknown, auth: ProviderAuth): Error {
   return err instanceof Error ? err : new Error(String(err));
 }
 
-/** Whether an error from either provider indicates credentials the user must
- *  refresh. Used where the arm isn't known up front (the auto-sync
- *  scheduler's shared catch). */
+/** Whether an error from either provider is an authentication failure the
+ *  user must act on — expired credentials, or a GCP reader the user may not
+ *  impersonate. Gates whether a listing failure is surfaced rather than
+ *  replaced by the local-only inventory or skipped by the scheduler; it does
+ *  NOT decide which remedy is offered (`toUserFriendlyError` does). */
 export function isAnyCredentialError(err: unknown): boolean {
-  return isCredentialError(err) || isGcpCredentialError(err);
+  return isCredentialError(err) || isGcpCredentialError(err) || isGcpImpersonationError(err);
 }

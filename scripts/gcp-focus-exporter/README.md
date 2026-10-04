@@ -359,28 +359,34 @@ gcloud storage rm --recursive gs://<BUCKET>/<PREFIX>/<TIER>/billing_period=YYYY-
 
 ## Point CostGoblin at it
 
-Easiest route: pick **Google Cloud** on the setup screen and choose **Find my
-export**. The wizard lists your projects (via `gcloud projects list`) — or, when
-your account can't list the project, takes its ID typed into **Project not
-listed? Enter its ID** — then the buckets in that project, then walks the bucket
-so you can select the tier folder — and writes the config itself. It won't let you select the `<PREFIX>`
-folder above the tiers, which is the mistake that makes the daily tier read the
-hourly shards too.
+Easiest route: pick **Google Cloud** on the setup screen, type the project ID
+that holds the export bucket into **Google Cloud project**, and press
+**Continue**. The wizard then lists the buckets in that project, walks the
+bucket so you can select the tier folder, and writes the config itself. It
+won't let you select the `<PREFIX>` folder above the tiers, which is the mistake
+that makes the daily tier read the hourly shards too. Typing the ID never runs
+`gcloud projects list` — the faster route in an organisation with thousands of
+projects, where that listing is slow and the list too long to scan.
 
-Already know the project ID? Type it into **Already know the project ID? Skip
-the project list**, just under **Find my export**, and the wizard goes straight
-to the bucket step without running `gcloud projects list` at all — the faster
-route in an organisation with thousands of projects, where that listing is slow
-and the list too long to scan. The project step has a similar field, **Project
-not listed? Enter its ID**, usable while the list is still loading.
+Would rather pick it? **Choose from my projects**, just under the project field,
+lists your projects (via `gcloud projects list`); when your account can't list
+the project, type its ID into **Project not listed? Enter its ID** there, usable
+while the list is still loading.
 
-> **"Couldn't list the buckets in …" is expected with the read-only reader, not
-> a misconfiguration.** Listing the buckets in a project is a *project-level*
-> permission; `roles/storage.objectViewer` grants rights on the bucket and
-> deliberately nothing above it, so the wizard reports that it could not list
-> them and hides the empty list. Type the bucket name into the field below and
-> press **Browse** — walking a bucket needs only `storage.objects.list`, which
-> the reader already has, and every step after it behaves normally.
+The wizard reads as the read-only service account the setup above creates —
+the line under the project field shows the full
+`costgoblin-reader@<PROJECT>.iam.gserviceaccount.com` address it will use. Press
+**Change** beside it to name a different reader (a bare account name, completed
+with the project, or a full address), or clear it to read as your own account.
+
+> **"This account can't list the buckets in …"** means the reader doesn't have
+> the optional project-level `roles/storage.bucketViewer` grant from the
+> [Credentials](#credentials) recipe — listing a project's buckets is a
+> *project-level* permission, while `roles/storage.objectViewer` is granted on
+> the bucket alone. Nothing is broken: type the bucket name into the field
+> below and press **Browse** — walking a bucket needs only
+> `storage.objects.list`, which the reader already has — or add the grant
+> below and press **Retry** under **Details**.
 >
 > If **Browse** fails too, the credential has no access to that bucket at all.
 > GCP returns the same denial in both cases — the trailing "(or it may not
@@ -388,8 +394,8 @@ not listed? Enter its ID**, usable while the list is still loading.
 > step to see the raw message, which names the principal that was refused. That
 > is usually the tell that ADC resolved to a different account than you meant.
 >
-> To make the dropdown work instead, add a project-level grant, accepting that
-> the reader can then see the name of every bucket in the project:
+> The grant that makes the dropdown work (the reader then sees the name of
+> every bucket in the project, but still reads only the export):
 >
 > ```bash
 > gcloud projects add-iam-policy-binding PROJECT \
@@ -406,9 +412,9 @@ not listed? Enter its ID**, usable while the list is still loading.
 > **active account** — never ADC, never the impersonated service account — and
 > an account whose only grant is `roles/iam.serviceAccountTokenCreator` on the
 > reader — set up for you by an admin — holds nothing at the project level, so
-> the project is not listed. That is expected: type the project ID into **Project not listed? Enter its ID** (or
-> into the field under **Find my export**, which skips the list) and press
-> **Continue**. The project is only used to list its buckets, which the
+> the project is not listed. That is expected: type the project ID into **Project not listed? Enter its ID** (or,
+> to skip the list, into **Google Cloud project** on the screen before it) and
+> press **Continue**. The project is only used to list its buckets, which the
 > reader can't do anyway, so the bucket step then asks for the bucket name as
 > described above. If you would rather pick the project from the list, granting
 > your account `roles/browser` on the project lists it — optional, not required.
@@ -421,10 +427,15 @@ not listed? Enter its ID**, usable while the list is still loading.
 > gcloud config set account you@example.com
 > ```
 
-The wizard writes neither `keyFile` nor `impersonateServiceAccount`. If you use
-either (see [Credentials](#credentials)), add it to the provider the wizard
-wrote — without `impersonateServiceAccount` the download runs as your own
-gcloud account and is refused on a bucket granted only to the reader.
+The wizard's **Read-only service account** field writes the provider's
+`impersonateServiceAccount` (see [Credentials](#credentials)); leave it empty
+and both halves run as you — the download as your own gcloud account, which is
+refused on a bucket granted only to the reader. For a new provider the field
+starts on `costgoblin-reader`, completed to
+`costgoblin-reader@<the project you pick>.iam.gserviceaccount.com`, and before
+saving the wizard checks that the download (`gcloud storage ls` as that
+identity) can read the export. The wizard never writes a
+`keyFile`: add one to the provider by hand if you use it.
 
 To write the entry by hand instead — a bare service-account key the wizard
 can't browse with, for example — take the **Write the config by hand
@@ -482,9 +493,12 @@ are the entire requirement:
 | `storage.objects.list` | finding the `billing_period=` folders |
 | `storage.objects.get` | downloading the shards |
 
-Both come from `roles/storage.objectViewer` on the bucket. Nothing at the
-project level is needed — see the `storage.buckets.list` note under "Point
-CostGoblin at it" for the one place that shows.
+Both come from `roles/storage.objectViewer` on the bucket. The recipe below
+also grants `roles/storage.bucketViewer` on the project — bucket **names**
+only (`storage.buckets.get` + `storage.buckets.list`), no access to any
+object — so the setup wizard can list the project's buckets for you to pick
+from. Skip it if you'd rather the reader not see other bucket names; the
+wizard then asks you to type the bucket name instead.
 
 What the app *could* reach is a separate question, and it depends on how you
 sign it in. By default the provider uses **Application Default Credentials**,
@@ -501,9 +515,10 @@ it never uses that reach. That is fine for a personal project. On a company or
 shared laptop, confine it instead.
 
 For least privilege — the recommendation for company and shared machines —
-create a read-only service account and impersonate it. No long-lived key, and
-the identity CostGoblin reads the bucket with can reach nothing but this
-bucket:
+create a read-only service account and have CostGoblin impersonate it. No
+long-lived key, and the identity CostGoblin reads the bucket with can read
+nothing but this bucket (it can see the project's bucket names, not their
+contents):
 
 ```bash
 SA=costgoblin-reader@PROJECT.iam.gserviceaccount.com
@@ -512,18 +527,33 @@ gcloud iam service-accounts create costgoblin-reader \
 gcloud storage buckets add-iam-policy-binding gs://cost-goblin \
   --member=serviceAccount:${SA} \
   --role=roles/storage.objectViewer
+# Lets the setup wizard list the project's bucket NAMES so you can pick the
+# export — storage.buckets.get + list only, no object access. Optional.
+gcloud projects add-iam-policy-binding PROJECT \
+  --member=serviceAccount:${SA} \
+  --role=roles/storage.bucketViewer --condition=None
 # Impersonation needs permission to mint that account's tokens. It is NOT
-# implied by roles/editor — only by Owner — so without this the login below
-# fails with "Unable to impersonate", which is exactly the wall the
-# least-privilege reader is most likely to hit.
+# implied by roles/editor — only by Owner — so without this every read fails
+# with "unable to impersonate … iam.serviceAccounts.getAccessToken denied",
+# which is exactly the wall the least-privilege reader is most likely to hit.
 gcloud iam service-accounts add-iam-policy-binding ${SA} \
   --member="user:$(gcloud config get-value account)" \
   --role=roles/iam.serviceAccountTokenCreator
-gcloud auth application-default login \
-  --impersonate-service-account=${SA}
 ```
 
-then name it in the config:
+Minting the reader's token is an IAM Service Account Credentials API call,
+billed to your ADC **quota project** — the one `gcloud auth application-default
+login` prints when it finishes, *not* necessarily the reader's project. If
+CostGoblin reports that API as disabled, enable it in the project the message
+names (or point ADC at a project where it is on with
+`gcloud auth application-default set-quota-project PROJECT`):
+
+```bash
+gcloud services enable iamcredentials.googleapis.com --project=QUOTA_PROJECT
+```
+
+then name it on the provider — in the setup wizard's **Read-only service
+account** field, or by hand in the config:
 
 ```yaml
   - name: gcp-main
@@ -533,26 +563,41 @@ then name it in the config:
       ...
 ```
 
-Both halves are needed: the `gcloud auth` command covers the listing SDK, which
-reads ADC, while the config field passes the same identity to the
-`gcloud storage rsync` download, which uses gcloud's own credentials and would
-otherwise run as the signed-in user.
+Application Default Credentials stay your own plain
+`gcloud auth application-default login` — do **not** pass
+`--impersonate-service-account` to it. CostGoblin impersonates per provider, on
+top of that login: the listing reads the bucket as the provider's
+`impersonateServiceAccount`, and the `gcloud storage rsync` download passes the
+same account to gcloud. ADC is a single file per machine, so impersonating
+there would give every GCP provider the same reader; per provider, two
+providers — a personal project's reader and a company project's, say — each
+read as their own. Grant yourself `roles/iam.serviceAccountTokenCreator` on
+each reader.
+
+> Set up before this changed, with `application-default login
+> --impersonate-service-account=…`? Providers that name their reader
+> (`impersonateServiceAccount`) work immediately: CostGoblin mints each one from
+> *your* login underneath that file, so a second provider with a different
+> reader works too. A provider *without* one keeps reading as that file's
+> service account — and since a plain sign-in would widen it to your own
+> access, the app's **Sign in** button keeps that impersonation until every
+> provider names its reader. Add `impersonateServiceAccount` to each provider
+> in `costgoblin.yaml`; the next sign-in is then the plain login.
 
 Two limits apply even then, so weigh them before telling an approver the app is
 confined to the bucket:
 
-- **Without `impersonateServiceAccount` (or a `keyFile`), the download runs as
-  gcloud's signed-in account**, not as the reader — whatever that account can
-  reach, the `gcloud storage rsync` process can too. And the wizard's project
-  list (`gcloud projects list`) *always* runs as gcloud's active account, with
-  or without impersonation — which is why a least-privilege account is not
-  shown its project and types the ID instead.
+- **Without `impersonateServiceAccount` (or a `keyFile`), both halves run as
+  you** — the listing as your ADC login, the download as gcloud's signed-in
+  account — and whatever those can reach, the app can too. And the wizard's
+  project list (`gcloud projects list`) *always* runs as gcloud's active
+  account, with or without impersonation — which is why a least-privilege
+  account is not shown its project and types the ID instead.
 - **Impersonation confines the identity used, not what is stored.** The ADC
-  file written by `gcloud auth application-default login
-  --impersonate-service-account=…` still holds *your own* refresh token as the
-  source credential it impersonates from. Software running as you that reads
-  that file can act as you — so full-disk encryption and an account nobody else
-  uses still matter.
+  file still holds *your own* refresh token as the source credential every
+  reader is minted from. Software running as you that reads that file can act
+  as you — so full-disk encryption and an account nobody else uses still
+  matter.
 
 A `keyFile: /path/to/key.json` is also accepted for environments that require a
 service-account key, but impersonation is the better default — there is no
@@ -565,16 +610,26 @@ both in a **Signed in as** panel on each GCP provider under **Data
 Management**: the account behind **bucket listing** (the provider's `keyFile`,
 or Application Default Credentials — with the file it was read from) and the
 account **downloads** run as (gcloud's active account and configuration, or the
-same `keyFile`). The setup wizard shows the short form: the account gcloud is
+same `keyFile`), each impersonating the provider's `impersonateServiceAccount`
+when it names one. When nothing needs action the panel is one line — who you
+are signed in as and who CostGoblin reads as — with both paths under
+**Details**. The setup wizard shows the short form: the account gcloud is
 signed in as, which also lists your projects.
 
 The panel is read-only: it reads the credential files and runs
 `gcloud config list`, and asks Google to name the account behind ADC. No token
-is displayed or stored. It warns when **downloads and listing run as two
-different people** — typically after switching gcloud to an admin account to
-make the wizard's project list work, which makes downloads run as that admin
-too. Switch back with `gcloud config set account <you>` (after
-`gcloud auth login <you>` if gcloud has never signed in as you).
+is displayed or stored. It warns when:
+
+- **downloads and listing run as two different people** — typically after
+  switching gcloud to an admin account to make the wizard's project list work,
+  which makes downloads run as that admin too. Switch back with
+  `gcloud config set account <you>` (after `gcloud auth login <you>` if gcloud
+  has never signed in as you). With a reader, both accounts need Token Creator
+  on it.
+- **a provider with no reader lists through ADC from the older
+  `--impersonate-service-account` login** — listing reads as that service
+  account, but downloads run as gcloud's own account. Add it as the provider's
+  `impersonateServiceAccount` so both halves read as it.
 
 Press **Re-check** after changing either sign-in.
 

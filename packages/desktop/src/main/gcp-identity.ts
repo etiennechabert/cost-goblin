@@ -3,6 +3,7 @@ import {
   activeGcloudConfiguration,
   adcCredentialsLocation,
   emailFromIdToken,
+  isPathPlaceholder,
   grantsEmailScope,
   logger,
   parseAdcJson,
@@ -45,10 +46,11 @@ const ACCOUNT_LOOKUP_REQUEST_TIMEOUT_MS = 8_000;
 /** Long gcloud failure text is truncated: it lands in a compact panel. */
 const MAX_CLI_ERROR_LENGTH = 300;
 
-/** The provider field that changes which identity runs. Undefined is the
+/** The provider fields that change which identity runs. Undefined is the
  *  wizard's case: no provider exists yet. */
 export interface IdentityProviderOptions {
   readonly keyFile?: string | undefined;
+  readonly impersonateServiceAccount?: string | undefined;
 }
 
 export interface IdentityDeps {
@@ -72,6 +74,9 @@ function isEnoent(err: unknown): boolean {
 /** Describe one credential file the way the SDK will read it. A missing
  *  ADC file means "not signed in"; a missing key file is a broken config. */
 async function describeCredentialFile(file: GcpCredentialFile, deps: IdentityDeps): Promise<GcpListingIdentity> {
+  // A value that was not a path (pasted credential JSON) is shown redacted;
+  // there is nothing to read.
+  if (isPathPlaceholder(file.path)) return { kind: 'unreadable', file };
   let text: string;
   try {
     text = await deps.readFile(file.path);
@@ -167,7 +172,14 @@ export function createGcpIdentityResolver(deps: IdentityDeps): GcpIdentityResolv
       if (gcloudState.kind !== 'ok') download = gcloudState;
       else if (keyFile !== undefined) download = { kind: 'key-file', path: keyFile, email: listing.kind === 'service-account' ? listing.email : null };
       else download = { kind: 'gcloud', account: gcloudState.account, configuration: gcloudState.configuration };
-      return { listing, download, splitAccounts: splitAccounts(listing, download) };
+      // Both halves impersonate the reader, so what is shown and compared
+      // above are the accounts it is minted from.
+      return {
+        listing,
+        download,
+        reader: provider.impersonateServiceAccount ?? null,
+        splitAccounts: splitAccounts(listing, download),
+      };
     },
   };
 }
@@ -215,7 +227,8 @@ export function defaultIdentityDeps(): IdentityDeps {
 
 /** The `data:gcp-identities` handler's body, kept out of `handlers/setup.ts`
  *  so it can be tested without Electron. `rawProvider` arrives over IPC, so
- *  it is narrowed here: a string names a provider whose `keyFile` applies;
+ *  it is narrowed here: a string names a provider whose `keyFile` /
+ *  `impersonateServiceAccount` apply;
  *  anything else is the wizard's "no provider yet". */
 export async function gcpIdentitiesFor(
   rawProvider: unknown,

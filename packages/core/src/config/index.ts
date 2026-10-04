@@ -39,3 +39,5 @@ export {
 } from './provider-name.js';
 export { BUILTIN_EXCLUSION_RULES, DEFAULT_COST_SCOPE, mergeBuiltInExclusionRules } from './cost-scope-seed.js';
 export { GCLOUD_ADC_LOGIN_COMMAND, GCLOUD_CLI_LOGIN_COMMAND } from './credential-commands.js';
+export { DEFAULT_READER_ACCOUNT_ID, SERVICE_ACCOUNT_EMAIL_RULE, isServiceAccountEmail, resolveReaderInput } from './service-account.js';
+export type { ReaderInput } from './service-account.js';
