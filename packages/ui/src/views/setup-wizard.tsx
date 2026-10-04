@@ -371,8 +371,7 @@ function GcpIntroStep({ state, onBrowse, onProjectId, onScaffold, onDone, onBack
           className="text-accent underline underline-offset-2 hover:text-accent-hover"
         >
           Google Cloud setup guide
-        </a>
-        , then find your export below.
+        </a>, then find your export below.
       </p>
       <div className="flex w-full max-w-xs flex-col gap-3">
         <Button onClick={onBrowse} className="bg-accent hover:bg-accent-hover text-white">
