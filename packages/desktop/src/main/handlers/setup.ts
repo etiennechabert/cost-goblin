@@ -4,7 +4,6 @@ import {
   classifyGcsFolder,
   createGcsStorage,
   logger,
-  parseS3Path,
   isStringRecord,
 } from '@costgoblin/core';
 import type { GcpIdentityResult, GcpProject, GcsBrowseResult, GcsDownloadCheckResult } from '@costgoblin/core';
@@ -12,12 +11,11 @@ import { loadSharedConfigFiles } from '@smithy/shared-ini-file-loader';
 import { awsProfileNames } from '../aws-profiles.js';
 import { upsertWizardProvider } from '../config-upsert.js';
 import { buildConfigTemplate, buildDimensionsTemplate, PROVIDER_ABSENT_DIMENSIONS } from '../config-templates.js';
-import { classifyManifestColumns, parseManifestColumnNames, selectManifestKey } from '../setup-manifest.js';
 import { runGcloudCapture } from '../gcloud-capture.js';
 import { createGcpIdentityResolver, defaultIdentityDeps, gcpIdentitiesFor } from '../gcp-identity.js';
 import type { GcpIdentityResolver } from '../gcp-identity.js';
 import { collectGcsPrefixes, gcloudProjectsOutcome, gcsNextPageToken, listGcsBucketsAs, parseWizardReader, verifyGcsDownloadAs, wizardGcsErrorMessage, wizardWriteReader } from '../setup-gcp.js';
-import type { DetectedReportType } from '../setup-manifest.js';
+import { browseS3, listS3Buckets, testS3Connection } from '../setup-s3.js';
 import type { AppContext } from './context.js';
 
 /** Ceiling on `gcloud projects list`. The CLI can sit on a re-auth prompt it
@@ -68,27 +66,7 @@ export function registerSetupHandlers(app: AppContext): void {
     }
   });
 
-  ipcMain.handle('setup:test-connection', async (_event, params: { profile: string; bucket: string }): Promise<{ ok: boolean; error?: string | undefined }> => {
-    try {
-      const { S3Client, ListObjectsV2Command } = await import('@aws-sdk/client-s3');
-      const parsed = parseS3Path(params.bucket);
-      const client = new S3Client({
-        region: 'eu-central-1',
-        ...(params.profile === 'default' ? {} : { profile: params.profile }),
-      });
-
-      await client.send(new ListObjectsV2Command({
-        Bucket: parsed.bucket,
-        Prefix: parsed.prefix,
-        MaxKeys: 1,
-      }));
-
-      return { ok: true };
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { ok: false, error: message };
-    }
-  });
+  ipcMain.handle('setup:test-connection', (_event, params: { profile: string; bucket: string }) => testS3Connection(params));
 
   // The SDK's own loader, never a hand read of ~/.aws: see awsProfileNames.
   // ignoreCache because the loader memoises each file for the process
@@ -97,94 +75,9 @@ export function registerSetupHandlers(app: AppContext): void {
   ipcMain.handle('setup:list-profiles', async (): Promise<string[]> =>
     awsProfileNames(await loadSharedConfigFiles({ ignoreCache: true })));
 
-  ipcMain.handle('setup:list-buckets', async (_event, profile: string): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }> => {
-    try {
-      const { S3Client, ListBucketsCommand } = await import('@aws-sdk/client-s3');
-      const client = new S3Client({
-        region: 'us-east-1',
-        ...(profile === 'default' ? {} : { profile }),
-      });
+  ipcMain.handle('setup:list-buckets', (_event, profile: string) => listS3Buckets(profile));
 
-      const response = await client.send(new ListBucketsCommand({}));
-      const buckets = (response.Buckets ?? [])
-        .filter(b => b.Name !== undefined)
-        .map(b => ({ name: b.Name ?? '', region: '' }));
-      return { buckets };
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      logger.info('setup:list-buckets failed', { error: message });
-      return { buckets: [], error: message };
-    }
-  });
-
-  ipcMain.handle('setup:browse-s3', async (_event, params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isBillingExport: boolean; detectedType: DetectedReportType; missingColumns: string[]; error?: string | undefined }> => {
-    try {
-      const { S3Client, ListObjectsV2Command, GetObjectCommand } = await import('@aws-sdk/client-s3');
-      const client = new S3Client({
-        region: 'eu-central-1',
-        ...(params.profile === 'default' ? {} : { profile: params.profile }),
-      });
-
-      const response = await client.send(new ListObjectsV2Command({
-        Bucket: params.bucket,
-        Prefix: params.prefix,
-        Delimiter: '/',
-        MaxKeys: 200,
-      }));
-
-      const prefixes = (response.CommonPrefixes ?? [])
-        .filter(p => p.Prefix !== undefined)
-        .map(p => {
-          const full = p.Prefix ?? '';
-          const relative = full.slice(params.prefix.length);
-          return relative.replace(/\/$/, '');
-        })
-        .filter(p => p.length > 0);
-
-      const isBillingExport = prefixes.includes('data') && prefixes.includes('metadata');
-
-      let detectedType: DetectedReportType = 'unknown';
-      let missingColumns: string[] = [];
-
-      if (isBillingExport) {
-        try {
-          const metaList = await client.send(new ListObjectsV2Command({
-            Bucket: params.bucket,
-            Prefix: `${params.prefix}metadata/`,
-            MaxKeys: 10,
-          }));
-          const jsonKeys = (metaList.Contents ?? [])
-            .map(c => c.Key)
-            .filter((k): k is string => k !== undefined && k.endsWith('.json'));
-          const manifestKey = selectManifestKey(jsonKeys);
-          if (manifestKey !== undefined) {
-            const manifestResponse = await client.send(new GetObjectCommand({ Bucket: params.bucket, Key: manifestKey }));
-            const body = await manifestResponse.Body?.transformToString();
-            if (body !== undefined) {
-              const columnNames = parseManifestColumnNames(body);
-              const classification = classifyManifestColumns(columnNames);
-              detectedType = classification.detectedType;
-              missingColumns = classification.missingColumns;
-            }
-          }
-        } catch {
-          // manifest detection failed
-        }
-      }
-
-      return { prefixes, isBillingExport, detectedType, missingColumns };
-    } catch (err: unknown) {
-      // Surface the failure instead of swallowing it into an empty result. An
-      // expired SSO token or an s3:ListBucket AccessDenied while browsing used
-      // to render exactly like a genuinely empty bucket ("No subfolders
-      // found") — no message, no sign-in, no Retry. The wizard's browse step
-      // now shows an error panel, matching the bucket-list step and the GCP
-      // browse leg (the dead end #539/#542 removed everywhere else).
-      const message = err instanceof Error ? err.message : String(err);
-      logger.info('setup:browse-s3 failed', { error: message });
-      return { prefixes: [], isBillingExport: false, detectedType: 'unknown', missingColumns: [], error: message };
-    }
-  });
+  ipcMain.handle('setup:browse-s3', (_event, params: { profile: string; bucket: string; prefix: string }) => browseS3(params));
 
   // ---- GCP: the browse-and-pick counterpart of the three S3 handlers above.
   //
@@ -295,8 +188,8 @@ export function registerSetupHandlers(app: AppContext): void {
     } catch (err: unknown) {
       const message = wizardGcsErrorMessage(err, parsed.reader);
       logger.info('setup:browse-gcs failed', { error: message });
-      // Unlike `setup:browse-s3`, which swallows the error into an empty
-      // listing, the message is carried back: a GCP browse fails mostly on
+      // As in `setup:browse-s3`, the message is carried back rather than
+      // swallowed into an empty listing: a GCP browse fails mostly on
       // credentials, and the wizard turns that into an inline sign-in button.
       return { prefixes: [], folder: { kind: 'unknown' }, hasParquet: false, truncated: false, error: message };
     }

@@ -1,5 +1,4 @@
-import { logger } from '@costgoblin/core';
-import { loadSharedConfigFiles } from '@smithy/shared-ini-file-loader';
+import { credentialChainProfile, logger, profileRegion } from '@costgoblin/core';
 
 /** Per-region metadata AWS publishes under global-infrastructure. We pull
  *  three fields per region — longName for display, country + continent for
@@ -22,24 +21,17 @@ async function getSsmModule(): Promise<typeof import('@aws-sdk/client-ssm')> {
   return import('@aws-sdk/client-ssm');
 }
 
-/** Reads the AWS region configured for a profile in ~/.aws/config. Falls back
- *  to the profile's linked sso-session `sso_region` since SSO-only profiles
- *  often omit `region`. We must pass this explicitly to the SDK — env vars
- *  like AWS_REGION would otherwise take precedence over the profile's own
- *  config, which bites users whose SCPs deny specific regions (e.g. us-east-1). */
+/** The AWS region configured for a profile in ~/.aws/config (see
+ *  `profileRegion`: its `region`, else its SSO `sso_region`; for `'default'`,
+ *  the profile `AWS_PROFILE` names, the one the client's credentials come
+ *  from). We must pass this explicitly to the SDK — env vars like AWS_REGION
+ *  would otherwise take precedence over the profile's own config, which bites
+ *  users whose SCPs deny specific regions (e.g. us-east-1). */
 async function resolveProfileRegion(profile: string): Promise<string> {
-  const { configFile } = await loadSharedConfigFiles();
-  const section = configFile[profile] ?? {};
-  const region = section['region'];
-  if (typeof region === 'string' && region.length > 0) return region;
-  const ssoSession = section['sso_session'];
-  if (typeof ssoSession === 'string' && ssoSession.length > 0) {
-    const sessionSection = configFile[`sso-session.${ssoSession}`] ?? {};
-    const ssoRegion = sessionSection['sso_region'];
-    if (typeof ssoRegion === 'string' && ssoRegion.length > 0) return ssoRegion;
-  }
+  const region = await profileRegion(profile);
+  if (region !== undefined) return region;
   const configHint = process.platform === 'win32' ? String.raw`%USERPROFILE%\.aws\config` : '~/.aws/config';
-  throw new Error(`Profile "${profile}" has no region configured in ${configHint}. Add 'region = <aws-region>' to the profile.`);
+  throw new Error(`Profile "${credentialChainProfile(profile)}" has no region configured in ${configHint}. Add 'region = <aws-region>' to the profile.`);
 }
 
 const FIELDS = ['longName', 'geolocationCountry', 'geolocationRegion'] as const;
