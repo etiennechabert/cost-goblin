@@ -376,6 +376,22 @@ describe('DataManagement — GCP tier Configure', () => {
   });
 });
 
+describe('DataManagement — Region Names', () => {
+  it('is offered only alongside an AWS provider, whose SSM it reads', async () => {
+    const api = new MockCostApi();
+    vi.spyOn(api, 'getConfig').mockResolvedValue({ ...MOCK_MIXED_PROVIDER_CONFIG, providers: [MOCK_GCP_PROVIDER] });
+    renderDataManagement(api);
+    await screen.findByRole('region', { name: 'Provider gcp-main' });
+    expect(screen.queryByText(/Region Names/)).toBeNull();
+    cleanup();
+
+    const mixed = new MockCostApi();
+    vi.spyOn(mixed, 'getConfig').mockResolvedValue(MOCK_MIXED_PROVIDER_CONFIG);
+    renderDataManagement(mixed);
+    await waitFor(() => { expect(screen.getAllByText(/Region Names/).length).toBeGreaterThan(0); });
+  });
+});
+
 describe('DataManagement — GCP "Signed in as" panel', () => {
   const SECOND_GCP: ProviderConfig = { ...MOCK_GCP_PROVIDER, name: asProviderName('gcp-second') };
 

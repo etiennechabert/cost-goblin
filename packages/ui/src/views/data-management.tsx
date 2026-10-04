@@ -310,6 +310,7 @@ export function DataManagement() {
     ? 'Re-check S3 and download any new or updated data'
     : `Sync ${String(syncableTotal)} period(s) that are missing or out of date`;
 
+  const awsProfile = providers.find(p => p.type === 'aws')?.credentialsProfile;
   return (
     <div className="flex flex-col gap-5 p-6">
       {/* Header */}
@@ -394,11 +395,11 @@ export function DataManagement() {
         />
       ))}
 
-      {/* Region names enrichment — provider-independent (AWS region metadata
-          is global), so one section fed by the first AWS provider's profile.
-          Not `providers[0]`: that slot may hold a GCP provider, which has no
-          profile and no SSM to read. */}
-      <SsmParameterSection profile={providers.find(p => p.type === 'aws')?.credentialsProfile ?? null} />
+      {/* Region names enrichment — AWS region metadata read from SSM, so one
+          section fed by the first AWS provider's profile. Hidden without one:
+          SSM names AWS region codes only, so a GCP-only workspace has nothing
+          it could enrich, and "configure an AWS profile" was a dead end. */}
+      {awsProfile !== undefined && <SsmParameterSection profile={awsProfile} />}
 
       <SyncLogPanel active={anySyncing} />
 

@@ -62,24 +62,45 @@ async function warningsOf(panel: HTMLElement): Promise<string> {
   return list.textContent;
 }
 
+/** The full breakdown: behind Details when the panel is healthy (its one-line
+ *  summary repeats the account and reader), the panel itself otherwise. */
+function breakdown(panel: HTMLElement): HTMLElement {
+  return panel.querySelector('details') ?? panel;
+}
+
 afterEach(cleanup);
 
 describe('GcpIdentityPanel', () => {
   it('shows both identities, names its landmark after the provider, and warns about nothing when they agree', async () => {
     const { api, panel } = renderPanel(new MockCostApi().gcpIdentitiesResult, { providerName: 'gcp-main' });
     expect(screen.getByRole('region', { name: 'Signed in as (gcp-main)' })).toBe(panel);
-    await waitFor(() => { expect(within(panel).getAllByText('alice@acme.com')).toHaveLength(2); });
-    expect(within(panel).getByText(`Application Default Credentials · ${ADC_PATH}`)).toBeDefined();
-    expect(within(panel).getByText('gcloud CLI · configuration "default"')).toBeDefined();
+    await waitFor(() => { expect(within(breakdown(panel)).getAllByText('alice@acme.com')).toHaveLength(2); });
+    expect(within(breakdown(panel)).getByText(`Application Default Credentials · ${ADC_PATH}`)).toBeDefined();
+    expect(within(breakdown(panel)).getByText('gcloud CLI · configuration "default"')).toBeDefined();
     expect(within(panel).queryByRole('list', { name: 'Credential warnings' })).toBeNull();
     expect(api.gcpIdentitiesRequestedFor).toEqual(['gcp-main']);
   });
 
+  it('is one line when nothing needs action, with the breakdown behind Details', async () => {
+    const { panel } = renderPanel(ok({ listing: reader(SA), download: gcloud(account('alice@acme.com'), viaProvider(SA)) }));
+    await waitFor(() => { expect(panel.querySelector('details')).not.toBeNull(); });
+    const details = breakdown(panel);
+    expect(details.hasAttribute('open')).toBe(false);
+    const summary = panel.querySelector('p');
+    expect(summary?.textContent).toBe(`alice@acme.com · reads as ${SA}`);
+  });
+
+  it('shows the breakdown open when something needs action', async () => {
+    const { panel } = renderPanel(ok({ listing: { kind: 'not-signed-in', file: ADC }, download: gcloud(account('alice@acme.com'), viaProvider(SA)) }));
+    await waitFor(() => { expect(within(panel).getByText('Not signed in')).toBeDefined(); });
+    expect(panel.querySelector('details')).toBeNull();
+  });
+
   it('shows a provider s reader impersonated from the signed-in user', async () => {
     const { panel } = renderPanel(ok({ listing: reader(SA), download: gcloud(account('alice@acme.com'), viaProvider(SA)) }));
-    await waitFor(() => { expect(within(panel).getAllByText(SA)).toHaveLength(2); });
-    expect(within(panel).getAllByText('impersonating')).toHaveLength(2);
-    expect(within(panel).getAllByText('alice@acme.com')).toHaveLength(2);
+    await waitFor(() => { expect(within(breakdown(panel)).getAllByText(SA)).toHaveLength(2); });
+    expect(within(breakdown(panel)).getAllByText('impersonating')).toHaveLength(2);
+    expect(within(breakdown(panel)).getAllByText('alice@acme.com')).toHaveLength(2);
     expect(panel.textContent).toContain('This provider\'s read-only service account (impersonateServiceAccount), minted from your sign-in');
     expect(within(panel).queryByRole('list', { name: 'Credential warnings' })).toBeNull();
   });
@@ -98,13 +119,13 @@ describe('GcpIdentityPanel', () => {
       listing: reader(SA, { status: 'unknown', reason: 'not-recorded' }, OTHER_SA),
       download: gcloud(account('alice@acme.com'), viaProvider(SA)),
     }));
-    await waitFor(() => { expect(within(panel).getAllByText(SA)).toHaveLength(2); });
+    await waitFor(() => { expect(within(breakdown(panel)).getAllByText(SA)).toHaveLength(2); });
     expect(panel.textContent).toContain(`Your Application Default Credentials impersonate ${OTHER_SA} themselves; this provider doesn't use that — it mints its reader from the sign-in underneath`);
   });
 
   it('says when listing impersonates through a legacy ADC file itself', async () => {
     const { panel } = renderPanel(ok({ listing: legacy(SA), download: gcloud(account('alice@acme.com'), viaGcloud(SA)) }));
-    await waitFor(() => { expect(within(panel).getAllByText(SA)).toHaveLength(2); });
+    await waitFor(() => { expect(within(breakdown(panel)).getAllByText(SA)).toHaveLength(2); });
     expect(panel.textContent).toContain('Impersonated by the credential itself (an --impersonate-service-account sign-in) — this provider names no read-only service account');
   });
 
@@ -122,7 +143,7 @@ describe('GcpIdentityPanel', () => {
       expect(text).not.toContain('gcloud config unset');
       expect(text).not.toContain('--impersonate-service-account');
       expect(text).not.toContain('setup wizard');
-      expect(within(panel).getByText(/impersonation from gcloud's auth\/impersonate_service_account/)).toBeDefined();
+      expect(within(breakdown(panel)).getByText(/impersonation from gcloud's auth\/impersonate_service_account/)).toBeDefined();
     });
 
     it('gcloud impersonating on its own while listing does not', async () => {
@@ -149,7 +170,7 @@ describe('GcpIdentityPanel', () => {
       expect(text).toContain('from CLOUDSDK_AUTH_IMPERSONATE_SERVICE_ACCOUNT in CostGoblin\'s environment');
       expect(text).toContain('If that setting isn\'t meant for CostGoblin, unset CLOUDSDK_AUTH_IMPERSONATE_SERVICE_ACCOUNT in CostGoblin\'s environment');
       expect(text).not.toContain('gcloud config unset');
-      expect(within(panel).getByText(/impersonation from CLOUDSDK_AUTH_IMPERSONATE_SERVICE_ACCOUNT/)).toBeDefined();
+      expect(within(breakdown(panel)).getByText(/impersonation from CLOUDSDK_AUTH_IMPERSONATE_SERVICE_ACCOUNT/)).toBeDefined();
     });
 
     it('never offers a reader to a key-file provider, which cannot have both', async () => {
@@ -175,7 +196,7 @@ describe('GcpIdentityPanel', () => {
       expect(chainText).toContain(`through the delegation chain ${OTHER_SA} → ${SA}`);
       expect(chainText).toContain('naming the last hop alone would skip the others');
       expect(chainText).not.toContain('impersonateServiceAccount:');
-      expect(within(first.panel).getByText(`Through the delegation chain ${OTHER_SA} → ${SA}`)).toBeDefined();
+      expect(within(breakdown(first.panel)).getByText(`Through the delegation chain ${OTHER_SA} → ${SA}`)).toBeDefined();
       cleanup();
 
       const odd = 'Weird@example.com';
@@ -225,7 +246,7 @@ describe('GcpIdentityPanel', () => {
       // `config set` alone breaks downloads for an account gcloud never signed in as.
       expect(text).toContain('gcloud auth login alice@acme.com first');
       expect(text).not.toContain('project list');
-      expect(within(panel).getByText('gcloud CLI · configuration "acme-admin"')).toBeDefined();
+      expect(within(breakdown(panel)).getByText('gcloud CLI · configuration "acme-admin"')).toBeDefined();
     });
 
     it('never tells a CLOUDSDK_CORE_ACCOUNT user to run `config set`, which cannot win', async () => {
@@ -238,7 +259,7 @@ describe('GcpIdentityPanel', () => {
       expect(text).toContain('each needs its own access');
       expect(text).toContain('gcloud\'s account is set by CLOUDSDK_CORE_ACCOUNT');
       expect(text).not.toContain('gcloud config set account');
-      expect(within(panel).getByText('account set by CLOUDSDK_CORE_ACCOUNT')).toBeDefined();
+      expect(within(breakdown(panel)).getByText('account set by CLOUDSDK_CORE_ACCOUNT')).toBeDefined();
     });
 
     it('follows gcloud s precedence: a credential file override is unset, not outvoted by `config set account`', async () => {
@@ -262,7 +283,7 @@ describe('GcpIdentityPanel', () => {
       const envText = await warningsOf(second.panel);
       expect(envText).toContain('unset CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE in CostGoblin\'s environment');
       expect(envText).not.toContain('gcloud config unset');
-      expect(within(second.panel).getByText('gcloud\'s auth/credential_file_override · /g.json · set by CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE')).toBeDefined();
+      expect(within(breakdown(second.panel)).getByText('gcloud\'s auth/credential_file_override · /g.json · set by CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE')).toBeDefined();
     });
 
     it('points a service-account listing at keyFile, not at `config set`', async () => {
@@ -320,10 +341,10 @@ describe('GcpIdentityPanel', () => {
   describe('remedies', () => {
     it('tells a signed-out user to run the plain sign-in, even for a provider with a reader', async () => {
       const { panel } = renderPanel(ok({ listing: { kind: 'not-signed-in', file: ADC }, download: gcloud(account('alice@acme.com'), viaProvider(SA)) }));
-      await waitFor(() => { expect(within(panel).getByText('Not signed in')).toBeDefined(); });
-      expect(within(panel).getByText('gcloud auth application-default login')).toBeDefined();
+      await waitFor(() => { expect(within(breakdown(panel)).getByText('Not signed in')).toBeDefined(); });
+      expect(within(breakdown(panel)).getByText('gcloud auth application-default login')).toBeDefined();
       expect(panel.textContent).not.toContain('--impersonate-service-account');
-      expect(within(panel).getByText(`No file at ${ADC_PATH}`)).toBeDefined();
+      expect(within(breakdown(panel)).getByText(`No file at ${ADC_PATH}`)).toBeDefined();
     });
 
     it('blanks gcloud s own impersonation setting in the sign-in command, which a terminal would otherwise honour', async () => {
@@ -332,38 +353,38 @@ describe('GcpIdentityPanel', () => {
         download: gcloud(account('alice@acme.com'), viaProvider(SA)),
         gcloudImpersonation: viaGcloud(OTHER_SA),
       }));
-      await waitFor(() => { expect(within(panel).getByText('Not signed in')).toBeDefined(); });
-      expect(within(panel).getByText('CLOUDSDK_AUTH_IMPERSONATE_SERVICE_ACCOUNT= gcloud auth application-default login')).toBeDefined();
+      await waitFor(() => { expect(within(breakdown(panel)).getByText('Not signed in')).toBeDefined(); });
+      expect(within(breakdown(panel)).getByText('CLOUDSDK_AUTH_IMPERSONATE_SERVICE_ACCOUNT= gcloud auth application-default login')).toBeDefined();
     });
 
     it('re-signs an expired sign-in for a provider with a reader with the plain login, on a line of its own', async () => {
       const { panel } = renderPanel(ok({ listing: reader(SA, { status: 'unknown', reason: 'expired' }, SA), download: gcloud(account('alice@acme.com'), viaProvider(SA)) }));
-      await waitFor(() => { expect(within(panel).getByText(/sign-in has expired/)).toBeDefined(); });
-      const command = within(panel).getByText('gcloud auth application-default login');
+      await waitFor(() => { expect(within(breakdown(panel)).getByText(/sign-in has expired/)).toBeDefined(); });
+      const command = within(breakdown(panel)).getByText('gcloud auth application-default login');
       expect(command.parentElement?.textContent).toBe('To sign in again, run gcloud auth application-default login.');
       // The account line itself carries no remedy, so nothing runs into "impersonating".
-      expect(within(panel).getByText(/sign-in has expired/).textContent).toBe('a Google account whose sign-in has expired');
+      expect(within(breakdown(panel)).getByText(/sign-in has expired/).textContent).toBe('a Google account whose sign-in has expired');
       expect(panel.textContent).not.toContain('--impersonate-service-account=');
     });
 
     it('never tells a reader-less provider on a legacy sign-in to sign in plainly — it would widen its access', async () => {
       const { panel } = renderPanel(ok({ listing: legacy(SA, { status: 'unknown', reason: 'expired' }), download: gcloud(account('alice@acme.com')) }));
-      await waitFor(() => { expect(within(panel).getByText(/sign-in has expired/)).toBeDefined(); });
-      const command = within(panel).getByText('gcloud auth application-default login');
+      await waitFor(() => { expect(within(breakdown(panel)).getByText(/sign-in has expired/)).toBeDefined(); });
+      const command = within(breakdown(panel)).getByText('gcloud auth application-default login');
       expect(command.parentElement?.textContent).toContain(`To sign in again, first add impersonateServiceAccount: ${SA} to this provider in costgoblin.yaml`);
       expect(command.parentElement?.textContent).toContain('a plain one would widen it to your own access; then run gcloud auth application-default login');
     });
 
     it('offers a bare sign-in when nothing impersonates', async () => {
       const { panel } = renderPanel(ok({ listing: user({ status: 'unknown', reason: 'expired' }), download: gcloud(account('alice@acme.com')) }));
-      await waitFor(() => { expect(within(panel).getByText('gcloud auth application-default login')).toBeDefined(); });
+      await waitFor(() => { expect(within(breakdown(panel)).getByText('gcloud auth application-default login')).toBeDefined(); });
     });
 
     it('sends a GOOGLE_APPLICATION_CREDENTIALS user to the variable, which signing in cannot change', async () => {
       const file: GcpCredentialFile = { path: '/old/key.json', origin: 'env' };
       const { panel } = renderPanel(ok({ listing: { kind: 'not-signed-in', file }, download: gcloud(account('alice@acme.com')) }));
-      await waitFor(() => { expect(within(panel).getByText('Not signed in')).toBeDefined(); });
-      const row = within(panel).getByText('Not signed in').parentElement;
+      await waitFor(() => { expect(within(breakdown(panel)).getByText('Not signed in')).toBeDefined(); });
+      const row = within(breakdown(panel)).getByText('Not signed in').parentElement;
       expect(row?.textContent).toContain('fix or unset GOOGLE_APPLICATION_CREDENTIALS');
       expect(within(panel).queryByText('gcloud auth application-default login')).toBeNull();
     });
@@ -374,21 +395,21 @@ describe('GcpIdentityPanel', () => {
         download: gcloud(account('alice@acme.com')),
         adcLoginPath: '/work/gcloud/application_default_credentials.json',
       }));
-      await waitFor(() => { expect(within(panel).getByText('Not signed in')).toBeDefined(); });
-      const row = within(panel).getByText('Not signed in').parentElement;
+      await waitFor(() => { expect(within(breakdown(panel)).getByText('Not signed in')).toBeDefined(); });
+      const row = within(breakdown(panel)).getByText('Not signed in').parentElement;
       expect(row?.textContent).toContain('CLOUDSDK_CONFIG is set, so gcloud writes /work/gcloud/application_default_credentials.json, which CostGoblin doesn\'t read');
     });
 
     it('puts the gcloud sign-in on its own line, apart from what downloads impersonate', async () => {
       const { panel } = renderPanel(ok({ listing: user(), download: gcloud(account(null), viaProvider(SA)) }));
-      await waitFor(() => { expect(within(panel).getByText('No active gcloud account')).toBeDefined(); });
-      const command = within(panel).getByText('gcloud auth login');
+      await waitFor(() => { expect(within(breakdown(panel)).getByText('No active gcloud account')).toBeDefined(); });
+      const command = within(breakdown(panel)).getByText('gcloud auth login');
       expect(command.parentElement?.textContent).toBe('Run gcloud auth login to sign gcloud in.');
     });
 
     it('sends an empty CLOUDSDK_CORE_ACCOUNT to the variable, not to a sign-in', async () => {
       const { panel } = renderPanel(ok({ listing: user(), download: gcloud(account(null, true)) }));
-      await waitFor(() => { expect(within(panel).getByText('No active gcloud account')).toBeDefined(); });
+      await waitFor(() => { expect(within(breakdown(panel)).getByText('No active gcloud account')).toBeDefined(); });
       expect(panel.textContent).toContain('CLOUDSDK_CORE_ACCOUNT is set but empty — unset CLOUDSDK_CORE_ACCOUNT in CostGoblin\'s environment.');
       expect(within(panel).queryByText('gcloud auth login')).toBeNull();
     });
@@ -402,7 +423,7 @@ describe('GcpIdentityPanel', () => {
         warnings: [{ kind: 'download-not-impersonated', listingTarget: SA, advice: { kind: 'set-reader', target: SA } }],
         notes: [{ kind: 'listing-account-unrecorded', downloadAccount: 'admin@acme.com', downloadTarget: null }],
       }), { context: 'wizard' });
-      await waitFor(() => { expect(within(panel).getByText('admin@acme.com')).toBeDefined(); });
+      await waitFor(() => { expect(within(breakdown(panel)).getByText('admin@acme.com')).toBeDefined(); });
       expect(panel.textContent).toContain('gcloud configuration "acme-admin"');
       expect(panel.textContent).not.toContain(SA);
       expect(panel.textContent).not.toContain('impersonat');
@@ -426,7 +447,7 @@ describe('GcpIdentityPanel', () => {
 
     it('reports a missing CLI', async () => {
       const { panel } = renderPanel(ok({ listing: user(), download: { kind: 'cli-missing' } }), { context: 'wizard' });
-      await waitFor(() => { expect(within(panel).getByText('The gcloud CLI is not installed')).toBeDefined(); });
+      await waitFor(() => { expect(within(breakdown(panel)).getByText('The gcloud CLI is not installed')).toBeDefined(); });
     });
   });
 
@@ -436,7 +457,7 @@ describe('GcpIdentityPanel', () => {
       download: gcloud(account('admin@acme.com'), viaProvider(SA)),
       notes: [{ kind: 'listing-account-unrecorded', downloadAccount: 'admin@acme.com', downloadTarget: SA }],
     }));
-    await waitFor(() => { expect(within(panel).getByText(/the credential doesn't record which/)).toBeDefined(); });
+    await waitFor(() => { expect(within(breakdown(panel)).getByText(/the credential doesn't record which/)).toBeDefined(); });
     // A note, not a warning: nothing is known to be wrong.
     expect(within(panel).queryByRole('list', { name: 'Credential warnings' })).toBeNull();
     const notes = within(panel).getByRole('list', { name: 'Credential notes' });
@@ -483,23 +504,23 @@ describe('GcpIdentityPanel', () => {
       listing: { kind: 'service-account', file: keyFile, email: 'ci@acme.iam.gserviceaccount.com' },
       download: gcloud({ kind: 'key-file', path: '/keys/ci.json', origin: 'provider', email: 'ci@acme.iam.gserviceaccount.com' }),
     }));
-    await waitFor(() => { expect(within(panel).getAllByText('ci@acme.iam.gserviceaccount.com')).toHaveLength(2); });
-    expect(within(panel).getAllByText('Provider keyFile · /keys/ci.json')).toHaveLength(2);
+    await waitFor(() => { expect(within(breakdown(panel)).getAllByText('ci@acme.iam.gserviceaccount.com')).toHaveLength(2); });
+    expect(within(breakdown(panel)).getAllByText('Provider keyFile · /keys/ci.json')).toHaveLength(2);
   });
 
   it('says when gcloud runs on a pre-minted token it cannot name', async () => {
     const { panel } = renderPanel(ok({ listing: user(), download: gcloud({ kind: 'access-token-file', path: '/tmp/token', origin: 'gcloud-config' }) }));
-    await waitFor(() => { expect(within(panel).getByText(/a pre-minted access token/)).toBeDefined(); });
-    expect(within(panel).getByText('gcloud\'s auth/access_token_file · /tmp/token')).toBeDefined();
+    await waitFor(() => { expect(within(breakdown(panel)).getByText(/a pre-minted access token/)).toBeDefined(); });
+    expect(within(breakdown(panel)).getByText('gcloud\'s auth/access_token_file · /tmp/token')).toBeDefined();
   });
 
   it('says when gcloud runs on a token from CLOUDSDK_AUTH_ACCESS_TOKEN, or a token file set in the environment', async () => {
     const first = renderPanel(ok({ listing: user(), download: gcloud({ kind: 'access-token' }) }));
-    await waitFor(() => { expect(within(first.panel).getByText(/a pre-minted access token/)).toBeDefined(); });
-    expect(within(first.panel).getByText('CLOUDSDK_AUTH_ACCESS_TOKEN in CostGoblin\'s environment')).toBeDefined();
+    await waitFor(() => { expect(within(breakdown(first.panel)).getByText(/a pre-minted access token/)).toBeDefined(); });
+    expect(within(breakdown(first.panel)).getByText('CLOUDSDK_AUTH_ACCESS_TOKEN in CostGoblin\'s environment')).toBeDefined();
     cleanup();
     const second = renderPanel(ok({ listing: user(), download: gcloud({ kind: 'access-token-file', path: '/sandbox/token', origin: 'env' }) }));
-    await waitFor(() => { expect(within(second.panel).getByText('gcloud\'s auth/access_token_file · /sandbox/token · set by CLOUDSDK_AUTH_ACCESS_TOKEN_FILE')).toBeDefined(); });
+    await waitFor(() => { expect(within(breakdown(second.panel)).getByText('gcloud\'s auth/access_token_file · /sandbox/token · set by CLOUDSDK_AUTH_ACCESS_TOKEN_FILE')).toBeDefined(); });
   });
 
   it('shows a key file that impersonates by itself on both halves, with nothing to warn about', async () => {
@@ -508,8 +529,8 @@ describe('GcpIdentityPanel', () => {
       listing: { kind: 'impersonated', file: keyFile, target: SA, source: { kind: 'user', account: ALICE }, via: { kind: 'credential' } },
       download: gcloud({ kind: 'key-file', path: '/keys/legacy.json', origin: 'provider', email: null }, { origin: 'credential-file', target: SA, fileOrigin: 'provider' }),
     }));
-    await waitFor(() => { expect(within(panel).getAllByText(SA)).toHaveLength(2); });
-    expect(within(panel).getByText(/impersonation built into the credential file/)).toBeDefined();
+    await waitFor(() => { expect(within(breakdown(panel)).getAllByText(SA)).toHaveLength(2); });
+    expect(within(breakdown(panel)).getByText(/impersonation built into the credential file/)).toBeDefined();
     expect(within(panel).queryByRole('list', { name: 'Credential warnings' })).toBeNull();
   });
 
@@ -518,23 +539,23 @@ describe('GcpIdentityPanel', () => {
       listing: { kind: 'unrecognized', file: ADC, type: 'mystery' },
       download: { kind: 'cli-missing' },
     }));
-    await waitFor(() => { expect(within(panel).getByText('The gcloud CLI is not installed — downloads need it')).toBeDefined(); });
-    expect(within(panel).getByText('A credential the Cloud Storage SDK can\'t use (mystery)')).toBeDefined();
+    await waitFor(() => { expect(within(breakdown(panel)).getByText('The gcloud CLI is not installed — downloads need it')).toBeDefined(); });
+    expect(within(breakdown(panel)).getByText('A credential the Cloud Storage SDK can\'t use (mystery)')).toBeDefined();
   });
 
   it('reports when the identities cannot be checked', async () => {
     const { panel } = renderPanel({ status: 'unavailable', reason: '"aws-main" is not a Google Cloud provider.' });
     await waitFor(() => {
-      expect(within(panel).getByText(`Couldn't check credentials: "aws-main" is not a Google Cloud provider.`)).toBeDefined();
+      expect(within(breakdown(panel)).getByText(`Couldn't check credentials: "aws-main" is not a Google Cloud provider.`)).toBeDefined();
     });
   });
 
   it('re-reads on Re-check', async () => {
     const { api, user: events, panel } = renderPanel(new MockCostApi().gcpIdentitiesResult);
-    await waitFor(() => { expect(within(panel).getAllByText('alice@acme.com')).toHaveLength(2); });
+    await waitFor(() => { expect(within(breakdown(panel)).getAllByText('alice@acme.com')).toHaveLength(2); });
     api.gcpIdentitiesResult = ok({ listing: user(), download: gcloud(account('carol@acme.com')) });
     await events.click(within(panel).getByRole('button', { name: 'Re-check' }));
-    await waitFor(() => { expect(within(panel).getByText('carol@acme.com')).toBeDefined(); });
+    await waitFor(() => { expect(within(breakdown(panel)).getByText('carol@acme.com')).toBeDefined(); });
     expect(api.gcpIdentitiesRequestedFor).toHaveLength(2);
   });
 });

@@ -116,7 +116,56 @@ function adcContext(identities: GcpIdentities): AdcContext {
   };
 }
 
+const isExpired = (account: GcpAccountLookup): boolean => account.status === 'unknown' && account.reason === 'expired';
+
+/** Nothing to act on: both halves resolved, nobody signed out or expired, no
+ *  warning. Then the panel is one line — who signs in and who it reads as —
+ *  with the full breakdown behind Details; anything less shows it open. */
+function isHealthy({ listing, download, warnings }: GcpIdentities): boolean {
+  if (warnings.length > 0) return false;
+  if (download.kind !== 'gcloud') return false;
+  if (download.principal.kind === 'account' && download.principal.account === null) return false;
+  switch (listing.kind) {
+    case 'user': return !isExpired(listing.account);
+    case 'impersonated': return listing.source.kind !== 'user' || !isExpired(listing.source.account);
+    case 'service-account':
+    case 'external':
+      return true;
+    case 'not-signed-in':
+    case 'unreadable':
+    case 'unrecognized':
+      return false;
+  }
+}
+
+/** The healthy panel's line: the account gcloud runs as, and the reader both
+ *  halves impersonate when there is one (with no warning, they agree). */
+function Summary({ identities }: Readonly<{ identities: GcpIdentities }>): React.JSX.Element | null {
+  const { listing, download } = identities;
+  if (download.kind !== 'gcloud') return null;
+  const target = download.impersonate?.target ?? (listing.kind === 'impersonated' ? listing.target : null);
+  return (
+    <p className="min-w-0 break-words">
+      <DownloadPrincipalText principal={download.principal} />
+      {target !== null && <><span className="text-text-muted"> · reads as </span><Principal>{target}</Principal></>}
+    </p>
+  );
+}
+
 function Identities({ identities }: Readonly<{ identities: GcpIdentities }>): React.JSX.Element {
+  if (!isHealthy(identities)) return <IdentityBreakdown identities={identities} />;
+  return (
+    <div className="mt-1">
+      <Summary identities={identities} />
+      <details className="mt-1">
+        <summary className="cursor-pointer text-[11px] text-text-muted hover:text-text-secondary">Details</summary>
+        <IdentityBreakdown identities={identities} />
+      </details>
+    </div>
+  );
+}
+
+function IdentityBreakdown({ identities }: Readonly<{ identities: GcpIdentities }>): React.JSX.Element {
   const adc = adcContext(identities);
   return (
     <>
