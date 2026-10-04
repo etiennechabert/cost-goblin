@@ -429,11 +429,10 @@ export interface CostApi {
      *  the entry's value (or none, for a new provider). */
     impersonateServiceAccount?: string | undefined;
     dailyBucket: string;
-    /** Daily-tier retention (the wizard's picker in daily mode). */
+    /** Per-tier retention, each from that tier's own picker on the Confirm
+     *  step. Omitted keeps the replaced entry's value, else the core default. */
     retentionDays?: number | undefined;
-    /** Hourly-tier retention (the wizard's picker in hourly-only mode). */
     hourlyRetentionDays?: number | undefined;
-    /** Cost-optimization-tier retention (the wizard's picker in a cost-opt-only run). */
     costOptRetentionDays?: number | undefined;
     hourlyBucket?: string | undefined;
     costOptBucket?: string | undefined;
