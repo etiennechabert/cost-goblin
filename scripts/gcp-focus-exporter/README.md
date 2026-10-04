@@ -379,13 +379,14 @@ the line under the project field shows the full
 **Change** beside it to name a different reader (a bare account name, completed
 with the project, or a full address), or clear it to read as your own account.
 
-> **"Listing the buckets in … isn't allowed for this account" is expected with the read-only reader, not
-> a misconfiguration.** Listing the buckets in a project is a *project-level*
-> permission; `roles/storage.objectViewer` grants rights on the bucket and
-> deliberately nothing above it, so the wizard reports that it could not list
-> them and hides the empty list. Type the bucket name into the field below and
-> press **Browse** — walking a bucket needs only `storage.objects.list`, which
-> the reader already has, and every step after it behaves normally.
+> **"This account can't list the buckets in …"** means the reader doesn't have
+> the optional project-level `roles/storage.bucketViewer` grant from the
+> [Credentials](#credentials) recipe — listing a project's buckets is a
+> *project-level* permission, while `roles/storage.objectViewer` is granted on
+> the bucket alone. Nothing is broken: type the bucket name into the field
+> below and press **Browse** — walking a bucket needs only
+> `storage.objects.list`, which the reader already has — or add the grant
+> below and press **Retry** under **Details**.
 >
 > If **Browse** fails too, the credential has no access to that bucket at all.
 > GCP returns the same denial in both cases — the trailing "(or it may not
@@ -393,8 +394,8 @@ with the project, or a full address), or clear it to read as your own account.
 > step to see the raw message, which names the principal that was refused. That
 > is usually the tell that ADC resolved to a different account than you meant.
 >
-> To make the dropdown work instead, add a project-level grant, accepting that
-> the reader can then see the name of every bucket in the project:
+> The grant that makes the dropdown work (the reader then sees the name of
+> every bucket in the project, but still reads only the export):
 >
 > ```bash
 > gcloud projects add-iam-policy-binding PROJECT \
@@ -492,9 +493,12 @@ are the entire requirement:
 | `storage.objects.list` | finding the `billing_period=` folders |
 | `storage.objects.get` | downloading the shards |
 
-Both come from `roles/storage.objectViewer` on the bucket. Nothing at the
-project level is needed — see the `storage.buckets.list` note under "Point
-CostGoblin at it" for the one place that shows.
+Both come from `roles/storage.objectViewer` on the bucket. The recipe below
+also grants `roles/storage.bucketViewer` on the project — bucket **names**
+only (`storage.buckets.get` + `storage.buckets.list`), no access to any
+object — so the setup wizard can list the project's buckets for you to pick
+from. Skip it if you'd rather the reader not see other bucket names; the
+wizard then asks you to type the bucket name instead.
 
 What the app *could* reach is a separate question, and it depends on how you
 sign it in. By default the provider uses **Application Default Credentials**,
@@ -512,8 +516,9 @@ shared laptop, confine it instead.
 
 For least privilege — the recommendation for company and shared machines —
 create a read-only service account and have CostGoblin impersonate it. No
-long-lived key, and the identity CostGoblin reads the bucket with can reach
-nothing but this bucket:
+long-lived key, and the identity CostGoblin reads the bucket with can read
+nothing but this bucket (it can see the project's bucket names, not their
+contents):
 
 ```bash
 SA=costgoblin-reader@PROJECT.iam.gserviceaccount.com
@@ -522,6 +527,11 @@ gcloud iam service-accounts create costgoblin-reader \
 gcloud storage buckets add-iam-policy-binding gs://cost-goblin \
   --member=serviceAccount:${SA} \
   --role=roles/storage.objectViewer
+# Lets the setup wizard list the project's bucket NAMES so you can pick the
+# export — storage.buckets.get + list only, no object access. Optional.
+gcloud projects add-iam-policy-binding PROJECT \
+  --member=serviceAccount:${SA} \
+  --role=roles/storage.bucketViewer --condition=None
 # Impersonation needs permission to mint that account's tokens. It is NOT
 # implied by roles/editor — only by Owner — so without this every read fails
 # with "unable to impersonate … iam.serviceAccounts.getAccessToken denied",

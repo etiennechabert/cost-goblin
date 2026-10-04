@@ -1267,7 +1267,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Acme Production');
 
-    await waitFor(() => { expect(screen.getByText(/normal for a read-only service account/i)).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByText(/can't list the buckets in/i)).toBeDefined(); });
     // A status, not an alert: with the recommended reader this is the normal path.
     expect(screen.queryByRole('alert')).toBeNull();
     // The fixture DOES contain the Troubleshooter URL — the point is that the
@@ -1301,12 +1301,12 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Acme Production');
 
-    await waitFor(() => { expect(screen.getByText(/normal for a read-only service account/i)).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByText(/can't list the buckets in/i)).toBeDefined(); });
     await userClickText(user, 'Details');
     expect(screen.getByText(BUCKET_LIST_DENIED).closest('details')?.open).toBe(true);
 
     await userClickText(user, 'Retry');
-    await waitFor(() => { expect(screen.getByText(/normal for a read-only service account/i)).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByText(/can't list the buckets in/i)).toBeDefined(); });
     expect(screen.getByText(BUCKET_LIST_DENIED).closest('details')?.open).toBe(true);
   });
 

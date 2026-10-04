@@ -706,8 +706,8 @@ function GcpBucketListDenied({ project, message, detailsOpen, onToggleDetails, o
     // `aria-atomic="false"` so opening Details announces only what it reveals.
     <div role="status" aria-atomic="false">
       <p className="text-xs text-text-secondary">
-        Listing the buckets in <code className="text-text-secondary">{project}</code> isn&apos;t allowed for this
-        account — normal for a read-only service account. Enter the bucket name below.
+        This account can&apos;t list the buckets in <code className="text-text-secondary">{project}</code> — enter the
+        bucket name below, or grant it bucket listing (see Details).
       </p>
       <details
         className="mt-1"
