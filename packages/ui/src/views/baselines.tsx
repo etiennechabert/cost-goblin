@@ -110,7 +110,14 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
   const [showRecompute, setShowRecompute] = useState(false);
 
   async function startTriage(): Promise<void> {
-    const res = await api.listBaselines({ triage: 'new' });
+    let res: BaselinesListResult;
+    try {
+      res = await api.listBaselines({ triage: 'new' });
+    } catch {
+      // Re-run the list query: its error state shows why baselines can't load.
+      setRefreshKey((n) => n + 1);
+      return;
+    }
     const ids = res.items.map((r) => r.spec.id);
     if (ids.length === 0) return;
     setTriageQueue(ids);

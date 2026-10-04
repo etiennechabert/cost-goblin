@@ -1,7 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
+import {
+  hasErrnoCode,
+  ifExists,
+  isTransientFsError,
+  retryTransientFs,
+  sweepStaleTemps,
+  TRANSIENT_RETRY_DELAYS_MS,
+} from '../utils/atomic-file.js';
 import { isStringRecord } from '../utils/json.js';
 import { logger } from '../logger/logger.js';
 import type { ProviderName } from '../types/branded.js';
@@ -226,42 +234,9 @@ export function parseEtagsJson(raw: string): Record<string, Record<string, strin
 
 type EtagSidecar = Record<string, Record<string, string>>;
 
-function hasErrnoCode(err: unknown, codes: readonly string[]): boolean {
-  return err instanceof Error && 'code' in err && typeof err.code === 'string' && codes.includes(err.code);
-}
-
-// A Windows antivirus, indexer or backup tool can briefly hold the sidecar or
-// a just-written temp file (EPERM/EACCES/EBUSY on open or rename), and a busy
-// process can momentarily run out of descriptors (EMFILE). Those are retried
-// with backoff; anything else, or one that outlasts the backoff, propagates.
-const TRANSIENT_FS_ERRORS: readonly string[] = ['EPERM', 'EACCES', 'EBUSY', 'EMFILE'];
-const TRANSIENT_RETRY_DELAYS_MS: readonly number[] = [25, 50, 100, 200, 400, 800];
-
-async function retryTransient<T>(op: () => Promise<T>, attempt = 0): Promise<T> {
-  try {
-    return await op();
-  } catch (err: unknown) {
-    const delayMs = TRANSIENT_RETRY_DELAYS_MS[attempt];
-    if (delayMs === undefined || !hasErrnoCode(err, TRANSIENT_FS_ERRORS)) throw err;
-    await sleep(delayMs);
-    return retryTransient(op, attempt + 1);
-  }
-}
-
-/**
- * Run a local read, retrying transient failures. Resolves null when the path
- * doesn't exist (ENOENT) — the only failure that means "nothing there yet";
- * anything else rejects. Reading any other failure as "nothing there" is what
- * turns one EMFILE into a whole retention window re-downloaded.
- */
-export async function ifExists<T>(read: () => Promise<T>): Promise<T | null> {
-  try {
-    return await retryTransient(read);
-  } catch (err: unknown) {
-    if (hasErrnoCode(err, ['ENOENT'])) return null;
-    throw err;
-  }
-}
+// `ifExists` moved to utils/atomic-file.ts with the other shared fs helpers;
+// re-exported here, where the sync barrel and its importers expect it.
+export { ifExists };
 
 /**
  * Local state the sync depends on (the etag sidecar, the downloaded periods)
@@ -335,28 +310,6 @@ export async function hasSyncedTier(
   }
 }
 
-// A writer that dies between writing its temp file and renaming it (the sync
-// worker dies with the app; a crash) never reaches its cleanup, and the temp's
-// random name is never reused, so sweep them. A live update's temp is
-// milliseconds old: an hour is far past anything still in flight.
-const STALE_TEMP_AGE_MS = 60 * 60 * 1000;
-
-async function sweepStaleTemps(etagPath: string): Promise<void> {
-  const dir = dirname(etagPath);
-  const prefix = `${basename(etagPath)}.`;
-  const names = await readdir(dir).catch((): string[] => []);
-  const cutoff = Date.now() - STALE_TEMP_AGE_MS;
-  await Promise.all(names
-    .filter(name => name.startsWith(prefix) && name.endsWith('.tmp'))
-    .map(async (name) => {
-      const tmpPath = join(dir, name);
-      const info = await stat(tmpPath).catch(() => null);
-      if (info !== null && info.mtimeMs < cutoff) {
-        await rm(tmpPath, { force: true }).catch(() => { /* best effort */ });
-      }
-    }));
-}
-
 /** Times one update re-applies itself to a sidecar another thread replaced
  *  underneath it before giving up. Committing anyway would overwrite that
  *  thread's change with a merge onto a stale read. */
@@ -402,7 +355,7 @@ async function applyAndCommit(update: SidecarUpdate, raw: string | null): Promis
   update.tmpWritten = true;
   // Flushed, so the rename can't reach the disk before the data does and leave
   // a power cut with a renamed but empty sidecar.
-  await retryTransient(() => writeFile(update.tmpPath, JSON.stringify(next, null, 2), { flush: true }));
+  await retryTransientFs(() => writeFile(update.tmpPath, JSON.stringify(next, null, 2), { flush: true }));
   await commitIfUnchanged(update, raw);
 }
 
@@ -423,7 +376,7 @@ async function commitIfUnchanged(update: SidecarUpdate, raw: string | null): Pro
     update.tmpWritten = false;
   } catch (err: unknown) {
     const delayMs = TRANSIENT_RETRY_DELAYS_MS[update.renameRetries];
-    if (delayMs === undefined || !hasErrnoCode(err, TRANSIENT_FS_ERRORS)) throw err;
+    if (delayMs === undefined || !isTransientFsError(err)) throw err;
     update.renameRetries++;
     await sleep(delayMs);
     await commitIfUnchanged(update, raw);

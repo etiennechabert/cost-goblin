@@ -26,7 +26,7 @@ export function registerBaselinesHandlers(app: AppContext): void {
   ipcMain.handle('baselines:snapshots', (_e, id: string) => store.getSnapshots(deps, id));
   ipcMain.handle('baselines:drift', (_e, id: string, childDimension: string) => store.getDrift(deps, id, childDimension));
   ipcMain.handle('baselines:get-config', async () => { await store.load(deps); return store.getConfigState(); });
-  ipcMain.handle('baselines:set-config', (_e, config: BaselinesDiscoveryConfig) => store.setConfig(config));
-  ipcMain.handle('baselines:reset-config', () => store.resetConfig());
+  ipcMain.handle('baselines:set-config', (_e, config: BaselinesDiscoveryConfig) => store.setConfig(deps, config));
+  ipcMain.handle('baselines:reset-config', () => store.resetConfig(deps));
   ipcMain.handle('baselines:status', () => store.getStatus());
 }
