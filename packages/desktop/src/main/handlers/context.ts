@@ -32,6 +32,7 @@ import {
   isGcloudCliAccountError,
   isGcpCredentialError,
   isGcpImpersonationError,
+  isGcpNetworkError,
   isS3SyncDownloadFailure,
 } from '@costgoblin/core';
 import { buildAccountReverseMap } from './query-utils.js';
@@ -713,6 +714,11 @@ export { isCredentialError };
  *  an IAM permission error must not be dressed up as "log in again". */
 export function toUserFriendlyError(err: unknown, auth: ProviderAuth): Error {
   if (auth.kind === 'gcp') {
+    // First: gcloud wraps an unreachable token endpoint in "Please run:
+    // gcloud auth login", and a dropped connection is no sign-in problem.
+    if (isGcpNetworkError(err)) {
+      return new Error('Couldn\'t reach Google Cloud — this machine has no network route to googleapis.com. Check your connection or VPN, then retry.');
+    }
     // BEFORE the ADC check, whose markers this shares. A GCP sync spans two
     // credential stores — the listing SDK reads ADC, `gcloud storage rsync`
     // runs as gcloud's active account — and only re-running the matching one

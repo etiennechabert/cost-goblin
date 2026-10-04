@@ -37,7 +37,7 @@ export {
   parseGcsPath,
 } from './gcs-client.js';
 
-export { describeGcpImpersonationFailure, isGcpImpersonationError } from './gcp-credential-errors.js';
+export { describeGcpImpersonationFailure, isGcpImpersonationError, isGcpNetworkError } from './gcp-credential-errors.js';
 
 export {
   type GcsStorageOptions,

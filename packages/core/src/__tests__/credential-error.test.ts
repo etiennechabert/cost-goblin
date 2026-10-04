@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { isCredentialError, isS3SyncDownloadFailure } from '../sync/s3-client.js';
 import { isGcloudCliAccountError, isGcloudDownloadFailure, isGcpBucketListDeniedMessage, isGcpCredentialError } from '../sync/gcs-client.js';
-import { describeGcpImpersonationFailure, isGcpImpersonationError } from '../sync/gcp-credential-errors.js';
+import { describeGcpImpersonationFailure, isGcpImpersonationError, isGcpNetworkError } from '../sync/gcp-credential-errors.js';
 
 /** The verbatim denial a live least-privilege reader produces on the wizard's
  *  bucket step — `roles/storage.objectViewer` on the bucket, nothing at the
@@ -323,5 +323,36 @@ describe('isS3SyncDownloadFailure', () => {
     expect(isS3SyncDownloadFailure(new Error('aws s3 sync failed (exit 1): An error occurred (AccessDenied)'))).toBe(false);
     expect(isS3SyncDownloadFailure('a string')).toBe(false);
     expect(isS3SyncDownloadFailure(null)).toBe(false);
+  });
+});
+
+describe('isGcpNetworkError', () => {
+  // Verbatim from a live run: gcloud wraps the unreachable token endpoint in
+  // its own "gcloud auth login" advice, which the CLI-account check matches.
+  const REFRESH_NO_ROUTE = 'gcloud storage rsync failed (exit 1): WARNING: This command is using service account impersonation.\n'
+    + 'ERROR: (gcloud.storage.rsync) There was a problem refreshing your current auth tokens: '
+    + "HTTPSConnectionPool(host='oauth2.googleapis.com', port=443): Max retries exceeded with url: /token "
+    + '(Caused by NewConnectionError("HTTPSConnection(host=\'oauth2.googleapis.com\', port=443): Failed to establish a new connection: [Errno 65] No route to host"))\n'
+    + 'Please run:\n  $ gcloud auth login\nto obtain new credentials.';
+
+  it('recognizes a token refresh that never reached Google, even when gcloud blames the sign-in', () => {
+    expect(isGcpNetworkError(new Error(REFRESH_NO_ROUTE))).toBe(true);
+    // Why it must be checked first: the CLI-account check matches it too.
+    expect(isGcloudCliAccountError(new Error(REFRESH_NO_ROUTE))).toBe(true);
+  });
+
+  it.each([
+    'request to https://oauth2.googleapis.com/token failed, reason: getaddrinfo ENOTFOUND oauth2.googleapis.com',
+    'connect EHOSTUNREACH 142.250.0.95:443',
+    'connect ECONNREFUSED 127.0.0.1:443',
+    "HTTPSConnectionPool(host='storage.googleapis.com', port=443): [Errno 8] nodename nor servname provided, or not known",
+  ])('recognizes %s', (message) => {
+    expect(isGcpNetworkError(new Error(message))).toBe(true);
+  });
+
+  it('does not claim a refusal Google actually answered', () => {
+    expect(isGcpNetworkError(new Error('Could not refresh access token: invalid_grant'))).toBe(false);
+    expect(isGcpNetworkError(new Error('gcloud storage rsync failed (exit 1): HTTPError 403: does not have storage.objects.get access'))).toBe(false);
+    expect(isGcpNetworkError('No route to host')).toBe(false);
   });
 });

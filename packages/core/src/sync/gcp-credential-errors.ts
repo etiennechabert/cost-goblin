@@ -160,6 +160,36 @@ export function isGcloudCliAccountError(err: unknown): boolean {
   );
 }
 
+/** The machine could not reach Google at all — no route, no DNS, refused —
+ *  as opposed to Google refusing the credential. Checked before every
+ *  credential classifier: gcloud wraps a token refresh that never left the
+ *  machine in "There was a problem refreshing your current auth tokens …
+ *  Please run: gcloud auth login", so without this a dropped Wi-Fi or VPN read
+ *  as an expired sign-in and sent the user to re-authenticate. Seen live:
+ *  `[Errno 65] No route to host` against oauth2 and iamcredentials while the
+ *  very same command succeeded a minute later.
+ *
+ *  Markers are the socket-level failures only — Python's (gcloud) and Node's
+ *  (the listing SDK) — never an HTTP status, which means Google answered. */
+const NETWORK_FAILURE_MARKERS = [
+  'No route to host',
+  'Network is unreachable',
+  'Failed to establish a new connection',
+  'Temporary failure in name resolution',
+  'nodename nor servname provided',
+  'Name or service not known',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'ECONNREFUSED',
+];
+
+export function isGcpNetworkError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return NETWORK_FAILURE_MARKERS.some(m => err.message.includes(m));
+}
+
 /** A `gcloud storage rsync` download that failed without an explicit
  *  credential signature — retries exhausted, connection reset. Sister of
  *  `isS3SyncDownloadFailure`: for an ADC-backed bucket this is usually an

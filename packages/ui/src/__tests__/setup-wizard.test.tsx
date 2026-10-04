@@ -2079,6 +2079,20 @@ describe('SetupWizard — GCP download check on Confirm', () => {
     expect(screen.queryByText('Save anyway')).toBeNull();
   });
 
+  it('offers Retry, not a sign-in, when gcloud could not reach Google', async () => {
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    api.gcsDownloadCheckResult = {
+      ok: false,
+      error: "ERROR: (gcloud.storage.ls) There was a problem refreshing your current auth tokens: HTTPSConnectionPool(host='oauth2.googleapis.com', port=443): "
+        + 'Failed to establish a new connection: [Errno 65] No route to host\nPlease run:\n  $ gcloud auth login',
+    };
+    await enterGcpBrowse(user);
+    await walkGcpFromBucketRootToConfirm(user);
+    await waitFor(() => { expect(screen.getByText('Retry')).toBeDefined(); });
+    expect(screen.queryByText('Sign in the gcloud CLI')).toBeNull();
+  });
+
   it('offers the gcloud CLI sign-in when the download identity is signed out', async () => {
     const { api, user } = renderWizard();
     gcpExportLayout(api);

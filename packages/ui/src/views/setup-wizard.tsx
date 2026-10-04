@@ -1,5 +1,5 @@
 import type { ConfigBundleSummary, GcpProject, GcsDownloadCheckResult, GcsFolderKind, ProviderConfig } from '@costgoblin/core/browser';
-import { DEFAULT_READER_ACCOUNT_ID, DEFAULT_RETENTION_DAYS, GCP_PROJECT_ID_RULES, gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isGcpImpersonationError, isValidGcpProjectId, isValidWorkspaceName, parseProviderName, resolveReaderInput, SERVICE_ACCOUNT_EMAIL_RULE } from '@costgoblin/core/browser';
+import { DEFAULT_READER_ACCOUNT_ID, DEFAULT_RETENTION_DAYS, GCP_PROJECT_ID_RULES, gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isGcpImpersonationError, isGcpNetworkError, isValidGcpProjectId, isValidWorkspaceName, parseProviderName, resolveReaderInput, SERVICE_ACCOUNT_EMAIL_RULE } from '@costgoblin/core/browser';
 import { Check, Loader2, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
@@ -655,6 +655,8 @@ function GcpReaderDenied({ reader, project, message }: Readonly<{ reader: string
  *  projects the listing is simply slow, and a sign-in cannot make it faster. */
 function isGcpAuthError(message: string): boolean {
   if (message.length === 0 || message.includes('GCLOUD_CLI_NOT_FOUND') || message.includes(GCLOUD_PROJECTS_TIMEOUT)) return false;
+  // gcloud tells an offline user to `gcloud auth login`; a sign-in can't fix it.
+  if (isGcpNetworkError(new Error(message))) return false;
   return isGcpCredentialError(new Error(message))
     || message.includes('do not currently have an active account');
 }
