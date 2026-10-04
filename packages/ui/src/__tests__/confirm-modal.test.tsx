@@ -1,5 +1,6 @@
-import { render, screen, cleanup } from '@testing-library/react';
+import { act, render, screen, cleanup } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
+import { useState } from 'react';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { ConfirmModal } from '../components/confirm-modal.js';
 
@@ -58,6 +59,30 @@ describe('ConfirmModal', () => {
     // …and Escape reaches the latest handler.
     await user.keyboard('{Escape}');
     expect(onCancel).toHaveBeenCalledOnce();
+  });
+
+  it('returns focus to the opener on close and keeps it inside while open', async () => {
+    function Page(): React.JSX.Element {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => { setOpen(true); }}>Delete</button>
+          <button type="button">Behind</button>
+          {open && <ConfirmModal title="Delete it?" message="msg" onConfirm={vi.fn()} onCancel={() => { setOpen(false); }} />}
+        </>
+      );
+    }
+    const user = userEvent.setup();
+    render(<Page />);
+    const trigger = screen.getByRole('button', { name: 'Delete' });
+    await user.click(trigger);
+    const dialog = screen.getByRole('dialog', { name: 'Delete it?' });
+    act(() => { screen.getByRole('button', { name: 'Behind' }).focus(); });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog', { name: 'Delete it?' })).toBeNull();
+    expect(document.activeElement).toBe(trigger);
   });
 
   it('renders custom button labels', () => {

@@ -1,4 +1,5 @@
-import { useEffect, useId, useRef } from 'react';
+import { useId, useRef } from 'react';
+import { useModalDialog } from '../hooks/use-modal-dialog.js';
 
 interface ConfirmModalProps {
   title: string;
@@ -19,27 +20,17 @@ export function ConfirmModal({
   onConfirm,
   onCancel,
 }: Readonly<ConfirmModalProps>) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const titleId = useId();
   const messageId = useId();
-
-  // Mount only: callers pass an inline onCancel, so an effect keyed on it
-  // re-runs on every parent render (the app re-renders on each sync poll) and
-  // would pull focus back to Cancel off the button the user tabbed to.
-  useEffect(() => {
-    cancelRef.current?.focus();
-  }, []);
-
-  useEffect(() => {
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onCancel();
-    }
-    document.addEventListener('keydown', handleKey);
-    return () => { document.removeEventListener('keydown', handleKey); };
-  }, [onCancel]);
+  // Focus starts on Cancel — once, on mount: callers pass an inline onCancel
+  // and the app re-renders on each sync poll, so it must not be pulled back
+  // off the button the user tabbed to.
+  useModalDialog(dialogRef, { onClose: onCancel, initialFocusRef: cancelRef });
 
   return (
-    <dialog open className="fixed inset-0 z-[100] flex items-center justify-center bg-transparent m-0 p-0 max-w-none max-h-none w-full h-full border-none" aria-modal="true" aria-labelledby={titleId} aria-describedby={messageId}>
+    <dialog ref={dialogRef} open tabIndex={-1} className="fixed inset-0 z-[100] flex items-center justify-center bg-transparent m-0 p-0 max-w-none max-h-none w-full h-full border-none outline-none" aria-modal="true" aria-labelledby={titleId} aria-describedby={messageId}>
       <div
         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
         onClick={onCancel}

@@ -1,4 +1,5 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useId, useRef } from 'react';
+import { useModalDialog } from '../hooks/use-modal-dialog.js';
 
 /** Native `<dialog open aria-modal>` chrome with a title row and ✕, named by
  *  its title heading — the same overlay pattern as ConfirmModal. Shared by
@@ -6,7 +7,8 @@ import { useEffect, useId, useRef, useState } from 'react';
  *
  *  Focus moves into the dialog on open (unless a child already took it), so
  *  assistive tech announces the dialog by name instead of leaving focus on
- *  the page aria-modal declares inert, and returns to the opener on close. */
+ *  the page aria-modal declares inert; it stays inside while open and returns
+ *  to the opener on close (see useModalDialog). */
 export function TitledModal({ title, onClose, children, dismissable = true }: Readonly<{
   title: string;
   onClose: () => void;
@@ -17,26 +19,7 @@ export function TitledModal({ title, onClose, children, dismissable = true }: Re
 }>): React.JSX.Element {
   const titleId = useId();
   const dialogRef = useRef<HTMLDialogElement>(null);
-  // Captured during the first render: by the time an effect runs, a child
-  // that autofocuses an input has already moved focus off the opener.
-  const [opener] = useState(() => document.activeElement);
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (dialog !== null && !dialog.contains(document.activeElement)) dialog.focus();
-    return () => {
-      if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
-    };
-  }, [opener]);
-
-  useEffect(() => {
-    if (!dismissable) return undefined;
-    function handleKey(e: KeyboardEvent): void {
-      if (e.key === 'Escape') onClose();
-    }
-    document.addEventListener('keydown', handleKey);
-    return () => { document.removeEventListener('keydown', handleKey); };
-  }, [onClose, dismissable]);
+  useModalDialog(dialogRef, { onClose, dismissable });
 
   return (
     // no-drag: the modal can open above a window drag region (the standalone

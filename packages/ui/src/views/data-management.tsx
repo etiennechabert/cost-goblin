@@ -2,6 +2,7 @@ import { useCallback, useState, useEffect, useRef } from 'react';
 import type { DataInventoryResult, DataTier, CostGoblinConfig, ProviderConfig, SyncStatus } from '@costgoblin/core/browser';
 import { GCLOUD_ADC_LOGIN_COMMAND, GCLOUD_CLI_LOGIN_COMMAND, splitGcsLocation } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
+import { useModalDialog } from '../hooks/use-modal-dialog.js';
 import { useQuery } from '../hooks/use-query.js';
 import { ConfirmModal } from '../components/confirm-modal.js';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '../components/ui/dialog.js';
@@ -931,44 +932,14 @@ const CONFIGURE_TIER_LABEL: Record<ConfigureSource, string> = {
  *  open (Import, which also locks itself shut during a pull), the key is that
  *  dialog's to handle, and a key a nested layer already consumed
  *  (`defaultPrevented`) is left alone. Focus moves in on open, stays inside
- *  while open, and returns to the opener on close. */
+ *  while open, and returns to the opener on close (see useModalDialog). */
 function WizardModal({ label, onClose, children }: Readonly<{
   label: string;
   onClose: () => void;
   children: React.ReactNode;
 }>): React.JSX.Element {
   const dialogRef = useRef<HTMLDialogElement>(null);
-  // Captured during the first render: by the time an effect runs, a wizard
-  // step that autofocuses an input has already moved focus off the opener.
-  const [opener] = useState(() => document.activeElement);
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (dialog !== null && !dialog.contains(document.activeElement)) dialog.focus();
-    // aria-modal tells assistive tech the page behind is inert, so focus must
-    // not reach it: anything Tab (or a click) moves out is pulled back in.
-    function keepFocusInside(e: FocusEvent): void {
-      const current = dialogRef.current;
-      if (current !== null && e.target instanceof Node && !current.contains(e.target)) current.focus();
-    }
-    document.addEventListener('focusin', keepFocusInside);
-    return () => {
-      document.removeEventListener('focusin', keepFocusInside);
-      if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
-    };
-  }, [opener]);
-
-  useEffect(() => {
-    function handleKey(e: KeyboardEvent): void {
-      // isComposing: that Escape cancels an IME candidate, not the wizard.
-      if (e.key !== 'Escape' || e.isComposing || e.defaultPrevented) return;
-      const dialog = dialogRef.current;
-      if (dialog === null || dialog.querySelector('dialog[open], [role="dialog"]') !== null) return;
-      onClose();
-    }
-    document.addEventListener('keydown', handleKey);
-    return () => { document.removeEventListener('keydown', handleKey); };
-  }, [onClose]);
+  useModalDialog(dialogRef, { onClose });
 
   return (
     // no-drag: the modal opens over the app header, a window drag region —

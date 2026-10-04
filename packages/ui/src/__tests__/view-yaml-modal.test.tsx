@@ -1,6 +1,6 @@
 import { asDimensionId } from '@costgoblin/core/browser';
 import type { ViewSpec } from '@costgoblin/core/browser';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { ViewYamlModal } from '../components/view-yaml-modal.js';
@@ -47,6 +47,16 @@ describe('ViewYamlModal', () => {
     // …and Escape reaches the latest handler.
     await user.keyboard('{Escape}');
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the pasted YAML when Escape only cancels an IME composition', async () => {
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    render(<ViewYamlModal mode="import" existingIds={new Set()} onImport={vi.fn()} onClose={onClose} />);
+    await user.click(screen.getByRole('textbox'));
+    await user.paste('id: x');
+    act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', isComposing: true, bubbles: true })); });
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it('announces an import error', async () => {

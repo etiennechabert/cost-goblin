@@ -1,7 +1,8 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { parse, stringify } from 'yaml';
 import { validateViews, viewToYaml, ConfigValidationError } from '@costgoblin/core/browser';
 import type { ViewSpec } from '@costgoblin/core/browser';
+import { useModalDialog } from '../hooks/use-modal-dialog.js';
 
 interface ExportProps {
   readonly mode: 'export';
@@ -30,6 +31,7 @@ function asCustomView(v: ViewSpec): ViewSpec {
 }
 
 export function ViewYamlModal(props: ViewYamlModalProps): React.JSX.Element {
+  const dialogRef = useRef<HTMLDialogElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const titleId = useId();
   const hintId = useId();
@@ -40,21 +42,10 @@ export function ViewYamlModal(props: ViewYamlModalProps): React.JSX.Element {
   const [importError, setImportError] = useState<string | null>(null);
 
   const { onClose } = props;
-
-  // Mount only: `props` is a fresh object on every parent render (the app
-  // re-renders on each sync poll), so focusing in an effect keyed on it would
-  // yank focus out of the import textarea mid-paste.
-  useEffect(() => {
-    closeRef.current?.focus();
-  }, []);
-
-  useEffect(() => {
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
-    }
-    document.addEventListener('keydown', handleKey);
-    return () => { document.removeEventListener('keydown', handleKey); };
-  }, [onClose]);
+  // Focus starts on Close — once, on mount: `props` is a fresh object on every
+  // parent render (the app re-renders on each sync poll), and re-focusing then
+  // would yank focus out of the import textarea mid-paste.
+  useModalDialog(dialogRef, { onClose, initialFocusRef: closeRef });
 
   async function handleCopy(): Promise<void> {
     await navigator.clipboard.writeText(text);
@@ -93,7 +84,7 @@ export function ViewYamlModal(props: ViewYamlModalProps): React.JSX.Element {
   const isExport = props.mode === 'export';
 
   return (
-    <dialog open className="fixed inset-0 z-[100] flex items-center justify-center bg-transparent m-0 p-0 max-w-none max-h-none w-full h-full border-none" aria-modal="true" aria-labelledby={titleId} aria-describedby={hintId}>
+    <dialog ref={dialogRef} open tabIndex={-1} className="fixed inset-0 z-[100] flex items-center justify-center bg-transparent m-0 p-0 max-w-none max-h-none w-full h-full border-none outline-none" aria-modal="true" aria-labelledby={titleId} aria-describedby={hintId}>
       <div
         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
         onClick={onClose}
