@@ -92,6 +92,66 @@ function unitBytes(unit: string): number | null {
   }
 }
 
+/** gcloud's own default is one worker process per CPU core with 4 threads
+ *  each — up to ~60 parallel connections on a 15-core Mac — and with
+ *  `--impersonate-service-account` every worker also mints its own token
+ *  (one oauth2 refresh plus one iamcredentials call). Networks that inspect
+ *  traffic (a corporate Zero Trust client, say) refuse such bursts outright:
+ *  measured here, 25 of 30 simultaneous connections to oauth2.googleapis.com
+ *  failed within 20 ms as `[Errno 65] No route to host`, while one at a time
+ *  succeeded. Billing shards are small, so a few workers lose little
+ *  throughput.
+ *
+ *  Passed as environment variables, which gcloud ranks above its config
+ *  file: a value set with `gcloud config set storage/process_count` is
+ *  overridden here, one set in CostGoblin's own environment is kept. */
+const GCLOUD_RSYNC_PARALLELISM: Readonly<Record<string, string>> = {
+  CLOUDSDK_STORAGE_PROCESS_COUNT: '4',
+  CLOUDSDK_STORAGE_THREAD_COUNT: '4',
+};
+
+const DOWNLOAD_CANCELLED = 'Download cancelled';
+
+/** One `gcloud storage rsync` at a time. Every sync request (each provider,
+ *  each tier) lands in the one sync worker, which used to run them
+ *  concurrently — daily and hourly together doubled the burst above. Each
+ *  call waits for the previous one to settle, success or failure. */
+let rsyncQueue: Promise<unknown> = Promise.resolve();
+/** Runs queued or in flight, so a caller can say it is waiting. */
+let rsyncsPending = 0;
+
+/** Resolves when `turn` settles; rejects as soon as `signal` aborts, so a
+ *  sync cancelled while queued stops at once instead of when the download
+ *  ahead of it ends. */
+function waitForTurn(turn: Promise<unknown>, signal: AbortSignal | undefined): Promise<void> {
+  const settled = turn.then(() => undefined, () => undefined);
+  if (signal === undefined) return settled;
+  return new Promise((resolve, reject) => {
+    const onAbort = (): void => { reject(new Error(DOWNLOAD_CANCELLED)); };
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    signal.addEventListener('abort', onAbort, { once: true });
+    void settled.then(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    });
+  });
+}
+
+function oneRsyncAtATime<T>(run: () => Promise<T>, signal: AbortSignal | undefined, onWait: () => void): Promise<T> {
+  if (rsyncsPending > 0) onWait();
+  rsyncsPending++;
+  const turn = rsyncQueue;
+  const next = waitForTurn(turn, signal).then(run);
+  // The queue moves on only once BOTH have settled: a run cancelled while
+  // waiting rejects early, and the one ahead of it is still downloading.
+  rsyncQueue = Promise.allSettled([turn, next]);
+  void next.then(() => undefined, () => undefined).then(() => { rsyncsPending--; });
+  return next;
+}
+
 interface GcloudRsyncOptions {
   readonly source: string;
   readonly dest: string;
@@ -123,6 +183,11 @@ function runGcloudStorageRsync(options: GcloudRsyncOptions): Promise<void> {
     }
 
     const env: NodeJS.ProcessEnv = { ...process.env };
+    for (const [name, value] of Object.entries(GCLOUD_RSYNC_PARALLELISM)) {
+      // Blank counts as unset here: gcloud would otherwise read '' as the
+      // property's value.
+      if ((env[name] ?? '') === '') env[name] = value;
+    }
     if (options.keyFile !== undefined) {
       // Points this invocation at a service-account key without touching the
       // user's global gcloud credential store (which `gcloud auth
@@ -152,7 +217,7 @@ function runGcloudStorageRsync(options: GcloudRsyncOptions): Promise<void> {
     // process whose 'error' event has no listener yet, and an unlistened
     // ChildProcess 'error' is an uncaught exception in the worker.
     if (options.signal?.aborted) {
-      reject(new Error('Download cancelled'));
+      reject(new Error(DOWNLOAD_CANCELLED));
       return;
     }
 
@@ -237,7 +302,7 @@ function runGcloudStorageRsync(options: GcloudRsyncOptions): Promise<void> {
     proc.on('close', (code, signal) => {
       detachAbort();
       if (signal === 'SIGTERM' || options.signal?.aborted) {
-        reject(new Error('Download cancelled'));
+        reject(new Error(DOWNLOAD_CANCELLED));
       } else if (code === 0) {
         resolve();
       } else {
@@ -397,7 +462,7 @@ export async function syncGcpSelectedFiles(
     await mkdir(stagingDir, { recursive: true });
 
     try {
-      await runGcloudStorageRsync({
+      await oneRsyncAtATime(() => runGcloudStorageRsync({
         source,
         dest: stagingDir,
         ...(options.keyFile === undefined ? {} : { keyFile: options.keyFile }),
@@ -432,6 +497,17 @@ export async function syncGcpSelectedFiles(
             ...(parsed === null ? {} : { message: line }),
           });
         },
+      }), options.signal, () => {
+        // Another provider or tier is downloading; say so rather than sit
+        // silent on this period until it finishes.
+        onProgress?.({
+          phase: 'downloading',
+          filesTotal: totalFiles,
+          filesDone: filesBefore,
+          bytesTotal,
+          bytesDone: bytesBefore,
+          message: 'Waiting for another Cloud Storage download to finish…',
+        });
       });
 
       // A clean exit means every file in the period landed, whatever the
