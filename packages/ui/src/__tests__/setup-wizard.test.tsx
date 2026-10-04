@@ -745,8 +745,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await enterGcpBrowse(user);
     await user.click(screen.getByLabelText('Open folder focus'));
     await waitFor(() => { expect(screen.getByText('This is the parent folder — go one level deeper')).toBeDefined(); });
-    // Nothing to use until a folder is an export: the action lives on the
-    // "FOCUS export detected" card, not as a disabled footer button.
+    // Nothing to use until a folder is an export, so no disabled placeholder.
     expect(screen.queryByRole('button', { name: 'Use this location' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Select an export folder' })).toBeNull();
   });
@@ -760,10 +759,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await user.click(screen.getByLabelText('Open folder daily'));
     await waitFor(() => { expect(screen.getByText('FOCUS export detected')).toBeDefined(); });
     expect(screen.getByText('Found 2 billing periods (2026-06 – 2026-07)')).toBeDefined();
-    const useIt = screen.getByRole('button', { name: 'Use this location' });
-    expect(useIt.hasAttribute('disabled')).toBe(false);
-    // On the verdict card that enables it.
-    expect(screen.getByText('FOCUS export detected').closest('div.rounded-lg')?.contains(useIt)).toBe(true);
+    expect(screen.getByRole('button', { name: 'Use this location' }).hasAttribute('disabled')).toBe(false);
   });
 
   it('writes a gcp provider with a gs:// path and no AWS profile', async () => {

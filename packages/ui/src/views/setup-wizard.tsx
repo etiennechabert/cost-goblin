@@ -1233,22 +1233,14 @@ function GcpBrowseStep({ state, conflictsWith, onNavigate, onRetry, onConfirm, o
         </div>
       )}
 
-      {/* The action sits on the verdict that enables it: until a folder is an
-          export there is nothing to use, so no button at all — a disabled one
-          in the footer read as a step the user was missing. */}
       {selectable && state.folder.kind === 'export' && (
-        <div className="flex items-center justify-between gap-4 rounded-lg border border-accent/40 bg-accent/5 px-4 py-3">
-          <div>
-            <p className="text-sm font-medium text-accent">FOCUS export detected</p>
-            <p className="text-xs text-text-secondary mt-0.5">
-              Found {state.folder.periods.length} billing{' '}
-              {state.folder.periods.length === 1 ? 'period' : 'periods'} ({state.folder.periods[0]}
-              {state.folder.periods.length > 1 ? ` – ${String(state.folder.periods[state.folder.periods.length - 1])}` : ''})
-            </p>
-          </div>
-          <Button onClick={onConfirm} className="shrink-0 bg-accent hover:bg-accent-hover text-white">
-            Use this location
-          </Button>
+        <div className="rounded-lg border border-accent/40 bg-accent/5 px-4 py-3">
+          <p className="text-sm font-medium text-accent">FOCUS export detected</p>
+          <p className="text-xs text-text-secondary mt-0.5">
+            Found {state.folder.periods.length} billing{' '}
+            {state.folder.periods.length === 1 ? 'period' : 'periods'} ({state.folder.periods[0]}
+            {state.folder.periods.length > 1 ? ` – ${String(state.folder.periods[state.folder.periods.length - 1])}` : ''})
+          </p>
         </div>
       )}
 
@@ -1291,9 +1283,18 @@ function GcpBrowseStep({ state, conflictsWith, onNavigate, onRetry, onConfirm, o
 
       <div className="flex items-center justify-between pt-2">
         <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
-        {onSkip !== undefined && (
-          <button type="button" onClick={onSkip} className="text-xs text-text-muted hover:text-text-secondary underline underline-offset-2">Skip</button>
-        )}
+        {/* Shown only once a folder is an export: a disabled placeholder read
+            as a step the user was missing, while the fix is to navigate. */}
+        <div className="flex items-center gap-3">
+          {onSkip !== undefined && (
+            <button type="button" onClick={onSkip} className="text-xs text-text-muted hover:text-text-secondary underline underline-offset-2">Skip</button>
+          )}
+          {selectable && (
+            <Button onClick={onConfirm} className="bg-accent hover:bg-accent-hover text-white px-8">
+              Use this location
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   );
