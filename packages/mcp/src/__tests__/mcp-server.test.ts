@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { DuckDBInstance } from '@duckdb/node-api';
 import { existsSync, realpathSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { request as httpRequest } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -249,6 +249,7 @@ describe('MCP server E2E', () => {
       allowedDirectories: [realpathSync(SYNTHETIC_DIR), spillDir],
       allowedPaths: [],
       tempDirectory: spillDir,
+      maxTempDirectorySizeGB: 1,
       memoryLimitGB: 1,
       threads: 2,
     })) {
@@ -770,13 +771,18 @@ describe('MCP server E2E', () => {
     expect(text).not.toContain(CANARY);
   });
 
+  // The payload has to survive buildRunSqlStatement's wrapping, or DuckDB
+  // rejects it at parse time and nothing is tested: it closes the wrapper's
+  // subquery, stacks the COPY, and reopens one for the wrapper's tail. The
+  // `"'"` alias desyncs the validator's quote scrubber, hiding both `;`.
   it('run_sql cannot stack a COPY that writes outside the workspace', async () => {
     const target = `${outsideDir}/stacked.csv`;
     const { text, isError } = await client.callTool('run_sql', {
-      sql: `SELECT 1 AS "a'b"; COPY (SELECT 42) TO '${target}'; SELECT 1 LIMIT 1`,
+      sql: `SELECT 1 AS "'") AS x; COPY (SELECT 42 AS v) TO '${target}' (FORMAT CSV); SELECT * FROM (SELECT 1 AS "'"`,
       dateRange: { start: '2026-01-01', end: '2026-01-31' },
     });
     expect(isError).toBe(true);
+    expect(text).toMatch(/Permission Error/);
     expect(text).not.toContain(CANARY);
     expect(existsSync(target)).toBe(false);
   });
@@ -879,6 +885,25 @@ describe('MCP server E2E', () => {
     const shortPort = 19598;
     await expect(createMcpHttpServer(ctx, { port: shortPort, authToken })).rejects.toThrow(/at least 32 characters/);
     expect(await probeHealth(shortPort)).toBe('ECONNREFUSED');
+  });
+
+  // A failed IPv6 bind must not leave the IPv4 listener up: it would keep
+  // answering (with the token it was created with) outside the caller's
+  // start/stop lifecycle and hold the port against every later start.
+  it('closes the IPv4 listener when the IPv6 bind fails', async () => {
+    const blockedPort = 19597;
+    const squatter = createServer();
+    const bound = await new Promise<boolean>((resolve) => {
+      squatter.once('error', () => { resolve(false); });
+      squatter.listen(blockedPort, '::1', () => { resolve(true); });
+    });
+    expect(bound).toBe(true);
+    try {
+      await expect(createMcpHttpServer(ctx, { port: blockedPort, authToken: TEST_TOKEN })).rejects.toThrow(/EADDRINUSE/);
+      expect(await probeHealth(blockedPort)).toBe('ECONNREFUSED');
+    } finally {
+      await new Promise<void>((resolve) => { squatter.close(() => { resolve(); }); });
+    }
   });
 
   it('leaves /health open (unauthenticated liveness probe)', async () => {

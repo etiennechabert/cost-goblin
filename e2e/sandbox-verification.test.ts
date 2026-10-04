@@ -1,5 +1,5 @@
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { closeApp, launchApp, navigateTo } from './helpers.js';
@@ -135,14 +135,27 @@ test.describe('MCP queries run on a sandboxed DuckDB instance', () => {
     expect(text).not.toContain(scratch);
   });
 
-  test('a stacked COPY writes nothing', async () => {
-    const target = join(scratch, 'stacked.csv').replaceAll('\\', '/');
-    const { isError } = await callTool('run_sql', {
-      sql: `SELECT 1 AS "a'b"; COPY (SELECT 42) TO '${target}'; SELECT 1 LIMIT 1`,
-      dateRange,
-    });
-    expect(isError).toBe(true);
-    expect(existsSync(target)).toBe(false);
+  // allowed_directories grants write as well as read, so the workspace's own
+  // data dir is the target that matters. The payload survives run_sql's
+  // wrapping (it closes the wrapper's subquery, stacks the COPY and reopens
+  // one for the wrapper's tail) and the validator (the `"'"` alias desyncs
+  // its quote scrubber, hiding both `;`), so only the worker's one-SELECT
+  // gate stands between it and the disk.
+  test('a stacked COPY into the workspace data dir is refused and writes nothing', async () => {
+    const dataDir = await mcpApp?.evaluate(() => process.env['COSTGOBLIN_DATA_DIR'] ?? '');
+    expect(dataDir).toBeTruthy();
+    const target = join(realpathSync(dataDir ?? ''), 'e2e-stacked-copy.csv').replaceAll('\\', '/');
+    try {
+      const { text, isError } = await callTool('run_sql', {
+        sql: `SELECT 1 AS "'") AS x; COPY (SELECT 42 AS v) TO '${target}' (FORMAT CSV); SELECT * FROM (SELECT 1 AS "'"`,
+        dateRange,
+      });
+      expect(isError).toBe(true);
+      expect(text).toContain('Only a single SELECT statement can run');
+      expect(existsSync(target)).toBe(false);
+    } finally {
+      rmSync(target, { force: true });
+    }
   });
 });
 

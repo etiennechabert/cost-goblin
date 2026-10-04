@@ -72,6 +72,14 @@ describe('redactHome', () => {
     ['a single quote', "open '/home/eve' failed", "open '~' failed"],
     ['a double quote', 'open "/home/eve" failed', 'open "~" failed'],
     ['the end of the message', 'cwd is /home/eve', 'cwd is ~'],
+    // The usual error-message terminators after a bare path.
+    ['a colon', 'Cannot open /home/eve: Permission denied', 'Cannot open ~: Permission denied'],
+    ['a space', 'dir /home/eve is not writable', 'dir ~ is not writable'],
+    ['a closing paren', 'in (/home/eve)', 'in (~)'],
+    ['a comma', 'tried /home/eve, then /tmp', 'tried ~, then /tmp'],
+    ['a sentence-ending dot', 'No such directory /home/eve.', 'No such directory ~.'],
+    ['a newline', 'path: /home/eve\nnext', 'path: ~\nnext'],
+    ['a backtick', 'open `/home/eve` failed', 'open `~` failed'],
   ])('redacts the home directory followed by %s', (_name, message, expected) => {
     expect(redactHome(message, '/home/eve')).toBe(expected);
   });
@@ -82,6 +90,16 @@ describe('redactHome', () => {
 
   it('leaves a longer name that merely starts with the home directory', () => {
     expect(redactHome('/home/eveline/x', '/home/eve')).toBe('/home/eveline/x');
+    expect(redactHome('/home/eve.bak/x', '/home/eve')).toBe('/home/eve.bak/x');
+    expect(redactHome('/home/eve-old/x', '/home/eve')).toBe('/home/eve-old/x');
+    expect(redactHome('/home/evé/x', '/home/eve')).toBe('/home/evé/x');
+    expect(redactHome('/Users/evé/x', '/Users/eve')).toBe('/Users/evé/x');
+  });
+
+  it('matches a Windows home directory case-insensitively', () => {
+    expect(redactHome('IO Error: c:\\users\\eve\\data', 'C:\\Users\\Eve', 'win32')).toBe('IO Error: ~\\data');
+    expect(redactHome('IO Error: C:/USERS/EVE/data', 'C:\\Users\\Eve', 'win32')).toBe('IO Error: ~/data');
+    expect(redactHome('/home/EVE/x', '/home/eve', 'linux')).toBe('/home/EVE/x');
   });
 
   it('redacts the forward-slash form of a Windows home directory', () => {

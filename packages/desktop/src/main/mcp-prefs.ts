@@ -49,7 +49,11 @@ export async function applyMcpEnabled(value: unknown, deps: ApplyMcpEnabledDeps)
 
   if (!value) {
     await deps.persist(false);
-    if (deps.isRunning()) await deps.stop();
+    // Unconditional: isRunning() is false while a start or a token-rotation
+    // restart is still in flight, and a Disable gated on it would be dropped
+    // while that start goes on to listen. stop() is serialized behind any
+    // in-flight start and is a no-op when nothing runs.
+    await deps.stop();
     return;
   }
 

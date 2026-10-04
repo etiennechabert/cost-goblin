@@ -39,6 +39,7 @@ describe('prepareMcpSandbox', () => {
     const opts = prepareMcpSandbox({ dataDir: join(root, 'd'), stateDir: join(root, 's'), tempDir: join(root, 't') });
     expect(opts.memoryLimitGB).toBeGreaterThanOrEqual(1);
     expect(opts.memoryLimitGB).toBeLessThanOrEqual(2);
+    expect(Number.isInteger(opts.maxTempDirectorySizeGB) && opts.maxTempDirectorySizeGB > 0).toBe(true);
     expect(opts.threads).toBeGreaterThanOrEqual(1);
     expect(opts.threads).toBeLessThanOrEqual(4);
     expect(buildDuckDbSandboxStatements(opts).at(-1)).toBe('SET lock_configuration = true');

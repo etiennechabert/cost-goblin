@@ -27,7 +27,7 @@ const formatSchema = z.enum(['markdown', 'json', 'csv']).optional().describe(
   'Response format. "markdown" (default) for human-readable tables. ' +
   '"json" for machine-readable rows the LLM can ingest directly without re-parsing markdown — use this when reasoning over many rows or chaining queries. ' +
   '"csv" for downstream tooling. ' +
-  'Values are verbatim only in "json": "markdown" and "csv" escape a `|` inside a value as `\\|` and a line break as `\\n`.',
+  'Values are verbatim only in "json": "markdown" and "csv" write a line break inside a value as `\\n`, and "markdown" also escapes a `|` as `\\|`.',
 );
 
 /** Every tool description ends with the untrusted-data note (#602). */
@@ -75,7 +75,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
     'get_filter_values',
     {
       description: describeTool('Get all values for a dimension with their cost contribution. Useful for discovering what to filter on. ' +
-        "Use format:'json' to reuse values as filters: markdown and csv escape pipes and line breaks, so a copied value would not match."),
+        "Use format:'json' to reuse values as filters: markdown escapes pipes, and markdown and csv both escape line breaks, so a copied value would not match."),
       inputSchema: {
         dimensionId: z.string().describe('Dimension ID (from list_dimensions)'),
         dateRange: dateRangeSchema,
@@ -236,7 +236,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
     {
       description: describeTool('Run an ad-hoc SELECT query. A "costs" CTE is pre-defined with the dataset for the given date range (default: last 60 days). Write: SELECT ... FROM costs WHERE ... At most `limit` rows (default 100, max 500) are returned, even when the query has its own LIMIT; a note says when more rows exist.'),
       inputSchema: {
-        sql: z.string().describe('SQL query (SELECT/WITH only). A "costs" CTE with columns: usage_date, account_id, account_name, region, service, service_code, service_category, charge_category, pricing_category, commitment_status, operation, sku_meter, description, resource_id, usage_amount, cost, list_cost, plus tag columns.'),
+        sql: z.string().describe('SQL query: one SELECT/WITH statement. A PIVOT must list its values (PIVOT costs ON service IN (\'A\', \'B\') USING sum(cost)). A "costs" CTE with columns: usage_date, account_id, account_name, region, service, service_code, service_category, charge_category, pricing_category, commitment_status, operation, sku_meter, description, resource_id, usage_amount, cost, list_cost, plus tag columns.'),
         dateRange: dateRangeSchema,
         limit: z.number().int().min(1).optional().describe('Max rows returned (integer, default 100, values above 500 are clamped to 500). The cap always applies, even when the query has its own LIMIT; page with LIMIT/OFFSET inside the query.'),
         format: formatSchema,

@@ -109,6 +109,13 @@ export function stopMcpServer(): Promise<void> {
   return serialized(doStop);
 }
 
+/** Interrupt the MCP instance's queued and running queries. Its worker is
+ *  separate from the app's shared instance, so a caller releasing DuckDB file
+ *  handles before deleting data (remove-provider) must cancel both. */
+export function cancelMcpQueries(): void {
+  running?.db.cancelPendingQueries();
+}
+
 export function isMcpServerRunning(): boolean {
   return running !== null;
 }
