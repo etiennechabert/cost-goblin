@@ -1,4 +1,4 @@
-import type { Table } from '@tanstack/react-table';
+import type { RowData, Table, TableFeatures } from '@tanstack/react-table';
 import { Download } from 'lucide-react';
 
 // A leading =, +, -, @, tab, or CR makes Excel/Sheets evaluate the cell as a
@@ -22,9 +22,9 @@ export function escapeCsv(value: unknown): string {
   return str;
 }
 
-export function CsvExportButton<TData>({ table, filename }: Readonly<{ table: Table<TData>; filename: string }>) {
+export function CsvExportButton<TFeatures extends TableFeatures, TData extends RowData>({ table, filename }: Readonly<{ table: Table<TFeatures, TData>; filename: string }>) {
   function handleExport() {
-    const visibleColumns = table.getVisibleLeafColumns();
+    const visibleColumns = table.getAllLeafColumns();
     const headers = visibleColumns.map(col => {
       const header = col.columnDef.header;
       return typeof header === 'string' ? header : col.id;
