@@ -14,7 +14,12 @@ export const ROOT = join(import.meta.dirname, '..');
 const DESKTOP_DIR = join(ROOT, 'packages', 'desktop');
 export const SCREENSHOT_DIR = join(tmpdir(), 'costgoblin-e2e');
 export const V8_DIR = join(tmpdir(), 'costgoblin-e2e-v8');
-mkdirSync(SCREENSHOT_DIR, { recursive: true });
+/** Debug screenshots from {@link screenshot} are opt-in. Nothing reads them:
+ *  CI doesn't upload SCREENSHOT_DIR, and the homepage images come from
+ *  homepage-screenshots.ts, which takes its own. Taking them on every run
+ *  cost a capture per call (~50 calls across the suites). */
+const SCREENSHOTS = process.env['COSTGOBLIN_E2E_SCREENSHOTS'] === '1';
+if (SCREENSHOTS) mkdirSync(SCREENSHOT_DIR, { recursive: true });
 mkdirSync(V8_DIR, { recursive: true });
 
 export const LOAD_TIMEOUT = 5_000;
@@ -394,7 +399,9 @@ export async function finishCoverage(
   }
 }
 
+/** Save a debug PNG to SCREENSHOT_DIR, only when COSTGOBLIN_E2E_SCREENSHOTS=1. */
 export async function screenshot(page: Page, name: string): Promise<void> {
+  if (!SCREENSHOTS) return;
   await page.screenshot({ path: join(SCREENSHOT_DIR, `${name}.png`) });
 }
 

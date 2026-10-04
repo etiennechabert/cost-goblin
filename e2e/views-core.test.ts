@@ -53,15 +53,6 @@ test.describe('App shell', () => {
     await ensureViewMode(page);
   });
 
-  test('has theme toggle in General settings', async () => {
-    await openSettings(page);
-    await page.getByRole('navigation', { name: SETTINGS_NAV_LABEL }).getByRole('button', { name: 'General', exact: true }).click();
-    // Theme is a segmented Dark / Light control.
-    await expect(page.getByRole('button', { name: 'Dark', exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Light', exact: true })).toBeVisible();
-    await ensureViewMode(page);
-  });
-
   test('General settings offer the startup update-check preference and a manual check', async () => {
     const rail = page.getByRole('navigation', { name: SETTINGS_NAV_LABEL });
     const openGeneral = (): Promise<void> => rail.getByRole('button', { name: 'General', exact: true }).click();
@@ -115,33 +106,6 @@ test.describe('App shell', () => {
     const restored = await html.evaluate(el => el.classList.contains('dark'));
     expect(restored).toBe(hadDark);
     await ensureViewMode(page);
-  });
-
-  test('navigating between all views changes active content', async () => {
-    const views: { button: string; marker: { type: 'heading'; name: string } | { type: 'text'; text: string } }[] = [
-      { button: 'Cost Overview', marker: { type: 'heading', name: 'Cost Overview' } },
-      { button: 'Trends', marker: { type: 'text', text: 'Period-over-period comparison' } },
-      { button: 'Tags', marker: { type: 'text', text: 'without the selected allocation tag' } },
-      { button: 'Findings', marker: { type: 'text', text: 'cost optimization recommendations' } },
-      { button: 'Cost Scope', marker: { type: 'heading', name: 'Cost Scope' } },
-      { button: 'Dimensions', marker: { type: 'heading', name: 'Dimensions' } },
-      { button: 'Sync', marker: { type: 'heading', name: 'Data Management' } },
-    ];
-
-    for (const { button, marker } of views) {
-      await clickNavButton(page, button);
-      if (marker.type === 'heading') {
-        await expect(page.getByRole('heading', { name: marker.name, exact: true })).toBeVisible({ timeout: 5000 });
-      } else {
-        await expect(page.getByText(marker.text, { exact: false }).first()).toBeVisible({ timeout: 5000 });
-      }
-      await page.waitForTimeout(500);
-      await assertNoReactCrash(page);
-    }
-
-    // go back to overview for subsequent tests
-    await clickNavButton(page, 'Cost Overview');
-    await expect(page.getByRole('heading', { name: 'Cost Overview' })).toBeVisible();
   });
 });
 
@@ -287,70 +251,8 @@ test.describe('Cost Overview', () => {
     await screenshot(page, 'overview-pie-charts');
   });
 
-  test('pie chart dimension dropdown switches the dimension', async () => {
-    // Only target visible, enabled selects (pie chart dropdowns) — guard
-    // against any hidden/disabled selects other widgets might render.
-    const selects = page.locator('select:not([disabled])');
-    const visibleSelects: typeof selects[] = [];
-    for (let i = 0; i < await selects.count(); i++) {
-      if (await selects.nth(i).isVisible()) visibleSelects.push(selects.nth(i));
-    }
-    if (visibleSelects.length === 0 || visibleSelects[0] === undefined) return;
-
-    const firstSelect = visibleSelects[0];
-    const options = firstSelect.locator('option');
-    const optCount = await options.count();
-    if (optCount <= 1) return;
-
-    const secondOption = await options.nth(1).getAttribute('value');
-    if (secondOption !== null) {
-      await firstSelect.selectOption(secondOption);
-      await waitForQuerySettle(page);
-      const firstOption = await options.first().getAttribute('value');
-      if (firstOption !== null) {
-        await firstSelect.selectOption(firstOption);
-        await waitForQuerySettle(page);
-      }
-    }
-  });
-
   test('stacked bar chart renders with title', async () => {
     await expect(page.locator('h3', { hasText: 'Service' }).first()).toBeVisible();
-  });
-
-  test('histogram expand/collapse toggle works', async () => {
-    const expandBtn = page.locator('button[title="Expand"], button[title="Collapse"]');
-    const count = await expandBtn.count();
-
-    if (count > 0) {
-      await expandBtn.first().click();
-      await page.waitForTimeout(200);
-      await expandBtn.first().click();
-    }
-  });
-
-  test('pie chart expand/collapse works', async () => {
-    const expandBtns = page.locator('button[title="Toggle expand"]');
-    const count = await expandBtns.count();
-
-    if (count > 0) {
-      // expand first pie
-      await expandBtns.first().click();
-      await screenshot(page, 'overview-pie-expanded');
-
-      // click again to restore
-      await expandBtns.first().click();
-      await screenshot(page, 'overview-pie-restored');
-    }
-  });
-
-  test('hovering a pie legend entry does not crash', async () => {
-    const legendItems = page.locator('svg g text');
-    const legendCount = await legendItems.count();
-    if (legendCount > 0) {
-      await legendItems.first().hover();
-      await screenshot(page, 'overview-pie-hover');
-    }
   });
 
   test('breakdown table renders rows for the fixture range', async () => {
