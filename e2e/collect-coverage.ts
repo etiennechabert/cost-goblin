@@ -11,17 +11,15 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { join, resolve, relative } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import v8ToIstanbul from 'v8-to-istanbul';
 import {
+  addBundleEntry,
   auditCoverageReport,
-  createCoverageReport,
+  createBundleCoverage,
   describeCoverageFailure,
   generateLcov,
   isCoverageShardFile,
   isProjectSourcePath,
   isRendererBundleUrl,
-  mergeIstanbulFile,
-  parseIstanbulFileCoverage,
   restrictToStatementLines,
 } from '../packages/core/src/e2e-coverage/index.js';
 
@@ -74,55 +72,43 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // Merged coverage per source file (across multiple test groups)
-  const merged = createCoverageReport();
+  // Merged coverage per source file, across multiple test groups.
+  const coverage = createBundleCoverage();
   const withoutSourceMap: string[] = [];
 
+  const started = performance.now();
   for (const entry of relevant) {
     // fileURLToPath, not a prefix strip: the URL percent-encodes spaces and
     // non-ASCII characters in the checkout path.
     const urlPath = entry.url.startsWith('file:') ? fileURLToPath(entry.url) : entry.url;
-    const sourceMapPath = `${urlPath}.map`;
 
-    let sourceMap: string;
+    let sourceMapText: string;
     try {
-      sourceMap = readFileSync(sourceMapPath, 'utf-8');
+      sourceMapText = readFileSync(`${urlPath}.map`, 'utf-8');
     } catch {
       // A whole bundle's worth of coverage, dropped. Expected locally, where
       // V8_DIR outlives a rebuild and still holds entries for bundle hashes
       // whose .map is gone — so this warns rather than fails. It must not do
       // it silently: this is the same "a dropped file raises the number"
-      // shape that the parse failure below refuses outright.
+      // shape that addBundleEntry refuses outright.
       withoutSourceMap.push(urlPath);
       continue;
     }
 
-    const converter = v8ToIstanbul(urlPath, 0, {
-      source: entry.source ?? readFileSync(urlPath, 'utf-8'),
-      sourceMap: { sourcemap: JSON.parse(sourceMap) as object },
+    const added = await addBundleEntry(coverage, {
+      bundlePath: urlPath,
+      code: entry.source ?? readFileSync(urlPath, 'utf-8'),
+      sourceMapText,
+      functions: entry.functions,
+      isProjectFile: filePath => isProjectSourcePath(relative(ROOT, filePath)),
     });
-
-    await converter.load();
-    converter.applyCoverage(entry.functions);
-
-    for (const [filePath, data] of Object.entries(converter.toIstanbul())) {
-      if (!isProjectSourcePath(relative(ROOT, filePath))) continue;
-      const fileData = parseIstanbulFileCoverage(data);
-      // Not skippable: an entry we cannot read is a file dropped from the
-      // report, and dropping predominantly-uncovered files RAISES the number.
-      // The audit cannot see that — the report is neither empty nor fabricated
-      // — so this has to fail here. The pre-extraction collector crashed on
-      // the same input; this is the same outcome with a usable message.
-      if (fileData === null) {
-        fail(
-          `${filePath} came back from v8-to-istanbul in an unrecognised shape — ` +
-            'the collector cannot tell covered from uncovered lines and refuses to guess. ' +
-            'Check whether v8-to-istanbul changed its toIstanbul() output.',
-        );
-      }
-      mergeIstanbulFile(merged, filePath, fileData);
-    }
+    if (added.status === 'error') fail(added.message);
   }
+
+  process.stdout.write(
+    `Converted ${String(relevant.length)} renderer bundle entr${relevant.length === 1 ? 'y' : 'ies'} ` +
+      `in ${((performance.now() - started) / 1000).toFixed(1)}s\n`,
+  );
 
   if (withoutSourceMap.length > 0) {
     process.stderr.write(
@@ -133,9 +119,10 @@ async function main(): Promise<void> {
     );
   }
 
-  // The audit reads the raw report, every source line included: its thresholds
-  // were measured on that shape, before the statement-line restriction below.
-  const verdict = auditCoverageReport(merged);
+  // The audit reads v8-to-istanbul's report, every source line included: its
+  // thresholds were measured on that shape, and it is the shape in which a
+  // lost coverage-attach race shows up as inflation.
+  const verdict = auditCoverageReport(coverage.raw);
   const outputPath = join(OUTPUT_DIR, 'lcov.info');
 
   // Both rejections happen BEFORE the report is written, and that ordering is
@@ -146,21 +133,21 @@ async function main(): Promise<void> {
   // report that still lands on disk is a rejected report that still moves the
   // number. The diagnostic copy below is named so the artifact glob misses it.
   if (verdict.status !== 'ok') {
-    writeFileSync(`${outputPath}.rejected`, generateLcov(merged));
+    writeFileSync(`${outputPath}.rejected`, generateLcov(coverage.raw));
     fail(describeCoverageFailure(verdict));
   }
 
-  const published = await restrictToStatementLines(merged, filePath => readFileSync(filePath, 'utf-8'));
+  const published = await restrictToStatementLines(coverage.measured, filePath => readFileSync(filePath, 'utf-8'));
   if (published.unrestricted.length > 0) {
     process.stderr.write(
-      `::warning::Kept every source line of ${String(published.unrestricted.length)} file(s) whose ` +
-        `statement lines could not be computed: ${published.unrestricted.join(', ')}\n`,
+      `::warning::Published ${String(published.unrestricted.length)} file(s) as the bundle has them, unaligned ` +
+        `with the unit report, because their statement lines could not be computed: ${published.unrestricted.join(', ')}\n`,
     );
   }
 
   writeFileSync(outputPath, generateLcov(published.report));
   process.stdout.write(`E2E coverage written to ${outputPath}\n`);
-  process.stdout.write(`  ${String(merged.size)} source files covered\n`);
+  process.stdout.write(`  ${String(coverage.raw.size)} source files covered\n`);
 }
 
 void main();

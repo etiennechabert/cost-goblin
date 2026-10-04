@@ -226,18 +226,22 @@ const COVERAGE = new WeakMap<Page, CoverageSession>();
  *
  * **Call this immediately after `app.firstWindow()`, before any other await.**
  * That ordering is load-bearing, and getting it wrong fails loudly nowhere —
- * it silently inflates the shard instead:
+ * it silently skews the shard instead:
  *
  * CDP's `Profiler.startPreciseCoverage` only counts execution after it takes
  * effect, so every await in the gap is a window in which the renderer's
  * deferred module bundle can run. Functions that ran pre-attach are ABSENT
  * from V8's report, not reported as zero — and v8-to-istanbul is subtractive,
  * starting every line at "covered" and zeroing it only when a count-0 range
- * says so. A file V8 never mentioned therefore comes out at 100%. Since Sonar
- * unions the shards, one lost race lifts the whole project number: this is
+ * says so. A file V8 never mentioned therefore came out at 100%. Since Sonar
+ * unions the shards, one lost race lifted the whole project number: this is
  * what made main's coverage saw-tooth between ~66% and ~82% (#556). The
  * `toHaveTitle('CostGoblin')` check was the specific culprit — the title is
- * static HTML, so it can resolve before the bundle executes.
+ * static HTML, so it can resolve before the bundle executes. The published
+ * report now comes from ast-v8-to-istanbul, which gives code missing from
+ * V8's report the count of the range around it — 0 when nothing around it is
+ * reported either — rather than 1; the collector still converts with
+ * v8-to-istanbul too, for the audit that catches the inflation.
  *
  * Returning the page lets the invariant be expressed as a single expression
  * with no room for an await in the gap:
@@ -254,7 +258,7 @@ const COVERAGE = new WeakMap<Page, CoverageSession>();
  *
  * Be honest about how much this enforces. Taking a `Page` means
  * `firstWindow()` → something slow → `attachCoverage(page)` still type-checks
- * and still inflates the shard; the helpers make the right order the easy one,
+ * and still skews the shard; the helpers make the right order the easy one,
  * they do not make the wrong one unwriteable. Nor does any signature close the
  * residual race — `startJSCoverage` is itself an async CDP round-trip against
  * the renderer's `loadFile`. Genuinely retiring the invariant means gating the
