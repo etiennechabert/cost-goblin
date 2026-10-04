@@ -4,27 +4,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { closeApp, launchApp, navigateTo } from './helpers.js';
 
-let app: ElectronApplication;
-let page: Page;
-
-test.beforeAll(async () => {
-  app = await launchApp();
-  page = await app.firstWindow();
-  await expect(page).toHaveTitle('CostGoblin');
-});
-
-test.afterAll(async () => {
-  await closeApp(app);
-});
-
-test('renderer is sandboxed', async () => {
-  const sandboxed = await page.evaluate(() => {
-    const debug = (window as { costgoblinDebug?: { isSandboxed: () => boolean } }).costgoblinDebug;
-    return debug?.isSandboxed() ?? false;
-  });
-  expect(sandboxed).toBe(true);
-});
-
 // ---------------------------------------------------------------------------
 // MCP DuckDB sandbox (#594): the embedded MCP server runs every query on a
 // dedicated, locked-down DuckDB worker. Driven through the real app so the
@@ -149,7 +128,8 @@ test.describe('MCP queries run on a sandboxed DuckDB instance', () => {
 // ---------------------------------------------------------------------------
 // MCP opt-in (#599): a default launch leaves the MCP port closed; Enable in
 // Settings → AI Assistant starts the server, Disable stops it. The token is
-// accepted only from the Authorization header.
+// accepted only from the Authorization header. The same default launch also
+// hosts the renderer sandbox check, which needs no launch of its own.
 // ---------------------------------------------------------------------------
 
 const OPT_IN_PORT = 19632;
@@ -183,6 +163,14 @@ test.describe('the MCP server is opt-in', () => {
   test.afterAll(async () => {
     await closeApp(optApp);
     rmSync(scratch, { recursive: true, force: true });
+  });
+
+  test('renderer is sandboxed', async () => {
+    const sandboxed = await optPage.evaluate(() => {
+      const debug = (window as { costgoblinDebug?: { isSandboxed: () => boolean } }).costgoblinDebug;
+      return debug?.isSandboxed() ?? false;
+    });
+    expect(sandboxed).toBe(true);
   });
 
   test('nothing listens until Enable; Disable closes the port again', async () => {

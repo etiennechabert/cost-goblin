@@ -30,9 +30,13 @@ function appStatePath(): string {
 }
 
 async function openWorkspacesTab(): Promise<void> {
+  const heading = page.getByRole('heading', { name: 'Workspaces' });
+  // Every test after the first starts on this tab already; a snapshot read
+  // (no wait) skips re-opening it.
+  if (await heading.isVisible()) return;
   await openSettings(page);
   await page.getByLabel(SETTINGS_NAV_LABEL).getByRole('button', { name: 'Workspaces' }).click();
-  await expect(page.getByRole('heading', { name: 'Workspaces' })).toBeVisible();
+  await expect(heading).toBeVisible();
 }
 
 test.describe('Workspaces (workspace mode)', () => {

@@ -136,7 +136,7 @@ test.describe('Widget growth', () => {
     await expect.poll(async () => {
       await requestMounts(page);
       return slotIds('[data-widget-state="deferred"]');
-    }, { message: 'every widget slot mounts', timeout: 60_000, intervals: [1_000] }).toEqual([]);
+    }, { message: 'every widget slot mounts', timeout: 60_000, intervals: [100, 250] }).toEqual([]);
 
     const { recent, waitedMs } = await observe(page);
 

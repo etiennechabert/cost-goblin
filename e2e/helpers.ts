@@ -413,6 +413,20 @@ export async function assertNoReactCrash(page: Page): Promise<void> {
   }
 }
 
+/** Runs in the renderer (serialized by page.evaluate — no outer references).
+ *  True when every dashboard widget slot inside the viewport has mounted and
+ *  shows no CoinRainLoader (the `<output>` every widget renders while its query
+ *  is in flight). Slots below the fold stay deferred until scrolled to, so
+ *  only the visible ones can be waited on. A page with no slots (every
+ *  non-dashboard view) is trivially settled. */
+function viewportWidgetsSettled(): boolean {
+  return [...document.querySelectorAll('[data-widget-id]')].every(slot => {
+    const box = slot.getBoundingClientRect();
+    const inViewport = box.bottom > 0 && box.top < window.innerHeight && box.right > 0 && box.left < window.innerWidth;
+    return !inViewport || (slot.getAttribute('data-widget-state') === 'mounted' && slot.querySelector('output') === null);
+  });
+}
+
 export async function waitForQuerySettle(page: Page): Promise<void> {
   // Wait for any "Loading" text to disappear, or time out gracefully.
   // Views may show errors instead of data — that's fine, we just need the query cycle to finish.
@@ -421,29 +435,15 @@ export async function waitForQuerySettle(page: Page): Promise<void> {
   } catch {
     // Loading text might never have appeared (instant response or error)
   }
-  // small settle for rendering
-  await page.waitForTimeout(300);
+  // Then the dashboard widgets in view. Two consecutive settled polls, so a
+  // slot the scheduler mounts between two of them (its loader not painted
+  // yet) can't pass on a single lucky read.
+  let streak = 0;
+  await expect.poll(async () => {
+    streak = (await page.evaluate(viewportWidgetsSettled)) ? streak + 1 : 0;
+    return streak;
+  }, { message: 'every in-viewport widget mounted with no loader', timeout: 20_000, intervals: [100] }).toBeGreaterThanOrEqual(2);
   // catch React crashes that happened during query/render cycle
-  await assertNoReactCrash(page);
-}
-
-/** Wait for the Cost Scope preview to finish its debounced first load. The
- *  preview effect debounces 300ms and then runs several IPC queries
- *  serially (per-rule + totals + daily + sample + count). Polling for the
- *  in-header "loading…" marker to disappear is the only reliable settle
- *  signal — waitForQuerySettle's generic "Loading" check doesn't fire here
- *  because the preview uses its own marker to stay scoped to this view. */
-export async function waitForCostScopePreview(page: Page): Promise<void> {
-  // The marker only appears once the first debounce fires (~300ms). Give
-  // it a little room to show up before checking for its disappearance.
-  await page.waitForTimeout(400);
-  const marker = page.getByTestId('preview-loading');
-  try {
-    await expect(marker).toBeHidden({ timeout: LOAD_TIMEOUT });
-  } catch {
-    // Marker may have finished before we attached the locator; that's fine.
-  }
-  await page.waitForTimeout(200);
   await assertNoReactCrash(page);
 }
 
@@ -457,9 +457,9 @@ export async function hasVisibleData(page: Page): Promise<boolean> {
 }
 
 /** Assert the current view has loaded real dollar data, retrying until the
- *  cost cells actually paint. `waitForQuerySettle` only waits out the shared
- *  "Loading" text (driven by the dimensions query) plus a fixed 300ms, which
- *  can race the per-widget cost queries on a slow runner — so poll rather than
+ *  cost cells actually paint. `waitForQuerySettle` only waits for dashboard
+ *  widget slots; the analysis views (Trends, Tags) hold no slots, so their
+ *  data can still be in flight when it returns — poll rather than
  *  snapshotting `hasVisibleData` once. */
 export async function expectVisibleData(page: Page): Promise<void> {
   await expect.poll(() => hasVisibleData(page), { timeout: LOAD_TIMEOUT }).toBe(true);
