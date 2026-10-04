@@ -9,7 +9,7 @@
     "build:preload": "esbuild src/preload/preload.ts --bundle --platform=node --format=cjs --sourcemap --outfile=out/worker/preload.cjs --external:electron",
     "check": "tsc --noEmit && eslint src/ && vitest run",
     "test": "vitest run",
-    "dev": "npm run build:worker && npm run build:preload && electron-vite dev"
+    "dev": "node -e \"require('electron')\" && npm run build:worker && npm run build:preload && electron-vite dev"
   },
   "dependencies": {
     "@aws-sdk/client-organizations": "^3.1095.0",
