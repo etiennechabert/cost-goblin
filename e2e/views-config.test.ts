@@ -158,20 +158,20 @@ test.describe('Data Management', () => {
     await expect(page.getByText('Delete all local data')).toBeHidden();
   });
 
-  test('Add Provider and the tier gear open their setup wizard modals and Close dismisses them', async () => {
-    // Two different modals behind two buttons sharing a title prefix: the
-    // header's Add Provider ("Configure an additional billing source…") and
-    // the Daily panel's gear.
-    const closeBtn = page.locator('button[title="Close"]');
-    for (const { title, shot } of [
-      { title: 'Configure an additional billing source (e.g. a second AWS payer account)', shot: 'add-provider' },
-      { title: 'Configure daily', shot: 'daily' },
+  test('Add Provider and the tier gear open their setup wizard dialogs and Close dismisses them', async () => {
+    // Two different wizard dialogs behind two buttons: the header's Add
+    // Provider and the Daily panel's gear. Role queries reach them only
+    // because the dialogs are no longer inside an aria-hidden overlay.
+    for (const { trigger, dialogName, shot } of [
+      { trigger: 'Add Provider', dialogName: 'Add provider', shot: 'add-provider' },
+      { trigger: 'Configure daily', dialogName: /^Configure daily data source for /, shot: 'daily' },
     ]) {
-      await page.locator(`button[title="${title}"]`).click();
-      await expect(closeBtn).toBeVisible();
+      await page.getByRole('button', { name: trigger, exact: true }).first().click();
+      const dialog = page.getByRole('dialog', { name: dialogName });
+      await expect(dialog).toBeVisible();
       await screenshot(page, `data-management-modal-${shot}`);
-      await closeBtn.click();
-      await expect(closeBtn).toBeHidden();
+      await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+      await expect(dialog).toBeHidden();
     }
   });
 });

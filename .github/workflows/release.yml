@@ -137,7 +137,7 @@ jobs:
           MAIN_VITE_SENTRY_DSN: ${{ vars.SENTRY_DSN }}
 
       # Every sentry-cli call below runs the lockfile-pinned @sentry/cli devDep
-      # by its path — never `npx @sentry/cli@^2`, which resolves (and runs) a
+      # by its path — never `npx @sentry/cli@^3`, which resolves (and runs) a
       # registry version at release time. The native binary comes from the
       # exact-pinned, script-free @sentry/cli-<platform> optional dependency, so
       # @sentry/cli's own install script is denied in package.json#allowScripts
@@ -268,7 +268,7 @@ jobs:
         run: bash .github/scripts/assert-npm-guards.sh
 
       # The manifest merge needs js-yaml. Install it from the lockfile — never a
-      # run-time `npm install js-yaml@^4`, which re-resolves against the registry
+      # run-time `npm install js-yaml@^5`, which re-resolves against the registry
       # in the job that rewrites the update manifests (the sha512 there is
       # electron-updater's only integrity check on the unsigned Win/Linux
       # builds). --ignore-scripts: nothing here needs an install script, so no
