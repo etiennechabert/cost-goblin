@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within, cleanup } from '@testing-library/react';
+import { act, render, screen, waitFor, within, cleanup } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
@@ -288,6 +288,27 @@ describe('DataManagement — modal dialogs', () => {
     await user.keyboard('{Escape}');
     await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Add provider' })).toBeNull(); });
     expect(document.activeElement).toBe(trigger);
+  });
+
+  it('pulls focus that lands on the page behind back into the dialog', async () => {
+    // aria-modal declares the page inert — Tab must not walk onto it.
+    const { dialog } = await openAddProvider();
+    act(() => { screen.getByRole('button', { name: 'Refresh' }).focus(); });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+  });
+
+  it('ignores an Escape a nested layer already consumed, or one that cancels an IME composition', async () => {
+    const { user } = await openAddProvider();
+    // A layer above it (e.g. a Radix popover) handles Escape in the capture
+    // phase and marks it consumed.
+    const consume = (e: KeyboardEvent) => { e.preventDefault(); };
+    document.addEventListener('keydown', consume, { capture: true });
+    await user.keyboard('{Escape}');
+    document.removeEventListener('keydown', consume, { capture: true });
+    expect(screen.getByRole('dialog', { name: 'Add provider' })).toBeDefined();
+
+    act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', isComposing: true, bubbles: true })); });
+    expect(screen.getByRole('dialog', { name: 'Add provider' })).toBeDefined();
   });
 
   it('closes on a backdrop click but not on a click inside the wizard', async () => {

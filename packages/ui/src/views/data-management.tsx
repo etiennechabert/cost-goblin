@@ -930,7 +930,8 @@ const CONFIGURE_TIER_LABEL: Record<ConfigureSource, string> = {
  *  Escape closes only the topmost dialog. While the wizard has one of its own
  *  open (Import, which also locks itself shut during a pull), the key is that
  *  dialog's to handle, and a key a nested layer already consumed
- *  (`defaultPrevented`) is left alone. */
+ *  (`defaultPrevented`) is left alone. Focus moves in on open, stays inside
+ *  while open, and returns to the opener on close. */
 function WizardModal({ label, onClose, children }: Readonly<{
   label: string;
   onClose: () => void;
@@ -944,14 +945,23 @@ function WizardModal({ label, onClose, children }: Readonly<{
   useEffect(() => {
     const dialog = dialogRef.current;
     if (dialog !== null && !dialog.contains(document.activeElement)) dialog.focus();
+    // aria-modal tells assistive tech the page behind is inert, so focus must
+    // not reach it: anything Tab (or a click) moves out is pulled back in.
+    function keepFocusInside(e: FocusEvent): void {
+      const current = dialogRef.current;
+      if (current !== null && e.target instanceof Node && !current.contains(e.target)) current.focus();
+    }
+    document.addEventListener('focusin', keepFocusInside);
     return () => {
+      document.removeEventListener('focusin', keepFocusInside);
       if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
     };
   }, [opener]);
 
   useEffect(() => {
     function handleKey(e: KeyboardEvent): void {
-      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      // isComposing: that Escape cancels an IME candidate, not the wizard.
+      if (e.key !== 'Escape' || e.isComposing || e.defaultPrevented) return;
       const dialog = dialogRef.current;
       if (dialog === null || dialog.querySelector('dialog[open], [role="dialog"]') !== null) return;
       onClose();
