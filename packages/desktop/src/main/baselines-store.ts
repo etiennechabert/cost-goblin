@@ -18,6 +18,7 @@ import {
   computeOrgAccountsDigest,
   computeSavings,
   computeShapeSignature,
+  DEFAULT_LAG_DAYS,
   deriveStatus,
   effectiveBands,
   estimateBytesPerRow,
@@ -61,7 +62,7 @@ import type {
   TagValue,
 } from '@costgoblin/core';
 import type { RawRow } from './duckdb-client.js';
-import { columnForDimension, providersEmptyForRange } from './handlers/query-utils.js';
+import { columnForDimension, providersWithoutDataForRange } from './handlers/query-utils.js';
 
 /** The query/config capabilities the store needs to recompute. Mirrors the
  *  pieces the cost-query handlers pull off AppContext, kept structural so the
@@ -156,6 +157,69 @@ function dateNDaysAgo(end: string, days: number): string {
 function todayUtc(): string {
   return new Date().toISOString().slice(0, 10);
 }
+
+/** The day a recompute's windows end on: today minus the cost basis's lag. */
+function settledEnd(lagDays: number | undefined): string {
+  return dateNDaysAgo(todayUtc(), lagDays ?? DEFAULT_LAG_DAYS);
+}
+
+/** The window a recompute reads: `lookbackDays` back from the settled end. */
+function lookbackRange(lagDays: number | undefined, lookbackDays: number): DateRange {
+  const end = settledEnd(lagDays);
+  return { start: asDateString(dateNDaysAgo(end, lookbackDays)), end: asDateString(end) };
+}
+
+/** How much of a window's cost data can be read. Only a query over data that
+ *  is present can show a scope spent nothing: 'none' says nothing about any
+ *  scope, and under 'partial' an empty result may just be a scope whose spend
+ *  sits on a missing provider. Neither may read as empty history, which
+ *  finalizeFromHistory answers by dropping the scope's snapshot trend.
+ *  getQueryProviders maps an unreadable costgoblin.yaml to [], so a config
+ *  that is briefly invalid reads as 'none' too. */
+type DataCoverage =
+  | { readonly kind: 'full' }
+  | { readonly kind: 'partial'; readonly missing: readonly ProviderName[]; readonly reason: string }
+  | { readonly kind: 'none'; readonly reason: string };
+
+function dataCoverage(providers: readonly ProviderSourceSpec[], dateRange: DateRange): DataCoverage {
+  if (providers.length === 0) return { kind: 'none', reason: 'no billing provider is configured, or the configuration could not be read' };
+  const span = `${String(dateRange.start)} to ${String(dateRange.end)}`;
+  const missing = providersWithoutDataForRange(providers, dateRange).map((p) => p.name);
+  if (missing.length === providers.length) return { kind: 'none', reason: `no billing data is synced locally for ${span}` };
+  if (missing.length > 0) return { kind: 'partial', missing, reason: `no billing data is synced locally for ${missing.join(', ')} for ${span}` };
+  return { kind: 'full' };
+}
+
+/** Whether two windows read the same providers, so a gap between them is a
+ *  change in spend rather than one window missing a provider's data. */
+function sameCoverage(a: DataCoverage, b: DataCoverage): boolean {
+  if (a.kind === 'none' || b.kind === 'none') return false;
+  const missingA = a.kind === 'partial' ? a.missing.join('\n') : '';
+  const missingB = b.kind === 'partial' ? b.missing.join('\n') : '';
+  return missingA === missingB;
+}
+
+/** The recompute failure for a no-data state — surfaced as the status message. */
+function leftUnchanged(reason: string): Error {
+  return new Error(`${reason} — baselines left unchanged`);
+}
+
+/** Everything a discovery run reads up front, once for the whole run. */
+interface DiscoveryLookback {
+  readonly cfg: BaselinesDiscoveryConfig;
+  readonly costScope: CostScopeConfig;
+  readonly dateRange: DateRange;
+  readonly providers: readonly ProviderSourceSpec[];
+  readonly coverage: DataCoverage;
+}
+
+/** A discovery run either reconciled the discovered set — `refreshed` holds the
+ *  ids whose history it re-set — or was skipped without touching anything. */
+type DiscoveryOutcome =
+  | { readonly kind: 'ran'; readonly refreshed: ReadonlySet<string> }
+  | { readonly kind: 'skipped'; readonly reason: string };
+
+const NO_CARDINALITY_PROBE: { readonly cardinalityByColumn: Record<string, number>; readonly lineItems: number } = { cardinalityByColumn: {}, lineItems: 0 };
 
 export class BaselineStore {
   private readonly stateDir: string;
@@ -430,7 +494,16 @@ export class BaselineStore {
       updatedAt: now,
     };
     this.specs.set(spec.id, spec);
-    await this.recomputeOne(deps, spec);
+    try {
+      // With no cost data readable yet it stays insufficient-data until the
+      // next recompute that can read some — creating it must not fail.
+      await this.recomputeOne(deps, spec);
+    } catch (err: unknown) {
+      // A failed query must not leave a phantom spec behind: it would block
+      // the retry as a duplicate scope, and the next save would persist it.
+      this.forget(spec.id);
+      throw err;
+    }
     await this.save();
     const accountMap = await deps.getAccountMap();
     const orgTree = (await deps.getOrgTreeConfig()).tree;
@@ -529,7 +602,8 @@ export class BaselineStore {
         const spec = this.specs.get(opts.only);
         if (spec !== undefined) {
           this.setStatus({ state: 'running', phase: 'computing', done: 0, total: 1 });
-          await this.recomputeOne(deps, spec);
+          const unavailable = await this.recomputeOne(deps, spec);
+          if (unavailable !== null) throw leftUnchanged(unavailable);
         }
       } else {
         await this.recomputeAll(deps, opts.startFresh === true);
@@ -549,46 +623,78 @@ export class BaselineStore {
   }
 
   /** Full recompute: rediscover the baseline set, then refresh every spec's
-   *  history and derived stats, broadcasting throttled progress. */
+   *  history and derived stats, broadcasting throttled progress. A baseline is
+   *  only ever rewritten from data this run actually read: one whose window
+   *  can't be read is left exactly as it was, and a run whose discovery could
+   *  not run and that refreshed nothing else fails with the reason instead of
+   *  reporting success. */
   private async recomputeAll(deps: BaselineEngineDeps, startFresh: boolean): Promise<void> {
-    // Start fresh: wipe ALL discovered baselines (incl. user-edited) so the
-    // new grain rediscovers from a clean slate. Manual baselines are kept.
-    if (startFresh) {
-      for (const s of this.specs.values()) if (s.source === 'discovered') this.forget(s.id);
-    }
     this.setStatus({ state: 'running', phase: 'discovering', done: 0, total: 0 });
-    await this.discover(deps);
+    const discovery = await this.discover(deps, await this.discoveryLookback(deps), startFresh);
+    // Start fresh means "rediscover from a clean slate": when discovery could
+    // not run, nothing was wiped and the request fails rather than half-apply.
+    if (discovery.kind === 'skipped' && startFresh) throw leftUnchanged(discovery.reason);
     const specs = [...this.specs.values()];
     const total = specs.length;
     let done = 0;
+    let refreshed = 0;
     this.setStatus({ state: 'running', phase: 'computing', done, total });
     // Throttle progress broadcasts: with thousands of baselines, one IPC
     // message per item would flood the renderer.
     const step = Math.max(1, Math.floor(total / 100));
-    for (const spec of specs) {
+    for (const { id } of specs) {
       // `specs` was snapshotted before the awaits below; skip any baseline
-      // the user deleted mid-recompute so we don't re-populate its history.
-      if (!this.specs.has(spec.id)) continue;
-      // Only discovered FILTER baselines had their history set during
-      // discover(); everything else (manual, or any view-scoped spec) needs
-      // a per-baseline query here, or it would finalize on stale history.
-      if (spec.source === 'discovered' && spec.scope.kind === 'filter') this.finalizeFromHistory(spec);
-      else await this.recomputeOne(deps, spec);
+      // the user deleted mid-recompute so we don't re-populate its history,
+      // and read the rest afresh so an edit made meanwhile (a manual band,
+      // say) is what today's snapshot is computed with.
+      const spec = this.specs.get(id);
+      if (spec === undefined) continue;
+      if (await this.refreshSpec(deps, spec, discovery)) refreshed += 1;
       done += 1;
       if (done % step === 0 || done === total) this.setStatus({ state: 'running', phase: 'computing', done, total });
     }
+    // Discovery skipped and nothing else refreshed: memory is untouched, so
+    // fail (nothing is saved) rather than report a run that did nothing.
+    if (discovery.kind === 'skipped' && refreshed === 0) throw leftUnchanged(discovery.reason);
+    if (refreshed < done) {
+      logger.warn('baselines: some baselines left unchanged — no fresh data for them this run', {
+        unchanged: done - refreshed,
+        ...(discovery.kind === 'skipped' ? { discoverySkipped: discovery.reason } : {}),
+      });
+    }
   }
 
-  private async discover(deps: BaselineEngineDeps): Promise<void> {
+  /** Refresh one baseline from this run's data; false when it is left as it was. */
+  private async refreshSpec(deps: BaselineEngineDeps, spec: BaselineSpec, discovery: DiscoveryOutcome): Promise<boolean> {
+    if (spec.source === 'discovered' && spec.scope.kind === 'filter') {
+      if (discovery.kind === 'ran' && discovery.refreshed.has(spec.id)) { this.finalizeFromHistory(spec); return true; }
+      // Discovery didn't fetch this one's history (under the auto-ignore
+      // threshold, its provider missing from the window, or discovery skipped),
+      // so never snapshot its stale history. One the user invested in gets its
+      // own query like a manual baseline; the rest wait for the next discovery.
+      if (!this.isUserEdited(spec.id)) return false;
+    }
+    return (await this.recomputeOne(deps, spec)) === null;
+  }
+
+  /** Everything discovery reads up front — config, cost scope, window, providers
+   *  and their coverage of it — so the whole run works from one snapshot. */
+  private async discoveryLookback(deps: BaselineEngineDeps): Promise<DiscoveryLookback> {
     const cfg = this.effectiveConfig();
-    const dimensions = await deps.getQueryDimensions();
     const costScope = await deps.getCostScope();
-    const end = dateNDaysAgo(todayUtc(), costScope.lagDays ?? 2);
-    const start = dateNDaysAgo(end, cfg.lookbackDays);
-    const dateRange = { start: asDateString(start), end: asDateString(end) };
+    const dateRange = lookbackRange(costScope.lagDays, cfg.lookbackDays);
     const providers = await deps.getQueryProviders('daily');
-    if (providers.length === 0) { logger.info('baselines: discovery skipped — no provider configured'); return; }
-    if (providersEmptyForRange(providers, dateRange)) { logger.info('baselines: discovery skipped — no data in range'); return; }
+    return { cfg, costScope, dateRange, providers, coverage: dataCoverage(providers, dateRange) };
+  }
+
+  /** Rediscover the baseline set over `lookback`. Skipped, touching nothing,
+   *  when none of its data can be read or no grain resolves. Every await comes
+   *  before the start-fresh wipe and the reconcile, so a query that fails (or
+   *  that the renderer cancels) leaves every baseline as it was. */
+  private async discover(deps: BaselineEngineDeps, lookback: DiscoveryLookback, startFresh: boolean): Promise<DiscoveryOutcome> {
+    const { cfg, costScope, dateRange, providers, coverage } = lookback;
+    if (coverage.kind === 'none') return { kind: 'skipped', reason: coverage.reason };
+    const dimensions = await deps.getQueryDimensions();
     const opts = {
       dataDir: deps.dataDir,
       dimensions,
@@ -597,8 +703,11 @@ export class BaselineStore {
       costScope,
     };
 
-    // 1) Probe cardinality of the enabled built-ins to drop high-card dims.
-    const { cardinalityByColumn, lineItems } = await this.probeDimCardinality(deps, dateRange, opts);
+    // 1) Probe cardinality of the enabled built-ins to drop high-card dims —
+    //    only the automatic grain reads it; an override is used as is.
+    const { cardinalityByColumn, lineItems } = cfg.grainDimensions.length > 0
+      ? NO_CARDINALITY_PROBE
+      : await this.probeDimCardinality(deps, dateRange, opts);
 
     const grain = resolveDiscoveryGrain({
       dimensions,
@@ -607,10 +716,7 @@ export class BaselineStore {
       bytesPerRow: estimateBytesPerRow(null),
       override: cfg.grainDimensions,
     });
-    if (grain.length === 0) {
-      logger.warn('baselines: no stable built-in dimensions for discovery grain');
-      return;
-    }
+    if (grain.length === 0) return { kind: 'skipped', reason: 'no enabled built-in dimension is available for the discovery grain' };
 
     const grainIds = grain.map((d) => d.name);
     const grainCols = grain.map((d) => d.field);
@@ -644,16 +750,27 @@ export class BaselineStore {
     const dailyRows = await deps.runPreparedQuery(dailyQ.sql, dailyQ.params, mat !== undefined);
     const dailyByTuple = foldDailyByTuple(dailyRows, grain);
 
+    // ^ last await. From here the wipe and the reconcile index this.specs
+    // synchronously, so baselines the user deleted mid-discovery stay gone.
+    // Start fresh: wipe ALL discovered baselines (incl. user-edited) so the
+    // new grain rediscovers from a clean slate. Manual baselines are kept.
+    if (startFresh) {
+      for (const s of this.specs.values()) if (s.source === 'discovered') this.forget(s.id);
+    }
     // 4+5) Upsert a baseline per live tuple; prune or blank the vanished ones.
-    const basis = await snapshotBasis(deps);
-    // ^ last await before the synchronous reconcile: it indexes this.specs
-    // after this point, so baselines the user deleted mid-discovery stay gone.
-    this.reconcileDiscovered({ tuples, grain, basis, dailyByTuple, historyEnd: dateRange.end, minTotal });
+    // The basis is the cost scope the queries above ran with, not a re-read.
+    const refreshed = this.reconcileDiscovered({
+      tuples, grain, basis: costScopeToBasis(costScope), dailyByTuple, historyEnd: dateRange.end, minTotal,
+      keepVanished: coverage.kind === 'partial',
+    });
+    return { kind: 'ran', refreshed };
   }
 
   /** Probe cardinality of the enabled built-ins (used to drop high-cardinality
-   *  dims from the default discovery grain). A failed probe degrades to the
-   *  empty grain guard rather than failing the whole recompute. */
+   *  dims from the automatic discovery grain). A failure — say a query the
+   *  renderer cancelled — fails the run: without the guard every enabled
+   *  dimension, resource-level ones included, would join the grain and re-key
+   *  (so prune or blank) every discovered baseline. */
   private async probeDimCardinality(
     deps: BaselineEngineDeps,
     dateRange: DateRange,
@@ -662,16 +779,11 @@ export class BaselineStore {
     const enabledFields = [...new Set(opts.dimensions.builtIn.filter((d) => d.enabled !== false).map((d) => d.field))];
     const cardinalityByColumn: Record<string, number> = {};
     let lineItems = 0;
-    try {
-      const probe = buildDimCardinalityQuery(enabledFields, dateRange, opts);
-      const probeRows = await deps.runPreparedQuery(probe.sql, probe.params, false);
-      const row = probeRows[0];
-      if (row !== undefined) {
-        for (const f of enabledFields) cardinalityByColumn[f] = num(row[f]);
-        lineItems = num(row['row_count']);
-      }
-    } catch (err: unknown) {
-      logger.warn('baselines: cardinality probe failed; using empty grain guard', { error: err instanceof Error ? err.message : String(err) });
+    const probe = buildDimCardinalityQuery(enabledFields, dateRange, opts);
+    const row = (await deps.runPreparedQuery(probe.sql, probe.params, false))[0];
+    if (row !== undefined) {
+      for (const f of enabledFields) cardinalityByColumn[f] = num(row[f]);
+      lineItems = num(row['row_count']);
     }
     return { cardinalityByColumn, lineItems };
   }
@@ -694,7 +806,8 @@ export class BaselineStore {
    *  a scope that dropped to zero spend over the lookback; this runs on every
    *  recompute, not just grain changes). Prune the untouched ones so the list
    *  doesn't accumulate stale rows; keep the ones the user invested in but blank
-   *  their history so they show insufficient-data rather than a stale band. */
+   *  their history so they show insufficient-data rather than a stale band.
+   *  Returns the ids whose history it set, which recomputeAll finalizes. */
   private reconcileDiscovered(args: {
     readonly tuples: ReadonlyMap<string, DiscoveredTuple>;
     readonly grain: readonly GrainDim[];
@@ -704,8 +817,12 @@ export class BaselineStore {
     /** UNCLAMPED whole-window auto-ignore threshold (minMonthlyCost × lookback
      *  months) — the same number the daily query's minTotalCost derives from. */
     readonly minTotal: number;
-  }): void {
+    /** Some provider has no data in the window, so a tuple missing from the
+     *  results may just be one of its: keep vanished ones as they are. */
+    readonly keepVanished: boolean;
+  }): ReadonlySet<string> {
     const { existingByScope, manualScopes } = this.indexSpecsByScope();
+    const refreshed = new Set<string>();
 
     const seenScopes = new Set<string>();
     // One timestamp for the whole batch — nothing reads per-tuple-distinct
@@ -723,29 +840,40 @@ export class BaselineStore {
         ? { ...existing, basis: args.basis, basisSnapshotAt: now, updatedAt: now }
         : { id: randomUUID(), source: 'discovered', scope, basis: args.basis, basisSnapshotAt: now, createdAt: now, updatedAt: now };
       this.specs.set(spec.id, spec);
-      this.histories.set(spec.id, clampHistory(args.dailyByTuple.get(key) ?? [], args.historyEnd));
+      // The daily query skips tuples under the auto-ignore threshold, so their
+      // missing history means "not fetched", not "no spend". Blank it only when
+      // nobody invested in the baseline; a user-edited one keeps its trend and
+      // gets its own query in recomputeAll.
+      const daily = args.dailyByTuple.get(key);
+      if (daily !== undefined || !this.isUserEdited(spec.id)) {
+        this.histories.set(spec.id, clampHistory(daily ?? [], args.historyEnd));
+        refreshed.add(spec.id);
+      }
       if (!this.userTriaged.has(spec.id)) {
         if (tuple.total < args.minTotal) this.triageStatuses.set(spec.id, 'ignored');
         else this.triageStatuses.delete(spec.id); // un-ignore once it grows past the threshold
       }
-      // finalizeFromHistory runs once for every spec in recomputeAll()'s loop.
     }
 
     for (const [key, spec] of existingByScope) {
-      if (seenScopes.has(key)) continue;
-      if (this.isUserEdited(spec.id)) this.histories.set(spec.id, []);
+      if (seenScopes.has(key) || args.keepVanished) continue;
+      if (this.isUserEdited(spec.id)) { this.histories.set(spec.id, []); refreshed.add(spec.id); }
       else this.forget(spec.id);
     }
+    return refreshed;
   }
 
-  private async recomputeOne(deps: BaselineEngineDeps, spec: BaselineSpec): Promise<void> {
+  /** Re-query one baseline's daily history and finalize it. Returns why, and
+   *  leaves its history and snapshots exactly as they were, when its window has
+   *  no readable data, or has a provider missing and the query found nothing
+   *  (the scope's spend may sit on that provider); null once refreshed. */
+  private async recomputeOne(deps: BaselineEngineDeps, spec: BaselineSpec): Promise<string | null> {
     const cfg = this.effectiveConfig();
     const dimensions = await deps.getQueryDimensions();
-    const end = dateNDaysAgo(todayUtc(), spec.basis.lagDays ?? 2);
-    const start = dateNDaysAgo(end, cfg.lookbackDays);
-    const dateRange = { start: asDateString(start), end: asDateString(end) };
+    const dateRange = lookbackRange(spec.basis.lagDays, cfg.lookbackDays);
     const providers = await deps.getQueryProviders('daily');
-    if (providers.length === 0 || providersEmptyForRange(providers, dateRange)) { this.histories.set(spec.id, []); this.finalizeFromHistory(spec); return; }
+    const coverage = dataCoverage(providers, dateRange);
+    if (coverage.kind === 'none') return coverage.reason;
     const basisScope = basisToCostScope(spec.basis);
     const groupBy = primaryGroupBy(spec.scope);
     // The query filters on the FULL scope, so the rollup-fit check must require
@@ -775,8 +903,10 @@ export class BaselineStore {
     const byDay = new Map<string, number>();
     for (const r of rows) byDay.set(str(r['date']).slice(0, 10), (byDay.get(str(r['date']).slice(0, 10)) ?? 0) + num(r['cost']));
     const points: BaselineDailyPoint[] = [...byDay.entries()].map(([date, cost]) => ({ date: asDateString(date), cost: asDollars(cost) }));
+    if (points.length === 0 && coverage.kind === 'partial') return coverage.reason;
     this.histories.set(spec.id, clampHistory(points, dateRange.end));
     this.finalizeFromHistory(spec);
+    return null;
   }
 
   /** Compute current/bands/savings/status from stored history, append a
@@ -784,9 +914,11 @@ export class BaselineStore {
   private finalizeFromHistory(spec: BaselineSpec): void {
     const cfg = this.effectiveConfig();
     const history = this.histories.get(spec.id) ?? [];
-    // No stored history (e.g. a baseline that became auto-ignored or vanished)
-    // → nothing to snapshot, and drop any snapshots from when it had data so the
-    // stored trend doesn't go stale. Stats derive as insufficient-data.
+    // No stored history (e.g. a baseline that became auto-ignored, vanished, or
+    // whose scope spent nothing over the window) → nothing to snapshot, and drop
+    // any snapshots from when it had data so the stored trend doesn't go stale.
+    // Stats derive as insufficient-data. Only a query that actually ran can say
+    // so: callers never get here when no cost data could be read at all.
     if (history.length === 0) { this.snapshots.delete(spec.id); return; }
     const runRate = runRateSeries(history, cfg.windowDays);
     const bands = computeBands(runRate, { lowerPct: cfg.lowerPct, upperPct: cfg.upperPct });
@@ -820,20 +952,21 @@ export class BaselineStore {
     const cfg = this.effectiveConfig();
     const dimensions = await deps.getQueryDimensions();
     const basisScope = basisToCostScope(spec.basis);
-    const end = dateNDaysAgo(todayUtc(), spec.basis.lagDays ?? 2);
+    const end = asDateString(settledEnd(spec.basis.lagDays));
     // `dateNDaysAgo(end, N)` then an inclusive BETWEEN spans N+1 calendar days;
     // subtract one so each window is exactly windowDays/lookbackDays days — matching
     // the divisors below.
-    const trailingStart = dateNDaysAgo(end, Math.max(0, cfg.windowDays - 1));
-    const bandStart = dateNDaysAgo(end, Math.max(0, cfg.lookbackDays - 1));
+    const trailingRange = { start: asDateString(dateNDaysAgo(end, Math.max(0, cfg.windowDays - 1))), end };
+    const bandRange = { start: asDateString(dateNDaysAgo(end, Math.max(0, cfg.lookbackDays - 1))), end };
     const child = asDimensionId(childDimension);
     const accountReverseMap = await deps.getAccountReverseMap();
     const providers = await deps.getQueryProviders('daily');
+    // Drift compares the two windows: if either can't be read, or they read
+    // different providers, the missing data would show up as a spend change
+    // (every child "improving" once sync stops). Report no drift instead.
+    if (!sameCoverage(dataCoverage(providers, trailingRange), dataCoverage(providers, bandRange))) return [];
 
-    const windowByChild = async (winStart: string): Promise<Map<string, number>> => {
-      if (providers.length === 0) return new Map<string, number>();
-      const range = { start: asDateString(winStart), end: asDateString(end) };
-      if (providersEmptyForRange(providers, range)) return new Map<string, number>();
+    const windowByChild = async (range: DateRange): Promise<Map<string, number>> => {
       const mat = this.matSource(deps, providers.length, basisScope, dimensions, range, [columnForDimension(dimensions, childDimension), 'cost']);
       const q = buildDailyCostsQuery(
         { dateRange: range, filters: scopeFilters(spec.scope), groupBy: child },
@@ -851,7 +984,7 @@ export class BaselineStore {
       return totals;
     };
 
-    const [trailing, band] = await Promise.all([windowByChild(trailingStart), windowByChild(bandStart)]);
+    const [trailing, band] = await Promise.all([windowByChild(trailingRange), windowByChild(bandRange)]);
     const trailingDays = Math.max(1, cfg.windowDays);
     const bandDays = Math.max(1, cfg.lookbackDays);
     const children = new Set<string>([...trailing.keys(), ...band.keys()]);
@@ -986,7 +1119,10 @@ function clampHistory(points: readonly BaselineDailyPoint[], end: string): reado
 }
 
 async function snapshotBasis(deps: BaselineEngineDeps): Promise<BaselineCostBasis> {
-  const cs = await deps.getCostScope();
+  return costScopeToBasis(await deps.getCostScope());
+}
+
+function costScopeToBasis(cs: CostScopeConfig): BaselineCostBasis {
   return {
     costMetric: cs.costMetric,
     rules: cs.rules,
