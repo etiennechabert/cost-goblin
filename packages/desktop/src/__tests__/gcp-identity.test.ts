@@ -2,14 +2,37 @@ import { describe, expect, it, vi } from 'vitest';
 import { asBucketPath, asProviderName } from '@costgoblin/core';
 import type { CostGoblinConfig, GcpAccountLookup } from '@costgoblin/core';
 import type { GcloudCaptureResult } from '../main/gcloud-capture.js';
-import type { GcpIdentityResolver, IdentityDeps, IdentityProviderOptions } from '../main/gcp-identity.js';
+import type { IdentityDeps, IdentityProviderOptions } from '../main/gcp-identity.js';
 import { createGcpIdentityResolver, gcpIdentitiesFor } from '../main/gcp-identity.js';
+import type { GcpIdentityResolver } from '../main/gcp-identity.js';
 
 const HOME = '/Users/a';
 const ADC_PATH = `${HOME}/.config/gcloud/application_default_credentials.json`;
 const ACTIVE_CONFIG_PATH = `${HOME}/.config/gcloud/active_config`;
+const SA = 'costgoblin-reader@acme-billing.iam.gserviceaccount.com';
+const OTHER_SA = 'company-reader@corp.iam.gserviceaccount.com';
 
-const USER_ADC = JSON.stringify({ type: 'authorized_user', client_id: 'cid', client_secret: 'FAKE-SECRET', refresh_token: 'FAKE-REFRESH' });
+/** A plain `gcloud auth application-default login` — the recommended setup. */
+const USER_ADC = JSON.stringify({
+  type: 'authorized_user',
+  client_id: 'cid',
+  client_secret: 'FAKE-SECRET',
+  refresh_token: 'FAKE-REFRESH',
+});
+
+/** The legacy `application-default login --impersonate-service-account=<SA>`
+ *  file. */
+const IMPERSONATED_ADC = JSON.stringify({
+  type: 'impersonated_service_account',
+  service_account_impersonation_url: `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${SA}:generateAccessToken`,
+  delegates: [],
+  source_credentials: {
+    type: 'authorized_user',
+    client_id: 'cid',
+    client_secret: 'FAKE-SECRET',
+    refresh_token: 'FAKE-REFRESH',
+  },
+});
 
 const KEY_FILE = JSON.stringify({
   type: 'service_account',
@@ -21,8 +44,17 @@ function enoent(): Error {
   return Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' });
 }
 
-function configList(account?: string): GcloudCaptureResult {
-  return { kind: 'exited', code: 0, stdout: JSON.stringify({ core: account === undefined ? {} : { account } }), stderr: '' };
+function configList(values: { account?: string; impersonate?: string; credentialFileOverride?: string; accessTokenFile?: string }): GcloudCaptureResult {
+  const auth: Record<string, string> = {};
+  if (values.impersonate !== undefined) auth['impersonate_service_account'] = values.impersonate;
+  if (values.credentialFileOverride !== undefined) auth['credential_file_override'] = values.credentialFileOverride;
+  if (values.accessTokenFile !== undefined) auth['access_token_file'] = values.accessTokenFile;
+  return {
+    kind: 'exited',
+    code: 0,
+    stdout: JSON.stringify({ core: values.account === undefined ? {} : { account: values.account }, ...(Object.keys(auth).length > 0 ? { auth } : {}) }),
+    stderr: '',
+  };
 }
 
 function files(entries: Readonly<Record<string, string>>): (path: string) => Promise<string> {
@@ -37,28 +69,91 @@ function deps(overrides: Partial<IdentityDeps>): IdentityDeps {
     env: { HOME },
     platform: 'darwin',
     readFile: files({ [ADC_PATH]: USER_ADC, [ACTIVE_CONFIG_PATH]: 'acme\n' }),
-    runGcloud: () => Promise.resolve(configList('alice@acme.com')),
+    runGcloud: () => Promise.resolve(configList({ account: 'alice@acme.com' })),
     lookupEmail: () => Promise.resolve({ status: 'known', email: 'alice@acme.com' }),
     ...overrides,
   };
 }
 
-function resolve(provider: IdentityProviderOptions, overrides: Partial<IdentityDeps> = {}): ReturnType<GcpIdentityResolver['resolve']> {
+function resolve(provider: IdentityProviderOptions, overrides: Partial<IdentityDeps> = {}): ReturnType<ReturnType<typeof createGcpIdentityResolver>['resolve']> {
   return createGcpIdentityResolver(deps(overrides)).resolve(provider);
 }
 
 describe('createGcpIdentityResolver', () => {
-  it('describes both paths and finds nothing wrong when they agree', async () => {
-    expect(await resolve({})).toEqual({
-      listing: { kind: 'user', file: { path: ADC_PATH, origin: 'well-known' }, account: { status: 'known', email: 'alice@acme.com' } },
-      download: { kind: 'gcloud', account: 'alice@acme.com', configuration: 'acme' },
-      splitAccounts: null,
+  const legacyAdc = { readFile: files({ [ADC_PATH]: IMPERSONATED_ADC, [ACTIVE_CONFIG_PATH]: 'acme\n' }) };
+
+  it('lists a provider with a reader as that reader, minted from the plain ADC user, and finds nothing wrong', async () => {
+    expect(await resolve({ impersonateServiceAccount: SA })).toEqual({
+      listing: {
+        kind: 'impersonated',
+        file: { path: ADC_PATH, origin: 'well-known' },
+        target: SA,
+        source: { kind: 'user', account: { status: 'known', email: 'alice@acme.com' } },
+        via: { kind: 'provider', adcTarget: null },
+      },
+      download: {
+        kind: 'gcloud',
+        principal: { kind: 'account', account: 'alice@acme.com', fromEnv: false },
+        impersonate: { target: SA, origin: 'provider' },
+        configuration: 'acme',
+      },
+      adcLoginPath: null,
+      warnings: [],
+      notes: [],
     });
   });
 
-  it('reproduces the switched-to-admin trap', async () => {
-    const result = await resolve({}, { runGcloud: () => Promise.resolve(configList('admin@acme.com')) });
-    expect(result.splitAccounts).toEqual({ listingAccount: 'alice@acme.com', downloadAccount: 'admin@acme.com' });
+  it('lists a provider without a reader as plain ADC', async () => {
+    const result = await resolve({});
+    expect(result.listing).toEqual({ kind: 'user', file: { path: ADC_PATH, origin: 'well-known' }, account: { status: 'known', email: 'alice@acme.com' } });
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('unwraps a legacy impersonated ADC to mint the provider s own reader — no target mismatch', async () => {
+    const result = await resolve({ impersonateServiceAccount: OTHER_SA }, legacyAdc);
+    expect(result.listing).toEqual({
+      kind: 'impersonated',
+      file: { path: ADC_PATH, origin: 'well-known' },
+      target: OTHER_SA,
+      source: { kind: 'user', account: { status: 'known', email: 'alice@acme.com' } },
+      via: { kind: 'provider', adcTarget: SA },
+    });
+    expect(result.download).toMatchObject({ impersonate: { target: OTHER_SA, origin: 'provider' } });
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('warns when a provider without a reader reads a legacy impersonated ADC: downloads bypass it', async () => {
+    const result = await resolve({}, legacyAdc);
+    expect(result.listing).toMatchObject({ kind: 'impersonated', target: SA, via: { kind: 'credential' } });
+    expect(result.warnings).toEqual([{ kind: 'download-not-impersonated', listingTarget: SA }]);
+  });
+
+  it('reproduces the switched-to-admin trap — both accounts then need Token Creator on the reader', async () => {
+    const result = await resolve({ impersonateServiceAccount: SA }, {
+      runGcloud: () => Promise.resolve(configList({ account: 'admin@acme.com' })),
+    });
+    expect(result.download).toMatchObject({ principal: { account: 'admin@acme.com' } });
+    expect(result.warnings).toEqual([{
+      kind: 'split-accounts', listingAccount: 'alice@acme.com', downloadAccount: 'admin@acme.com', listingKeyFile: null, downloadAccountFromEnv: false, sharedTarget: SA,
+    }]);
+  });
+
+  it('sees gcloud s own impersonation setting, which rsync honours without a flag', async () => {
+    const gcloudImpersonates = { runGcloud: () => Promise.resolve(configList({ account: 'alice@acme.com', impersonate: 'ops@corp.iam.gserviceaccount.com' })) };
+    const legacy = await resolve({}, { ...legacyAdc, ...gcloudImpersonates });
+    expect(legacy.download).toMatchObject({ impersonate: { target: 'ops@corp.iam.gserviceaccount.com', origin: 'gcloud-config' } });
+    expect(legacy.warnings).toEqual([{ kind: 'target-mismatch', listingTarget: SA, gcloudTarget: 'ops@corp.iam.gserviceaccount.com' }]);
+    const plain = await resolve({}, gcloudImpersonates);
+    expect(plain.warnings).toEqual([{ kind: 'listing-not-impersonated', gcloudTarget: 'ops@corp.iam.gserviceaccount.com', listingFromKeyFile: false }]);
+    // A provider s reader is passed as a flag, which beats gcloud s setting on the download half too.
+    const withReader = await resolve({ impersonateServiceAccount: SA }, gcloudImpersonates);
+    expect(withReader.download).toMatchObject({ impersonate: { target: SA, origin: 'provider' } });
+    expect(withReader.warnings).toEqual([]);
+  });
+
+  it('marks an account forced by CLOUDSDK_CORE_ACCOUNT, which `config set` cannot change', async () => {
+    const result = await resolve({}, { env: { HOME, CLOUDSDK_CORE_ACCOUNT: 'admin@acme.com' } });
+    expect(result.download).toMatchObject({ principal: { kind: 'account', fromEnv: true } });
   });
 
   it('reads ADC from GOOGLE_APPLICATION_CREDENTIALS when set, and reports a missing file as not signed in there', async () => {
@@ -68,62 +163,104 @@ describe('createGcpIdentityResolver', () => {
     expect(result.listing).toEqual({ kind: 'not-signed-in', file: { path: '/sandbox/adc.json', origin: 'env' } });
   });
 
-  it('reports an unreadable ADC file, and no location without HOME', async () => {
+  it('says where a sign-in would land when CLOUDSDK_CONFIG moves gcloud away from what the SDK reads', async () => {
+    const result = await resolve({}, { env: { HOME, CLOUDSDK_CONFIG: '/work/gcloud' }, readFile: files({}) });
+    expect(result.adcLoginPath).toBe('/work/gcloud/application_default_credentials.json');
+    expect(result.download).toMatchObject({ configuration: 'default' });
+  });
+
+  it('reports an unreadable or unparseable ADC file', async () => {
     const denied = await resolve({}, { readFile: () => Promise.reject(Object.assign(new Error('EACCES'), { code: 'EACCES' })) });
     expect(denied.listing).toEqual({ kind: 'unreadable', file: { path: ADC_PATH, origin: 'well-known' } });
-    expect((await resolve({}, { readFile: () => Promise.resolve('not json') })).listing.kind).toBe('unreadable');
+    const garbage = await resolve({}, { readFile: () => Promise.resolve('not json') });
+    expect(garbage.listing).toEqual({ kind: 'unreadable', file: { path: ADC_PATH, origin: 'well-known' } });
+  });
+
+  it('reports no location when neither HOME nor the env var is set', async () => {
     expect((await resolve({}, { env: {} })).listing).toEqual({ kind: 'not-signed-in', file: null });
   });
 
-  it('uses a provider key file for both halves, never reads ADC, but still needs gcloud', async () => {
+  it('uses a provider key file for listing and downloads, and never reads ADC', async () => {
     const readFile = vi.fn(files({ '/keys/ci.json': KEY_FILE }));
     const result = await resolve({ keyFile: '/keys/ci.json' }, { readFile });
     expect(result).toEqual({
       listing: { kind: 'service-account', file: { path: '/keys/ci.json', origin: 'key-file' }, email: 'ci-reader@acme-billing.iam.gserviceaccount.com' },
-      download: { kind: 'key-file', path: '/keys/ci.json', email: 'ci-reader@acme-billing.iam.gserviceaccount.com' },
-      splitAccounts: null,
+      download: {
+        kind: 'gcloud',
+        principal: { kind: 'key-file', path: '/keys/ci.json', origin: 'provider', email: 'ci-reader@acme-billing.iam.gserviceaccount.com' },
+        impersonate: null,
+        configuration: 'default',
+      },
+      adcLoginPath: null,
+      warnings: [],
+      notes: [],
     });
     expect(readFile.mock.calls.map(([path]) => path)).not.toContain(ADC_PATH);
     expect(JSON.stringify(result)).not.toContain('FAKE-KEY');
-
-    const noCli = await resolve({ keyFile: '/keys/missing.json' }, { readFile: files({}), runGcloud: () => Promise.resolve({ kind: 'missing' }) });
-    expect(noCli.listing).toEqual({ kind: 'unreadable', file: { path: '/keys/missing.json', origin: 'key-file' } });
-    expect(noCli.download).toEqual({ kind: 'cli-missing' });
   });
 
-  it('reports a failing, timed-out or unreadable gcloud, and an unset account', async () => {
+  it('reports a key file it cannot read, and a missing CLI even for a key-file provider', async () => {
+    const result = await resolve({ keyFile: '/keys/missing.json' }, {
+      readFile: files({}),
+      runGcloud: () => Promise.resolve({ kind: 'missing' }),
+    });
+    expect(result.listing).toEqual({ kind: 'unreadable', file: { path: '/keys/missing.json', origin: 'key-file' } });
+    // Key-file downloads still go through `gcloud storage rsync`.
+    expect(result.download).toEqual({ kind: 'cli-missing' });
+  });
+
+  it('names who gcloud s own credential file override is', async () => {
+    const result = await resolve({}, {
+      readFile: files({ [ADC_PATH]: USER_ADC, '/g.json': KEY_FILE }),
+      runGcloud: () => Promise.resolve(configList({ account: 'alice@acme.com', credentialFileOverride: '/g.json' })),
+    });
+    expect(result.download).toMatchObject({
+      principal: { kind: 'key-file', path: '/g.json', origin: 'gcloud-config', email: 'ci-reader@acme-billing.iam.gserviceaccount.com' },
+    });
+  });
+
+  it('reports a failing, timed-out or unreadable gcloud', async () => {
     const failing = await resolve({}, { runGcloud: () => Promise.resolve({ kind: 'exited', code: 1, stdout: '', stderr: `ERROR: ${'x'.repeat(400)}` }) });
+    expect(failing.download.kind).toBe('cli-error');
     expect(failing.download.kind === 'cli-error' ? failing.download.message.length : 0).toBeLessThanOrEqual(301);
-    expect((await resolve({}, { runGcloud: () => Promise.resolve({ kind: 'timeout' }) })).download)
-      .toEqual({ kind: 'cli-error', message: 'Timed out waiting for gcloud.' });
-    expect((await resolve({}, { runGcloud: () => Promise.resolve({ kind: 'exited', code: 0, stdout: 'Updates are available', stderr: '' }) })).download.kind)
-      .toBe('cli-error');
-    expect((await resolve({}, { runGcloud: () => Promise.resolve(configList()) })).download)
-      .toEqual({ kind: 'gcloud', account: null, configuration: 'acme' });
+
+    const timedOut = await resolve({}, { runGcloud: () => Promise.resolve({ kind: 'timeout' }) });
+    expect(timedOut.download).toEqual({ kind: 'cli-error', message: 'Timed out waiting for gcloud.' });
+
+    const nag = await resolve({}, { runGcloud: () => Promise.resolve({ kind: 'exited', code: 0, stdout: 'Updates are available', stderr: '' }) });
+    expect(nag.download.kind).toBe('cli-error');
+
+    const unset = await resolve({}, { runGcloud: () => Promise.resolve(configList({})) });
+    expect(unset.download).toMatchObject({ kind: 'gcloud', principal: { kind: 'account', account: null } });
   });
 
   it('asks gcloud one read-only question', async () => {
-    const runGcloud = vi.fn(() => Promise.resolve(configList('alice@acme.com')));
+    const runGcloud = vi.fn(() => Promise.resolve(configList({ account: 'alice@acme.com' })));
     await resolve({}, { runGcloud });
     expect(runGcloud.mock.calls).toEqual([[['config', 'list', '--format=json']]]);
   });
 
   it('shares one gcloud read and one ADC read among concurrent callers, but not later ones', async () => {
-    const runGcloud = vi.fn(() => Promise.resolve(configList('alice@acme.com')));
+    const runGcloud = vi.fn(() => Promise.resolve(configList({ account: 'alice@acme.com' })));
     const lookupEmail = vi.fn((): Promise<GcpAccountLookup> => Promise.resolve({ status: 'known', email: 'alice@acme.com' }));
     const resolver = createGcpIdentityResolver(deps({ runGcloud, lookupEmail }));
-    await Promise.all([resolver.resolve({}), resolver.resolve({})]);
+    await Promise.all([resolver.resolve({ impersonateServiceAccount: SA }), resolver.resolve({})]);
     expect(runGcloud).toHaveBeenCalledTimes(1);
     expect(lookupEmail).toHaveBeenCalledTimes(1);
     // A later Re-check — after a sign-in, say — must not get the old answer.
     await resolver.resolve({});
     expect(runGcloud).toHaveBeenCalledTimes(2);
+    expect(lookupEmail).toHaveBeenCalledTimes(2);
   });
 
   it('never returns a secret from the ADC file', async () => {
-    const serialized = JSON.stringify(await resolve({}));
-    expect(serialized).not.toContain('FAKE-SECRET');
-    expect(serialized).not.toContain('FAKE-REFRESH');
+    for (const overrides of [{}, legacyAdc]) {
+      for (const provider of [{}, { impersonateServiceAccount: SA }]) {
+        const serialized = JSON.stringify(await resolve(provider, overrides));
+        expect(serialized).not.toContain('FAKE-SECRET');
+        expect(serialized).not.toContain('FAKE-REFRESH');
+      }
+    }
   });
 });
 
@@ -132,6 +269,7 @@ describe('gcpIdentitiesFor', () => {
   const CONFIG: CostGoblinConfig = {
     providers: [
       { name: asProviderName('aws-main'), type: 'aws', credentialsProfile: 'default', sync: { ...sync, daily: { bucket: asBucketPath('s3-bucket/x'), retentionDays: 90 } } },
+      { name: asProviderName('gcp-main'), type: 'gcp', impersonateServiceAccount: SA, sync },
       { name: asProviderName('gcp-key'), type: 'gcp', keyFile: '/keys/ci.json', sync },
     ],
     defaults: { periodDays: 30, costMetric: 'effective', lagDays: 2 },
@@ -143,10 +281,13 @@ describe('gcpIdentitiesFor', () => {
     return { seen, resolver: () => ({ resolve: (provider) => { seen.push(provider); return real.resolve(provider); } }) };
   }
 
-  it('applies the named GCP provider s key file', async () => {
+  it('applies the named GCP provider s impersonation and key file', async () => {
     const { resolver, seen } = recordingResolver();
-    expect((await gcpIdentitiesFor('gcp-key', () => Promise.resolve(CONFIG), resolver)).status).toBe('ok');
-    expect(seen[0]).toMatchObject({ keyFile: '/keys/ci.json' });
+    const result = await gcpIdentitiesFor('gcp-main', () => Promise.resolve(CONFIG), resolver);
+    expect(result.status).toBe('ok');
+    expect(seen[0]).toMatchObject({ impersonateServiceAccount: SA });
+    await gcpIdentitiesFor('gcp-key', () => Promise.resolve(CONFIG), resolver);
+    expect(seen[1]).toMatchObject({ keyFile: '/keys/ci.json' });
   });
 
   it('treats anything but a string as the wizard s "no provider yet", without loading the config', async () => {
@@ -164,7 +305,7 @@ describe('gcpIdentitiesFor', () => {
       .toEqual({ status: 'unavailable', reason: 'No provider named "nope" is configured.' });
     expect(await gcpIdentitiesFor('aws-main', () => Promise.resolve(CONFIG), resolver))
       .toEqual({ status: 'unavailable', reason: '"aws-main" is not a Google Cloud provider.' });
-    expect((await gcpIdentitiesFor('gcp-key', () => Promise.resolve(null), resolver)).status).toBe('unavailable');
+    expect((await gcpIdentitiesFor('gcp-main', () => Promise.resolve(null), resolver)).status).toBe('unavailable');
   });
 
   it('reports a resolver failure as unavailable rather than rejecting the IPC call', async () => {

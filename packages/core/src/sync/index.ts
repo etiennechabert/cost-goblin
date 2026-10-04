@@ -48,17 +48,25 @@ export {
 export {
   type AccountLookupFn,
   type AuthorizedUserSecret,
+  type GcloudConfigValues,
   type ParsedAdc,
+  type ParsedAdcSource,
   activeGcloudConfigPath,
   activeGcloudConfiguration,
   adcCredentialsLocation,
+  adcLoginPath,
+  applyProviderImpersonation,
+  assembleDownloadIdentity,
   classifyAccountLookupError,
+  credentialEmail,
   emailFromIdToken,
+  gcloudConfigDir,
+  gcpIdentityNotes,
+  gcpIdentityWarnings,
   grantsEmailScope,
   parseAdcJson,
-  parseGcloudAccount,
+  parseGcloudConfigList,
   resolveListingIdentity,
-  splitAccounts,
 } from './gcp-identity.js';
 
 export {

@@ -87,10 +87,14 @@ test.describe('mixed AWS + GCP workspace', () => {
     const panel = page.getByRole('region', { name: 'Signed in as (gcp-main)' });
     await expect(panel.getByText('Not signed in')).toBeVisible({ timeout: 30_000 });
     await expect(panel.getByText(/No file at .*cloud-sandbox/)).toBeVisible();
-    // gcloud may or may not sit in a trusted location on the runner; when it
-    // does, its config dir is the sandbox's empty one, so it has no account —
-    // never one from the developer's gcloud.
-    await expect(panel.getByText(/No active gcloud account|The gcloud CLI is not installed/)).toBeVisible();
+    // gcloud may or may not sit in a trusted location on the runner. When it
+    // does, the sandbox's CLOUDSDK_AUTH_ACCESS_TOKEN_FILE pin outranks every
+    // other gcloud credential, so that pinned (absent) file is what the
+    // download row must name — never an account from the developer's gcloud.
+    await expect(panel.getByText(/a pre-minted access token|The gcloud CLI is not installed/)).toBeVisible();
+    if (await panel.getByText(/a pre-minted access token/).count() > 0) {
+      await expect(panel.getByText(/auth\/access_token_file · .*cloud-sandbox/)).toBeVisible();
+    }
     await expect(panel.getByText('Checking Google Cloud credentials…')).toHaveCount(0);
 
     await panel.getByRole('button', { name: 'Re-check' }).click();

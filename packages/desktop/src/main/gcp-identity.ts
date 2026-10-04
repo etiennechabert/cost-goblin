@@ -2,20 +2,26 @@ import {
   activeGcloudConfigPath,
   activeGcloudConfiguration,
   adcCredentialsLocation,
+  adcLoginPath,
+  applyProviderImpersonation,
+  assembleDownloadIdentity,
+  credentialEmail,
   emailFromIdToken,
-  grantsEmailScope,
   logger,
+  gcpIdentityNotes,
+  gcpIdentityWarnings,
+  grantsEmailScope,
   parseAdcJson,
-  parseGcloudAccount,
+  parseGcloudConfigList,
   parseJsonObject,
   resolveListingIdentity,
-  splitAccounts,
 } from '@costgoblin/core';
 import { readFile } from 'node:fs/promises';
 import type {
   AccountLookupFn,
   AuthorizedUserSecret,
   CostGoblinConfig,
+  GcloudConfigValues,
   GcpAccountLookup,
   GcpCredentialFile,
   GcpDownloadIdentity,
@@ -45,10 +51,11 @@ const ACCOUNT_LOOKUP_REQUEST_TIMEOUT_MS = 8_000;
 /** Long gcloud failure text is truncated: it lands in a compact panel. */
 const MAX_CLI_ERROR_LENGTH = 300;
 
-/** The provider field that changes which identity runs. Undefined is the
- *  wizard's case: no provider exists yet. */
+/** The provider fields that change which identity runs. Undefined fields are
+ *  the wizard's case: no provider exists yet. */
 export interface IdentityProviderOptions {
   readonly keyFile?: string | undefined;
+  readonly impersonateServiceAccount?: string | undefined;
 }
 
 export interface IdentityDeps {
@@ -61,7 +68,14 @@ export interface IdentityDeps {
 }
 
 type GcloudState =
-  | { readonly kind: 'ok'; readonly account: string | null; readonly configuration: string }
+  | {
+    readonly kind: 'ok';
+    readonly config: GcloudConfigValues;
+    readonly configuration: string;
+    readonly accountFromEnv: boolean;
+    /** Who gcloud's own `auth/credential_file_override` authenticates as. */
+    readonly overrideFileEmail: string | null;
+  }
   | { readonly kind: 'cli-missing' }
   | { readonly kind: 'cli-error'; readonly message: string };
 
@@ -104,10 +118,11 @@ async function readActiveConfigFile(deps: IdentityDeps): Promise<string | null> 
   }
 }
 
-/** gcloud's active account and configuration from ONE spawn:
- *  `config list --format=json` reports env overrides as well as the
- *  configuration file — what a spawned rsync resolves. The configuration's
- *  name is read from disk instead of a second spawn. */
+/** gcloud's effective credential configuration, from ONE spawn:
+ *  `config list --format=json` reports env overrides (`CLOUDSDK_CORE_ACCOUNT`,
+ *  `CLOUDSDK_AUTH_*`) as well as the active configuration's file — exactly
+ *  what a spawned rsync resolves. The configuration's name is read from disk
+ *  instead of a second spawn. */
 async function readGcloud(deps: IdentityDeps): Promise<GcloudState> {
   const [result, activeConfigFile] = await Promise.all([
     deps.runGcloud(['config', 'list', '--format=json']),
@@ -123,11 +138,34 @@ async function readGcloud(deps: IdentityDeps): Promise<GcloudState> {
     const text = result.stderr.trim();
     return { kind: 'cli-error', message: truncate(text.length > 0 ? text : `gcloud exited with code ${String(result.code)}`) };
   }
-  const account = parseGcloudAccount(result.stdout);
-  if (account === undefined) {
+  const config = parseGcloudConfigList(result.stdout);
+  if (config === null) {
     return { kind: 'cli-error', message: 'gcloud printed something other than its configuration. Run `gcloud config list` in a terminal to see what.' };
   }
-  return { kind: 'ok', account, configuration: activeGcloudConfiguration(deps.env, activeConfigFile) };
+  const override = config.credentialFileOverride;
+  const overrideIdentity = override === null ? null : await describeCredentialFile({ path: override, origin: 'key-file' }, deps);
+  const accountOverride = deps.env['CLOUDSDK_CORE_ACCOUNT'];
+  return {
+    kind: 'ok',
+    config,
+    configuration: activeGcloudConfiguration(deps.env, activeConfigFile),
+    accountFromEnv: accountOverride !== undefined && accountOverride.length > 0,
+    overrideFileEmail: overrideIdentity === null ? null : credentialEmail(overrideIdentity),
+  };
+}
+
+function downloadIdentity(gcloud: GcloudState, provider: IdentityProviderOptions, keyListing: GcpListingIdentity | null): GcpDownloadIdentity {
+  if (gcloud.kind !== 'ok') return gcloud;
+  return assembleDownloadIdentity({
+    config: gcloud.config,
+    configuration: gcloud.configuration,
+    accountFromEnv: gcloud.accountFromEnv,
+    providerKeyFile: provider.keyFile === undefined
+      ? null
+      : { path: provider.keyFile, email: keyListing === null ? null : credentialEmail(keyListing) },
+    providerTarget: provider.impersonateServiceAccount ?? null,
+    overrideFileEmail: gcloud.overrideFileEmail,
+  });
 }
 
 /** Share one in-flight run among concurrent callers, and only while it is in
@@ -156,18 +194,20 @@ export function createGcpIdentityResolver(deps: IdentityDeps): GcpIdentityResolv
   return {
     async resolve(provider) {
       // A key file drives listing (the SDK's keyFilename) and the download
-      // (CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE) alike, so ADC is not read —
-      // but the download still needs gcloud, so gcloud is asked regardless.
-      const { keyFile } = provider;
-      const [gcloudState, listing] = await Promise.all([
-        gcloud(),
-        keyFile === undefined ? adc() : describeCredentialFile({ path: keyFile, origin: 'key-file' }, deps),
-      ]);
-      let download: GcpDownloadIdentity;
-      if (gcloudState.kind !== 'ok') download = gcloudState;
-      else if (keyFile !== undefined) download = { kind: 'key-file', path: keyFile, email: listing.kind === 'service-account' ? listing.email : null };
-      else download = { kind: 'gcloud', account: gcloudState.account, configuration: gcloudState.configuration };
-      return { listing, download, splitAccounts: splitAccounts(listing, download) };
+      // (CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE) alike, so ADC is not read.
+      const keyListing = provider.keyFile === undefined ? null : describeCredentialFile({ path: provider.keyFile, origin: 'key-file' }, deps);
+      const [gcloudState, credential] = await Promise.all([gcloud(), keyListing ?? adc()]);
+      // ADC is machine-wide and read once; the provider's reader is applied
+      // per provider on top of it, exactly as `createGcsStorage` does.
+      const listing = keyListing === null ? applyProviderImpersonation(credential, provider.impersonateServiceAccount ?? null) : credential;
+      const download = downloadIdentity(gcloudState, provider, keyListing === null ? null : credential);
+      return {
+        listing,
+        download,
+        adcLoginPath: keyListing === null ? adcLoginPath(deps.env, deps.platform) : null,
+        warnings: gcpIdentityWarnings(listing, download),
+        notes: gcpIdentityNotes(listing, download),
+      };
     },
   };
 }
@@ -176,8 +216,12 @@ export function createGcpIdentityResolver(deps: IdentityDeps): GcpIdentityResolv
  *  SDK makes on its first request) and read the email from the id_token the
  *  refresh returns, falling back to tokeninfo. The access token is used only
  *  to ask tokeninfo who it belongs to; neither token leaves this function.
- *  Both routes need an email scope; when the refresh's granted scopes rule it
- *  out the answer is `not-recorded` with no second round trip. */
+ *
+ *  Both routes need an email scope. A plain `application-default login`
+ *  grants one; the impersonated variant does not (verified against gcloud
+ *  578: its source token carries `cloud-platform` alone), so when the
+ *  refresh's granted scopes rule it out the answer is `not-recorded` with no
+ *  second round trip. */
 export async function lookupAuthorizedUserEmail(secret: AuthorizedUserSecret): Promise<GcpAccountLookup> {
   const { UserRefreshClient } = await import('google-auth-library');
   const client = new UserRefreshClient({
@@ -215,8 +259,9 @@ export function defaultIdentityDeps(): IdentityDeps {
 
 /** The `data:gcp-identities` handler's body, kept out of `handlers/setup.ts`
  *  so it can be tested without Electron. `rawProvider` arrives over IPC, so
- *  it is narrowed here: a string names a provider whose `keyFile` applies;
- *  anything else is the wizard's "no provider yet". */
+ *  it is narrowed here: a string names a provider whose `keyFile` /
+ *  `impersonateServiceAccount` apply; anything else is the wizard's "no
+ *  provider yet". */
 export async function gcpIdentitiesFor(
   rawProvider: unknown,
   loadConfig: () => Promise<CostGoblinConfig | null>,

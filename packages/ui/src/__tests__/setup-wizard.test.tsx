@@ -1160,8 +1160,10 @@ describe('SetupWizard — GCP "Signed in as" panel', () => {
       status: 'ok',
       identities: {
         listing: { kind: 'user', file: { path: '/adc.json', origin: 'well-known' }, account: { status: 'known', email: 'alice@acme.com' } },
-        download: { kind: 'gcloud', account: 'admin@acme.com', configuration: 'admin' },
-        splitAccounts: { listingAccount: 'alice@acme.com', downloadAccount: 'admin@acme.com' },
+        download: { kind: 'gcloud', principal: { kind: 'account', account: 'admin@acme.com', fromEnv: false }, impersonate: null, configuration: 'admin' },
+        adcLoginPath: null,
+        warnings: [{ kind: 'split-accounts', listingAccount: 'alice@acme.com', downloadAccount: 'admin@acme.com', listingKeyFile: null, downloadAccountFromEnv: false, sharedTarget: null }],
+        notes: [],
       },
     };
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
