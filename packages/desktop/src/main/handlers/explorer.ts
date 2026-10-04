@@ -3,11 +3,9 @@ import { originStore } from '../query-log.js';
 import {
   asDimensionId,
   dimensionIdSet,
-  assertHourString,
   buildSource,
   buildRuleMatchExpr,
   computePeriodsInRange,
-  DEFAULT_LAG_DAYS,
   logger,
   resolveField,
   tagDimColumn,
@@ -39,54 +37,9 @@ import { type AppContext, prefsPath } from './context.js';
 import { buildAccountReverseMap, columnForDimension, resolveRollupSource, toNum, toStr } from './query-utils.js';
 import { readExplorerPreferences, writeExplorerPreferences } from './explorer-prefs.js';
 import { resolveScopeMetric } from './explorer-scope.js';
+import { resolveExplorerDateRange } from './query-windows.js';
 
-const DEFAULT_WINDOW_DAYS = 30;
 const MAX_ROW_LIMIT = 1000;
-
-const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-function parseDate(s: string | undefined): Date | null {
-  if (s === undefined || !ISO_DATE_RE.test(s)) return null;
-  const d = new Date(`${s}T00:00:00Z`);
-  return Number.isNaN(d.getTime()) ? null : d;
-}
-
-function toIsoDate(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
-
-interface ResolvedDateRange {
-  readonly startStr: string;
-  readonly endStr: string;
-  readonly windowDays: number;
-  readonly startHour?: string;
-  readonly endHour?: string;
-}
-
-function resolveDateRange(raw: { start?: string | undefined; end?: string | undefined; startHour?: string | undefined; endHour?: string | undefined } | undefined): ResolvedDateRange {
-  const start = parseDate(raw?.start);
-  const end = parseDate(raw?.end);
-  if (start !== null && end !== null && start.getTime() <= end.getTime()) {
-    const days = Math.floor((end.getTime() - start.getTime()) / 86_400_000) + 1;
-    const base = { startStr: toIsoDate(start), endStr: toIsoDate(end), windowDays: days };
-    // Hour bounds are an additive refinement from drag-zoom on the histogram.
-    // Validate up front so a malformed value can't reach the SQL builder.
-    if (typeof raw?.startHour === 'string' && typeof raw.endHour === 'string') {
-      try {
-        assertHourString(raw.startHour);
-        assertHourString(raw.endHour);
-        return { ...base, startHour: raw.startHour, endHour: raw.endHour };
-      } catch {
-        // fall through to day-only range
-      }
-    }
-    return base;
-  }
-  const latestDate = new Date(Date.now() - DEFAULT_LAG_DAYS * 86_400_000);
-  const fallbackEnd = toIsoDate(latestDate);
-  const fallbackStart = toIsoDate(new Date(latestDate.getTime() - (DEFAULT_WINDOW_DAYS - 1) * 86_400_000));
-  return { startStr: fallbackStart, endStr: fallbackEnd, windowDays: DEFAULT_WINDOW_DAYS };
-}
 
 const SORTABLE_SCALAR_COLUMNS: ReadonlySet<string> = new Set([
   'usage_date',
@@ -290,7 +243,7 @@ async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source
 
 async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams): Promise<QueryContext> {
   const { getQueryDimensions, getAccountMap, getQueryProviders } = app;
-  const { startStr, endStr, windowDays, startHour, endHour } = resolveDateRange(params.dateRange);
+  const { startStr, endStr, windowDays, startHour, endHour } = resolveExplorerDateRange(params.dateRange, app.ctx.now());
   // Hour bounds (sub-day drag-zoom) require the hourly tier — that's where
   // usage_hour lives. Promote tier when present, regardless of what
   // params.granularity says.

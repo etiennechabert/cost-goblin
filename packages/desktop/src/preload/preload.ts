@@ -72,6 +72,7 @@ import type {
   TelemetryStatus,
   TelemetryOutboxEntry,
 } from '@costgoblin/core';
+import { parseFixedNow } from '@costgoblin/core/clock';
 import { isTrustedNavigation, trustedRendererFromArgv } from '../main/window-security.js';
 
 // ---------------------------------------------------------------------------
@@ -575,12 +576,10 @@ exposeInMainWorld('costgoblinDebug', {
   isE2E(): boolean { return process.env['COSTGOBLIN_E2E'] === '1'; },
   /** COSTGOBLIN_NOW, parsed to epoch ms — e2e runs pin the renderer clock so
    *  relative date presets land inside the fixture data window. Null when the
-   *  variable is unset or unparseable (every real launch). */
+   *  variable is unset or unparseable (every real launch). Same parser as the
+   *  main process's clock (main.ts), so the two processes agree on "today". */
   fakeNowMs(): number | null {
-    const raw = process.env['COSTGOBLIN_NOW'];
-    if (raw === undefined || raw === '') return null;
-    const ms = Date.parse(raw);
-    return Number.isNaN(ms) ? null : ms;
+    return parseFixedNow(process.env['COSTGOBLIN_NOW']);
   },
   getMemoryMB(): Promise<number> { return invoke<number>('debug:get-memory-mb'); },
   getGitBranch(): Promise<string | null> { return invoke<string | null>('debug:get-git-branch'); },

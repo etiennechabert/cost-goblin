@@ -4,6 +4,7 @@ import {
   computePeriodsInRange,
   DEFAULT_LAG_DAYS,
   logger,
+  trailingWindow,
 } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
 import type { Cell, Column, StructuredResult } from '../formatters/result.js';
@@ -174,20 +175,14 @@ export function validateRunSqlQuery(sql: string): string | null {
 }
 
 /** The explicit range when given (validated), else the trailing 60 days ending
- *  at the default lag. */
-function resolveDateRange(param: { start: string; end: string } | undefined): { start: string; end: string } {
+ *  at the default lag before `nowMs`. */
+function resolveDateRange(param: { start: string; end: string } | undefined, nowMs: number): { start: string; end: string } {
   if (param !== undefined) {
     assertDateString(param.start);
     assertDateString(param.end);
     return param;
   }
-  const dayMs = 86_400_000;
-  const end = new Date(Date.now() - DEFAULT_LAG_DAYS * dayMs);
-  const start = new Date(end.getTime() - 59 * dayMs);
-  return {
-    start: start.toISOString().slice(0, 10),
-    end: end.toISOString().slice(0, 10),
-  };
+  return trailingWindow(nowMs, DEFAULT_LAG_DAYS, 60);
 }
 
 /** The `costs` CTE the user's query runs against: the materialized rollup when
@@ -271,7 +266,7 @@ export async function runSql(
     return toolError(validationError);
   }
 
-  const dateRange = resolveDateRange(params.dateRange);
+  const dateRange = resolveDateRange(params.dateRange, ctx.now());
   const costsCte = await buildCostsCte(ctx, dateRange);
   if (costsCte === null) {
     return emptyRangeResult(ctx, dateRange, format, `Query Result`);

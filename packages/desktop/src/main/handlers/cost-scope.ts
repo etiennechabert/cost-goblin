@@ -25,6 +25,7 @@ import type {
 import type { RawRow } from '../duckdb-client.js';
 import type { AppContext } from './context.js';
 import { toNum } from './query-utils.js';
+import { costScopePreviewWindow } from './query-windows.js';
 
 const SAMPLE_ROW_LIMIT = 500;
 
@@ -123,12 +124,7 @@ export function registerCostScopeHandlers(app: AppContext): void {
     const config = validateCostScope(payload, dimensionIdSet(dimensions));
     const enabledRules = config.rules.filter(r => r.enabled);
 
-    const windowDays = 30;
-    const lagDays = config.lagDays ?? DEFAULT_LAG_DAYS;
-    const endDate = new Date(Date.now() - lagDays * 24 * 60 * 60 * 1000);
-    const startDate = new Date(endDate.getTime() - (windowDays - 1) * 24 * 60 * 60 * 1000);
-    const endStr = endDate.toISOString().slice(0, 10);
-    const startStr = startDate.toISOString().slice(0, 10);
+    const { windowDays, startDate: startStr, endDate: endStr } = costScopePreviewWindow(ctx.now(), config.lagDays ?? DEFAULT_LAG_DAYS);
 
     const zero: CostScopePreviewResult = {
       windowDays,

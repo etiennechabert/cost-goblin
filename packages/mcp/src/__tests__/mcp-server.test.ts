@@ -297,6 +297,7 @@ describe('MCP server E2E', () => {
       getOrgAccountsPath: () => Promise.resolve(undefined),
       materializedBase: { getSource: () => undefined },
       warmup: () => Promise.resolve(),
+      now: () => Date.now(),
     };
 
     server = await createMcpHttpServer(ctx, { port, authToken: TEST_TOKEN });
