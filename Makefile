@@ -9,7 +9,8 @@ INSTALLED_LOCK = node_modules/.installed-package-lock.json
 # is unchanged.
 deps: ## Install dependencies when package-lock.json differs from the last install
 	@cmp -s package-lock.json $(INSTALLED_LOCK) 2>/dev/null || \
-		{ npm ci && cp package-lock.json $(INSTALLED_LOCK); }
+		{ echo "package-lock.json differs from the last install: running npm ci"; \
+		  npm ci && cp package-lock.json $(INSTALLED_LOCK); }
 
 dev: deps ## Launch Electron in dev mode
 	cd packages/desktop && npm run dev
