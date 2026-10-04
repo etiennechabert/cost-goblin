@@ -16,6 +16,7 @@ import type { RollupGrainEstimate } from '../rollup/estimator.js';
 import type { GcsFolderKind } from '../sync/gcs-export-layout.js';
 import type { AliasSuggestion } from '../normalize/similarity.js';
 import type { ViewsConfig } from './views.js';
+import type { GcpIdentityResult } from './gcp-identity.js';
 import type { CostScopeConfig, CostScopePreviewResult } from './cost-scope.js';
 import type { TelemetryPreferences, TelemetryStatus, TelemetryOutboxEntry } from '../telemetry/types.js';
 import type {
@@ -304,6 +305,17 @@ export interface CostApi {
    *  requirement of the GCP download path, so this adds no dependency where
    *  the Resource Manager client would. */
   listGcpProjects(): Promise<{ projects: readonly GcpProject[]; error?: string | undefined }>;
+  /** Who each GCP credential path runs as — read-only, no tokens. The
+   *  listing identity comes from Application Default Credentials (what the
+   *  Cloud Storage SDK reads); the download identity is gcloud's active
+   *  account plus the provider's `impersonateServiceAccount` (what
+   *  `gcloud storage rsync` and `gcloud projects list` run as). `warnings`
+   *  names every disagreement between the two.
+   *
+   *  `providerName` selects whose `impersonateServiceAccount` / `keyFile` to
+   *  apply; omitted (the wizard, before a provider exists) both are treated
+   *  as unset. An unknown or non-GCP name is `unavailable`. */
+  getGcpIdentities(providerName?: string): Promise<GcpIdentityResult>;
   /** Buckets in one project, read through Application Default Credentials —
    *  the same client `browseGcs` and the sync's listing half build — as the
    *  user's own login, or as `impersonateServiceAccount` when given, which is

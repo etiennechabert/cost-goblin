@@ -10,6 +10,7 @@ import { OrgAccountsSection } from './data-management-org.js';
 import { SsmParameterSection } from './data-management-ssm.js';
 import { TierPanel, type SyncState } from './data-management-tier.js';
 import { SyncLogPanel } from './data-management-logs.js';
+import { GcpIdentityPanel } from '../components/gcp-identity-panel.js';
 import { GcloudLoginButton, RetryButton, SsoLoginButton } from '../components/sso-login-button.js';
 import { SchedulerControls } from '../components/scheduler-controls.js';
 
@@ -155,6 +156,15 @@ export function DataManagement() {
   function bumpAll(): void {
     setRefreshSignal(k => k + 1);
   }
+
+  // Re-reads every GCP provider's "Signed in as" panel. Page-level because
+  // the identities are machine-wide: a sign-in launched from one provider's
+  // section re-mints the ADC every GCP section reads. Deliberately NOT tied to
+  // `refreshSignal`, which also ticks after every Sync all / Prune / org sync —
+  // none of which can change a Google identity, while each re-read runs gcloud
+  // and may call Google.
+  const [gcpIdentityRefresh, setGcpIdentityRefresh] = useState(0);
+  const refreshGcpIdentities = useCallback((): void => { setGcpIdentityRefresh(k => k + 1); }, []);
 
   function onConfigChanged(): void {
     setConfigRefreshKey(k => k + 1);
@@ -329,7 +339,7 @@ export function DataManagement() {
           <button type="button" onClick={() => { api.openDataFolder().catch(() => undefined); }} className="rounded-md border border-border bg-bg-tertiary/50 px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-tertiary hover:text-text-primary transition-colors">
             Open Folder
           </button>
-          <button type="button" onClick={bumpAll} className="rounded-md border border-border bg-bg-tertiary/50 px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-tertiary hover:text-text-primary transition-colors">
+          <button type="button" onClick={() => { bumpAll(); refreshGcpIdentities(); }} className="rounded-md border border-border bg-bg-tertiary/50 px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-tertiary hover:text-text-primary transition-colors">
             Refresh
           </button>
         </div>
@@ -361,6 +371,8 @@ export function DataManagement() {
           provider={provider}
           soleProvider={providers.length === 1}
           refreshSignal={refreshSignal}
+          gcpIdentityRefresh={gcpIdentityRefresh}
+          onGcpCredentialsChanged={refreshGcpIdentities}
           onCounts={onCounts}
           onConfigChanged={onConfigChanged}
           onOrgDataChanged={bumpAll}
@@ -422,13 +434,18 @@ interface ProviderSectionProps {
    *  read like the pre-#516 single-provider layout. */
   readonly soleProvider: boolean;
   readonly refreshSignal: number;
+  /** Re-read key for the GCP "Signed in as" panel, shared by every section. */
+  readonly gcpIdentityRefresh: number;
+  /** A sign-in or Retry here may have changed the machine-wide identities —
+   *  every GCP section's panel must re-read, not just this one's. */
+  readonly onGcpCredentialsChanged: () => void;
   readonly onCounts: (provider: string, counts: ProviderCounts) => void;
   readonly onConfigChanged: () => void;
   /** Org sync/clear changed the SHARED merged lookups — refresh siblings. */
   readonly onOrgDataChanged: () => void;
 }
 
-function ProviderSection({ provider, soleProvider, refreshSignal, onCounts, onConfigChanged, onOrgDataChanged }: ProviderSectionProps) {
+function ProviderSection({ provider, soleProvider, refreshSignal, gcpIdentityRefresh, onGcpCredentialsChanged, onCounts, onConfigChanged, onOrgDataChanged }: ProviderSectionProps) {
   const api = useCostApi();
   const name = String(provider.name);
   const awsProfile = provider.type === 'aws' ? provider.credentialsProfile : null;
@@ -459,11 +476,30 @@ function ProviderSection({ provider, soleProvider, refreshSignal, onCounts, onCo
   // credentials fail every query, but only daily's error is rendered, so
   // refreshing daily alone healed the panel while the hourly and cost-opt
   // tiers stayed stuck and drew themselves as "0 periods".
+  //
+  // It also re-reads the GCP "Signed in as" panels: a Retry usually follows a
+  // sign-in, which is exactly when the identities change.
   const retryInventory = (): void => {
     setDailyRefreshKey(k => k + 1);
     setHourlyRefreshKey(k => k + 1);
     setCostOptRefreshKey(k => k + 1);
+    if (provider.type === 'gcp') onGcpCredentialsChanged();
   };
+
+  // The poll above heals the inventory without a Retry — and once it does,
+  // the Retry button is gone. Re-read the identities on that heal (once, not
+  // per tick), or the panel keeps saying "expired" beside a working sync.
+  const hadCredentialError = useRef(false);
+  useEffect(() => {
+    if (isCredentialError) {
+      hadCredentialError.current = true;
+      return;
+    }
+    if (hadCredentialError.current && inventoryQuery.status === 'success') {
+      hadCredentialError.current = false;
+      if (provider.type === 'gcp') onGcpCredentialsChanged();
+    }
+  }, [isCredentialError, inventoryQuery.status, provider.type, onGcpCredentialsChanged]);
 
   // Which sign-in, if any, this error has a one-click remedy for. Hoisted out
   // of the JSX so the panel can tell "no remedy" from "no button" and still
@@ -701,6 +737,13 @@ function ProviderSection({ provider, soleProvider, refreshSignal, onCounts, onCo
           )}
         </div>
       </div>
+
+      {/* Which Google identities this provider's listing and downloads run
+          as — and whether they disagree. GCP-only: an AWS provider has one
+          credential path, named by its profile in the header. */}
+      {provider.type === 'gcp' && (
+        <GcpIdentityPanel context="provider" providerName={name} refreshKey={gcpIdentityRefresh} />
+      )}
 
       {/* Account mapping — per provider: each payer account syncs its own AWS
           Organization; the lookups are merged across providers, so a change

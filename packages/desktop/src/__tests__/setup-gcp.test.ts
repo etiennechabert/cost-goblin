@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { isGcpCredentialError } from '@costgoblin/core';
 import type { GcsPrefixPage } from '../main/setup-gcp.js';
-import { collectGcsPrefixes, extractGcsPrefixNames, gcsNextPageToken, listGcsBucketsAs, parseGcloudProjects, parseWizardReader, wizardGcsErrorMessage, wizardWriteReader } from '../main/setup-gcp.js';
+import { collectGcsPrefixes, extractGcsPrefixNames, gcloudProjectsOutcome, gcsNextPageToken, listGcsBucketsAs, parseGcloudProjects, parseWizardReader, wizardGcsErrorMessage, wizardWriteReader } from '../main/setup-gcp.js';
 
 describe('parseGcloudProjects', () => {
   it('reads the shape `gcloud projects list --format=json` emits', () => {
@@ -273,5 +273,30 @@ describe('wizardWriteReader', () => {
   it('throws on a value the next launch\'s validator would reject', () => {
     expect(() => wizardWriteReader('someone@gmail.com')).toThrow(/service-account address/);
     expect(() => wizardWriteReader(42)).toThrow(/service-account address/);
+  });
+});
+
+describe('gcloudProjectsOutcome', () => {
+  it('lists the projects of a clean run', () => {
+    const stdout = JSON.stringify([{ projectId: 'acme-prod', name: 'Acme Production', lifecycleState: 'ACTIVE' }]);
+    expect(gcloudProjectsOutcome({ kind: 'exited', code: 0, stdout, stderr: '' }))
+      .toEqual({ projects: [{ projectId: 'acme-prod', name: 'Acme Production' }] });
+  });
+
+  it('refuses to call unreadable stdout an empty account', () => {
+    expect(gcloudProjectsOutcome({ kind: 'exited', code: 0, stdout: 'Updates are available', stderr: '' }).error)
+      .toMatch(/^Could not read the project list from gcloud/);
+  });
+
+  it('shows gcloud s own stderr on failure, or the exit code when it printed nothing', () => {
+    const stderr = 'ERROR: (gcloud.projects.list) You do not currently have an active account selected.';
+    expect(gcloudProjectsOutcome({ kind: 'exited', code: 1, stdout: '', stderr: `${stderr}\n` })).toEqual({ projects: [], error: stderr });
+    expect(gcloudProjectsOutcome({ kind: 'exited', code: 2, stdout: '', stderr: '' }).error).toBe('gcloud projects list failed (exit 2)');
+  });
+
+  it('maps a missing CLI to the sentinel the wizard renders, and reports timeouts and spawn failures', () => {
+    expect(gcloudProjectsOutcome({ kind: 'missing' })).toEqual({ projects: [], error: 'GCLOUD_CLI_NOT_FOUND' });
+    expect(gcloudProjectsOutcome({ kind: 'timeout' })).toEqual({ projects: [], error: 'GCLOUD_PROJECTS_TIMEOUT' });
+    expect(gcloudProjectsOutcome({ kind: 'failed', message: 'EACCES' })).toEqual({ projects: [], error: 'EACCES' });
   });
 });

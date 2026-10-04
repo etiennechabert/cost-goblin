@@ -46,6 +46,22 @@ export {
 } from './gcs-storage.js';
 
 export {
+  type AccountLookupFn,
+  type AuthorizedUserSecret,
+  type ParsedAdc,
+  activeGcloudConfigPath,
+  activeGcloudConfiguration,
+  adcCredentialsLocation,
+  classifyAccountLookupError,
+  emailFromIdToken,
+  grantsEmailScope,
+  parseAdcJson,
+  parseGcloudAccount,
+  resolveListingIdentity,
+  splitAccounts,
+} from './gcp-identity.js';
+
+export {
   GCS_BUCKET_NAME_RULES,
   assertValidGcsBucketName,
   isValidGcsBucketName,

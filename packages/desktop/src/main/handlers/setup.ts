@@ -3,20 +3,20 @@ import {
   assertValidGcsBucketName,
   classifyGcsFolder,
   createGcsStorage,
-  findGcloudCli,
-  gcloudChildPath,
-  gcloudSpawnShape,
   logger,
   parseS3Path,
   isStringRecord,
 } from '@costgoblin/core';
-import type { GcpProject, GcsBrowseResult } from '@costgoblin/core';
+import type { GcpIdentityResult, GcpProject, GcsBrowseResult } from '@costgoblin/core';
 import { loadSharedConfigFiles } from '@smithy/shared-ini-file-loader';
 import { awsProfileNames } from '../aws-profiles.js';
 import { upsertWizardProvider } from '../config-upsert.js';
 import { buildConfigTemplate, buildDimensionsTemplate, PROVIDER_ABSENT_DIMENSIONS } from '../config-templates.js';
 import { classifyManifestColumns, parseManifestColumnNames, selectManifestKey } from '../setup-manifest.js';
-import { collectGcsPrefixes, gcsNextPageToken, listGcsBucketsAs, parseGcloudProjects, parseWizardReader, wizardGcsErrorMessage, wizardWriteReader } from '../setup-gcp.js';
+import { runGcloudCapture } from '../gcloud-capture.js';
+import { createGcpIdentityResolver, defaultIdentityDeps, gcpIdentitiesFor } from '../gcp-identity.js';
+import type { GcpIdentityResolver } from '../gcp-identity.js';
+import { collectGcsPrefixes, gcloudProjectsOutcome, gcsNextPageToken, listGcsBucketsAs, parseWizardReader, wizardGcsErrorMessage, wizardWriteReader } from '../setup-gcp.js';
 import type { DetectedReportType } from '../setup-manifest.js';
 import type { AppContext } from './context.js';
 
@@ -197,93 +197,35 @@ export function registerSetupHandlers(app: AppContext): void {
   // so it costs no new dependency and no extra API to enable.
 
   ipcMain.handle('setup:list-gcp-projects', async (): Promise<{ projects: readonly GcpProject[]; error?: string | undefined }> => {
-    const { spawn } = await import('node:child_process');
-    const { StringDecoder } = await import('node:string_decoder');
-
-    // `findGcloudCli` returning null is the "not installed" signal on every
-    // platform — it cannot come from spawn: on Windows gcloud is a `.cmd`
-    // that needs a shell (CVE-2024-27980, encapsulated in gcloudSpawnShape),
-    // and cmd.exe starts fine whether or not gcloud exists, so ENOENT can
-    // never fire there.
-    const bin = findGcloudCli();
-    if (bin === null) {
-      return { projects: [], error: 'GCLOUD_CLI_NOT_FOUND' };
+    // Shared capture helper: trusted binary, gcloudSpawnShape, trusted-first
+    // child PATH, stdin ignored so a re-auth prompt fails on the timeout.
+    const result = await runGcloudCapture(['projects', 'list', '--format=json'], GCLOUD_PROJECTS_TIMEOUT_MS);
+    const outcome = gcloudProjectsOutcome(result);
+    if (result.kind === 'exited' && outcome.error !== undefined) {
+      logger.info('setup:list-gcp-projects failed', { error: outcome.error });
     }
-    // Trusted SDK dirs first — see gcloudChildPath: the launcher's helper
-    // lookups must not be served by a writable early inherited-PATH entry.
-    const fullPath = gcloudChildPath(process.env['PATH'] ?? '');
-    const shape = gcloudSpawnShape(bin, ['projects', 'list', '--format=json']);
-
-    return new Promise<{ projects: readonly GcpProject[]; error?: string | undefined }>((resolve) => {
-      const proc = spawn(shape.command, shape.args, {
-        // stdin ignored: a gcloud that wants interactive re-auth must fail
-        // on the timeout below rather than block waiting for input.
-        stdio: ['ignore', 'pipe', 'pipe'],
-        shell: shape.shell,
-        env: { ...process.env, PATH: fullPath },
-      });
-
-      // StringDecoder, not chunk.toString(): a pipe boundary can fall mid
-      // multi-byte character, and two halves each decode to U+FFFD. JSON still
-      // parses, so a mangled project name would reach the picker silently.
-      const outDecoder = new StringDecoder('utf8');
-      const errDecoder = new StringDecoder('utf8');
-      let stdout = '';
-      let stderr = '';
-      let settled = false;
-      const finish = (result: { projects: readonly GcpProject[]; error?: string | undefined }): void => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve(result);
-      };
-
-      const timer = setTimeout(() => {
-        proc.kill();
-        // A sentinel, not prose: the old message carried `gcloud auth login`,
-        // which the wizard's credential check matched — so an organisation
-        // whose thousands of projects simply outlast this ceiling was offered
-        // a sign-in that could not help. The wizard words both causes.
-        finish({ projects: [], error: 'GCLOUD_PROJECTS_TIMEOUT' });
-      }, GCLOUD_PROJECTS_TIMEOUT_MS);
-
-      proc.stdout.on('data', (chunk: Buffer) => { stdout += outDecoder.write(chunk); });
-      proc.stderr.on('data', (chunk: Buffer) => { stderr += errDecoder.write(chunk); });
-
-      proc.on('error', (err: NodeJS.ErrnoException) => {
-        finish({ projects: [], error: err.code === 'ENOENT' ? 'GCLOUD_CLI_NOT_FOUND' : err.message });
-      });
-
-      proc.on('close', (code) => {
-        stdout += outDecoder.end();
-        stderr += errDecoder.end();
-        if (code === 0) {
-          const projects = parseGcloudProjects(stdout);
-          if (projects === null) {
-            // Exit 0 but unreadable stdout. Reporting [] here would render the
-            // "No Google Cloud projects found" panel — a false statement about
-            // their account, with no remedy offered.
-            finish({ projects: [], error: 'Could not read the project list from gcloud. Run `gcloud projects list` in a terminal to see what it printed.' });
-            return;
-          }
-          finish({ projects });
-          return;
-        }
-        // gcloud's own stderr is the most useful thing to show: it names the
-        // exact remedy ("You do not currently have an active account") that
-        // the wizard's sign-in button then performs.
-        const message = stderr.trim().length > 0 ? stderr.trim() : `gcloud projects list failed (exit ${String(code)})`;
-        logger.info('setup:list-gcp-projects failed', { error: message });
-        finish({ projects: [], error: message });
-      });
-    });
+    return outcome;
   });
+
+  // Read-only: who the listing SDK and the gcloud CLI run as, for the
+  // "Signed in as" panel. Lives with the wizard's GCP handlers because the
+  // wizard is its first caller; Data Management passes a provider name so
+  // that provider's `impersonateServiceAccount` / `keyFile` apply. One
+  // resolver for the process, created on first use, so the panels Data
+  // Management mounts together share a single gcloud read.
+  let identityResolver: GcpIdentityResolver | null = null;
+  ipcMain.handle('data:gcp-identities', (_event, rawProvider: unknown): Promise<GcpIdentityResult> => gcpIdentitiesFor(
+    rawProvider,
+    () => app.getConfig().catch(() => null),
+    () => (identityResolver ??= createGcpIdentityResolver(defaultIdentityDeps())),
+  ));
 
   // Both GCS handlers build their client through `createGcsStorage` — the
   // sync's own constructor — so the wizard browses as exactly the identity the
   // provider will sync as: the user's ADC login, or the reader it names.
   ipcMain.handle('setup:list-gcs-buckets', (_event, projectId: string, rawReader?: unknown) =>
     listGcsBucketsAs(projectId, rawReader, createGcsStorage));
+
 
   ipcMain.handle('setup:browse-gcs', async (_event, params: { projectId: string; bucket: string; prefix: string; impersonateServiceAccount?: unknown }): Promise<GcsBrowseResult> => {
     const prefix = normalizeGcsPrefix(params.prefix);

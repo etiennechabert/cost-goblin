@@ -579,6 +579,26 @@ A `keyFile: /path/to/key.json` is also accepted for environments that require a
 service-account key, but impersonation is the better default — there is no
 secret to leak or rotate.
 
+#### Checking which identities are in play
+
+Because the two halves read two different credential stores, CostGoblin shows
+both in a **Signed in as** panel on each GCP provider under **Data
+Management**: the account behind **bucket listing** (the provider's `keyFile`,
+or Application Default Credentials — with the file it was read from) and the
+account **downloads** run as (gcloud's active account and configuration, or the
+same `keyFile`). The setup wizard shows the short form: the account gcloud is
+signed in as, which also lists your projects.
+
+The panel is read-only: it reads the credential files and runs
+`gcloud config list`, and asks Google to name the account behind ADC. No token
+is displayed or stored. It warns when **downloads and listing run as two
+different people** — typically after switching gcloud to an admin account to
+make the wizard's project list work, which makes downloads run as that admin
+too. Switch back with `gcloud config set account <you>` (after
+`gcloud auth login <you>` if gcloud has never signed in as you).
+
+Press **Re-check** after changing either sign-in.
+
 ### What GCP does not fill in
 
 Two dimensions are empty for GCP rows, because the FOCUS export has no such
