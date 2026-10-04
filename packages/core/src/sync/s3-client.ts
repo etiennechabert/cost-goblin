@@ -3,6 +3,7 @@ import { createWriteStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { Readable, Transform } from 'node:stream';
 import { dirname } from 'node:path';
+import { loadSharedConfigFiles } from '@smithy/shared-ini-file-loader';
 import type { ManifestFileEntry } from './manifest.js';
 import type { DownloadOptions, ObjectStoreHandle } from './object-store.js';
 
@@ -35,7 +36,7 @@ async function getS3Module(): Promise<typeof import('@aws-sdk/client-s3')> {
   return import('@aws-sdk/client-s3');
 }
 
-/** Region a client sends its first request to when the caller names none. */
+/** Region a client starts in when neither the caller nor the profile names one. */
 const DEFAULT_S3_REGION = 'eu-central-1';
 
 export interface S3ClientBaseConfig {
@@ -44,24 +45,46 @@ export interface S3ClientBaseConfig {
   readonly profile?: string;
 }
 
+/** The region ~/.aws/config gives a profile: its own `region`, else the
+ *  `sso_region` of its linked sso-session (SSO-only profiles often omit
+ *  `region`). Read through the SDK's own loader with `ignoreCache`, so a
+ *  profile edited since launch counts; it resolves to empty maps for a missing
+ *  or unreadable file and never rejects. `AWS_REGION` is deliberately not
+ *  consulted: it would outrank the profile, which bites orgs whose SCPs deny
+ *  regions the profile was set up to avoid. */
+export async function profileRegion(profile: string): Promise<string | undefined> {
+  const { configFile } = await loadSharedConfigFiles({ ignoreCache: true });
+  const section = configFile[profile] ?? {};
+  const region = section['region'];
+  if (typeof region === 'string' && region.length > 0) return region;
+  const ssoSession = section['sso_session'];
+  if (typeof ssoSession !== 'string' || ssoSession.length === 0) return undefined;
+  const ssoRegion = configFile[`sso-session.${ssoSession}`]?.['sso_region'];
+  return typeof ssoRegion === 'string' && ssoRegion.length > 0 ? ssoRegion : undefined;
+}
+
 /** The options every `S3Client` the app builds starts from.
  *
- *  Nothing in the config records a bucket's region, so clients are built
- *  against a fixed one. Without `followRegionRedirects` a bucket in any other
- *  region fails every call with S3's 301 PermanentRedirect ("The bucket you
- *  are attempting to access must be addressed using the specified
- *  endpoint"): the wizard could not browse an eu-west-1 export, and the
- *  sync's inventory listing could not see it either. With it, the SDK reads
- *  the bucket's region off the 301's `x-amz-bucket-region` header and retries
- *  there. `aws s3 sync` needs no equivalent; the CLI follows the redirect
- *  itself.
+ *  Nothing in the config records a bucket's region, so a client has to guess
+ *  where to send its first request: the caller's `region` if it names one,
+ *  else the profile's own (exports usually live in the region the profile was
+ *  set up for, and an org that denies other regions by SCP has set it to one
+ *  it allows), else eu-central-1. A wrong guess costs one round trip, not the
+ *  call: `followRegionRedirects` makes the SDK read the bucket's region off
+ *  S3's 301 PermanentRedirect ("The bucket you are attempting to access must
+ *  be addressed using the specified endpoint") and retry there. Without it,
+ *  the wizard could not browse an eu-west-1 export, and the sync's inventory
+ *  listing could not see it either. `aws s3 sync` needs no equivalent; the CLI
+ *  follows the redirect itself.
  *
  *  `profile === 'default'` leaves the profile unset so the SDK's own
  *  credential chain picks it (honouring `AWS_PROFILE`). `undefined` means no
- *  profile at all: the caller supplies explicit credentials instead. */
-export function s3ClientConfig(profile: string | undefined, region?: string): S3ClientBaseConfig {
+ *  profile at all: the caller supplies explicit credentials instead, so no
+ *  profile region is looked up either. */
+export async function s3ClientConfig(profile: string | undefined, region?: string): Promise<S3ClientBaseConfig> {
+  const start = region ?? (profile === undefined ? undefined : await profileRegion(profile));
   return {
-    region: region ?? DEFAULT_S3_REGION,
+    region: start ?? DEFAULT_S3_REGION,
     followRegionRedirects: true,
     ...(profile === undefined || profile === 'default' ? {} : { profile }),
   };
@@ -158,7 +181,7 @@ export async function createS3Handle(profile: string, region?: string, endpointO
   // Explicit credentials (a custom endpoint such as MinIO) replace the profile.
   const credentials = endpointOptions?.credentials;
   const client = new S3Client({
-    ...s3ClientConfig(credentials === undefined ? profile : undefined, region),
+    ...(await s3ClientConfig(credentials === undefined ? profile : undefined, region)),
     ...(credentials === undefined ? {} : { credentials }),
     ...(endpointOptions?.endpoint === undefined ? {} : { endpoint: endpointOptions.endpoint }),
     ...(endpointOptions?.forcePathStyle === undefined ? {} : { forcePathStyle: endpointOptions.forcePathStyle }),

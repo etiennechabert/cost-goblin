@@ -18,7 +18,7 @@ export async function testS3Connection(params: { profile: string; bucket: string
   try {
     const { S3Client, ListObjectsV2Command } = await import('@aws-sdk/client-s3');
     const parsed = parseS3Path(params.bucket);
-    const client = new S3Client(s3ClientConfig(params.profile));
+    const client = new S3Client(await s3ClientConfig(params.profile));
 
     await client.send(new ListObjectsV2Command({
       Bucket: parsed.bucket,
@@ -36,7 +36,10 @@ export async function testS3Connection(params: { profile: string; bucket: string
 export async function listS3Buckets(profile: string): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }> {
   try {
     const { S3Client, ListBucketsCommand } = await import('@aws-sdk/client-s3');
-    const client = new S3Client(s3ClientConfig(profile, 'us-east-1'));
+    // ListBuckets is account-wide and answers from any regional endpoint, so
+    // it starts where every other client does: the profile's region, which an
+    // org that denies us-east-1 by SCP has set to one it allows.
+    const client = new S3Client(await s3ClientConfig(profile));
 
     const response = await client.send(new ListBucketsCommand({}));
     const buckets = (response.Buckets ?? [])
@@ -53,7 +56,7 @@ export async function listS3Buckets(profile: string): Promise<{ buckets: { name:
 export async function browseS3(params: { profile: string; bucket: string; prefix: string }): Promise<S3BrowseResult> {
   try {
     const { S3Client, ListObjectsV2Command, GetObjectCommand } = await import('@aws-sdk/client-s3');
-    const client = new S3Client(s3ClientConfig(params.profile));
+    const client = new S3Client(await s3ClientConfig(params.profile));
 
     const response = await client.send(new ListObjectsV2Command({
       Bucket: params.bucket,

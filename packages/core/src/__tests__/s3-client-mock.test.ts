@@ -1,6 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createS3Handle } from '../sync/s3-client.js';
 import type { S3Handle } from '../sync/s3-client.js';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Writable } from 'node:stream';
 import type { WriteStream } from 'node:fs';
 
@@ -31,6 +33,16 @@ vi.mock('node:fs', () => ({
 vi.mock('node:stream/promises', () => ({
   pipeline: vi.fn(),
 }));
+
+// A client starts in its profile's ~/.aws/config region: keep the developer's
+// own config out by pointing the SDK's loader at a file that doesn't exist.
+beforeEach(() => {
+  vi.stubEnv('AWS_CONFIG_FILE', join(tmpdir(), `costgoblin-no-aws-config-${String(process.pid)}`));
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe('S3 client (mocked) - listFiles', () => {
   let s3: S3Handle;
@@ -196,6 +208,22 @@ describe('S3 client (mocked) - listFiles', () => {
     await createS3Handle('default');
 
     expect(S3Client).toHaveBeenCalledWith({ region: 'eu-central-1', followRegionRedirects: true });
+  });
+
+  it('starts in the profile’s own region when none is given', async () => {
+    const { S3Client } = await import('@aws-sdk/client-s3');
+    // node:fs is mocked in this file; the real one writes the config.
+    const fs = await vi.importActual<typeof import('node:fs')>('node:fs');
+    const dir = fs.mkdtempSync(join(tmpdir(), 'costgoblin-aws-'));
+    try {
+      fs.writeFileSync(join(dir, 'config'), '[profile billing]\nregion = eu-west-1\n');
+      vi.stubEnv('AWS_CONFIG_FILE', join(dir, 'config'));
+      await createS3Handle('billing');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+
+    expect(S3Client).toHaveBeenCalledWith({ region: 'eu-west-1', followRegionRedirects: true, profile: 'billing' });
   });
 
   it('lets explicit endpoint credentials replace the profile', async () => {

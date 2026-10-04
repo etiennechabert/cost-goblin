@@ -1,8 +1,9 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, it, expect } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { S3Client, ListObjectsV2Command } from '@aws-sdk/client-s3';
-import { s3ClientConfig } from '../sync/s3-client.js';
+import { profileRegion, s3ClientConfig } from '../sync/s3-client.js';
 
 /** The real SDK against a fake S3 whose bucket lives in eu-west-1: any other
  *  regional endpoint answers with the 301 PermanentRedirect S3 sends, which
@@ -63,22 +64,81 @@ const hermetic = {
 };
 const browse = new ListObjectsV2Command({ Bucket: BUCKET, Prefix: '', Delimiter: '/', MaxKeys: 200 });
 
+/** Point the SDK's config loader at a throwaway ~/.aws/config, so the
+ *  developer's own profiles never decide where a client starts. */
+const configDirs: string[] = [];
+function useAwsConfig(contents: string): void {
+  const dir = mkdtempSync(join(tmpdir(), 'costgoblin-aws-'));
+  configDirs.push(dir);
+  writeFileSync(join(dir, 'config'), contents);
+  vi.stubEnv('AWS_CONFIG_FILE', join(dir, 'config'));
+  vi.stubEnv('AWS_SHARED_CREDENTIALS_FILE', join(dir, 'credentials'));
+}
+
+beforeEach(() => {
+  useAwsConfig('');
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  for (const dir of configDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+describe('profileRegion', () => {
+  it('reads a named profile’s region', async () => {
+    useAwsConfig('[profile billing]\nregion = eu-west-1\n');
+    await expect(profileRegion('billing')).resolves.toBe('eu-west-1');
+  });
+
+  it('falls back to the sso-session region of an SSO-only profile', async () => {
+    useAwsConfig('[profile sso]\nsso_session = corp\n\n[sso-session corp]\nsso_region = eu-north-1\n');
+    await expect(profileRegion('sso')).resolves.toBe('eu-north-1');
+  });
+
+  it.each([
+    ['an unknown profile', '[profile billing]\nregion = eu-west-1\n', 'other'],
+    ['a profile with no region or session', '[profile bare]\noutput = json\n', 'bare'],
+    ['a session with no region', '[profile sso]\nsso_session = corp\n\n[sso-session corp]\nsso_start_url = https://example.awsapps.com/start\n', 'sso'],
+    ['a dangling session', '[profile sso]\nsso_session = gone\n', 'sso'],
+  ])('finds no region for %s', async (_label, contents, profile) => {
+    useAwsConfig(contents);
+    await expect(profileRegion(profile)).resolves.toBeUndefined();
+  });
+
+  it('finds no region when the config file is missing', async () => {
+    vi.stubEnv('AWS_CONFIG_FILE', join(tmpdir(), `costgoblin-no-aws-config-${String(process.pid)}`));
+    await expect(profileRegion('default')).resolves.toBeUndefined();
+  });
+});
+
 describe('s3ClientConfig', () => {
-  it('follows region redirects and defaults the starting region', () => {
-    expect(s3ClientConfig('default')).toEqual({ region: 'eu-central-1', followRegionRedirects: true });
+  it('starts in eu-central-1 when the profile names no region', async () => {
+    await expect(s3ClientConfig('default')).resolves.toEqual({ region: 'eu-central-1', followRegionRedirects: true });
   });
 
-  it('passes a named profile through and honours an explicit region', () => {
-    expect(s3ClientConfig('billing', 'us-west-2')).toEqual({ region: 'us-west-2', followRegionRedirects: true, profile: 'billing' });
+  it('starts in the profile’s own region', async () => {
+    useAwsConfig('[profile billing]\nregion = eu-west-1\n');
+    await expect(s3ClientConfig('billing')).resolves.toEqual({ region: 'eu-west-1', followRegionRedirects: true, profile: 'billing' });
   });
 
-  it('leaves the profile unset when the caller brings its own credentials', () => {
-    expect(s3ClientConfig(undefined, 'us-west-2')).toEqual({ region: 'us-west-2', followRegionRedirects: true });
+  it('reads the default profile’s region without naming the profile', async () => {
+    useAwsConfig('[default]\nregion = ap-southeast-2\n');
+    await expect(s3ClientConfig('default')).resolves.toEqual({ region: 'ap-southeast-2', followRegionRedirects: true });
+  });
+
+  it('lets an explicit region win over the profile’s', async () => {
+    useAwsConfig('[profile billing]\nregion = eu-west-1\n');
+    await expect(s3ClientConfig('billing', 'us-west-2')).resolves.toEqual({ region: 'us-west-2', followRegionRedirects: true, profile: 'billing' });
+  });
+
+  it('looks up no profile when the caller brings its own credentials', async () => {
+    useAwsConfig('[default]\nregion = ap-southeast-2\n');
+    await expect(s3ClientConfig(undefined)).resolves.toEqual({ region: 'eu-central-1', followRegionRedirects: true });
   });
 
   it('reaches a bucket outside the starting region by following the 301', async () => {
     const { requestHandler, hosts } = fakeS3();
-    const client = new S3Client({ ...s3ClientConfig('default'), ...hermetic, requestHandler });
+    const client = new S3Client({ ...(await s3ClientConfig('default')), ...hermetic, requestHandler });
 
     const response = await client.send(browse);
 
@@ -87,6 +147,16 @@ describe('s3ClientConfig', () => {
       `${BUCKET}.s3.eu-central-1.amazonaws.com`,
       `${BUCKET}.s3.${BUCKET_REGION}.amazonaws.com`,
     ]);
+  });
+
+  it('needs no redirect when the bucket is in the profile’s region', async () => {
+    useAwsConfig(`[default]\nregion = ${BUCKET_REGION}\n`);
+    const { requestHandler, hosts } = fakeS3();
+    const client = new S3Client({ ...(await s3ClientConfig('default')), ...hermetic, requestHandler });
+
+    await client.send(browse);
+
+    expect(hosts).toEqual([`${BUCKET}.s3.${BUCKET_REGION}.amazonaws.com`]);
   });
 
   it('is what stands between the wizard and the PermanentRedirect error', async () => {
@@ -131,7 +201,7 @@ describe('S3 client policy', () => {
   it('starts every S3Client from s3ClientConfig', () => {
     const bare = sources.flatMap(s =>
       constructions(s.text)
-        .filter(m => !/^(?:\{\s*\.\.\.)?s3ClientConfig\(/.test(m[1] ?? ''))
+        .filter(m => !/^(?:\{\s*\.\.\.\(?)?(?:await\s+)?s3ClientConfig\(/.test(m[1] ?? ''))
         .map(() => s.file));
     expect(bare).toEqual([]);
   });

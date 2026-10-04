@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { REQUIRED_FOCUS_COLUMNS } from '../main/setup-manifest.js';
 import { browseS3, listS3Buckets, testS3Connection } from '../main/setup-s3.js';
 
@@ -26,11 +29,27 @@ const metadataListing = {
   ],
 };
 
+// Every client starts in its profile's ~/.aws/config region, so each test
+// gets a throwaway config: the developer's own profiles never leak in.
+let configDir = '';
+function useAwsConfig(contents: string): void {
+  writeFileSync(join(configDir, 'config'), contents);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   // clearAllMocks keeps queued *Once values: drop them so a test that fails
   // before consuming its responses cannot feed them to the next one.
   mockSend.mockReset();
+  configDir = mkdtempSync(join(tmpdir(), 'costgoblin-aws-'));
+  useAwsConfig('');
+  vi.stubEnv('AWS_CONFIG_FILE', join(configDir, 'config'));
+  vi.stubEnv('AWS_SHARED_CREDENTIALS_FILE', join(configDir, 'credentials'));
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  rmSync(configDir, { recursive: true, force: true });
 });
 
 describe('browseS3', () => {
@@ -41,6 +60,16 @@ describe('browseS3', () => {
     await browseS3({ profile: 'billing', bucket: 'b', prefix: '' });
 
     expect(S3Client).toHaveBeenCalledWith({ region: 'eu-central-1', followRegionRedirects: true, profile: 'billing' });
+  });
+
+  it('starts in the profile’s own region, so an export there needs no redirect', async () => {
+    const { S3Client } = await import('@aws-sdk/client-s3');
+    useAwsConfig('[profile billing]\nregion = eu-west-1\n');
+    mockSend.mockResolvedValueOnce({ CommonPrefixes: [] });
+
+    await browseS3({ profile: 'billing', bucket: 'b', prefix: '' });
+
+    expect(S3Client).toHaveBeenCalledWith({ region: 'eu-west-1', followRegionRedirects: true, profile: 'billing' });
   });
 
   it('lists child folders relative to the prefix and classifies the export from its columns manifest', async () => {
@@ -140,12 +169,13 @@ describe('testS3Connection', () => {
 });
 
 describe('listS3Buckets', () => {
-  it('lists the account’s buckets by name', async () => {
+  it('lists the account’s buckets by name, from the profile’s own region', async () => {
     const { S3Client } = await import('@aws-sdk/client-s3');
+    useAwsConfig('[profile billing]\nregion = eu-west-1\n');
     mockSend.mockResolvedValueOnce({ Buckets: [{ Name: 'a' }, {}, { Name: 'b' }] });
 
     await expect(listS3Buckets('billing')).resolves.toEqual({ buckets: [{ name: 'a', region: '' }, { name: 'b', region: '' }] });
-    expect(S3Client).toHaveBeenCalledWith({ region: 'us-east-1', followRegionRedirects: true, profile: 'billing' });
+    expect(S3Client).toHaveBeenCalledWith({ region: 'eu-west-1', followRegionRedirects: true, profile: 'billing' });
   });
 
   it('treats a listing with no buckets as empty', async () => {
