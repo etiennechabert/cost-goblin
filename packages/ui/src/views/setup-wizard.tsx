@@ -763,13 +763,14 @@ function GcpBucketListDenied({ reader, project, message, detailsOpen, onToggleDe
     // this denial is the normal path, so it reads as one line pointing at the
     // field below. The raw denial — the only evidence of which principal was
     // refused, since GCP returns the same sentence for "no access at all" —
-    // and the grant that fills the dropdown stay one click away.
-    // `aria-atomic="false"` so opening Details announces only what it reveals.
-    <div role="status" aria-atomic="false">
-      <p className="text-xs text-text-secondary">
+    // and the grant that fills the dropdown stay one click away. Only the line
+    // is the live region (`<output>`, whose role is status), so opening Details
+    // announces nothing over it.
+    <div>
+      <output className="block text-xs text-text-secondary">
         {reader === undefined ? 'Your account' : <code className="text-text-secondary">{accountName(reader)}</code>}{' '}
         can&apos;t list the buckets in <code className="text-text-secondary">{project}</code> — enter the bucket name below.
-      </p>
+      </output>
       <details
         className="mt-1"
         open={detailsOpen}

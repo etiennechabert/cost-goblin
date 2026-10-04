@@ -713,35 +713,41 @@ export { isCredentialError };
  *  Anything that isn't a credential or session failure is returned unchanged:
  *  an IAM permission error must not be dressed up as "log in again". */
 export function toUserFriendlyError(err: unknown, auth: ProviderAuth): Error {
-  if (auth.kind === 'gcp') {
-    // First: gcloud wraps an unreachable token endpoint in "Please run:
-    // gcloud auth login", and a dropped connection is no sign-in problem.
-    if (isGcpNetworkError(err)) {
-      return new Error('Couldn\'t reach Google Cloud — this machine has no network route to googleapis.com. Check your connection or VPN, then retry.');
-    }
-    // BEFORE the ADC check, whose markers this shares. A GCP sync spans two
-    // credential stores — the listing SDK reads ADC, `gcloud storage rsync`
-    // runs as gcloud's active account — and only re-running the matching one
-    // helps. Observed live: with a work account active in gcloud but personal
-    // ADC, listing succeeded and the download failed, and the ADC advice would
-    // have looped forever.
-    if (isGcloudCliAccountError(err)) {
-      return new Error(`The gcloud CLI is signed in as a different account than CostGoblin's credentials, or its session expired. Run: ${GCLOUD_CLI_LOGIN_COMMAND}`);
-    }
-    // An impersonation the IAM side refuses is a missing grant or a wrong
-    // reader; the text carries no sign-in marker, since signing in would loop.
-    if (isGcpImpersonationError(err) && err instanceof Error) {
-      return new Error(describeGcpImpersonationFailure(auth.impersonateServiceAccount, err.message));
-    }
-    if (isGcpCredentialError(err)) {
-      return new Error(`GCP credentials are missing or expired. Run: ${GCLOUD_ADC_LOGIN_COMMAND}`);
-    }
-    if (isGcloudDownloadFailure(err)) {
-      return new Error(`Download from Cloud Storage failed — your GCP session may have expired. Run: ${GCLOUD_ADC_LOGIN_COMMAND} and retry. If it persists, check your network/VPN connection.`);
-    }
-    return err instanceof Error ? err : new Error(String(err));
+  return auth.kind === 'gcp' ? gcpUserFriendlyError(err, auth) : awsUserFriendlyError(err, auth.profile);
+}
+
+/** The GCP arm of `toUserFriendlyError`. */
+function gcpUserFriendlyError(err: unknown, auth: Extract<ProviderAuth, { kind: 'gcp' }>): Error {
+  // First: gcloud wraps an unreachable token endpoint in "Please run:
+  // gcloud auth login", and a dropped connection is no sign-in problem.
+  if (isGcpNetworkError(err)) {
+    return new Error('Couldn\'t reach Google Cloud — this machine has no network route to googleapis.com. Check your connection or VPN, then retry.');
   }
-  const profile = auth.profile;
+  // BEFORE the ADC check, whose markers this shares. A GCP sync spans two
+  // credential stores — the listing SDK reads ADC, `gcloud storage rsync`
+  // runs as gcloud's active account — and only re-running the matching one
+  // helps. Observed live: with a work account active in gcloud but personal
+  // ADC, listing succeeded and the download failed, and the ADC advice would
+  // have looped forever.
+  if (isGcloudCliAccountError(err)) {
+    return new Error(`The gcloud CLI is signed in as a different account than CostGoblin's credentials, or its session expired. Run: ${GCLOUD_CLI_LOGIN_COMMAND}`);
+  }
+  // An impersonation the IAM side refuses is a missing grant or a wrong
+  // reader; the text carries no sign-in marker, since signing in would loop.
+  if (isGcpImpersonationError(err) && err instanceof Error) {
+    return new Error(describeGcpImpersonationFailure(auth.impersonateServiceAccount, err.message));
+  }
+  if (isGcpCredentialError(err)) {
+    return new Error(`GCP credentials are missing or expired. Run: ${GCLOUD_ADC_LOGIN_COMMAND}`);
+  }
+  if (isGcloudDownloadFailure(err)) {
+    return new Error(`Download from Cloud Storage failed — your GCP session may have expired. Run: ${GCLOUD_ADC_LOGIN_COMMAND} and retry. If it persists, check your network/VPN connection.`);
+  }
+  return err instanceof Error ? err : new Error(String(err));
+}
+
+/** The AWS arm of `toUserFriendlyError`. */
+function awsUserFriendlyError(err: unknown, profile: string): Error {
   if (isCredentialError(err)) {
     return new Error(`AWS credentials expired for profile "${profile}". Run: aws sso login --profile ${profile}`);
   }
