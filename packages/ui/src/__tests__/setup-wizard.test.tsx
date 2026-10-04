@@ -519,11 +519,19 @@ describe('SetupWizard — per-tier Configure on a GCP provider', () => {
   it('adds the hourly tier later, opening in the bucket the daily export lives in', async () => {
     // The AWS tiers had this; on GCP the panel only said to edit the YAML, so
     // skipping hourly during setup meant a hand edit to add it later.
-    const { api, user } = renderWizard(configureHourly);
-    const listBuckets = vi.spyOn(api, 'listGcsBuckets');
+    const listedProjects: string[] = [];
+    const { api, user } = renderWizard({
+      ...configureHourly,
+      // Installed before mount, so a listing fired on mount would be caught.
+      prepare: (mock) => {
+        gcpExportLayout(mock);
+        const list = mock.listGcsBuckets.bind(mock);
+        mock.listGcsBuckets = (projectId) => { listedProjects.push(projectId); return list(projectId); };
+      },
+    });
     // Opens on the daily export's parent — no project, no bucket listing.
     await waitFor(() => { expect(screen.getByLabelText('Open folder hourly')).toBeDefined(); });
-    expect(listBuckets).not.toHaveBeenCalled();
+    expect(listedProjects).toEqual([]);
     await user.click(screen.getByLabelText('Open folder hourly'));
     await waitFor(() => { expect(screen.getByText('FOCUS export detected')).toBeDefined(); });
     await userClickText(user, 'Use this location');
@@ -541,6 +549,27 @@ describe('SetupWizard — per-tier Configure on a GCP provider', () => {
     expect(written?.dailyBucket).toBe('');
     expect(written?.hourlyBucket).toBe('gs://acme-focus-export/focus/hourly/');
     expect(written?.hourlyRetentionDays).toBe(30);
+  });
+
+  it('goes ← Back from Confirm to the folder it opened on, with no Skip offered', async () => {
+    const { user } = renderWizard(configureHourly);
+    await waitFor(() => { expect(screen.getByLabelText('Open folder hourly')).toBeDefined(); });
+    // It came for this one tier; skipping it would only save an unchanged config.
+    expect(screen.queryByText('Skip')).toBeNull();
+    await user.click(screen.getByLabelText('Open folder hourly'));
+    await waitFor(() => { expect(screen.getByText('FOCUS export detected')).toBeDefined(); });
+    await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+    // A bucket step could not list without a project; the folder is where the user was.
+    await userClickText(user, '← Back');
+    await waitFor(() => { expect(screen.getByLabelText('Open folder hourly')).toBeDefined(); });
+  });
+
+  it('asks the "Signed in as" panel about the provider being configured', async () => {
+    // Its impersonateServiceAccount decides who downloads, so the panel has to
+    // name it rather than report the bare signed-in identity.
+    const { api } = renderWizard(configureHourly);
+    await waitFor(() => { expect(api.gcpIdentitiesRequestedFor).toContain('gcp-main'); });
   });
 
   it('refuses the configured daily folder as the hourly one', async () => {
@@ -1151,8 +1180,8 @@ describe('SetupWizard — GCP "Signed in as" panel', () => {
   });
 
   it('never asks about an AWS provider s name after backing out of its Configure into Google Cloud', async () => {
-    // Per-tier Configure (source mode) is AWS-only and fixes the provider
-    // name; Back → Back still reaches the hub's Google Cloud tile.
+    // AWS per-tier Configure (source mode) fixes the provider name; Back →
+    // Back still reaches the hub's Google Cloud tile.
     const { api, user } = renderWizard({ source: 'daily', profile: 'default' });
     await waitFor(() => { expect(screen.getByText('my-cur-bucket')).toBeDefined(); });
     await userClickText(user, '← Back');
