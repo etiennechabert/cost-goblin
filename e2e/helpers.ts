@@ -40,6 +40,15 @@ export const FIXTURE_MULTI_CONFIG_DIR = join(ROOT, 'packages', 'core', 'src', '_
  *  produces — and the natural guesses `true`/`yes` all silently show the
  *  window, the opposite of what they read like. Only an explicit '0' opts out.
  *
+ *  CI opts out (ci.yml sets '0'), because hiding costs a lot there and buys
+ *  nothing. On Linux a never-shown window gets ~1-5 compositor frames per
+ *  second, so requestAnimationFrame starves. Playwright's actionability checks
+ *  wait on animation frames, so every click took 1-2s, and the suites ran ~8x
+ *  slower than with the window shown on xvfb's virtual display, which nobody
+ *  can see or click anyway. macOS keeps rendering a hidden window at full rate,
+ *  so the hidden default stays fast for local runs. On a Linux desktop, run
+ *  under `xvfb-run` with '0' rather than hidden.
+ *
  *  See CLAUDE.md's Layer 4 section for the developer-facing version. */
 export const HEADLESS = process.env['COSTGOBLIN_HEADLESS'] === '0' ? '0' : '1';
 

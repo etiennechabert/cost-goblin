@@ -148,14 +148,27 @@ jobs:
       # explicit generate.ts step produced a PARTIAL tree without cost-opt that
       # setup()'s freshness probe used to accept — the Findings suite then ran
       # against an empty recommendations view.
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps
+      #
+      # No `npx playwright install --with-deps`: _electron.launch drives the
+      # app's own bundled Chromium, so the three browsers it downloaded were
+      # never used. The runner image already ships xvfb-run and Chrome's system
+      # libraries, which are all Electron needs. That step cost ~50s per shard.
+      # If an image update ever drops a library, the launch fails with a
+      # missing-.so error; `npx playwright install-deps chromium` installs the
+      # system packages alone.
       - name: Build desktop
         run: npm run build --workspace=packages/desktop
+      # COSTGOBLIN_HEADLESS=0 shows the window — on xvfb's virtual display, so
+      # nothing is visible and nothing can steal focus. Keep it: a hidden
+      # (never-mapped) window on Linux gets ~1-5 compositor frames per second,
+      # and Playwright's actionability checks wait on animation frames, so every
+      # click cost 1-2s and the suites ran ~8x slower (views-core 3.4 min vs
+      # 28s shown). Pinned by scripts/ci/workflow-policy.test.mjs.
       - name: Run E2E shard
         env:
           COSTGOBLIN_DATA_DIR: ${{ github.workspace }}/packages/core/src/__fixtures__/synthetic
           COSTGOBLIN_CONFIG_DIR: ${{ github.workspace }}/packages/core/src/__fixtures__/config
+          COSTGOBLIN_HEADLESS: '0'
         run: xvfb-run --auto-servernum --server-args="-screen 0 1280x960x24" npx playwright test e2e/${{ matrix.shard }}.test.ts
       - name: Collect E2E coverage
         if: always()
