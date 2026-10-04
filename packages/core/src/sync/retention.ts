@@ -4,8 +4,10 @@ import type { DataTier } from '../types/api.js';
  *  Periods strictly older than this are eligible for pruning; periods at or
  *  after it are kept. This mirrors the auto-sync download cutoff exactly
  *  (download keeps `period >= cutoff`, prune deletes `period < cutoff`), so a
- *  boundary month is never downloaded-then-immediately-pruned. */
-export function retentionCutoffPeriod(retentionDays: number, now: number = Date.now()): string {
+ *  boundary month is never downloaded-then-immediately-pruned. `now` has no
+ *  default on purpose: callers pass the main process's injected Clock, so a
+ *  pinned COSTGOBLIN_NOW reaches every retention decision. */
+export function retentionCutoffPeriod(retentionDays: number, now: number): string {
   const d = new Date(now - retentionDays * 24 * 60 * 60 * 1000);
   return `${String(d.getFullYear())}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
@@ -20,7 +22,7 @@ export function retentionCutoffPeriod(retentionDays: number, now: number = Date.
 export function periodsOutsideRetention(
   localPeriods: readonly string[],
   retentionDays: number,
-  now: number = Date.now(),
+  now: number,
 ): string[] {
   if (!Number.isFinite(retentionDays) || retentionDays <= 0) return [];
   const cutoff = retentionCutoffPeriod(retentionDays, now);

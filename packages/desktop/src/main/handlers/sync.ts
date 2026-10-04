@@ -230,7 +230,7 @@ export function registerSyncHandlers(app: AppContext): void {
     for (const provider of config.providers) {
       for (const { tier, retentionDays } of configuredTierRetentions(provider.sync)) {
         const local = await getLocalDataInventory(ctx.dataDir, provider.name, tier);
-        const expired = periodsOutsideRetention(local.local.periods, retentionDays);
+        const expired = periodsOutsideRetention(local.local.periods, retentionDays, ctx.now());
         for (const period of expired) {
           const removed = await deleteLocalPeriodFiles(ctx.dataDir, provider.name, period, tier);
           if (removed) deleted.push({ tier, period, provider: provider.name });

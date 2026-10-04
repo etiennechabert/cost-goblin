@@ -107,6 +107,7 @@ describe('auto-sync runOnce (multi-provider orchestration)', () => {
 
   function buildDeps(overrides: Partial<AutoSyncDeps>, calls: Calls): AutoSyncDeps {
     return {
+      now: () => Date.now(),
       getPrefsPath: () => Promise.resolve(prefsFile),
       getConfig: () => Promise.resolve({ providers: [providerA, providerB] }),
       getInventory: (provider, tier) => {
@@ -321,6 +322,56 @@ describe('auto-sync runOnce (multi-provider orchestration)', () => {
     expect(calls.inventory).toEqual([]);
     expect(calls.sync).toEqual([]);
     expect(getAutoSyncStatus().state).toBe('idle');
+  });
+
+  // The e2e FIXTURE_NOW, months after which the real clock has moved on: the
+  // retention decisions must follow the injected clock, never Date.
+  const PINNED_NOW = Date.UTC(2026, 2, 2, 12);
+  const FIXTURE_MONTHS = ['2025-12', '2026-01', '2026-02'];
+
+  it('prunes against the injected clock, not the wall clock', async () => {
+    writePrefs({ autoSync: false, autoPrune: true });
+    const calls = newCalls();
+    const deps = buildDeps({
+      now: () => PINNED_NOW,
+      getConfig: () => Promise.resolve({ providers: [providerB] }),
+      getLocalPeriods: (provider, tier) => {
+        calls.localReads.push({ provider, tier });
+        return Promise.resolve(FIXTURE_MONTHS);
+      },
+    }, calls);
+
+    await runOnce(deps);
+
+    // 30-day hourly retention from 2026-03-02 keeps 2026-01 onward; the daily
+    // 365-day window keeps everything. On the wall clock both would expire.
+    expect(calls.deletes).toEqual([{ provider: 'aws-b', periods: ['2025-12'], tier: 'hourly' }]);
+  });
+
+  it('downloads only periods inside retention as of the injected clock', async () => {
+    writePrefs({ autoSync: true, autoPrune: false });
+    const calls = newCalls();
+    const deps = buildDeps({
+      now: () => PINNED_NOW,
+      getConfig: () => Promise.resolve({ providers: [providerB] }),
+      getInventory: (provider, tier) => {
+        calls.inventory.push({ provider, tier });
+        return Promise.resolve({
+          periods: FIXTURE_MONTHS.map(period => ({
+            period,
+            localStatus: 'missing',
+            files: [{ key: `${tier}-${period}.parquet`, contentHash: period, size: 1 }],
+          })),
+        });
+      },
+    }, calls);
+
+    await runOnce(deps);
+
+    expect(calls.sync).toEqual([
+      { provider: 'aws-b', tier: 'daily', files: 3 },
+      { provider: 'aws-b', tier: 'hourly', files: 2 },
+    ]);
   });
 
   it('one provider\'s prune failure never aborts the other provider\'s prune', async () => {
