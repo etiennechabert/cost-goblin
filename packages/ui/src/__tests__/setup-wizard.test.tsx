@@ -1253,8 +1253,9 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Acme Production');
 
-    await waitFor(() => { expect(screen.getByText(/couldn't list the buckets in/i)).toBeDefined(); });
-    expect(screen.getByText(/least-privilege reader/i)).toBeDefined();
+    await waitFor(() => { expect(screen.getByText(/normal for a read-only service account/i)).toBeDefined(); });
+    // A status, not an alert: with the recommended reader this is the normal path.
+    expect(screen.queryByRole('alert')).toBeNull();
     // The fixture DOES contain the Troubleshooter URL — the point is that the
     // wall of text is demoted into the disclosure rather than deleted. GCP
     // returns this same denial when the credential has no access to the
@@ -1262,7 +1263,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     // identity ADC resolved to, so it has to stay recoverable.
     const raw = screen.getByText(BUCKET_LIST_DENIED);
     expect(raw.closest('details')).not.toBeNull();
-    expect(screen.getByText('Details, and how to grant the listing permission')).toBeDefined();
+    expect(screen.getByText('Details')).toBeDefined();
     // The empty list must not be reported as a missing export...
     expect(screen.queryByText('No buckets found')).toBeNull();
     // ...and the grant the panel discloses is applied in a terminal, so the
@@ -1286,12 +1287,12 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Acme Production');
 
-    await waitFor(() => { expect(screen.getByText(/couldn't list the buckets in/i)).toBeDefined(); });
-    await userClickText(user, 'Details, and how to grant the listing permission');
+    await waitFor(() => { expect(screen.getByText(/normal for a read-only service account/i)).toBeDefined(); });
+    await userClickText(user, 'Details');
     expect(screen.getByText(BUCKET_LIST_DENIED).closest('details')?.open).toBe(true);
 
     await userClickText(user, 'Retry');
-    await waitFor(() => { expect(screen.getByText(/couldn't list the buckets in/i)).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByText(/normal for a read-only service account/i)).toBeDefined(); });
     expect(screen.getByText(BUCKET_LIST_DENIED).closest('details')?.open).toBe(true);
   });
 

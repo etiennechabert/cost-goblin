@@ -596,44 +596,40 @@ function GcpBucketListDenied({ project, message, detailsOpen, onToggleDetails, o
   onRetry: () => void;
 }>) {
   return (
-    // `aria-atomic="false"` because `role="alert"` implies atomic: without it,
-    // opening the disclosure re-announces the whole panel — headline, both
-    // paragraphs and the 350-character denial — instead of the text it reveals.
-    <div className="rounded-lg border border-border bg-bg-tertiary/30 px-4 py-3" role="alert" aria-atomic="false">
-      <p className="text-sm text-text-primary">
-        Couldn&apos;t list the buckets in <code className="text-text-secondary">{project}</code>.
-      </p>
-      <p className="text-xs text-text-secondary mt-1.5">
-        For a least-privilege reader this is expected and harmless:{' '}
-        <code className="text-text-secondary">roles/storage.objectViewer</code> is granted on the bucket
-        itself, while listing buckets is a project-level permission — so type the bucket name below and
-        press Browse. If instead the credential has no access to the bucket, browsing will fail too;
-        the details below name the principal that was denied.
+    // A status, not an alert: with the recommended read-only service account
+    // this denial is the normal path, so it reads as one line pointing at the
+    // field below. The raw denial — the only evidence of which principal was
+    // refused, since GCP returns the same sentence for "no access at all" —
+    // and the grant that fills the dropdown stay one click away.
+    // `aria-atomic="false"` so opening Details announces only what it reveals.
+    <div role="status" aria-atomic="false">
+      <p className="text-xs text-text-secondary">
+        Listing the buckets in <code className="text-text-secondary">{project}</code> isn&apos;t allowed for this
+        account — normal for a read-only service account. Enter the bucket name below.
       </p>
       <details
-        className="mt-2"
+        className="mt-1"
         open={detailsOpen}
         onToggle={(e) => { onToggleDetails(e.currentTarget.open); }}
       >
-        <summary className="text-xs text-text-muted cursor-pointer hover:text-text-secondary">
-          Details, and how to grant the listing permission
-        </summary>
+        <summary className="text-xs text-text-muted cursor-pointer hover:text-text-secondary">Details</summary>
         <p className="mt-1.5 whitespace-pre-wrap break-words font-mono text-[11px] text-text-muted">{message}</p>
         <p className="text-xs text-text-muted mt-2">
-          Granting <code className="text-text-secondary">roles/storage.bucketViewer</code> on{' '}
-          <code className="text-text-secondary">{project}</code> to that principal populates the dropdown,
-          at the cost of letting it see every bucket name in the project. The exact command is in{' '}
+          To pick from a list instead, grant <code className="text-text-secondary">roles/storage.bucketViewer</code>{' '}
+          on <code className="text-text-secondary">{project}</code> to that principal (it then sees every bucket name in
+          the project) —{' '}
           <a
             href={GCP_EXPORTER_DOCS}
             target="_blank"
             rel="noopener noreferrer"
             className="text-accent underline underline-offset-2 hover:text-accent-hover"
           >
-            the exporter README
-          </a>.
+            command in the exporter README
+          </a>{' '}
+          — then retry.
         </p>
+        <div className="mt-2"><RetryButton onRetry={onRetry} /></div>
       </details>
-      <div className="mt-2"><RetryButton onRetry={onRetry} /></div>
     </div>
   );
 }

@@ -374,7 +374,7 @@ route in an organisation with thousands of projects, where that listing is slow
 and the list too long to scan. The project step has a similar field, **Project
 not listed? Enter its ID**, usable while the list is still loading.
 
-> **"Couldn't list the buckets in …" is expected with the read-only reader, not
+> **"Listing the buckets in … isn't allowed for this account" is expected with the read-only reader, not
 > a misconfiguration.** Listing the buckets in a project is a *project-level*
 > permission; `roles/storage.objectViewer` grants rights on the bucket and
 > deliberately nothing above it, so the wizard reports that it could not list
