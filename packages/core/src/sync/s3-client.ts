@@ -57,12 +57,13 @@ export interface S3ClientBaseConfig {
  *  itself.
  *
  *  `profile === 'default'` leaves the profile unset so the SDK's own
- *  credential chain picks it (honouring `AWS_PROFILE`). */
-export function s3ClientConfig(profile: string, region?: string): S3ClientBaseConfig {
+ *  credential chain picks it (honouring `AWS_PROFILE`). `undefined` means no
+ *  profile at all: the caller supplies explicit credentials instead. */
+export function s3ClientConfig(profile: string | undefined, region?: string): S3ClientBaseConfig {
   return {
     region: region ?? DEFAULT_S3_REGION,
     followRegionRedirects: true,
-    ...(profile === 'default' ? {} : { profile }),
+    ...(profile === undefined || profile === 'default' ? {} : { profile }),
   };
 }
 
@@ -157,7 +158,7 @@ export async function createS3Handle(profile: string, region?: string, endpointO
   // Explicit credentials (a custom endpoint such as MinIO) replace the profile.
   const credentials = endpointOptions?.credentials;
   const client = new S3Client({
-    ...s3ClientConfig(credentials === undefined ? profile : 'default', region),
+    ...s3ClientConfig(credentials === undefined ? profile : undefined, region),
     ...(credentials === undefined ? {} : { credentials }),
     ...(endpointOptions?.endpoint === undefined ? {} : { endpoint: endpointOptions.endpoint }),
     ...(endpointOptions?.forcePathStyle === undefined ? {} : { forcePathStyle: endpointOptions.forcePathStyle }),

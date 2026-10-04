@@ -191,7 +191,7 @@ describe('S3 client (mocked) - listFiles', () => {
     );
   });
 
-  it('follows region redirects, so a bucket outside the starting region still lists', async () => {
+  it('starts from eu-central-1 with region redirects on when no region is given', async () => {
     const { S3Client } = await import('@aws-sdk/client-s3');
     await createS3Handle('default');
 
