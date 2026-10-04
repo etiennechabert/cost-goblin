@@ -1,6 +1,6 @@
 import { useCallback, useState, useEffect, useRef } from 'react';
 import type { DataInventoryResult, DataTier, CostGoblinConfig, ProviderConfig, SyncStatus } from '@costgoblin/core/browser';
-import { GCLOUD_ADC_LOGIN_COMMAND, GCLOUD_CLI_LOGIN_COMMAND } from '@costgoblin/core/browser';
+import { GCLOUD_ADC_LOGIN_COMMAND, GCLOUD_CLI_LOGIN_COMMAND, splitGcsLocation } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { ConfirmModal } from '../components/confirm-modal.js';
@@ -104,6 +104,16 @@ function configuredTiers(provider: ProviderConfig): { id: DataTier; cutoff: stri
     tiers.push({ id: 'cost-optimization', cutoff: retentionCutoffPeriod(provider.sync.costOptimization.retentionDays), retentionDays: provider.sync.costOptimization.retentionDays });
   }
   return tiers;
+}
+
+/** Where per-tier Configure opens the GCP wizard: the bucket of the daily
+ *  export and its parent folder, where the exporter writes `hourly/` beside
+ *  `daily/` — one click from either tier. */
+function gcpConfigureLocation(dailyBucket: string): { bucket: string; prefix: string } {
+  const { bucket, prefix } = splitGcsLocation(dailyBucket);
+  const segments = prefix.split('/').filter(s => s.length > 0);
+  const parent = segments.slice(0, -1).join('/');
+  return { bucket, prefix: parent === '' ? '' : `${parent}/` };
 }
 
 export function DataManagement() {
@@ -782,11 +792,10 @@ function ProviderSection({ provider, soleProvider, refreshSignal, gcpIdentityRef
       )}
 
       {/* Two-column tier layout — show immediately if a sync is running.
-          Daily's Configure gear is AWS-only: the wizard browses S3 and its save
-          path writes an `aws` provider, so opening it on a GCP provider would
-          rewrite that entry as `type: aws` and the GCP source would vanish. The
-          GCP wizard step is #517 phase F; until then GCP is configured in the
-          YAML. */}
+          Each tier's Configure opens the wizard on that tier alone, for both
+          clouds: an AWS provider in its profile's S3 buckets, a GCP one in the
+          bucket its daily export lives in (`gcpSource`), so hourly can be
+          added after setup on either — the wizard leaves it optional. */}
       {(inventory !== null || anySyncing) && (
         <div className="flex gap-5">
           <TierPanel
@@ -810,7 +819,7 @@ function ProviderSection({ provider, soleProvider, refreshSignal, gcpIdentityRef
             onDeletePeriod={handleDelete('daily', () => { setDailyRefreshKey(k => k + 1); })}
             syncState={dailySyncState}
             onCancelSync={() => { api.cancelSync(syncIdFor(name, 'daily')).catch(() => undefined); setDailySyncState({ status: 'idle' }); }}
-            onConfigure={provider.type === 'aws' ? () => { setConfigureSource('daily'); } : undefined}
+            onConfigure={() => { setConfigureSource('daily'); }}
           />
           {/* Hourly is real on both providers: AWS delivers it as a second
               Data Export, GCP as the exporter's untouched `…/hourly/` folder.
@@ -837,7 +846,7 @@ function ProviderSection({ provider, soleProvider, refreshSignal, gcpIdentityRef
               onDeletePeriod={handleDelete('hourly', () => { setHourlyRefreshKey(k => k + 1); })}
               syncState={hourlySyncState}
               onCancelSync={() => { api.cancelSync(syncIdFor(name, 'hourly')).catch(() => undefined); setHourlySyncState({ status: 'idle' }); }}
-              onConfigure={provider.type === 'aws' ? () => { setConfigureSource('hourly'); } : undefined}
+              onConfigure={() => { setConfigureSource('hourly'); }}
             />
           {provider.type === 'aws' && (
             <TierPanel
@@ -877,6 +886,7 @@ function ProviderSection({ provider, soleProvider, refreshSignal, gcpIdentityRef
               source={configureSource}
               profile={awsProfile ?? 'default'}
               providerName={name}
+              gcpSource={provider.type === 'gcp' ? gcpConfigureLocation(dailyBucket) : undefined}
               onComplete={() => { setConfigureSource(null); onConfigChanged(); }}
             />
           </div>
