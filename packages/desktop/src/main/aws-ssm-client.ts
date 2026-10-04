@@ -1,4 +1,4 @@
-import { logger, profileRegion } from '@costgoblin/core';
+import { credentialChainProfile, logger, profileRegion } from '@costgoblin/core';
 
 /** Per-region metadata AWS publishes under global-infrastructure. We pull
  *  three fields per region — longName for display, country + continent for
@@ -22,15 +22,16 @@ async function getSsmModule(): Promise<typeof import('@aws-sdk/client-ssm')> {
 }
 
 /** The AWS region configured for a profile in ~/.aws/config (see
- *  `profileRegion`: its `region`, else its SSO `sso_region`). We
- *  must pass this explicitly to the SDK — env vars like AWS_REGION would
- *  otherwise take precedence over the profile's own config, which bites users
- *  whose SCPs deny specific regions (e.g. us-east-1). */
+ *  `profileRegion`: its `region`, else its SSO `sso_region`; for `'default'`,
+ *  the profile `AWS_PROFILE` names, the one the client's credentials come
+ *  from). We must pass this explicitly to the SDK — env vars like AWS_REGION
+ *  would otherwise take precedence over the profile's own config, which bites
+ *  users whose SCPs deny specific regions (e.g. us-east-1). */
 async function resolveProfileRegion(profile: string): Promise<string> {
   const region = await profileRegion(profile);
   if (region !== undefined) return region;
   const configHint = process.platform === 'win32' ? String.raw`%USERPROFILE%\.aws\config` : '~/.aws/config';
-  throw new Error(`Profile "${profile}" has no region configured in ${configHint}. Add 'region = <aws-region>' to the profile.`);
+  throw new Error(`Profile "${credentialChainProfile(profile)}" has no region configured in ${configHint}. Add 'region = <aws-region>' to the profile.`);
 }
 
 const FIELDS = ['longName', 'geolocationCountry', 'geolocationRegion'] as const;

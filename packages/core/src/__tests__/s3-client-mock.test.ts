@@ -35,9 +35,11 @@ vi.mock('node:stream/promises', () => ({
 }));
 
 // A client starts in its profile's ~/.aws/config region: keep the developer's
-// own config out by pointing the SDK's loader at a file that doesn't exist.
+// own files out by pointing the SDK's loader at files that don't exist (it
+// reads the credentials file alongside the config, even for a region).
 beforeEach(() => {
   vi.stubEnv('AWS_CONFIG_FILE', join(tmpdir(), `costgoblin-no-aws-config-${String(process.pid)}`));
+  vi.stubEnv('AWS_SHARED_CREDENTIALS_FILE', join(tmpdir(), `costgoblin-no-aws-credentials-${String(process.pid)}`));
   vi.stubEnv('AWS_PROFILE', '');
 });
 

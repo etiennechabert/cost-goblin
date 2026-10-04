@@ -14,6 +14,7 @@ export {
   type S3Handle,
   type S3ClientBaseConfig,
   createS3Handle,
+  credentialChainProfile,
   profileRegion,
   s3ClientConfig,
   parseS3Path,

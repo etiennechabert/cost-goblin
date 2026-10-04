@@ -45,18 +45,28 @@ export interface S3ClientBaseConfig {
   readonly profile?: string;
 }
 
+/** The ~/.aws/config profile the SDK's credential chain reads for a
+ *  configured profile name. `'default'` names no profile: the chain resolves
+ *  it through `AWS_PROFILE` (`getProfileName` is the SDK's own resolution),
+ *  so anything read from the config for it has to follow the same rule, or
+ *  the credentials and the region come from two different profiles. */
+export function credentialChainProfile(profile: string): string {
+  return profile === 'default' ? getProfileName({}) : profile;
+}
+
 /** The region ~/.aws/config gives a profile: its own `region`, else the
  *  `sso_region` SSO-only profiles carry instead (often omitting `region`):
  *  in the profile itself for the legacy format `aws configure sso` writes
- *  without a session name, or in its linked sso-session. Read through the
- *  SDK's own loader with `ignoreCache`, so a profile edited since launch
- *  counts; it resolves to empty maps for a missing or unreadable file and
- *  never rejects. `AWS_REGION` is deliberately not consulted: it would outrank
- *  the profile, which bites orgs whose SCPs deny regions the profile was set
- *  up to avoid. */
+ *  without a session name, or in its linked sso-session. `'default'` reads
+ *  the profile `AWS_PROFILE` names (see `credentialChainProfile`). Read
+ *  through the SDK's own loader with `ignoreCache`, so a profile edited since
+ *  launch counts; it resolves to empty maps for a missing or unreadable file
+ *  and never rejects. `AWS_REGION` is deliberately not consulted: it would
+ *  outrank the profile, which bites orgs whose SCPs deny regions the profile
+ *  was set up to avoid. */
 export async function profileRegion(profile: string): Promise<string | undefined> {
   const { configFile } = await loadSharedConfigFiles({ ignoreCache: true });
-  const section = configFile[profile] ?? {};
+  const section = configFile[credentialChainProfile(profile)] ?? {};
   const nonEmpty = (value: unknown): string | undefined => typeof value === 'string' && value.length > 0 ? value : undefined;
   const own = nonEmpty(section['region']) ?? nonEmpty(section['sso_region']);
   if (own !== undefined) return own;
@@ -79,14 +89,13 @@ export async function profileRegion(profile: string): Promise<string | undefined
  *  follows the redirect itself.
  *
  *  `profile === 'default'` leaves the profile unset so the SDK's own
- *  credential chain picks it (honouring `AWS_PROFILE`), and the region is read
- *  from that same profile (`getProfileName` is the SDK's own resolution), so
- *  credentials and starting region never come from two different profiles.
- *  `undefined` means no profile at all: the caller supplies explicit
- *  credentials instead, so no profile region is looked up either. */
+ *  credential chain picks it (honouring `AWS_PROFILE`), and `profileRegion`
+ *  reads the region from that same profile, so credentials and starting
+ *  region never come from two different profiles. `undefined` means no
+ *  profile at all: the caller supplies explicit credentials instead, so no
+ *  profile region is looked up either. */
 export async function s3ClientConfig(profile: string | undefined, region?: string): Promise<S3ClientBaseConfig> {
-  const regionProfile = profile === 'default' ? getProfileName({}) : profile;
-  const start = region ?? (regionProfile === undefined ? undefined : await profileRegion(regionProfile));
+  const start = region ?? (profile === undefined ? undefined : await profileRegion(profile));
   return {
     region: start ?? DEFAULT_S3_REGION,
     followRegionRedirects: true,

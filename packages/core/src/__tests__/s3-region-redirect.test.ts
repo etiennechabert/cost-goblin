@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { S3Client, ListObjectsV2Command } from '@aws-sdk/client-s3';
-import { profileRegion, s3ClientConfig } from '../sync/s3-client.js';
+import { credentialChainProfile, profileRegion, s3ClientConfig } from '../sync/s3-client.js';
 
 /** The real SDK against a fake S3 whose bucket lives in eu-west-1: any other
  *  regional endpoint answers with the 301 PermanentRedirect S3 sends, which
@@ -106,6 +106,20 @@ describe('profileRegion', () => {
   it('prefers the profile’s own region over any sso_region', async () => {
     useAwsConfig('[profile sso]\nregion = eu-west-3\nsso_region = us-east-1\nsso_session = corp\n\n[sso-session corp]\nsso_region = eu-north-1\n');
     await expect(profileRegion('sso')).resolves.toBe('eu-west-3');
+  });
+
+  it('reads the profile AWS_PROFILE names for default, the one its credentials come from', async () => {
+    useAwsConfig('[default]\nregion = us-east-1\n\n[profile corp]\nregion = eu-west-1\n');
+    vi.stubEnv('AWS_PROFILE', 'corp');
+    await expect(profileRegion('default')).resolves.toBe('eu-west-1');
+    expect(credentialChainProfile('default')).toBe('corp');
+  });
+
+  it('keeps a named profile even when AWS_PROFILE names another', async () => {
+    useAwsConfig('[profile billing]\nregion = ap-south-1\n\n[profile corp]\nregion = eu-west-1\n');
+    vi.stubEnv('AWS_PROFILE', 'corp');
+    await expect(profileRegion('billing')).resolves.toBe('ap-south-1');
+    expect(credentialChainProfile('billing')).toBe('billing');
   });
 
   it.each([
