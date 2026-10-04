@@ -5,6 +5,13 @@
   "critical": true,
   "allowlist": [
     {
+      "GHSA-ch52-4w7c-c8xp|http-cache-semantics": {
+        "active": true,
+        "expiry": "2026-10-12",
+        "notes": "http-cache-semantics 4.3.0 (published 2026-10-04T02:56Z) sits outside the advisory's <=4.2.0 range, so npm now reports the fix as available at the leaf and attributes the advisory to no parent: audit-ci renders the path bare and the two chain-scoped keys below no longer match. The lockfile cannot move to 4.3.0 yet: .npmrc's min-release-age=7 refuses it until 2026-10-11, by design. Exact key, no wildcard, so it matches only this bare rendering. The only path is still the build-time electron-builder chain the keys below describe (npm ls http-cache-semantics). Expires 2026-10-12, after which CI fails closed again unless the lockfile is on http-cache-semantics >= 4.3.0 (npm update http-cache-semantics, or the Dependabot security PR); then delete this entry. The chain keys stay for the case where npm attributes the advisory to the chain again."
+      }
+    },
+    {
       "GHSA-ch52-4w7c-c8xp|app-builder-lib>@electron/get>got>cacheable-request>http-cache-semantics*": {
         "active": true,
         "notes": "No patched http-cache-semantics exists (<= 4.2.0 is every release). Only reached via electron-builder's app-builder-lib > @electron/get@3 > got@11 > cacheable-request, a devDependency chain that downloads Electron and builder toolsets at packaging time and is not in app.asar. got always loads cacheable-request but only uses it (and so http-cache-semantics) when a `cache` option is set: app-builder-lib sets none and electron-builder's config schema rejects electronDownload.downloadOptions. The flaw also needs a shared cache serving multiple users. Inner hops are exact on purpose (audit-ci's `*` also matches `>`). This key covers the path audit-ci starts at app-builder-lib (it cuts the walk at the dmg-builder / squirrel-windows peer cycle); the next key covers the longer ones. If a package in the chain gets its own advisory, audit-ci emits `>>` at that hop and CI fails closed: add that exact variant. Drop once app-builder-lib depends on @electron/get >= 5 (got-free; 4.x still uses got@14). See PR #651."
