@@ -7,10 +7,12 @@ import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { MOCK_GCP_PROVIDER, MockCostApi } from '../__fixtures__/mock-api.js';
 import { SetupWizard } from '../views/setup-wizard.js';
 
-function renderWizard(props?: { source?: 'daily' | 'hourly' | 'costOptimization'; profile?: string; mode?: 'add'; config?: CostGoblinConfig }) {
+function renderWizard(props?: { source?: 'daily' | 'hourly' | 'costOptimization'; profile?: string; mode?: 'add'; config?: CostGoblinConfig; providerName?: string; gcpSource?: { bucket: string; prefix: string }; prepare?: (api: MockCostApi) => void }) {
   const api = new MockCostApi();
   // Before render: the wizard reads the configured providers on mount.
   if (props?.config !== undefined) vi.spyOn(api, 'getConfig').mockResolvedValue(props.config);
+  // Before render, for wizards that start loading on mount (per-tier Configure).
+  props?.prepare?.(api);
   const onComplete = vi.fn();
   const user = userEvent.setup();
   return {
@@ -19,7 +21,7 @@ function renderWizard(props?: { source?: 'daily' | 'hourly' | 'costOptimization'
     user,
     ...render(
       <CostApiProvider value={api}>
-        <SetupWizard onComplete={onComplete} source={props?.source} profile={props?.profile} mode={props?.mode} />
+        <SetupWizard onComplete={onComplete} source={props?.source} profile={props?.profile} mode={props?.mode} providerName={props?.providerName} gcpSource={props?.gcpSource} />
       </CostApiProvider>,
     ),
   };
@@ -502,6 +504,52 @@ async function enterGcpBrowse(user: ReturnType<typeof userEvent.setup>): Promise
   await userClickText(user, 'acme-focus-export');
   await waitFor(() => { expect(screen.getByLabelText('Open folder focus')).toBeDefined(); });
 }
+
+describe('SetupWizard — per-tier Configure on a GCP provider', () => {
+  /** gcp-main with its daily tier only, as the wizard (hourly optional) leaves it. */
+  const dailyOnlyGcp: CostGoblinConfig = {
+    providers: [{
+      ...MOCK_GCP_PROVIDER,
+      sync: { daily: { bucket: asBucketPath('gs://acme-focus-export/focus/daily/'), retentionDays: 365 }, intervalMinutes: 60 },
+    }],
+    defaults: { periodDays: 30, costMetric: 'effective', lagDays: 2 },
+  };
+  const configureHourly = { source: 'hourly' as const, providerName: 'gcp-main', gcpSource: { bucket: 'acme-focus-export', prefix: 'focus/' }, config: dailyOnlyGcp, prepare: gcpExportLayout };
+
+  it('adds the hourly tier later, opening in the bucket the daily export lives in', async () => {
+    // The AWS tiers had this; on GCP the panel only said to edit the YAML, so
+    // skipping hourly during setup meant a hand edit to add it later.
+    const { api, user } = renderWizard(configureHourly);
+    const listBuckets = vi.spyOn(api, 'listGcsBuckets');
+    // Opens on the daily export's parent — no project, no bucket listing.
+    await waitFor(() => { expect(screen.getByLabelText('Open folder hourly')).toBeDefined(); });
+    expect(listBuckets).not.toHaveBeenCalled();
+    await user.click(screen.getByLabelText('Open folder hourly'));
+    await waitFor(() => { expect(screen.getByText('FOCUS export detected')).toBeDefined(); });
+    await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+
+    // The config records no project, so there is none to show.
+    expect(screen.queryByText('Google Cloud project')).toBeNull();
+    expect(screen.queryByText('Daily FOCUS export')).toBeNull();
+    await userClickText(user, 'Complete Setup');
+    await waitFor(() => { expect(api.writtenConfigs).toHaveLength(1); });
+    const written = api.writtenConfigs[0];
+    expect(written?.type).toBe('gcp');
+    expect(written?.providerName).toBe('gcp-main');
+    // Daily absent from the payload: the writer keeps the configured one.
+    expect(written?.dailyBucket).toBe('');
+    expect(written?.hourlyBucket).toBe('gs://acme-focus-export/focus/hourly/');
+    expect(written?.hourlyRetentionDays).toBe(30);
+  });
+
+  it('refuses the configured daily folder as the hourly one', async () => {
+    const { user } = renderWizard(configureHourly);
+    await waitFor(() => { expect(screen.getByLabelText('Open folder daily')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder daily'));
+    await waitFor(() => { expect(screen.getByText('Already used by the daily tier')).toBeDefined(); });
+  });
+});
 
 describe('SetupWizard — GCP browse-and-pick', () => {
   it('lists projects from gcloud, since GCS has no account-wide bucket list', async () => {
@@ -1083,11 +1131,12 @@ describe('SetupWizard — GCP "Signed in as" panel', () => {
     await user.click(screen.getByLabelText('Open folder daily'));
     await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
     await userClickText(user, 'Use this location');
-    await waitFor(() => { expect(screen.getByText('Skip')).toBeDefined(); });
-    expect(signedInPanel()).not.toBeNull();
-    await userClickText(user, 'Skip');
     await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
     expect(signedInPanel()).toBeNull();
+    // ← Back opens the optional hourly leg, which touches credentials again.
+    await userClickText(user, '← Back');
+    await waitFor(() => { expect(screen.getByText('Skip')).toBeDefined(); });
+    expect(signedInPanel()).not.toBeNull();
   });
 
   it('asks without a provider name — none exists yet — and does not re-run gcloud per step', async () => {

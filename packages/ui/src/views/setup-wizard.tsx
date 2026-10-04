@@ -27,6 +27,9 @@ const SOURCE_LABELS: Record<DataSource, { title: string; description: string }> 
  *  came from: a TYPED ID returns to the intro, which holds the typed entry,
  *  rather than starting the `gcloud projects list` the user just skipped. */
 interface GcpProjectChoice { readonly id: string; readonly typed: boolean }
+/** No project: per-tier Configure on a GCP provider, which knows its bucket
+ *  but not a project. `typed` so ← Back never re-lists projects. */
+const NO_GCP_PROJECT: GcpProjectChoice = { id: '', typed: true };
 
 type WizardStep =
   | { step: 'welcome' }
@@ -85,6 +88,12 @@ interface SetupWizardProps {
    *  the name renders read-only. Omitted in source mode, the first
    *  configured provider is targeted. */
   providerName?: string | undefined;
+  /** Source mode for a GCP provider: the bucket holding its exports and the
+   *  folder to open (the daily export's parent, where the exporter writes
+   *  `hourly/` beside `daily/`). The GCP config records no project and
+   *  browsing a bucket needs none, so the wizard opens straight in it —
+   *  the same per-tier Configure the AWS tiers get. `profile` is not used. */
+  gcpSource?: { readonly bucket: string; readonly prefix: string } | undefined;
   /** 'add' opens the wizard to create an ADDITIONAL provider: the name field
    *  starts empty, is required, and must not collide with an existing
    *  provider (the upsert would silently overwrite it). Default: first-run
@@ -1511,8 +1520,10 @@ function ConfirmStep({ state, providerNaming, existing, retention, onComplete, o
   // The credential card names whichever store this provider authenticates
   // through. Hardcoding "AWS Profile" here was fine while the wizard only
   // built AWS providers; a GCP run has no profile at all.
+  // A per-tier Configure on a GCP provider has no project (the config records
+  // none), so there is no card to show.
   const credential = state.cloud === 'gcp'
-    ? { label: 'Google Cloud project', value: state.project.id }
+    ? (state.project.id === '' ? null : { label: 'Google Cloud project', value: state.project.id })
     : { label: 'AWS Profile', value: state.profile };
 
   function handleSave() {
@@ -1585,10 +1596,12 @@ function ConfirmStep({ state, providerNaming, existing, retention, onComplete, o
           )}
         </div>
 
-        <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
-          <p className="text-xs text-text-muted uppercase tracking-wider">{credential.label}</p>
-          <p className="text-sm font-mono text-text-primary mt-0.5">{credential.value}</p>
-        </div>
+        {credential !== null && (
+          <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
+            <p className="text-xs text-text-muted uppercase tracking-wider">{credential.label}</p>
+            <p className="text-sm font-mono text-text-primary mt-0.5">{credential.value}</p>
+          </div>
+        )}
 
         {paths.map(({ value, tier }) => {
           const label = SOURCE_LABELS[tier].title;
@@ -1647,9 +1660,15 @@ function ConfirmStep({ state, providerNaming, existing, retention, onComplete, o
   );
 }
 
-export function SetupWizard({ onComplete, source: initialSource, profile: initialProfile, providerName: initialProviderName, mode, workspaceNaming, workspaceLabel, otherWorkspaces }: Readonly<SetupWizardProps>): React.JSX.Element {
+export function SetupWizard({ onComplete, source: initialSource, profile: initialProfile, providerName: initialProviderName, gcpSource, mode, workspaceNaming, workspaceLabel, otherWorkspaces }: Readonly<SetupWizardProps>): React.JSX.Element {
   const api = useCostApi();
-  const isSourceMode = initialSource !== undefined && initialProfile !== undefined;
+  // Per-tier Configure from Data & Sync. A GCP provider opens on its own
+  // bucket (no cost-optimization tier there); an AWS one on its profile.
+  const gcpSourceTier: GcpSource | undefined = gcpSource !== undefined && (initialSource === 'daily' || initialSource === 'hourly')
+    ? initialSource
+    : undefined;
+  const awsSourceProfile = gcpSource === undefined && initialSource !== undefined ? initialProfile : undefined;
+  const isSourceMode = gcpSourceTier !== undefined || awsSourceProfile !== undefined;
   const [workspaceName, setWorkspaceName] = useState(workspaceNaming?.initialName ?? '');
   // Provider identity: fixed when reconfiguring an existing provider (source
   // mode), free-text when adding one, prefilled 'aws-main' on first run.
@@ -1693,8 +1712,11 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     }
   }, [initialWorkspaceName]);
   const [wizard, setWizard] = useState<WizardStep>(() => {
-    if (isSourceMode) {
-      return { step: 'bucket', profile: initialProfile, source: initialSource, buckets: [], loading: true, selected: '', error: '' };
+    if (gcpSourceTier !== undefined && gcpSource !== undefined) {
+      return { step: 'gcp-browse', project: NO_GCP_PROJECT, source: gcpSourceTier, bucket: gcpSource.bucket, prefix: gcpSource.prefix, prefixes: [], loading: true, folder: { kind: 'unknown' }, hasParquet: false, truncated: false, error: '', path: gcpSource.prefix.split('/').filter(s => s.length > 0) };
+    }
+    if (awsSourceProfile !== undefined && initialSource !== undefined) {
+      return { step: 'bucket', profile: awsSourceProfile, source: initialSource, buckets: [], loading: true, selected: '', error: '' };
     }
     // Naming comes first on a true first run; otherwise (workspace already
     // named, e.g. created via Settings → New workspace) start at the hub.
@@ -1796,6 +1818,12 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
 
   function startGcpBucketStep(project: GcpProjectChoice, source: GcpSource): void {
     const token = ++stepRequestRef.current;
+    // Per-tier Configure knows the bucket but not the project, and listing
+    // buckets needs one: offer the typed entry instead of an error.
+    if (project.id === '') {
+      setWizard({ step: 'gcp-bucket', project, source, buckets: [], loading: false, selected: '', error: '' });
+      return;
+    }
     setWizard({ step: 'gcp-bucket', project, source, buckets: [], loading: true, selected: '', error: '' });
     api.listGcsBuckets(project.id).then(result => {
       if (stepRequestRef.current !== token) return;
@@ -1869,11 +1897,15 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   // Goes through `startBucketStep` rather than repeating its body, so the
   // token guard and the error path stay in one place.
   useEffect(() => {
-    if (isSourceMode && !bucketsLoaded) {
+    if (bucketsLoaded) return;
+    if (gcpSourceTier !== undefined && gcpSource !== undefined) {
       setBucketsLoaded(true);
-      startBucketStep(initialProfile, initialSource);
+      gcpBrowseTo(NO_GCP_PROJECT, gcpSourceTier, gcpSource.bucket, gcpSource.prefix);
+    } else if (awsSourceProfile !== undefined && initialSource !== undefined) {
+      setBucketsLoaded(true);
+      startBucketStep(awsSourceProfile, initialSource);
     }
-  }, [isSourceMode, bucketsLoaded, api, initialProfile, initialSource]);
+  }, [bucketsLoaded, api, awsSourceProfile, gcpSourceTier, gcpSource, initialSource]);
 
   function goToProfileStep() {
     // `collectedPaths` is shared by both chains, so entering one must clear
@@ -2177,7 +2209,8 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
               // Both legs: Back-navigation lets the user re-pick daily after
               // hourly is already collected, and validateGcpSync rejects the
               // overlap in either direction.
-              conflictsWith={wizard.source === 'hourly' ? collectedPaths.daily : collectedPaths.hourly}
+              conflictsWith={(wizard.source === 'hourly' ? collectedPaths.daily : collectedPaths.hourly)
+                || (existingConfigs.find(c => String(c.name) === providerName && c.type === 'gcp')?.sync[wizard.source === 'hourly' ? 'daily' : 'hourly']?.bucket ?? '')}
               onNavigate={(prefix) => { gcpBrowseTo(wizard.project, wizard.source, wizard.bucket, prefix); }}
               onRetry={() => { setGcpIdentityRefresh(n => n + 1); gcpBrowseTo(wizard.project, wizard.source, wizard.bucket, wizard.prefix); }}
               onConfirm={handleGcpBrowseConfirm}

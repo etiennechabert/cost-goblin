@@ -17,6 +17,9 @@ export { ConfigValidationError } from './config/validator.js';
 // The wizard seeds its per-tier retention pickers from the same defaults the
 // writer and prune paths use. Pure leaf module (type-only import).
 export { DEFAULT_RETENTION_DAYS } from './sync/retention.js';
+// Data & Sync opens the GCP wizard on a tier inside the provider's own bucket.
+// Leaf module with no imports.
+export { splitGcsLocation } from './sync/gcs-bucket-name.js';
 // The editor validates strip patterns against the same caps the save handler
 // enforces. Pure leaf module: the bounded executor that RUNS the patterns
 // (normalize/strip-bounded.ts, node:vm) must never be exported from here.
