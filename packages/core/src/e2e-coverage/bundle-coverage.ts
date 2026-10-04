@@ -138,8 +138,13 @@ async function convertMeasured(entry: BundleEntry, sourceMap: SourceMap): Promis
   });
 }
 
-const IGNORE_FILE_HINT =
-  /\/\*\s*(?:istanbul|[cv]8|node:coverage)\s+ignore\s+file\b[\s\S]*?\*\/|\/\/[ \t]*(?:istanbul|[cv]8|node:coverage)\s+ignore\s+file\b[^\n]*/g;
+// The block and line comment forms ast-v8-to-istanbul recognises.
+const IGNORE_FILE_BLOCK_HINT = /\/\*\s*(?:istanbul|[cv]8|node:coverage)\s+ignore\s+file\b[\s\S]*?\*\//g;
+const IGNORE_FILE_LINE_HINT = /\/\/[ \t]*(?:istanbul|[cv]8|node:coverage)\s+ignore\s+file\b[^\n]*/g;
+
+function blank(text: string): string {
+  return text.replace(/[^\r\n]/g, ' ');
+}
 
 /**
  * `code` with every `ignore file` coverage hint blanked out, same length and
@@ -153,7 +158,7 @@ const IGNORE_FILE_HINT =
  * `restrictToExecutableLines` drops it from the e2e report too.
  */
 export function withoutIgnoreFileHints(code: string): string {
-  return code.replace(IGNORE_FILE_HINT, hint => hint.replace(/[^\r\n]/g, ' '));
+  return code.replace(IGNORE_FILE_BLOCK_HINT, blank).replace(IGNORE_FILE_LINE_HINT, blank);
 }
 
 type IgnoreNode = NonNullable<Parameters<typeof astV8ToIstanbul>[0]['ignoreNode']>;

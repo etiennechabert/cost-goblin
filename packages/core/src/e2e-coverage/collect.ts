@@ -2,6 +2,7 @@ import { isStringRecord } from '../utils/json.js';
 import type {
   CoverageReport,
   ExecutableLines,
+  FileCoverage,
   IstanbulBranch,
   IstanbulFileCoverage,
   IstanbulFunction,
@@ -183,6 +184,33 @@ function parseBranches(
   return branches;
 }
 
+/** One file's line records under `restrictToExecutableLines`' line rules. */
+function restrictLines(coverage: FileCoverage, lines: ExecutableLines): Map<number, number> {
+  const kept = new Map<number, number>();
+  const displaced: [number, number][] = [];
+  for (const [line, count] of coverage.lines) {
+    if (lines.statements.has(line) || (count > 0 && lines.branches.has(line))) kept.set(line, count);
+    else if (count > 0) displaced.push([line, count]);
+  }
+  for (const [line, count] of displaced) {
+    const target = lineVitestStarts(line, coverage, lines);
+    if (target !== null) kept.set(target, Math.max(kept.get(target) ?? 0, count));
+  }
+  return kept;
+}
+
+/**
+ * The first statement line within the span of the statement starting on
+ * `line` that no record of the file starts on, or `null`.
+ */
+function lineVitestStarts(line: number, coverage: FileCoverage, lines: ExecutableLines): number | null {
+  const end = coverage.statementEnds.get(line) ?? line;
+  for (let target = line + 1; target <= end; target++) {
+    if (lines.statements.has(target) && !coverage.lines.has(target)) return target;
+  }
+  return null;
+}
+
 /**
  * Restricts each file's records to what the unit report could list for it
  * (see `executableLines`), so that no line or branch can come out covered that
@@ -222,23 +250,8 @@ export function restrictToExecutableLines(
       continue;
     }
     if (lines.statements.size === 0 && lines.branches.size === 0) continue;
-    const kept = new Map<number, number>();
-    const displaced: [number, number][] = [];
-    for (const [line, count] of coverage.lines) {
-      if (lines.statements.has(line) || (count > 0 && lines.branches.has(line))) kept.set(line, count);
-      else if (count > 0) displaced.push([line, count]);
-    }
-    for (const [line, count] of displaced) {
-      const end = coverage.statementEnds.get(line) ?? line;
-      for (let target = line + 1; target <= end; target++) {
-        if (lines.statements.has(target) && !coverage.lines.has(target)) {
-          kept.set(target, Math.max(kept.get(target) ?? 0, count));
-          break;
-        }
-      }
-    }
     restricted.set(filePath, {
-      lines: kept,
+      lines: restrictLines(coverage, lines),
       functions: coverage.functions,
       branches: coverage.branches.filter(branch => lines.branches.has(branch.line)),
       statementEnds: coverage.statementEnds,
