@@ -414,17 +414,41 @@ export async function assertNoReactCrash(page: Page): Promise<void> {
 }
 
 /** Runs in the renderer (serialized by page.evaluate — no outer references).
- *  True when every dashboard widget slot inside the viewport has mounted and
- *  shows no CoinRainLoader (the `<output>` every widget renders while its query
- *  is in flight). Slots below the fold stay deferred until scrolled to, so
- *  only the visible ones can be waited on. A page with no slots (every
- *  non-dashboard view) is trivially settled. */
-function viewportWidgetsSettled(): boolean {
-  return [...document.querySelectorAll('[data-widget-id]')].every(slot => {
-    const box = slot.getBoundingClientRect();
-    const inViewport = box.bottom > 0 && box.top < window.innerHeight && box.right > 0 && box.left < window.innerWidth;
-    return !inViewport || (slot.getAttribute('data-widget-state') === 'mounted' && slot.querySelector('output') === null);
-  });
+ *  What still keeps the dashboard from being settled, one entry per blocker
+ *  (empty when settled):
+ *  - an in-viewport widget slot that hasn't mounted yet;
+ *  - a mounted slot still loading: CoinRainLoader's `<output>`, or a plain
+ *    "Loading …" line like the baseline widget's. Mounted slots count wherever
+ *    they are — the scheduler also mounts slots up to 400px below the fold,
+ *    and tests read those (the overview's breakdown table). Slots further down
+ *    stay deferred until scrolled to, so they can't be waited on;
+ *  - the rollup-building overlay, which stands in for every slot while the
+ *    rollup for the range is computed.
+ *  Read twice 100ms apart, so a slot mounting between the reads (its loader
+ *  not painted yet) can't pass on one lucky read. A page with no slots and no
+ *  overlay (every non-dashboard view) needs only the first. */
+async function unsettledWidgets(): Promise<string[]> {
+  const read = (): string[] => {
+    const blockers = [...document.querySelectorAll('h3')].some(h => h.textContent === 'Preparing your cost data')
+      ? ['rollup-building overlay']
+      : [];
+    for (const slot of document.querySelectorAll('[data-widget-id]')) {
+      const id = slot.getAttribute('data-widget-id') ?? '(unnamed)';
+      if (slot.getAttribute('data-widget-state') === 'mounted') {
+        if (slot.querySelector('output') !== null || /\bLoading\b/.test(slot.textContent ?? '')) blockers.push(`${id}: loading`);
+        continue;
+      }
+      const box = slot.getBoundingClientRect();
+      if (box.bottom > 0 && box.top < window.innerHeight && box.right > 0 && box.left < window.innerWidth) {
+        blockers.push(`${id}: not mounted`);
+      }
+    }
+    return blockers;
+  };
+  const first = read();
+  if (first.length === 0 && document.querySelector('[data-widget-id]') === null) return first;
+  await new Promise(resolve => { setTimeout(resolve, 100); });
+  return [...new Set([...first, ...read()])];
 }
 
 export async function waitForQuerySettle(page: Page): Promise<void> {
@@ -435,14 +459,12 @@ export async function waitForQuerySettle(page: Page): Promise<void> {
   } catch {
     // Loading text might never have appeared (instant response or error)
   }
-  // Then the dashboard widgets in view. Two consecutive settled polls, so a
-  // slot the scheduler mounts between two of them (its loader not painted
-  // yet) can't pass on a single lucky read.
-  let streak = 0;
-  await expect.poll(async () => {
-    streak = (await page.evaluate(viewportWidgetsSettled)) ? streak + 1 : 0;
-    return streak;
-  }, { message: 'every in-viewport widget mounted with no loader', timeout: 20_000, intervals: [100] }).toBeGreaterThanOrEqual(2);
+  // Then the dashboard widgets. A failed evaluate (a reload destroying the
+  // context mid-poll) is retried rather than failing the poll outright.
+  await expect.poll(
+    () => page.evaluate(unsettledWidgets).catch((err: unknown) => [`page not ready: ${String(err)}`]),
+    { message: 'dashboard widgets settled (slots mounted, no loader, no rollup overlay)', timeout: 20_000, intervals: [100] },
+  ).toEqual([]);
   // catch React crashes that happened during query/render cycle
   await assertNoReactCrash(page);
 }
@@ -457,10 +479,11 @@ export async function hasVisibleData(page: Page): Promise<boolean> {
 }
 
 /** Assert the current view has loaded real dollar data, retrying until the
- *  cost cells actually paint. `waitForQuerySettle` only waits for dashboard
- *  widget slots; the analysis views (Trends, Tags) hold no slots, so their
- *  data can still be in flight when it returns — poll rather than
- *  snapshotting `hasVisibleData` once. */
+ *  cost cells actually paint. Past its page-wide "Loading" wait,
+ *  `waitForQuerySettle` only tracks dashboard widget slots, and the analysis
+ *  views (Trends, Tags) hold none — a query they start after that wait can
+ *  still be in flight when it returns. Poll rather than snapshotting
+ *  `hasVisibleData` once. */
 export async function expectVisibleData(page: Page): Promise<void> {
   await expect.poll(() => hasVisibleData(page), { timeout: LOAD_TIMEOUT }).toBe(true);
 }

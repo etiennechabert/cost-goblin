@@ -45,23 +45,10 @@ test.describe('Data Management', () => {
     await expect(page.getByRole('button', { name: 'Toggle auto-prune' })).toBeVisible();
   });
 
-  test('org section is visible (either synced or prompt)', async () => {
-    const synced = page.getByText('AWS Organization').first();
-    const prompt = page.getByText('AWS Organizations not synced');
-    const hasSynced = await synced.isVisible().catch(() => false);
-    const hasPrompt = await prompt.isVisible().catch(() => false);
-
-    expect(hasSynced || hasPrompt).toBe(true);
-
-    if (hasSynced && !hasPrompt) {
-      // click to expand
-      await synced.click();
-      await expect(page.getByText('Account ID').first()).toBeVisible({ timeout: 3000 });
-      await screenshot(page, 'data-management-org');
-
-      // collapse
-      await synced.click();
-    }
+  test('org section prompts for an AWS Organizations sync', async () => {
+    // The fixtures ship no org data, so the section is the sync prompt.
+    await expect(page.getByText('AWS Organizations not synced')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Sync from AWS Organizations' })).toBeVisible();
   });
 
   /** A tier panel, found from its <h3> title: the nearest rounded-xl card
@@ -73,21 +60,23 @@ test.describe('Data Management', () => {
   /** The fixture tree's local inventory: daily holds 2026-01..02, hourly and
    *  cost optimization 2026-02 only. Nothing remote is reachable (no
    *  credentials), so these come from the local scan alone. */
+  const FIXTURE_INVENTORY: readonly { title: string; months: string; from: string; periods: readonly string[] }[] = [
+    { title: 'Daily', months: '2 months', from: '2026-01', periods: ['Jan 2026', 'Feb 2026'] },
+    { title: 'Hourly', months: '1 months', from: '2026-02', periods: ['Feb 2026'] },
+    { title: 'Cost Optimization', months: '1 months', from: '2026-02', periods: ['Feb 2026'] },
+  ];
+
   async function expectFixtureInventory(): Promise<void> {
     await expect(page.getByText('Checking S3 for available data...')).toBeHidden({ timeout: LOAD_TIMEOUT });
-    const daily = tierPanel('Daily');
-    await expect(daily.getByText('2 months')).toBeVisible();
-    await expect(daily.getByText('2026-01', { exact: true })).toBeVisible();
-    await expect(daily.getByText('to 2026-02', { exact: true })).toBeVisible();
-    await expect(daily.getByText('Downloaded', { exact: true })).toBeVisible();
-    for (const period of ['Jan 2026', 'Feb 2026']) {
-      await expect(daily.getByText(period, { exact: true })).toBeVisible();
-    }
-    for (const title of ['Hourly', 'Cost Optimization']) {
+    for (const { title, months, from, periods } of FIXTURE_INVENTORY) {
       const panel = tierPanel(title);
-      await expect(panel.getByText('1 months')).toBeVisible();
+      await expect(panel.getByText(months)).toBeVisible();
+      await expect(panel.getByText(from, { exact: true })).toBeVisible();
+      await expect(panel.getByText('to 2026-02', { exact: true })).toBeVisible();
       await expect(panel.getByText('Downloaded', { exact: true })).toBeVisible();
-      await expect(panel.getByText('Feb 2026', { exact: true })).toBeVisible();
+      for (const period of periods) {
+        await expect(panel.getByText(period, { exact: true })).toBeVisible();
+      }
     }
   }
 
@@ -97,9 +86,21 @@ test.describe('Data Management', () => {
   });
 
   test('Refresh reloads the inventory back into the same tier panels', async () => {
-    // The click puts every inventory query back into loading; the panels
-    // must come back with the same local inventory, not empty or errored.
+    // Every inventory assert also holds on the pre-click panels, and the
+    // reload's "Checking S3…" state commits only after the click returns and
+    // can last a frame — too brief for a polled assertion. Record it from the
+    // page instead, so a Refresh that reloads nothing fails here.
+    await page.evaluate(() => {
+      const observer = new MutationObserver(() => {
+        if (!(document.body.textContent ?? '').includes('Checking S3 for available data...')) return;
+        document.body.dataset['inventoryReloaded'] = 'true';
+        observer.disconnect();
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    });
     await page.getByRole('button', { name: 'Refresh' }).click();
+    await expect(page.locator('body')).toHaveAttribute('data-inventory-reloaded', 'true');
+    // ...and the panels come back with the same local inventory.
     await expectFixtureInventory();
     await screenshot(page, 'data-management-refreshed');
   });
@@ -120,16 +121,21 @@ test.describe('Data Management', () => {
     await expect(page.getByText('Delete all local data')).toBeHidden();
   });
 
-  test('configure button opens the setup wizard modal and Close dismisses it', async () => {
-    // The gear on the Daily panel, not the provider-level "Configure an
-    // additional billing source" button that shares the title prefix.
-    await page.locator('button[title="Configure daily"]').click();
-
+  test('Add Provider and the tier gear open their setup wizard modals and Close dismisses them', async () => {
+    // Two different modals behind two buttons sharing a title prefix: the
+    // header's Add Provider ("Configure an additional billing source…") and
+    // the Daily panel's gear.
     const closeBtn = page.locator('button[title="Close"]');
-    await expect(closeBtn).toBeVisible();
-    await screenshot(page, 'data-management-configure-modal');
-    await closeBtn.click();
-    await expect(closeBtn).toBeHidden();
+    for (const { title, shot } of [
+      { title: 'Configure an additional billing source (e.g. a second AWS payer account)', shot: 'add-provider' },
+      { title: 'Configure daily', shot: 'daily' },
+    ]) {
+      await page.locator(`button[title="${title}"]`).click();
+      await expect(closeBtn).toBeVisible();
+      await screenshot(page, `data-management-modal-${shot}`);
+      await closeBtn.click();
+      await expect(closeBtn).toBeHidden();
+    }
   });
 });
 
@@ -182,9 +188,8 @@ test.describe('Dimensions', () => {
 
     await screenshot(page, 'dimensions-add-new');
 
-    // Cancel and wait for editor to close
     await page.getByRole('button', { name: 'Cancel' }).click();
-    await page.waitForTimeout(300);
+    await expect(page.getByText('Resource Tag', { exact: true })).toBeHidden();
   });
 
   test('Resource Tags section loads or shows loading/error state', async () => {
@@ -331,7 +336,7 @@ test.describe('Cost Scope', () => {
     await expect(card.getByText('After scope', { exact: true }).first()).toBeVisible();
     await expect(card.getByText('Excluded', { exact: true }).first()).toBeVisible();
 
-    // Daily cost label appears only when the histogram is rendered
+    // The histogram's label (rendered with or without preview data)
     await expect(card.getByText('Daily cost', { exact: true }).first()).toBeVisible();
 
     await screenshot(page, 'cost-scope-preview');
@@ -388,6 +393,14 @@ test.describe('Cost Scope', () => {
 
     // Save button should appear now (draft is dirty)
     await expect(page.getByRole('button', { name: /Save/ })).toBeVisible();
+
+    // The edit re-runs the debounced preview. An enabled rule's tally (the
+    // span beside its switch) leaves '—' only once that round trip resolves —
+    // nothing else waits for the preview, which would otherwise never fire
+    // before the next edit re-arms its debounce.
+    const tally = toggle.locator('xpath=../span');
+    if (nowChecked) await expect(tally).not.toHaveText('—');
+    else await expect(tally).toHaveText('—');
 
     // Cancel to keep the saved state untouched
     await page.getByRole('button', { name: 'Cancel' }).click();

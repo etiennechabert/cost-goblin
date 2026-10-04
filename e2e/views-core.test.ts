@@ -1,4 +1,4 @@
-import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
+import { test, expect, type ElectronApplication, type Locator, type Page } from '@playwright/test';
 import {
   launchAppWithCoverage,
   finishCoverage,
@@ -207,29 +207,26 @@ test.describe('Cost Overview', () => {
   test('switching the date preset reloads the total, and the breakdown table renders rows', async () => {
     const total = page.locator('p:text-is("Total Cost") + span').first();
     await expect(total).toHaveText(/^\$/);
-    const before = await total.textContent();
+    const before = await total.innerText();
 
     // 365 days back from the pinned clock covers the whole fixture window, a
     // strict superset of the default 30 — the total must reload to a new value.
     await selectDatePreset(page, 'Last 365 days');
     await expect.poll(async () => {
-      const text = await total.textContent();
-      return text !== before && text?.startsWith('$') === true ? 'reloaded' : text;
-    }, { message: `total reloads from ${String(before)} for the wider range`, timeout: LOAD_TIMEOUT }).toBe('reloaded');
-    await waitForQuerySettle(page);
+      const text = await total.innerText();
+      return text !== before && text.startsWith('$') ? 'reloaded' : text;
+    }, { message: `total reloads from ${before} for the wider range`, timeout: LOAD_TIMEOUT }).toBe('reloaded');
 
-    await expectVisibleData(page);
-    const tables = page.locator('table');
-    expect(await tables.count()).toBeGreaterThan(0);
-
-    const rows = tables.last().locator('tbody tr');
-    expect(await rows.count()).toBeGreaterThan(0);
+    // The breakdown table sits below the fold: wait for its rows rather than
+    // counting them once.
+    const rows = page.locator('table').last().locator('tbody tr');
+    await expect(rows.first()).toBeVisible();
     await rows.first().hover();
     await screenshot(page, 'overview-breakdown-hover');
 
     // Back to the default range: the total returns to where it started.
     await selectDatePreset(page, 'Last 30 days');
-    await expect(total).toHaveText(before ?? '');
+    await expect(total).toHaveText(before, { useInnerText: true });
     await waitForQuerySettle(page);
   });
 
@@ -248,23 +245,29 @@ test.describe('Cost Overview', () => {
 // Cost Trends
 // ---------------------------------------------------------------------------
 test.describe('Cost Trends', () => {
+  /** The "N items · <totals>" line, rendered only once the trends query has
+   *  settled. A getter: `page` is assigned in the file's beforeAll. */
+  const itemSummary = (): Locator => page.getByText(/^\d+ items · /);
+
   test.beforeAll(async () => {
     await navigateToText(page, 'Trends', 'Period-over-period comparison');
   });
 
   test('switching dimensions triggers reload', async () => {
-    const dimBtns = page.locator('.rounded-lg.border.bg-bg-tertiary\\/30 button').first();
-    const allDimBtns = page.locator('.rounded-lg.border.bg-bg-tertiary\\/30 button');
-    const count = await allDimBtns.count();
+    // The dimension selector's pill row, found by a dimension it holds: the
+    // date-picker trigger and the direction toggle share its classes.
+    const dimBtns = page.locator('div.rounded-lg.border', { has: page.getByRole('button', { name: 'Region', exact: true }) }).locator('button');
+    await expect(dimBtns.nth(1)).toBeVisible();
 
-    if (count > 1) {
-      await allDimBtns.nth(1).click();
-      await waitForQuerySettle(page);
-      await screenshot(page, 'trends-dimension-switch');
+    // The selected dimension is the accent-filled pill.
+    await dimBtns.nth(1).click();
+    await expect(dimBtns.nth(1)).toHaveClass(/\bbg-accent\b/);
+    await expect(itemSummary()).toBeVisible();
+    await screenshot(page, 'trends-dimension-switch');
 
-      await allDimBtns.first().click();
-      await waitForQuerySettle(page);
-    }
+    await dimBtns.first().click();
+    await expect(dimBtns.first()).toHaveClass(/\bbg-accent\b/);
+    await expect(itemSummary()).toBeVisible();
   });
 
   test('All/Increase/Savings toggle is present and clickable', async () => {
@@ -281,7 +284,7 @@ test.describe('Cost Trends', () => {
 
     // The toggle filters the loaded rows client-side; the summary line's total
     // label names the direction in force.
-    const summary = page.getByText(/^\d+ items · /);
+    const summary = itemSummary();
     await savingsBtn.click();
     await expect(summary).toHaveText(/ total savings$/);
     await screenshot(page, 'trends-savings');
@@ -299,26 +302,26 @@ test.describe('Cost Trends', () => {
     const numberInputs = page.locator('input[type="number"]');
     const inputCount = await numberInputs.count();
     expect(inputCount).toBeGreaterThanOrEqual(2);
-    // Each threshold change re-runs the trends query; the summary line is
-    // hidden while it is in flight and back (possibly at "0 items") once it
-    // settles.
-    const summary = page.getByText(/^\d+ items · /);
-
-    // modify Min $ threshold
     const minDollar = numberInputs.first();
-    await minDollar.fill('1000');
-    await expect(summary).toBeVisible();
-
-    // modify Min %
     const minPercent = numberInputs.nth(1);
+
+    // Each threshold change re-runs the trends query. At 0/0 every changed
+    // entity is listed; the fixture's deltas are far below $1000 / 50%, so the
+    // count must fall — and come back once the thresholds are restored. A
+    // count, not mere visibility: the old summary line stays up until the
+    // re-query's loading state commits.
+    const summary = itemSummary();
+    const atZero = await summary.innerText();
+    const itemCount = async (): Promise<number> => Number.parseInt(await summary.innerText(), 10);
+
+    await minDollar.fill('1000');
     await minPercent.fill('50');
-    await expect(summary).toBeVisible();
+    await expect.poll(itemCount, { message: `items drop below "${atZero}"` }).toBeLessThan(Number.parseInt(atZero, 10));
     await screenshot(page, 'trends-high-threshold');
 
-    // restore defaults
     await minDollar.fill('0');
     await minPercent.fill('0');
-    await expect(summary).toBeVisible();
+    await expect(summary).toHaveText(atZero, { useInnerText: true });
   });
 
   test('shows item count summary and table', async () => {
@@ -327,8 +330,7 @@ test.describe('Cost Trends', () => {
     // an empty or error state here is a regression, not an acceptable branch.
     await expectVisibleData(page);
 
-    const summaryLine = page.locator('text=/\\d+ items/');
-    await expect(summaryLine.first()).toBeVisible();
+    await expect(itemSummary()).toBeVisible();
 
     await expect(page.locator('table').first()).toBeVisible();
     for (const col of ['Entity', 'Current', 'Previous', 'Delta', 'Change']) {
@@ -381,22 +383,21 @@ test.describe('Missing Tags', () => {
   });
 
   test('tag dimension tabs are visible and switchable', async () => {
-    const tabContainer = page.locator('.rounded-lg.border.bg-bg-tertiary\\/30');
-    const hasMultiple = await tabContainer.first().isVisible().catch(() => false);
+    // One tab per tag dimension (the fixture config has four), found by the
+    // Team tab: the date picker's Daily/Hourly toggle shares the row's classes
+    // and comes first.
+    const tabBtns = page.locator('div.rounded-lg.border', { has: page.getByRole('button', { name: 'Team', exact: true }) }).locator('button');
+    await expect(tabBtns.nth(1)).toBeVisible();
 
-    if (hasMultiple) {
-      const tabBtns = tabContainer.first().locator('button');
-      const count = await tabBtns.count();
+    // The selected tab is the accent-filled pill.
+    await tabBtns.nth(1).click();
+    await expect(tabBtns.nth(1)).toHaveClass(/\bbg-accent\b/);
+    await waitForQuerySettle(page);
+    await screenshot(page, 'missing-tags-second-tab');
 
-      if (count > 1) {
-        await tabBtns.nth(1).click();
-        await waitForQuerySettle(page);
-        await screenshot(page, 'missing-tags-second-tab');
-
-        await tabBtns.first().click();
-        await waitForQuerySettle(page);
-      }
-    }
+    await tabBtns.first().click();
+    await expect(tabBtns.first()).toHaveClass(/\bbg-accent\b/);
+    await waitForQuerySettle(page);
   });
 
   test('min cost input is present and functional', async () => {
@@ -517,8 +518,7 @@ test.describe('Full user journey', () => {
   });
 
   test('overview → trends → missing tags → savings → data → overview (full navigation cycle)', async () => {
-    // 1. Overview
-    await waitForQuerySettle(page);
+    // 1. Overview (the beforeAll navigated and settled here)
     await expect(page.getByRole('heading', { name: 'Cost Overview' })).toBeVisible();
 
     // 2. Trends

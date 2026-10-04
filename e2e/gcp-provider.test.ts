@@ -56,8 +56,7 @@ test.describe('mixed AWS + GCP workspace', () => {
     // The settle only waits on widget slots already in the DOM, so it would
     // pass vacuously before the dashboard has rendered any.
     await expect(page.getByRole('heading', { name: 'Cost Overview' })).toBeVisible({ timeout: 15_000 });
-    await waitForQuerySettle(page);
-    await assertNoReactCrash(page);
+    await waitForQuerySettle(page); // ends with assertNoReactCrash
     await screenshot(page, 'gcp-mixed-dashboard');
   });
 

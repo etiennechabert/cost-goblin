@@ -6,9 +6,8 @@ import {
   FIXTURE_CONFIG_DIR,
   FIXTURE_DATA_DIR,
   HEADLESS,
-  SETTINGS_NAV_LABEL,
-  openSettings,
   attachCoverage,
+  clickNavButton,
   collectCoverage,
   expectCloudSandboxed,
   finishCoverage,
@@ -34,8 +33,7 @@ async function openWorkspacesTab(): Promise<void> {
   // Every test after the first starts on this tab already; a snapshot read
   // (no wait) skips re-opening it.
   if (await heading.isVisible()) return;
-  await openSettings(page);
-  await page.getByLabel(SETTINGS_NAV_LABEL).getByRole('button', { name: 'Workspaces' }).click();
+  await clickNavButton(page, 'Workspaces');
   await expect(heading).toBeVisible();
 }
 

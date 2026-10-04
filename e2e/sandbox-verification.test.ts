@@ -167,8 +167,9 @@ test.describe('the MCP server is opt-in', () => {
 
   test('renderer is sandboxed', async () => {
     const sandboxed = await optPage.evaluate(() => {
-      const debug = (window as { costgoblinDebug?: { isSandboxed: () => boolean } }).costgoblinDebug;
-      return debug?.isSandboxed() ?? false;
+      const debug: unknown = Reflect.get(globalThis, 'costgoblinDebug');
+      const isSandboxed: unknown = typeof debug === 'object' && debug !== null ? Reflect.get(debug, 'isSandboxed') : undefined;
+      return typeof isSandboxed === 'function' && Reflect.apply(isSandboxed, debug, []) === true;
     });
     expect(sandboxed).toBe(true);
   });
