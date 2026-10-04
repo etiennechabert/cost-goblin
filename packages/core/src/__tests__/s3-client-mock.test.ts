@@ -38,6 +38,7 @@ vi.mock('node:stream/promises', () => ({
 // own config out by pointing the SDK's loader at a file that doesn't exist.
 beforeEach(() => {
   vi.stubEnv('AWS_CONFIG_FILE', join(tmpdir(), `costgoblin-no-aws-config-${String(process.pid)}`));
+  vi.stubEnv('AWS_PROFILE', '');
 });
 
 afterEach(() => {

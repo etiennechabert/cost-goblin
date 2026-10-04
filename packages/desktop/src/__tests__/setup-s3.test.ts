@@ -45,6 +45,8 @@ beforeEach(() => {
   useAwsConfig('');
   vi.stubEnv('AWS_CONFIG_FILE', join(configDir, 'config'));
   vi.stubEnv('AWS_SHARED_CREDENTIALS_FILE', join(configDir, 'credentials'));
+  // 'default' reads the region of the profile AWS_PROFILE names ('' is unset).
+  vi.stubEnv('AWS_PROFILE', '');
 });
 
 afterEach(() => {

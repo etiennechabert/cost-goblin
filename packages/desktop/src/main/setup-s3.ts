@@ -1,4 +1,5 @@
 import { logger, parseS3Path, s3ClientConfig } from '@costgoblin/core';
+import type { CostApi } from '@costgoblin/core';
 import { classifyManifestColumns, parseManifestColumnNames, selectManifestKey } from './setup-manifest.js';
 import type { DetectedReportType } from './setup-manifest.js';
 
@@ -6,13 +7,9 @@ import type { DetectedReportType } from './setup-manifest.js';
 // electron) so they can be tested. Every client comes from s3ClientConfig: the
 // wizard knows a bucket's name, never its region.
 
-export interface S3BrowseResult {
-  prefixes: string[];
-  isBillingExport: boolean;
-  detectedType: DetectedReportType;
-  missingColumns: string[];
-  error?: string | undefined;
-}
+/** What `setup:browse-s3` answers: derived from the `CostApi` contract the
+ *  renderer codes against, so the handler cannot drift from it. */
+export type S3BrowseResult = Awaited<ReturnType<CostApi['browseS3']>>;
 
 export async function testS3Connection(params: { profile: string; bucket: string }): Promise<{ ok: boolean; error?: string | undefined }> {
   try {

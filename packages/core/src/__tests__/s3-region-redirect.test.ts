@@ -73,6 +73,9 @@ function useAwsConfig(contents: string): void {
   writeFileSync(join(dir, 'config'), contents);
   vi.stubEnv('AWS_CONFIG_FILE', join(dir, 'config'));
   vi.stubEnv('AWS_SHARED_CREDENTIALS_FILE', join(dir, 'credentials'));
+  // 'default' follows AWS_PROFILE, as the SDK's credential chain does: keep
+  // the developer's own choice out ('' reads as unset).
+  vi.stubEnv('AWS_PROFILE', '');
 }
 
 beforeEach(() => {
@@ -93,6 +96,16 @@ describe('profileRegion', () => {
   it('falls back to the sso-session region of an SSO-only profile', async () => {
     useAwsConfig('[profile sso]\nsso_session = corp\n\n[sso-session corp]\nsso_region = eu-north-1\n');
     await expect(profileRegion('sso')).resolves.toBe('eu-north-1');
+  });
+
+  it('falls back to the in-profile sso_region of a legacy SSO profile', async () => {
+    useAwsConfig('[profile legacy]\nsso_start_url = https://example.awsapps.com/start\nsso_region = ap-northeast-1\nsso_account_id = 123456789012\n');
+    await expect(profileRegion('legacy')).resolves.toBe('ap-northeast-1');
+  });
+
+  it('prefers the profile’s own region over any sso_region', async () => {
+    useAwsConfig('[profile sso]\nregion = eu-west-3\nsso_region = us-east-1\nsso_session = corp\n\n[sso-session corp]\nsso_region = eu-north-1\n');
+    await expect(profileRegion('sso')).resolves.toBe('eu-west-3');
   });
 
   it.each([
@@ -124,6 +137,12 @@ describe('s3ClientConfig', () => {
   it('reads the default profile’s region without naming the profile', async () => {
     useAwsConfig('[default]\nregion = ap-southeast-2\n');
     await expect(s3ClientConfig('default')).resolves.toEqual({ region: 'ap-southeast-2', followRegionRedirects: true });
+  });
+
+  it('reads the region of the profile AWS_PROFILE names for the default chain, matching its credentials', async () => {
+    useAwsConfig('[default]\nregion = us-east-1\n\n[profile corp]\nregion = eu-west-1\n');
+    vi.stubEnv('AWS_PROFILE', 'corp');
+    await expect(s3ClientConfig('default')).resolves.toEqual({ region: 'eu-west-1', followRegionRedirects: true });
   });
 
   it('lets an explicit region win over the profile’s', async () => {

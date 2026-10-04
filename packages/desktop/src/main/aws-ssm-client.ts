@@ -22,7 +22,7 @@ async function getSsmModule(): Promise<typeof import('@aws-sdk/client-ssm')> {
 }
 
 /** The AWS region configured for a profile in ~/.aws/config (see
- *  `profileRegion`: its `region`, else its sso-session's `sso_region`). We
+ *  `profileRegion`: its `region`, else its SSO `sso_region`). We
  *  must pass this explicitly to the SDK — env vars like AWS_REGION would
  *  otherwise take precedence over the profile's own config, which bites users
  *  whose SCPs deny specific regions (e.g. us-east-1). */
