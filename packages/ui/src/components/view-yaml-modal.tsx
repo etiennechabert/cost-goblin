@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { parse, stringify } from 'yaml';
 import { validateViews, viewToYaml, ConfigValidationError } from '@costgoblin/core/browser';
 import type { ViewSpec } from '@costgoblin/core/browser';
+import { useModalDialog } from '../hooks/use-modal-dialog.js';
 
 interface ExportProps {
   readonly mode: 'export';
@@ -30,21 +31,21 @@ function asCustomView(v: ViewSpec): ViewSpec {
 }
 
 export function ViewYamlModal(props: ViewYamlModalProps): React.JSX.Element {
+  const dialogRef = useRef<HTMLDialogElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const titleId = useId();
+  const hintId = useId();
   const [text, setText] = useState(() =>
     props.mode === 'export' ? stringify(viewToYaml(asCustomView(props.view))) : '',
   );
   const [copied, setCopied] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
 
-  useEffect(() => {
-    closeRef.current?.focus();
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') props.onClose();
-    }
-    document.addEventListener('keydown', handleKey);
-    return () => { document.removeEventListener('keydown', handleKey); };
-  }, [props]);
+  const { onClose } = props;
+  // Focus starts on Close — once, on mount: `props` is a fresh object on every
+  // parent render (the app re-renders on each sync poll), and re-focusing then
+  // would yank focus out of the import textarea mid-paste.
+  useModalDialog(dialogRef, { onClose, initialFocusRef: closeRef });
 
   async function handleCopy(): Promise<void> {
     await navigator.clipboard.writeText(text);
@@ -83,19 +84,19 @@ export function ViewYamlModal(props: ViewYamlModalProps): React.JSX.Element {
   const isExport = props.mode === 'export';
 
   return (
-    <dialog open className="fixed inset-0 z-[100] flex items-center justify-center bg-transparent m-0 p-0 max-w-none max-h-none w-full h-full border-none" aria-modal="true">
+    <dialog ref={dialogRef} open tabIndex={-1} className="fixed inset-0 z-[100] flex items-center justify-center bg-transparent m-0 p-0 max-w-none max-h-none w-full h-full border-none outline-none" aria-modal="true" aria-labelledby={titleId} aria-describedby={hintId}>
       <div
         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-        onClick={props.onClose}
+        onClick={onClose}
         aria-hidden="true"
       />
 
       <div className="relative rounded-xl border border-border bg-bg-secondary p-5 shadow-2xl max-w-2xl w-full mx-4 flex flex-col gap-3">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-text-primary">
+          <h3 id={titleId} className="text-sm font-semibold text-text-primary">
             {isExport ? 'Export view' : 'Import view'}
           </h3>
-          <span className="text-[11px] text-text-muted">
+          <span id={hintId} className="text-[11px] text-text-muted">
             {isExport ? 'Copy this YAML to share or back up the view.' : 'Paste a view YAML (from Export) to add it.'}
           </span>
         </div>
@@ -109,7 +110,7 @@ export function ViewYamlModal(props: ViewYamlModalProps): React.JSX.Element {
         />
 
         {importError !== null && (
-          <div className="rounded-md border border-negative/50 bg-negative-muted px-3 py-2 text-xs text-negative">
+          <div role="alert" className="rounded-md border border-negative/50 bg-negative-muted px-3 py-2 text-xs text-negative">
             {importError}
           </div>
         )}
@@ -118,7 +119,7 @@ export function ViewYamlModal(props: ViewYamlModalProps): React.JSX.Element {
           <button
             ref={closeRef}
             type="button"
-            onClick={props.onClose}
+            onClick={onClose}
             className="rounded-md px-3 py-1.5 text-sm font-medium text-text-secondary hover:bg-bg-tertiary transition-colors"
           >
             Close

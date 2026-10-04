@@ -97,8 +97,46 @@ describe('WorkspacesView', () => {
 
     await user.click(await screen.findByRole('button', { name: 'New workspace' }));
 
-    expect(screen.getByText(/Existing:/)).toBeDefined();
-    expect(screen.getByText(/default, client-acme/)).toBeDefined();
+    const dialog = screen.getByRole('dialog', { name: 'New workspace' });
+    expect(dialog.getAttribute('aria-modal')).toBe('true');
+    expect(within(dialog).getByText(/Existing:/)).toBeDefined();
+    expect(within(dialog).getByText(/default, client-acme/)).toBeDefined();
+  });
+
+  it('closes the New workspace modal from the named ✕, Escape and the aria-hidden backdrop', async () => {
+    const user = userEvent.setup();
+    renderView(apiWith(TWO_WORKSPACES));
+    const trigger = await screen.findByRole('button', { name: 'New workspace' });
+
+    await user.click(trigger);
+    await user.click(within(screen.getByRole('dialog', { name: 'New workspace' })).getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog', { name: 'New workspace' })).toBeNull();
+
+    await user.click(trigger);
+    expect(screen.getByRole('dialog', { name: 'New workspace' })).toBeDefined();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: 'New workspace' })).toBeNull();
+
+    await user.click(trigger);
+    const backdrop = screen.getByRole('dialog', { name: 'New workspace' }).querySelector(':scope > [aria-hidden="true"]');
+    if (!(backdrop instanceof HTMLElement)) throw new Error('backdrop not found');
+    await user.click(backdrop);
+    expect(screen.queryByRole('dialog', { name: 'New workspace' })).toBeNull();
+  });
+
+  // The name is announced only when focus enters the dialog; left on the
+  // trigger, focus would sit on the page aria-modal declares inert.
+  it('moves focus into the New workspace dialog on open and back to its trigger on close', async () => {
+    const user = userEvent.setup();
+    renderView(apiWith(TWO_WORKSPACES));
+    const trigger = await screen.findByRole('button', { name: 'New workspace' });
+
+    await user.click(trigger);
+    const dialog = screen.getByRole('dialog', { name: 'New workspace' });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    await user.keyboard('{Escape}');
+    expect(document.activeElement).toBe(trigger);
   });
 
   it('creates a fresh workspace and restarts into it', async () => {
@@ -142,8 +180,11 @@ describe('WorkspacesView', () => {
     const acmeRow = await screen.findByTestId('workspace-row-client-acme');
     await user.click(within(acmeRow).getByRole('button', { name: 'Delete' }));
 
-    expect(screen.getByText(/permanently deletes all of its synced data and configuration/)).toBeDefined();
-    await user.click(screen.getByRole('button', { name: 'Delete Workspace' }));
+    const confirm = screen.getByRole('dialog', {
+      name: 'Delete workspace',
+      description: /permanently deletes all of its synced data and configuration/,
+    });
+    await user.click(within(confirm).getByRole('button', { name: 'Delete Workspace' }));
 
     await waitFor(() => {
       expect(deleteSpy).toHaveBeenCalledWith('client-acme');
@@ -159,8 +200,11 @@ describe('WorkspacesView', () => {
     const acmeRow = await screen.findByTestId('workspace-row-client-acme');
     await user.click(within(acmeRow).getByRole('button', { name: 'Switch' }));
 
-    expect(screen.getByText('Switch to workspace "client-acme"? CostGoblin will restart.')).toBeDefined();
-    await user.click(screen.getByRole('button', { name: 'Switch & Restart' }));
+    const confirm = screen.getByRole('dialog', {
+      name: 'Switch workspace',
+      description: 'Switch to workspace "client-acme"? CostGoblin will restart.',
+    });
+    await user.click(within(confirm).getByRole('button', { name: 'Switch & Restart' }));
 
     await waitFor(() => {
       expect(switchSpy).toHaveBeenCalledWith('client-acme');
@@ -176,7 +220,7 @@ describe('WorkspacesView', () => {
     const acmeRow = await screen.findByTestId('workspace-row-client-acme');
     await user.click(within(acmeRow).getByRole('button', { name: 'Rename' }));
 
-    const modal = screen.getByRole('dialog');
+    const modal = screen.getByRole('dialog', { name: 'Rename workspace' });
     const input = within(modal).getByLabelText('New name');
     await user.clear(input);
     await user.type(input, 'client-beta');

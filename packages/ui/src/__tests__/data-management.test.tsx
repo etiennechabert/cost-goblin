@@ -323,10 +323,10 @@ describe('DataManagement — modal dialogs', () => {
     const { user, dialog } = await openAddProvider();
     await user.click(within(dialog).getByRole('button', { name: 'Import from a teammate' }));
     // The Import dialog renders inside the wizard (it is not portalled).
-    await within(dialog).findByText('Import configuration');
+    await within(dialog).findByRole('dialog', { name: 'Import configuration' });
 
     await user.keyboard('{Escape}');
-    await waitFor(() => { expect(screen.queryByText('Import configuration')).toBeNull(); });
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Import configuration' })).toBeNull(); });
     expect(screen.getByRole('dialog', { name: 'Add provider' })).toBeDefined();
 
     await user.keyboard('{Escape}');
@@ -376,6 +376,34 @@ describe('DataManagement — GCP tier Configure', () => {
   });
 });
 
+describe('DataManagement — Region Names', () => {
+  it('is offered only alongside an AWS provider, whose SSM it reads', async () => {
+    const api = new MockCostApi();
+    vi.spyOn(api, 'getConfig').mockResolvedValue({ ...MOCK_MIXED_PROVIDER_CONFIG, providers: [MOCK_GCP_PROVIDER] });
+    renderDataManagement(api);
+    await screen.findByRole('region', { name: 'Provider gcp-main' });
+    expect(screen.queryByText(/Region Names/)).toBeNull();
+    cleanup();
+
+    const mixed = new MockCostApi();
+    vi.spyOn(mixed, 'getConfig').mockResolvedValue(MOCK_MIXED_PROVIDER_CONFIG);
+    renderDataManagement(mixed);
+    await waitFor(() => { expect(screen.getAllByText(/Region Names/).length).toBeGreaterThan(0); });
+  });
+  it('keeps names cached before the AWS provider was removed, with Clear', async () => {
+    const api = new MockCostApi();
+    vi.spyOn(api, 'getConfig').mockResolvedValue({ ...MOCK_MIXED_PROVIDER_CONFIG, providers: [MOCK_GCP_PROVIDER] });
+    vi.spyOn(api, 'getRegionNamesInfo').mockResolvedValue({
+      count: 1, syncedAt: '2026-10-01T00:00:00Z', lastError: null,
+      regions: { 'eu-west-1': { longName: 'Europe (Ireland)', country: 'Ireland', continent: 'Europe' } },
+    });
+    renderDataManagement(api);
+    await waitFor(() => { expect(screen.getByText('Region Names')).toBeDefined(); });
+    expect(screen.getByRole('button', { name: 'Clear' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Re-sync' })).toBeNull();
+  });
+});
+
 describe('DataManagement — GCP "Signed in as" panel', () => {
   const SECOND_GCP: ProviderConfig = { ...MOCK_GCP_PROVIDER, name: asProviderName('gcp-second') };
 
@@ -400,6 +428,7 @@ describe('DataManagement — GCP "Signed in as" panel', () => {
       identities: {
         listing: { kind: 'user', file: { path: '/adc.json', origin: 'well-known' }, account: { status: 'known', email: 'alice@acme.com' } },
         download: { kind: 'gcloud', account: 'admin@acme.com', configuration: 'default' },
+        reader: null,
         splitAccounts: { listingAccount: 'alice@acme.com', downloadAccount: 'admin@acme.com' },
       },
     };

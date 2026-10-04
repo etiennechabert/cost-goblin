@@ -52,8 +52,25 @@ describe('createGcpIdentityResolver', () => {
     expect(await resolve({})).toEqual({
       listing: { kind: 'user', file: { path: ADC_PATH, origin: 'well-known' }, account: { status: 'known', email: 'alice@acme.com' } },
       download: { kind: 'gcloud', account: 'alice@acme.com', configuration: 'acme' },
+      reader: null,
       splitAccounts: null,
     });
+  });
+
+  it('carries the provider s reader, which both paths impersonate', async () => {
+    const reader = 'costgoblin-reader@acme-billing.iam.gserviceaccount.com';
+    const result = await resolve({ impersonateServiceAccount: reader });
+    expect(result.reader).toBe(reader);
+    // The accounts it is minted from are still the ones shown and compared.
+    expect(result.listing.kind).toBe('user');
+    expect(result.splitAccounts).toBeNull();
+  });
+
+  it('never reads or echoes a GOOGLE_APPLICATION_CREDENTIALS value that is not a path', async () => {
+    const readFile = vi.fn(files({}));
+    const result = await resolve({}, { env: { HOME, GOOGLE_APPLICATION_CREDENTIALS: '{"type":"service_account","private_key":"x"}' }, readFile });
+    expect(readFile).not.toHaveBeenCalledWith(expect.stringContaining('private_key'));
+    expect(result.listing).toEqual({ kind: 'unreadable', file: { path: '<value of GOOGLE_APPLICATION_CREDENTIALS is not a file path>', origin: 'env' } });
   });
 
   it('reproduces the switched-to-admin trap', async () => {
@@ -81,6 +98,7 @@ describe('createGcpIdentityResolver', () => {
     expect(result).toEqual({
       listing: { kind: 'service-account', file: { path: '/keys/ci.json', origin: 'key-file' }, email: 'ci-reader@acme-billing.iam.gserviceaccount.com' },
       download: { kind: 'key-file', path: '/keys/ci.json', email: 'ci-reader@acme-billing.iam.gserviceaccount.com' },
+      reader: null,
       splitAccounts: null,
     });
     expect(readFile.mock.calls.map(([path]) => path)).not.toContain(ADC_PATH);

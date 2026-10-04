@@ -2,6 +2,7 @@ import { useCallback, useState, useEffect, useRef } from 'react';
 import type { DataInventoryResult, DataTier, CostGoblinConfig, ProviderConfig, SyncStatus } from '@costgoblin/core/browser';
 import { GCLOUD_ADC_LOGIN_COMMAND, GCLOUD_CLI_LOGIN_COMMAND, splitGcsLocation } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
+import { useModalDialog } from '../hooks/use-modal-dialog.js';
 import { useQuery } from '../hooks/use-query.js';
 import { ConfirmModal } from '../components/confirm-modal.js';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '../components/ui/dialog.js';
@@ -110,11 +111,15 @@ function configuredTiers(provider: ProviderConfig): { id: DataTier; cutoff: stri
 /** Where per-tier Configure opens the GCP wizard: the bucket of the daily
  *  export and its parent folder, where the exporter writes `hourly/` beside
  *  `daily/` — one click from either tier. */
-function gcpConfigureLocation(dailyBucket: string): { bucket: string; prefix: string } {
+function gcpConfigureLocation(dailyBucket: string, impersonateServiceAccount: string | undefined): { bucket: string; prefix: string; impersonateServiceAccount?: string } {
   const { bucket, prefix } = splitGcsLocation(dailyBucket);
   const segments = prefix.split('/').filter(s => s.length > 0);
   const parent = segments.slice(0, -1).join('/');
-  return { bucket, prefix: parent === '' ? '' : `${parent}/` };
+  return {
+    bucket,
+    prefix: parent === '' ? '' : `${parent}/`,
+    ...(impersonateServiceAccount === undefined ? {} : { impersonateServiceAccount }),
+  };
 }
 
 export function DataManagement() {
@@ -390,10 +395,9 @@ export function DataManagement() {
         />
       ))}
 
-      {/* Region names enrichment — provider-independent (AWS region metadata
-          is global), so one section fed by the first AWS provider's profile.
-          Not `providers[0]`: that slot may hold a GCP provider, which has no
-          profile and no SSM to read. */}
+      {/* Region names enrichment — AWS region metadata read from SSM, so one
+          section fed by the first AWS provider's profile. Not `providers[0]`:
+          that slot may hold a GCP provider, which has no profile and no SSM. */}
       <SsmParameterSection profile={providers.find(p => p.type === 'aws')?.credentialsProfile ?? null} />
 
       <SyncLogPanel active={anySyncing} />
@@ -776,10 +780,10 @@ function ProviderSection({ provider, soleProvider, refreshSignal, gcpIdentityRef
             <SsoLoginButton profile={awsProfile} onRetry={retryInventory} />
           )}
           {gcpAdcRemedy && (
-            <GcloudLoginButton mode="adc" providerName={name} onRetry={retryInventory} />
+            <GcloudLoginButton mode="adc" onRetry={retryInventory} />
           )}
           {gcpCliRemedy && (
-            <GcloudLoginButton mode="cli" providerName={name} onRetry={retryInventory} />
+            <GcloudLoginButton mode="cli" onRetry={retryInventory} />
           )}
           {!awsSsoRemedy && !gcpAdcRemedy && !gcpCliRemedy && (
             <div className="mt-2"><RetryButton onRetry={retryInventory} /></div>
@@ -878,7 +882,7 @@ function ProviderSection({ provider, soleProvider, refreshSignal, gcpIdentityRef
             source={configureSource}
             profile={awsProfile ?? 'default'}
             providerName={name}
-            gcpSource={provider.type === 'gcp' ? gcpConfigureLocation(dailyBucket) : undefined}
+            gcpSource={provider.type === 'gcp' ? gcpConfigureLocation(dailyBucket, provider.impersonateServiceAccount) : undefined}
             onComplete={() => { setConfigureSource(null); onConfigChanged(); }}
           />
         </WizardModal>
@@ -931,44 +935,14 @@ const CONFIGURE_TIER_LABEL: Record<ConfigureSource, string> = {
  *  open (Import, which also locks itself shut during a pull), the key is that
  *  dialog's to handle, and a key a nested layer already consumed
  *  (`defaultPrevented`) is left alone. Focus moves in on open, stays inside
- *  while open, and returns to the opener on close. */
+ *  while open, and returns to the opener on close (see useModalDialog). */
 function WizardModal({ label, onClose, children }: Readonly<{
   label: string;
   onClose: () => void;
   children: React.ReactNode;
 }>): React.JSX.Element {
   const dialogRef = useRef<HTMLDialogElement>(null);
-  // Captured during the first render: by the time an effect runs, a wizard
-  // step that autofocuses an input has already moved focus off the opener.
-  const [opener] = useState(() => document.activeElement);
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (dialog !== null && !dialog.contains(document.activeElement)) dialog.focus();
-    // aria-modal tells assistive tech the page behind is inert, so focus must
-    // not reach it: anything Tab (or a click) moves out is pulled back in.
-    function keepFocusInside(e: FocusEvent): void {
-      const current = dialogRef.current;
-      if (current !== null && e.target instanceof Node && !current.contains(e.target)) current.focus();
-    }
-    document.addEventListener('focusin', keepFocusInside);
-    return () => {
-      document.removeEventListener('focusin', keepFocusInside);
-      if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
-    };
-  }, [opener]);
-
-  useEffect(() => {
-    function handleKey(e: KeyboardEvent): void {
-      // isComposing: that Escape cancels an IME candidate, not the wizard.
-      if (e.key !== 'Escape' || e.isComposing || e.defaultPrevented) return;
-      const dialog = dialogRef.current;
-      if (dialog === null || dialog.querySelector('dialog[open], [role="dialog"]') !== null) return;
-      onClose();
-    }
-    document.addEventListener('keydown', handleKey);
-    return () => { document.removeEventListener('keydown', handleKey); };
-  }, [onClose]);
+  useModalDialog(dialogRef, { onClose });
 
   return (
     // no-drag: the modal opens over the app header, a window drag region —

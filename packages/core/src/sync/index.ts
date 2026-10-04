@@ -32,7 +32,6 @@ export {
 } from './object-store.js';
 
 export {
-  GCS_READ_ONLY_SCOPE,
   createGcsHandle,
   isGcloudCliAccountError,
   isGcloudDownloadFailure,
@@ -40,6 +39,14 @@ export {
   isGcpCredentialError,
   parseGcsPath,
 } from './gcs-client.js';
+
+export { describeGcpImpersonationFailure, isGcpImpersonationError, isGcpNetworkError } from './gcp-credential-errors.js';
+
+export {
+  type GcsStorageOptions,
+  GCS_READ_ONLY_SCOPE,
+  createGcsStorage,
+} from './gcs-storage.js';
 
 export {
   type AccountLookupFn,
@@ -49,13 +56,24 @@ export {
   activeGcloudConfiguration,
   adcCredentialsLocation,
   classifyAccountLookupError,
+  displayablePath,
   emailFromIdToken,
   grantsEmailScope,
+  isPathPlaceholder,
   parseAdcJson,
   parseGcloudAccount,
   resolveListingIdentity,
   splitAccounts,
 } from './gcp-identity.js';
+
+export {
+  type GcpProviderCredentialOptions,
+  type ImpersonatedAdc,
+  type ImpersonatedAdcSource,
+  adcLoginImpersonationToKeep,
+  classifyImpersonatedAdc,
+  impersonationTargetFromUrl,
+} from './gcp-adc-classify.js';
 
 export {
   GCS_BUCKET_NAME_RULES,

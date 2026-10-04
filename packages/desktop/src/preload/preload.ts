@@ -28,6 +28,8 @@ import type {
   GcpIdentityResult,
   GcpProject,
   GcsBrowseResult,
+  GcsDownloadCheckParams,
+  GcsDownloadCheckResult,
   AccountMappingStatus,
   SavingsPreferences,
   UIPreferences,
@@ -199,8 +201,8 @@ const api: CostApi = {
   ssoLogin(profile: string): Promise<void> {
     return invoke<undefined>('data:sso-login', profile).then(() => undefined);
   },
-  gcloudLogin(mode?: 'adc' | 'cli', providerName?: string): Promise<void> {
-    return invoke<undefined>('data:gcloud-login', mode, providerName).then(() => undefined);
+  gcloudLogin(mode?: 'adc' | 'cli'): Promise<void> {
+    return invoke<undefined>('data:gcloud-login', mode).then(() => undefined);
   },
   getAccountMapping(): Promise<AccountMappingStatus> {
     return invoke<AccountMappingStatus>('data:account-mapping');
@@ -226,11 +228,14 @@ const api: CostApi = {
   getGcpIdentities(providerName?: string): Promise<GcpIdentityResult> {
     return invoke<GcpIdentityResult>('data:gcp-identities', providerName);
   },
-  listGcsBuckets(projectId: string): Promise<{ buckets: readonly { name: string }[]; error?: string | undefined }> {
-    return invoke<{ buckets: readonly { name: string }[]; error?: string | undefined }>('setup:list-gcs-buckets', projectId);
+  listGcsBuckets(projectId: string, impersonateServiceAccount?: string): ReturnType<CostApi['listGcsBuckets']> {
+    return invoke<{ buckets: readonly { name: string }[]; error?: string | undefined }>('setup:list-gcs-buckets', projectId, impersonateServiceAccount);
   },
-  browseGcs(params: { projectId: string; bucket: string; prefix: string }): Promise<GcsBrowseResult> {
+  browseGcs(params: Parameters<CostApi['browseGcs']>[0]): Promise<GcsBrowseResult> {
     return invoke<GcsBrowseResult>('setup:browse-gcs', params);
+  },
+  verifyGcsDownload(params: GcsDownloadCheckParams): Promise<GcsDownloadCheckResult> {
+    return invoke<GcsDownloadCheckResult>('setup:verify-gcs-download', params);
   },
   scaffoldConfig(providerType?: 'aws' | 'gcp'): Promise<void> {
     return invoke<undefined>('setup:scaffold-config', providerType).then(() => undefined);

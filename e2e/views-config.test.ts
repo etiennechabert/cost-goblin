@@ -148,16 +148,18 @@ test.describe('Data Management', () => {
     await page.getByRole('button', { name: 'Delete All Data' }).click();
 
     // confirmation modal
-    await expect(page.getByText('Delete all local data')).toBeVisible({ timeout: 3000 });
-    await expect(page.getByText('This will remove all downloaded')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Delete All', exact: true })).toBeVisible();
+    const confirm = page.getByRole('dialog', { name: 'Delete all local data' });
+    await expect(confirm).toBeVisible({ timeout: 3000 });
+    await expect(confirm).toHaveAccessibleDescription(/This will remove all downloaded/);
+    await expect(confirm.getByText('This will remove all downloaded')).toBeVisible();
+    await expect(confirm.getByRole('button', { name: 'Cancel' })).toBeVisible();
+    await expect(confirm.getByRole('button', { name: 'Delete All', exact: true })).toBeVisible();
 
     await screenshot(page, 'data-management-delete-confirm');
 
     // cancel — don't actually delete
-    await page.getByRole('button', { name: 'Cancel' }).click();
-    await expect(page.getByText('Delete all local data')).toBeHidden();
+    await confirm.getByRole('button', { name: 'Cancel' }).click();
+    await expect(confirm).toBeHidden();
   });
 
   test('Prune removes nothing: main measures retention from the pinned clock too', async () => {
@@ -368,10 +370,12 @@ test.describe('Views editor', () => {
 test.describe('Cost Scope', () => {
   test.beforeAll(async () => {
     // Click Cost Scope nav — if the Views editor has unsaved changes,
-    // a "Discard" confirm modal will appear. Dismiss it.
+    // a "Discard …?" confirm modal will appear. Dismiss it.
     await clickNavButton(page, 'Cost Scope');
-    const discardBtn = page.getByRole('button', { name: 'Discard' });
-    if (await discardBtn.isVisible({ timeout: 500 }).catch(() => false)) {
+    const discardBtn = page.getByRole('dialog', { name: /^Discard / }).getByRole('button', { name: 'Discard', exact: true });
+    // isVisible() ignores a timeout and answers at once; waitFor gives the
+    // modal its 500ms to appear.
+    if (await discardBtn.waitFor({ state: 'visible', timeout: 500 }).then(() => true, () => false)) {
       await discardBtn.click();
     }
     await expect(page.getByRole('heading', { name: 'Cost Scope', exact: true })).toBeVisible({ timeout: 5000 });
