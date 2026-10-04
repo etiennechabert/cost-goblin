@@ -2,6 +2,10 @@ export function isStringRecord(value: unknown): value is Readonly<Record<string,
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+export function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item): item is string => typeof item === 'string');
+}
+
 export function parseJsonObject(raw: string): Readonly<Record<string, unknown>> | null {
   let parsed: unknown;
   try {
