@@ -2,8 +2,10 @@ import { useCallback, useState, useEffect, useRef } from 'react';
 import type { DataInventoryResult, DataTier, CostGoblinConfig, ProviderConfig, SyncStatus } from '@costgoblin/core/browser';
 import { GCLOUD_ADC_LOGIN_COMMAND, GCLOUD_CLI_LOGIN_COMMAND, splitGcsLocation } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
+import { useModalDialog } from '../hooks/use-modal-dialog.js';
 import { useQuery } from '../hooks/use-query.js';
 import { ConfirmModal } from '../components/confirm-modal.js';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '../components/ui/dialog.js';
 import { ProfilePicker } from '../components/profile-picker.js';
 import { SetupWizard } from './setup-wizard.js';
 import { OrgAccountsSection } from './data-management-org.js';
@@ -109,11 +111,15 @@ function configuredTiers(provider: ProviderConfig): { id: DataTier; cutoff: stri
 /** Where per-tier Configure opens the GCP wizard: the bucket of the daily
  *  export and its parent folder, where the exporter writes `hourly/` beside
  *  `daily/` — one click from either tier. */
-function gcpConfigureLocation(dailyBucket: string): { bucket: string; prefix: string } {
+function gcpConfigureLocation(dailyBucket: string, impersonateServiceAccount: string | undefined): { bucket: string; prefix: string; impersonateServiceAccount?: string } {
   const { bucket, prefix } = splitGcsLocation(dailyBucket);
   const segments = prefix.split('/').filter(s => s.length > 0);
   const parent = segments.slice(0, -1).join('/');
-  return { bucket, prefix: parent === '' ? '' : `${parent}/` };
+  return {
+    bucket,
+    prefix: parent === '' ? '' : `${parent}/`,
+    ...(impersonateServiceAccount === undefined ? {} : { impersonateServiceAccount }),
+  };
 }
 
 export function DataManagement() {
@@ -389,10 +395,9 @@ export function DataManagement() {
         />
       ))}
 
-      {/* Region names enrichment — provider-independent (AWS region metadata
-          is global), so one section fed by the first AWS provider's profile.
-          Not `providers[0]`: that slot may hold a GCP provider, which has no
-          profile and no SSM to read. */}
+      {/* Region names enrichment — AWS region metadata read from SSM, so one
+          section fed by the first AWS provider's profile. Not `providers[0]`:
+          that slot may hold a GCP provider, which has no profile and no SSM. */}
       <SsmParameterSection profile={providers.find(p => p.type === 'aws')?.credentialsProfile ?? null} />
 
       <SyncLogPanel active={anySyncing} />
@@ -422,17 +427,12 @@ export function DataManagement() {
       )}
 
       {addProviderOpen && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={(e) => { if (e.target === e.currentTarget) setAddProviderOpen(false); }} aria-hidden="true">
-          <div className="relative">
-            <button type="button" onClick={() => { setAddProviderOpen(false); }} className="absolute -top-2 -right-2 z-10 rounded-full bg-bg-tertiary border border-border w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-bg-secondary transition-colors" title="Close">
-              &#10005;
-            </button>
-            <SetupWizard
-              mode="add"
-              onComplete={() => { setAddProviderOpen(false); onConfigChanged(); }}
-            />
-          </div>
-        </div>
+        <WizardModal label="Add provider" onClose={() => { setAddProviderOpen(false); }}>
+          <SetupWizard
+            mode="add"
+            onComplete={() => { setAddProviderOpen(false); onConfigChanged(); }}
+          />
+        </WizardModal>
       )}
     </div>
   );
@@ -533,7 +533,7 @@ function ProviderSection({ provider, soleProvider, refreshSignal, gcpIdentityRef
   const [hourlySyncState, setHourlySyncState] = useState<SyncState>({ status: 'idle' });
   const [costOptSyncState, setCostOptSyncState] = useState<SyncState>({ status: 'idle' });
 
-  const [configureSource, setConfigureSource] = useState<'daily' | 'hourly' | 'costOptimization' | null>(null);
+  const [configureSource, setConfigureSource] = useState<ConfigureSource | null>(null);
   // Lightweight profile-only swap: a tiny modal that lists ~/.aws profiles
   // and rewrites only THIS provider's credentialsProfile in costgoblin.yaml.
   const [showProfileSwap, setShowProfileSwap] = useState(false);
@@ -780,10 +780,10 @@ function ProviderSection({ provider, soleProvider, refreshSignal, gcpIdentityRef
             <SsoLoginButton profile={awsProfile} onRetry={retryInventory} />
           )}
           {gcpAdcRemedy && (
-            <GcloudLoginButton mode="adc" providerName={name} onRetry={retryInventory} />
+            <GcloudLoginButton mode="adc" onRetry={retryInventory} />
           )}
           {gcpCliRemedy && (
-            <GcloudLoginButton mode="cli" providerName={name} onRetry={retryInventory} />
+            <GcloudLoginButton mode="cli" onRetry={retryInventory} />
           )}
           {!awsSsoRemedy && !gcpAdcRemedy && !gcpCliRemedy && (
             <div className="mt-2"><RetryButton onRetry={retryInventory} /></div>
@@ -877,20 +877,15 @@ function ProviderSection({ provider, soleProvider, refreshSignal, gcpIdentityRef
       )}
 
       {configureSource !== null && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={(e) => { if (e.target === e.currentTarget) setConfigureSource(null); }} aria-hidden="true">
-          <div className="relative">
-            <button type="button" onClick={() => { setConfigureSource(null); }} className="absolute -top-2 -right-2 z-10 rounded-full bg-bg-tertiary border border-border w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-bg-secondary transition-colors" title="Close">
-              &#10005;
-            </button>
-            <SetupWizard
-              source={configureSource}
-              profile={awsProfile ?? 'default'}
-              providerName={name}
-              gcpSource={provider.type === 'gcp' ? gcpConfigureLocation(dailyBucket) : undefined}
-              onComplete={() => { setConfigureSource(null); onConfigChanged(); }}
-            />
-          </div>
-        </div>
+        <WizardModal label={`Configure ${CONFIGURE_TIER_LABEL[configureSource]} data source for ${name}`} onClose={() => { setConfigureSource(null); }}>
+          <SetupWizard
+            source={configureSource}
+            profile={awsProfile ?? 'default'}
+            providerName={name}
+            gcpSource={provider.type === 'gcp' ? gcpConfigureLocation(dailyBucket, provider.impersonateServiceAccount) : undefined}
+            onComplete={() => { setConfigureSource(null); onConfigChanged(); }}
+          />
+        </WizardModal>
       )}
 
       {showProfileSwap && awsProfile !== null && (
@@ -915,6 +910,59 @@ function ProviderSection({ provider, soleProvider, refreshSignal, gcpIdentityRef
         />
       )}
     </section>
+  );
+}
+
+type ConfigureSource = 'daily' | 'hourly' | 'costOptimization';
+
+/** The tier as the Configure dialog's accessible name words it. */
+const CONFIGURE_TIER_LABEL: Record<ConfigureSource, string> = {
+  daily: 'daily',
+  hourly: 'hourly',
+  costOptimization: 'cost optimization',
+};
+
+/** Modal chrome for a SetupWizard opened over the page (Add Provider, a
+ *  tier's Configure).
+ *
+ *  A native `<dialog open aria-modal>`, like ConfirmModal, not the Radix
+ *  Dialog: Radix centres its content with a transform, and a transformed
+ *  element becomes the containing block of every `position: fixed`
+ *  descendant — the wizard's own Import dialog would be clipped to the card
+ *  instead of covering the window.
+ *
+ *  Escape closes only the topmost dialog. While the wizard has one of its own
+ *  open (Import, which also locks itself shut during a pull), the key is that
+ *  dialog's to handle, and a key a nested layer already consumed
+ *  (`defaultPrevented`) is left alone. Focus moves in on open, stays inside
+ *  while open, and returns to the opener on close (see useModalDialog). */
+function WizardModal({ label, onClose, children }: Readonly<{
+  label: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}>): React.JSX.Element {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  useModalDialog(dialogRef, { onClose });
+
+  return (
+    // no-drag: the modal opens over the app header, a window drag region —
+    // without the opt-out, clicks there would drag the window. (#317)
+    <dialog
+      ref={dialogRef}
+      open
+      aria-modal="true"
+      aria-label={label}
+      tabIndex={-1}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-transparent m-0 p-4 max-w-none max-h-none w-full h-full border-none outline-none [-webkit-app-region:no-drag]"
+    >
+      <div data-testid="modal-backdrop" className="absolute inset-0 bg-black/50" onClick={onClose} aria-hidden="true" />
+      <div className="relative">
+        <button type="button" onClick={onClose} className="absolute -top-2 -right-2 z-10 rounded-full bg-bg-tertiary border border-border w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-bg-secondary transition-colors" aria-label="Close">
+          &#10005;
+        </button>
+        {children}
+      </div>
+    </dialog>
   );
 }
 
@@ -946,12 +994,12 @@ function ProfileSwapModal({ currentProfile, providerName, onClose, onSaved }: Re
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }} aria-hidden="true">
-      <div className="relative rounded-xl border border-border bg-bg-secondary p-6 shadow-2xl max-w-md w-full">
-        <h3 className="text-base font-semibold text-text-primary">Change AWS Profile</h3>
-        <p className="text-xs text-text-muted mt-1">
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent>
+        <DialogTitle className="text-base">Change AWS Profile</DialogTitle>
+        <DialogDescription className="text-xs text-text-muted mt-1">
           Buckets and other config stay as-is — this only swaps the profile <span className="font-mono">{providerName}</span> uses to talk to AWS.
-        </p>
+        </DialogDescription>
 
         {profilesQuery.status === 'loading' && (
           <p className="text-sm text-text-secondary mt-4">Loading profiles…</p>
@@ -996,7 +1044,7 @@ function ProfileSwapModal({ currentProfile, providerName, onClose, onSaved }: Re
             {saving ? 'Saving…' : 'Save'}
           </button>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

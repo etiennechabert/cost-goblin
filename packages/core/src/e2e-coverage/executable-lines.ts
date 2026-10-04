@@ -24,13 +24,22 @@ function isIdentifierNamed(node: unknown, test: (name: string) => boolean): bool
  * source. Its branch and in-source-test filters are left out — they match
  * nothing in this repository's renderer sources.
  */
+const isSsrImport = (name: string): boolean => name.startsWith('__vite_ssr_import_');
+
 const ignoreModuleRunnerNodes: IgnoreNode = (node, type) => {
   if (type !== 'statement') return false;
   const kind = field(node, 'type');
   if (kind === 'VariableDeclarator') {
-    return isIdentifierNamed(
-      field(node, 'id'),
-      name => name.startsWith('__vite_ssr_import_') || name === '__vite_ssr_export_default__',
+    const init = field(node, 'init');
+    const object = field(init, 'object');
+    return (
+      isIdentifierNamed(field(node, 'id'), name => isSsrImport(name) || name === '__vite_ssr_export_default__') ||
+      // Since @vitest/coverage-v8 5 (vitest-dev/vitest#11023): a declarator
+      // reading a member of an imported binding, `const x = imported.y`, which
+      // the runner rewrites to `const x = __vite_ssr_import_0__.imported.y`.
+      (field(init, 'type') === 'MemberExpression' &&
+        field(object, 'type') === 'MemberExpression' &&
+        isIdentifierNamed(field(object, 'object'), isSsrImport))
     );
   }
   if (kind !== 'ExpressionStatement') return false;

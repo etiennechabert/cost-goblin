@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within, cleanup } from '@testing-library/react';
+import { act, render, screen, waitFor, within, cleanup } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
@@ -258,9 +258,106 @@ describe('DataManagement', () => {
     });
     await user.click(screen.getByText('Add Provider'));
     // Add-mode wizard starts at the get-started hub.
-    await waitFor(() => {
-      expect(screen.getByLabelText('Set up from AWS')).toBeDefined();
-    });
+    const dialog = await screen.findByRole('dialog', { name: 'Add provider' });
+    expect(within(dialog).getByLabelText('Set up from AWS')).toBeDefined();
+  });
+});
+
+// The wizard modals and the profile swap used to sit inside an
+// aria-hidden="true" overlay, which hid them — controls included — from
+// assistive tech, so none of these role queries could reach them.
+describe('DataManagement — modal dialogs', () => {
+  async function openAddProvider() {
+    const rendered = renderDataManagement();
+    const trigger = await screen.findByRole('button', { name: 'Add Provider' });
+    await rendered.user.click(trigger);
+    const dialog = await screen.findByRole('dialog', { name: 'Add provider' });
+    return { ...rendered, trigger, dialog };
+  }
+
+  it('Add Provider is a modal dialog whose Close button is named and dismisses it', async () => {
+    const { user, dialog } = await openAddProvider();
+    expect(dialog.getAttribute('aria-modal')).toBe('true');
+    await user.click(within(dialog).getByRole('button', { name: 'Close' }));
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Add provider' })).toBeNull(); });
+  });
+
+  it('moves focus into the dialog on open and returns it to the trigger on close', async () => {
+    const { user, trigger, dialog } = await openAddProvider();
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    await user.keyboard('{Escape}');
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Add provider' })).toBeNull(); });
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it('pulls focus that lands on the page behind back into the dialog', async () => {
+    // aria-modal declares the page inert — Tab must not walk onto it.
+    const { dialog } = await openAddProvider();
+    act(() => { screen.getByRole('button', { name: 'Refresh' }).focus(); });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+  });
+
+  it('ignores an Escape a nested layer already consumed, or one that cancels an IME composition', async () => {
+    const { user } = await openAddProvider();
+    // A layer above it (e.g. a Radix popover) handles Escape in the capture
+    // phase and marks it consumed.
+    const consume = (e: KeyboardEvent) => { e.preventDefault(); };
+    document.addEventListener('keydown', consume, { capture: true });
+    await user.keyboard('{Escape}');
+    document.removeEventListener('keydown', consume, { capture: true });
+    expect(screen.getByRole('dialog', { name: 'Add provider' })).toBeDefined();
+
+    act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', isComposing: true, bubbles: true })); });
+    expect(screen.getByRole('dialog', { name: 'Add provider' })).toBeDefined();
+  });
+
+  it('closes on a backdrop click but not on a click inside the wizard', async () => {
+    const { user, dialog } = await openAddProvider();
+    await user.click(within(dialog).getByText('Which cloud are you billing on?'));
+    expect(screen.getByRole('dialog', { name: 'Add provider' })).toBeDefined();
+    await user.click(within(dialog).getByTestId('modal-backdrop'));
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Add provider' })).toBeNull(); });
+  });
+
+  it('Escape closes only the topmost dialog when the wizard opened the Import dialog', async () => {
+    const { user, dialog } = await openAddProvider();
+    await user.click(within(dialog).getByRole('button', { name: 'Import from a teammate' }));
+    // The Import dialog renders inside the wizard (it is not portalled).
+    await within(dialog).findByRole('dialog', { name: 'Import configuration' });
+
+    await user.keyboard('{Escape}');
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Import configuration' })).toBeNull(); });
+    expect(screen.getByRole('dialog', { name: 'Add provider' })).toBeDefined();
+
+    await user.keyboard('{Escape}');
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Add provider' })).toBeNull(); });
+  });
+
+  it('the tier gear opens a Configure dialog named for the tier and provider', async () => {
+    const { user } = renderDataManagement();
+    const section = await screen.findByRole('region', { name: 'Provider aws-main' });
+    const gear = await within(section).findByTitle('Configure daily');
+    await user.click(gear);
+    const dialog = await screen.findByRole('dialog', { name: 'Configure daily data source for aws-main' });
+    expect(dialog.getAttribute('aria-modal')).toBe('true');
+    await user.click(within(dialog).getByRole('button', { name: 'Close' }));
+    await waitFor(() => { expect(screen.queryByRole('dialog')).toBeNull(); });
+  });
+
+  it('Change AWS Profile opens a named dialog that Escape and Cancel dismiss', async () => {
+    const { user } = renderDataManagement();
+    const swap = await screen.findByRole('button', { name: 'Change AWS Profile' });
+
+    await user.click(swap);
+    const dialog = await screen.findByRole('dialog', { name: 'Change AWS Profile' });
+    await within(dialog).findByRole('group', { name: 'AWS profiles' });
+    await user.keyboard('{Escape}');
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Change AWS Profile' })).toBeNull(); });
+
+    await user.click(swap);
+    const reopened = await screen.findByRole('dialog', { name: 'Change AWS Profile' });
+    await user.click(within(reopened).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Change AWS Profile' })).toBeNull(); });
   });
 });
 
@@ -276,6 +373,34 @@ describe('DataManagement — GCP tier Configure', () => {
     await userEvent.setup().click(configure);
     // The wizard opens browsing the provider's own bucket.
     await waitFor(() => { expect(screen.getByText('costgoblin-focus-export')).toBeDefined(); });
+  });
+});
+
+describe('DataManagement — Region Names', () => {
+  it('is offered only alongside an AWS provider, whose SSM it reads', async () => {
+    const api = new MockCostApi();
+    vi.spyOn(api, 'getConfig').mockResolvedValue({ ...MOCK_MIXED_PROVIDER_CONFIG, providers: [MOCK_GCP_PROVIDER] });
+    renderDataManagement(api);
+    await screen.findByRole('region', { name: 'Provider gcp-main' });
+    expect(screen.queryByText(/Region Names/)).toBeNull();
+    cleanup();
+
+    const mixed = new MockCostApi();
+    vi.spyOn(mixed, 'getConfig').mockResolvedValue(MOCK_MIXED_PROVIDER_CONFIG);
+    renderDataManagement(mixed);
+    await waitFor(() => { expect(screen.getAllByText(/Region Names/).length).toBeGreaterThan(0); });
+  });
+  it('keeps names cached before the AWS provider was removed, with Clear', async () => {
+    const api = new MockCostApi();
+    vi.spyOn(api, 'getConfig').mockResolvedValue({ ...MOCK_MIXED_PROVIDER_CONFIG, providers: [MOCK_GCP_PROVIDER] });
+    vi.spyOn(api, 'getRegionNamesInfo').mockResolvedValue({
+      count: 1, syncedAt: '2026-10-01T00:00:00Z', lastError: null,
+      regions: { 'eu-west-1': { longName: 'Europe (Ireland)', country: 'Ireland', continent: 'Europe' } },
+    });
+    renderDataManagement(api);
+    await waitFor(() => { expect(screen.getByText('Region Names')).toBeDefined(); });
+    expect(screen.getByRole('button', { name: 'Clear' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Re-sync' })).toBeNull();
   });
 });
 
@@ -303,6 +428,7 @@ describe('DataManagement — GCP "Signed in as" panel', () => {
       identities: {
         listing: { kind: 'user', file: { path: '/adc.json', origin: 'well-known' }, account: { status: 'known', email: 'alice@acme.com' } },
         download: { kind: 'gcloud', account: 'admin@acme.com', configuration: 'default' },
+        reader: null,
         splitAccounts: { listingAccount: 'alice@acme.com', downloadAccount: 'admin@acme.com' },
       },
     };

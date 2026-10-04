@@ -1,7 +1,9 @@
-import type { ConfigBundleSummary, GcpProject, GcsFolderKind, ProviderConfig } from '@costgoblin/core/browser';
-import { DEFAULT_RETENTION_DAYS, GCP_PROJECT_ID_RULES, gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isValidGcpProjectId, isValidWorkspaceName, parseProviderName } from '@costgoblin/core/browser';
-import { useState, useEffect, useRef } from 'react';
+import type { ConfigBundleSummary, GcpProject, GcsDownloadCheckResult, GcsFolderKind, ProviderConfig } from '@costgoblin/core/browser';
+import { DEFAULT_READER_ACCOUNT_ID, DEFAULT_RETENTION_DAYS, GCP_PROJECT_ID_RULES, gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isGcpImpersonationError, isGcpNetworkError, isValidGcpProjectId, isValidWorkspaceName, parseProviderName, resolveReaderInput, SERVICE_ACCOUNT_EMAIL_RULE } from '@costgoblin/core/browser';
+import { Check, Loader2, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
+import { sharedBucketRoot } from '../lib/bucket-paths.js';
 import { Card, CardContent } from '../components/ui/card.js';
 import { Button } from '../components/ui/button.js';
 import { BundleSummaryCard, ImportConfigDialog } from '../components/config-sharing.js';
@@ -31,10 +33,19 @@ interface GcpProjectChoice { readonly id: string; readonly typed: boolean }
 // a GCP provider, which knows its bucket but no project (the config records
 // none, and browsing a bucket needs none). Listing buckets does need one.
 
+/** Continue on the GCP intro proves the reader can be read as before moving
+ *  on: the project's bucket listing runs as it, and an impersonation refusal
+ *  (no such account in the project, or no Token Creator on it) stays on the
+ *  intro, beside the field that names it. Keyed by the reader and project it
+ *  ran for, so editing either drops a stale verdict. */
+type GcpReaderCheck =
+  | { readonly status: 'checking' }
+  | { readonly status: 'denied'; readonly reader: string; readonly project: string; readonly message: string };
+
 type WizardStep =
   | { step: 'welcome' }
   | { step: 'start' }
-  | { step: 'gcp'; scaffolded: boolean; error: string }
+  | { step: 'gcp'; scaffolded: boolean; error: string; check?: GcpReaderCheck }
   | { step: 'gcp-project'; projects: readonly GcpProject[]; loading: boolean; selected: string; error: string }
   | { step: 'gcp-bucket'; project: GcpProjectChoice | null; source: GcpSource; buckets: readonly { name: string }[]; loading: boolean; selected: string; error: string }
   | { step: 'gcp-browse'; project: GcpProjectChoice | null; source: GcpSource; bucket: string; prefix: string; prefixes: readonly string[]; loading: boolean; folder: GcsFolderKind; hasParquet: boolean; truncated: boolean; error: string; path: string[] }
@@ -43,7 +54,7 @@ type WizardStep =
   | { step: 'beacon'; profile: string; source: DataSource; bucket: string; content: string; summary: ConfigBundleSummary; applying: boolean; error: string }
   | { step: 'browse'; profile: string; source: DataSource; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[]; path: string[]; error: string }
   | { step: 'confirm'; cloud: 'aws'; profile: string; s3Path: string; hourlyPath: string; costOptPath: string }
-  | { step: 'confirm'; cloud: 'gcp'; project: GcpProjectChoice | null; s3Path: string; hourlyPath: string; costOptPath: string };
+  | { step: 'confirm'; cloud: 'gcp'; project: GcpProjectChoice | null; reader: string; clearsReader: boolean; s3Path: string; hourlyPath: string; costOptPath: string };
 
 /** One retention window per tier. Each tier needs its own: a year of daily is
  *  small, a year of hourly is ~24x that, so a single shared picker either
@@ -93,7 +104,9 @@ interface SetupWizardProps {
    *  `hourly/` beside `daily/`). The GCP config records no project and
    *  browsing a bucket needs none, so the wizard opens straight in it —
    *  the same per-tier Configure the AWS tiers get. `profile` is not used. */
-  gcpSource?: { readonly bucket: string; readonly prefix: string } | undefined;
+  /** `impersonateServiceAccount`: the provider's reader, so a per-tier
+   *  Configure browses — and keeps writing — the identity the sync uses. */
+  gcpSource?: { readonly bucket: string; readonly prefix: string; readonly impersonateServiceAccount?: string | undefined } | undefined;
   /** 'add' opens the wizard to create an ADDITIONAL provider: the name field
    *  starts empty, is required, and must not collide with an existing
    *  provider (the upsert would silently overwrite it). Default: first-run
@@ -365,28 +378,109 @@ const GCP_EXPORTER_DOCS = 'https://github.com/etiennechabert/cost-goblin/tree/ma
 /** The website's Google Cloud onboarding guide; the hash opens its modal. */
 const GCP_SETUP_GUIDE = 'https://costgoblin.com/#get-started-gcp';
 
+/** The reader field's help line for what was typed. */
+function readerHelp(input: ReturnType<typeof resolveReaderInput>): string {
+  switch (input.kind) {
+    case 'invalid':
+      return `Use an account name like ${DEFAULT_READER_ACCOUNT_ID}, or ${SERVICE_ACCOUNT_EMAIL_RULE}.`;
+    case 'needs-project':
+      return 'Completed with @<the project you pick>.iam.gserviceaccount.com — the account the setup guide creates. Your Google account needs the Service Account Token Creator role on it. Clear it to read as yourself.';
+    case 'address':
+    case 'none':
+      return 'Your Google account needs the Service Account Token Creator role on it. Leave blank to read as yourself.';
+  }
+}
+
+/** The collapsed reader line: who the browse and the sync will read as, for
+ *  what is typed so far. Undefined for an invalid reader, whose field is open
+ *  with its error instead. */
+function readerSummary(input: ReturnType<typeof resolveReaderInput>): string | undefined {
+  switch (input.kind) {
+    case 'invalid':
+      return undefined;
+    case 'none':
+      return 'your own Google account';
+    case 'needs-project':
+      return `${input.accountId} in the project you pick`;
+    case 'address':
+      return input.address;
+  }
+}
+
 /**
- * Step 2b — GCP: the exporter prerequisite, then into browse-and-pick.
+ * Step 2b — GCP: which project holds the export, then into browse-and-pick.
  *
- * The prerequisite is real — there is nothing in the bucket until the user's
- * own exporter has run — but it is an ORDERING constraint, not a reason to
- * hand-edit YAML. Once the exporter has run, a GCS bucket browses exactly like
- * an S3 one, so this states the prerequisite and then offers the same
- * pick-from-a-list flow AWS gets. A project ID typed here skips the project
- * list — for an account that can't list its project, or an organisation whose
- * thousands of projects make the list slow and useless (the next step also
- * takes a typed ID, so nobody has to wait the listing out). Hand-editing survives as the escape hatch for setups the wizard
+ * Project first, because everything after it is scoped to one: GCS has no
+ * account-wide bucket list, and a bare reader name is completed with the
+ * project (`<name>@<project>.iam.gserviceaccount.com`). Typing the ID is the
+ * primary path — the documented least-privilege account can't list its own
+ * project, and an organisation's thousands of projects make the list slow and
+ * useless — with the `gcloud projects list` picker one click away for anyone
+ * who would rather choose.
+ *
+ * The read-only service account almost always stays the default the setup
+ * guide creates, so it is one line showing who CostGoblin will read as,
+ * resolved live against the typed project, with the field behind "Change".
+ * The field starts open when it holds anything but that default (a
+ * reconfigured provider's own reader, a cleared one, or an invalid value), and
+ * never closes on its own once open — collapsing would hide what is being
+ * edited. Hand-editing survives as the escape hatch for setups the wizard
  * can't browse at all.
  */
-function GcpIntroStep({ state, onBrowse, onProjectId, onScaffold, onDone, onBack }: Readonly<{
-  state: { scaffolded: boolean; error: string };
+function GcpIntroStep({ state, reader, onReaderChange, onBrowse, onProjectId, onScaffold, onDone, onBack }: Readonly<{
+  state: Extract<WizardStep, { step: 'gcp' }>;
+  /** The read-only service account to browse and sync as: a full address,
+   *  or a bare account name completed with the project; '' for none. */
+  reader: string;
+  onReaderChange: (reader: string) => void;
+  /** Opens the `gcloud projects list` picker. */
   onBrowse: () => void;
-  /** A project ID typed here skips `gcloud projects list` entirely. */
+  /** Continue with the typed project ID: checks the reader, then its buckets. */
   onProjectId: (projectId: string) => void;
   onScaffold: () => void;
   onDone: () => void;
   onBack: () => void;
 }>) {
+  const [projectId, setProjectId] = useState('');
+  // The rule is shown after a submit attempt or on blur, not while a valid
+  // ID is still being typed through invalid prefixes (see `ManualEntry`).
+  const [attempted, setAttempted] = useState(false);
+  const trimmedProject = projectId.trim();
+  const projectValid = isValidGcpProjectId(trimmedProject);
+  const projectInvalid = attempted && trimmedProject.length > 0 && !projectValid;
+
+  // Resolved against the project as soon as one is valid, so the line shows
+  // the exact address the browse will impersonate.
+  const readerInput = resolveReaderInput(reader, projectValid ? trimmedProject : undefined);
+  const readerInvalid = readerInput.kind === 'invalid';
+  // The picker path resolves later, against the project picked there.
+  const readerNameInvalid = resolveReaderInput(reader, undefined).kind === 'invalid';
+  const checking = state.check?.status === 'checking';
+  const canContinue = projectValid && !readerInvalid && !checking;
+  const denial = readerDenialFor(state.check, readerInput, trimmedProject);
+
+  // A latch, adjusted during render: opens for a non-default or invalid value
+  // (including one prefilled after mount), and is never cleared here — typing
+  // the default back must not collapse the field out from under the cursor.
+  const needsReaderField = reader.trim() !== DEFAULT_READER_ACCOUNT_ID || readerInvalid;
+  const [readerOpen, setReaderOpen] = useState(needsReaderField);
+  if (needsReaderField && !readerOpen) setReaderOpen(true);
+  // "Change" disappears once the field opens, so focus moves into the field
+  // rather than falling back to the document.
+  const [focusReader, setFocusReader] = useState(false);
+  const readerFieldRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!focusReader) return;
+    readerFieldRef.current?.focus();
+    setFocusReader(false);
+  }, [focusReader]);
+
+  const submit = (): void => {
+    if (canContinue) onProjectId(trimmedProject);
+    else setAttempted(true);
+  };
+  const summary = readerSummary(readerInput);
+
   return (
     <div className="flex flex-col items-center gap-5 text-center">
       <span className="text-2xl font-bold text-accent tracking-wider">Set up from Google Cloud</span>
@@ -403,19 +497,85 @@ function GcpIntroStep({ state, onBrowse, onProjectId, onScaffold, onDone, onBack
           className="text-accent underline underline-offset-2 hover:text-accent-hover"
         >
           Google Cloud setup guide
-        </a>, then find your export below.
+        </a>, then enter the project that holds your export.
       </p>
-      <div className="flex w-full max-w-xs flex-col gap-3">
-        <Button onClick={onBrowse} className="bg-accent hover:bg-accent-hover text-white">
-          Find my export
-        </Button>
-        <div className="text-left">
-          <GcpProjectIdEntry
-            id="gcp-intro-project-id"
-            label="Already know the project ID? Skip the project list"
-            onSubmit={onProjectId}
-          />
+      <div className="flex w-full max-w-md flex-col gap-1.5 text-left">
+        <label htmlFor="gcp-project-id" className="text-sm text-text-secondary">
+          Google Cloud project
+        </label>
+        <input
+          id="gcp-project-id"
+          value={projectId}
+          onChange={(e) => { setProjectId(e.target.value); }}
+          onBlur={() => { setAttempted(true); }}
+          // `isComposing`: the Enter that commits an IME composition is not a submit.
+          onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) submit(); }}
+          placeholder="my-billing-project"
+          spellCheck={false}
+          autoComplete="off"
+          aria-invalid={projectInvalid}
+          aria-describedby={projectInvalid ? 'gcp-project-id-error' : undefined}
+          className="h-9 rounded-md border border-border bg-bg-primary px-3 font-mono text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent aria-invalid:border-negative"
+        />
+        {projectInvalid && (
+          <p id="gcp-project-id-error" className="text-xs text-negative">
+            {`${GCP_PROJECT_ID_RULES} — the ID, not the project's display name.`}
+          </p>
+        )}
+        <button
+          type="button"
+          onClick={onBrowse}
+          disabled={readerNameInvalid}
+          className="self-start text-xs text-accent underline underline-offset-2 hover:text-accent-hover disabled:cursor-not-allowed disabled:text-text-muted disabled:no-underline"
+        >
+          Choose from my projects
+        </button>
+
+        <div className="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          {summary !== undefined && (
+            <p className="text-xs text-text-muted break-all">
+              Reads as <span className="font-mono text-text-secondary">{summary}</span>
+            </p>
+          )}
+          {!readerOpen && (
+            <button
+              type="button"
+              aria-expanded={false}
+              aria-controls="gcp-reader-field"
+              onClick={() => { setReaderOpen(true); setFocusReader(true); }}
+              className="text-xs text-accent underline underline-offset-2 hover:text-accent-hover"
+            >
+              Change
+            </button>
+          )}
         </div>
+        {denial !== undefined && <GcpReaderDenied reader={denial.reader} project={denial.project} message={denial.message} />}
+        <div id="gcp-reader-field" hidden={!readerOpen} className="flex flex-col gap-1.5">
+          <label htmlFor="gcp-reader" className="text-xs text-text-muted">
+            Read-only service account
+          </label>
+          <input
+            id="gcp-reader"
+            ref={readerFieldRef}
+            type="text"
+            value={reader}
+            onChange={(e) => { onReaderChange(e.target.value); }}
+            placeholder="costgoblin-reader or name@project.iam.gserviceaccount.com"
+            spellCheck={false}
+            autoComplete="off"
+            aria-invalid={readerInvalid}
+            aria-describedby="gcp-reader-help"
+            className="h-9 rounded-md border border-border bg-bg-primary px-3 font-mono text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent"
+          />
+          <p id="gcp-reader-help" className={readerInvalid ? 'text-xs text-negative' : 'text-xs text-text-muted'}>
+            {readerHelp(readerInput)}
+          </p>
+        </div>
+      </div>
+      <div className="flex w-full max-w-xs flex-col gap-3">
+        <Button onClick={submit} disabled={!canContinue} className="bg-accent hover:bg-accent-hover text-white">
+          {checking ? 'Checking access…' : 'Continue'}
+        </Button>
         <button
           type="button"
           onClick={onScaffold}
@@ -445,6 +605,50 @@ function GcpIntroStep({ state, onBrowse, onProjectId, onScaffold, onDone, onBack
   );
 }
 
+/** `name@project.iam.gserviceaccount.com` → `name`: the project is on screen
+ *  beside it, and the full address wraps the one-line messages. */
+function accountName(address: string): string {
+  return address.split('@')[0] ?? address;
+}
+
+/** The intro's reader refusal, while the field and project still say what it
+ *  was checked against — an edit to either makes it stale. */
+function readerDenialFor(
+  check: GcpReaderCheck | undefined,
+  input: ReturnType<typeof resolveReaderInput>,
+  project: string,
+): Extract<GcpReaderCheck, { status: 'denied' }> | undefined {
+  if (check?.status !== 'denied' || input.kind !== 'address') return undefined;
+  return check.reader === input.address && check.project === project ? check : undefined;
+}
+
+/** The impersonation refusal in one line. IAM answers a missing account and a
+ *  missing Token Creator grant identically, so the line names both; the
+ *  rewritten message — the grant command and the raw denial — is one click
+ *  away. */
+function GcpReaderDenied({ reader, project, message, onRetry }: Readonly<{
+  reader: string;
+  project: string | undefined;
+  message: string;
+  /** The bucket step's re-list; the intro's Continue already re-checks. */
+  onRetry?: (() => void) | undefined;
+}>) {
+  return (
+    <div role="alert" className="text-left">
+      <p className="text-xs text-negative">
+        Can&apos;t read as <code>{accountName(reader)}</code> — it doesn&apos;t exist
+        {project === undefined ? '' : <> in <code>{project}</code></>}, or your Google account lacks
+        the Token Creator role on it.
+      </p>
+      <details className="mt-1">
+        <summary className="text-xs text-text-muted cursor-pointer hover:text-text-secondary">Details</summary>
+        <p className="mt-1.5 whitespace-pre-wrap break-words font-mono text-[11px] text-text-muted">{message}</p>
+      </details>
+      {onRetry !== undefined && <div className="mt-2"><RetryButton onRetry={onRetry} /></div>}
+    </div>
+  );
+}
+
 /** Whether a sign-in would fix this error.
  *
  *  Delegates to core's `isGcpCredentialError` — the same predicate the sync
@@ -459,6 +663,8 @@ function GcpIntroStep({ state, onBrowse, onProjectId, onScaffold, onDone, onBack
  *  projects the listing is simply slow, and a sign-in cannot make it faster. */
 function isGcpAuthError(message: string): boolean {
   if (message.length === 0 || message.includes('GCLOUD_CLI_NOT_FOUND') || message.includes(GCLOUD_PROJECTS_TIMEOUT)) return false;
+  // gcloud tells an offline user to `gcloud auth login`; a sign-in can't fix it.
+  if (isGcpNetworkError(new Error(message))) return false;
   return isGcpCredentialError(new Error(message))
     || message.includes('do not currently have an active account');
 }
@@ -544,7 +750,9 @@ function GcpError({ message, mode, onRetry }: Readonly<{
  *  the wizard's place. `role="alert"` for the same reason it uses one: this
  *  panel is inserted already-populated, and a polite region added that way is
  *  inconsistently announced. */
-function GcpBucketListDenied({ project, message, detailsOpen, onToggleDetails, onRetry }: Readonly<{
+function GcpBucketListDenied({ reader, project, message, detailsOpen, onToggleDetails, onRetry }: Readonly<{
+  /** The service account that was refused; undefined for the user's own login. */
+  reader: string | undefined;
   project: string;
   message: string;
   detailsOpen: boolean;
@@ -552,44 +760,41 @@ function GcpBucketListDenied({ project, message, detailsOpen, onToggleDetails, o
   onRetry: () => void;
 }>) {
   return (
-    // `aria-atomic="false"` because `role="alert"` implies atomic: without it,
-    // opening the disclosure re-announces the whole panel — headline, both
-    // paragraphs and the 350-character denial — instead of the text it reveals.
-    <div className="rounded-lg border border-border bg-bg-tertiary/30 px-4 py-3" role="alert" aria-atomic="false">
-      <p className="text-sm text-text-primary">
-        Couldn&apos;t list the buckets in <code className="text-text-secondary">{project}</code>.
-      </p>
-      <p className="text-xs text-text-secondary mt-1.5">
-        For a least-privilege reader this is expected and harmless:{' '}
-        <code className="text-text-secondary">roles/storage.objectViewer</code> is granted on the bucket
-        itself, while listing buckets is a project-level permission — so type the bucket name below and
-        press Browse. If instead the credential has no access to the bucket, browsing will fail too;
-        the details below name the principal that was denied.
-      </p>
+    // A status, not an alert: with the recommended read-only service account
+    // this denial is the normal path, so it reads as one line pointing at the
+    // field below. The raw denial — the only evidence of which principal was
+    // refused, since GCP returns the same sentence for "no access at all" —
+    // and the grant that fills the dropdown stay one click away. Only the line
+    // is the live region (`<output>`, whose role is status), so opening Details
+    // announces nothing over it.
+    <div>
+      <output className="block text-xs text-text-secondary">
+        {reader === undefined ? 'Your account' : <code className="text-text-secondary">{accountName(reader)}</code>}{' '}
+        can&apos;t list the buckets in <code className="text-text-secondary">{project}</code> — enter the bucket name below.
+      </output>
       <details
-        className="mt-2"
+        className="mt-1"
         open={detailsOpen}
         onToggle={(e) => { onToggleDetails(e.currentTarget.open); }}
       >
-        <summary className="text-xs text-text-muted cursor-pointer hover:text-text-secondary">
-          Details, and how to grant the listing permission
-        </summary>
+        <summary className="text-xs text-text-muted cursor-pointer hover:text-text-secondary">Details</summary>
         <p className="mt-1.5 whitespace-pre-wrap break-words font-mono text-[11px] text-text-muted">{message}</p>
         <p className="text-xs text-text-muted mt-2">
-          Granting <code className="text-text-secondary">roles/storage.bucketViewer</code> on{' '}
-          <code className="text-text-secondary">{project}</code> to that principal populates the dropdown,
-          at the cost of letting it see every bucket name in the project. The exact command is in{' '}
+          To pick from a list instead, grant <code className="text-text-secondary">roles/storage.bucketViewer</code>{' '}
+          on <code className="text-text-secondary">{project}</code> to that principal (it then sees every bucket name in
+          the project) —{' '}
           <a
             href={GCP_EXPORTER_DOCS}
             target="_blank"
             rel="noopener noreferrer"
             className="text-accent underline underline-offset-2 hover:text-accent-hover"
           >
-            the exporter README
-          </a>.
+            command in the exporter README
+          </a>{' '}
+          — then retry.
         </p>
+        <div className="mt-2"><RetryButton onRetry={onRetry} /></div>
       </details>
-      <div className="mt-2"><RetryButton onRetry={onRetry} /></div>
     </div>
   );
 }
@@ -795,8 +1000,10 @@ function GcpProjectStep({ state, onSelect, onTyped, onManual, onBack, onRetry }:
 }
 
 /** Step 2b-ii — pick the bucket. Sister of `BucketStep`, against GCS. */
-function GcpBucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
+function GcpBucketStep({ state, reader, onSelect, onSkip, onBack, onRetry }: Readonly<{
   state: Extract<WizardStep, { step: 'gcp-bucket' }>;
+  /** Who the listing ran as — the full address, or undefined for the ADC login. */
+  reader: string | undefined;
   onSelect: (bucket: string) => void;
   onSkip?: (() => void) | undefined;
   onBack: () => void;
@@ -820,6 +1027,24 @@ function GcpBucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
   const sourceLabel = SOURCE_LABELS[state.source];
   // Only a listing can be denied, and only a project can be listed.
   const deniedProject = state.project !== null && isGcpBucketListDeniedMessage(state.error) ? state.project.id : null;
+  let errorPanel: React.JSX.Element;
+  if (deniedProject !== null) {
+    errorPanel = (
+      <GcpBucketListDenied
+        reader={reader}
+        project={deniedProject}
+        message={state.error}
+        detailsOpen={detailsOpen}
+        onToggleDetails={setDetailsOpen}
+        onRetry={onRetry}
+      />
+    );
+  } else if (reader !== undefined && isGcpImpersonationError(new Error(state.error))) {
+    // The project picker reaches here without the intro's reader check.
+    errorPanel = <GcpReaderDenied reader={reader} project={state.project?.id} message={state.error} onRetry={onRetry} />;
+  } else {
+    errorPanel = <GcpError message={state.error} mode="adc" onRetry={onRetry} />;
+  }
 
   return (
     <div className="flex flex-col gap-5">
@@ -833,17 +1058,7 @@ function GcpBucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
         </p>
       </div>
 
-      {deniedProject !== null
-        ? (
-          <GcpBucketListDenied
-            project={deniedProject}
-            message={state.error}
-            detailsOpen={detailsOpen}
-            onToggleDetails={setDetailsOpen}
-            onRetry={onRetry}
-          />
-        )
-        : <GcpError message={state.error} mode="adc" onRetry={onRetry} />}
+      {errorPanel}
 
       {state.loading ? (
         <div className="flex items-center justify-center py-8">
@@ -1082,17 +1297,17 @@ function GcpBrowseStep({ state, conflictsWith, onNavigate, onRetry, onConfirm, o
 
       <div className="flex items-center justify-between pt-2">
         <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
+        {/* Shown only once a folder is an export: a disabled placeholder read
+            as a step the user was missing, while the fix is to navigate. */}
         <div className="flex items-center gap-3">
           {onSkip !== undefined && (
             <button type="button" onClick={onSkip} className="text-xs text-text-muted hover:text-text-secondary underline underline-offset-2">Skip</button>
           )}
-          <Button
-            onClick={onConfirm}
-            disabled={!selectable}
-            className="bg-accent hover:bg-accent-hover text-white px-8"
-          >
-            {selectable ? 'Use this location' : 'Select an export folder'}
-          </Button>
+          {selectable && (
+            <Button onClick={onConfirm} className="bg-accent hover:bg-accent-hover text-white px-8">
+              Use this location
+            </Button>
+          )}
         </div>
       </div>
     </div>
@@ -1514,18 +1729,119 @@ const OPTIONAL_TIER_ADD_LABEL: Readonly<Record<DataSource, string>> = {
   costOptimization: 'Add Cost Optimization data',
 };
 
-/** The Confirm step's credential card: the AWS profile, or the GCP project —
- *  none for per-tier Configure on a GCP provider, whose config records no
- *  project. */
-function credentialCard(state: Extract<WizardStep, { step: 'confirm' }>): { label: string; value: string } | null {
-  if (state.cloud === 'aws') return { label: 'AWS Profile', value: state.profile };
-  return state.project === null ? null : { label: 'Google Cloud project', value: state.project.id };
-}
-
 /** A tier this run has not collected, offered on Confirm as an optional add. */
 interface OptionalTier {
   readonly tier: DataSource;
   readonly onAdd: () => void;
+}
+
+/** The identity the saved GCP provider's DOWNLOADS will run as, mirroring the
+ *  config upsert: the reader this run sends; else — unless the user cleared
+ *  it — the reader the replaced entry already has; and that entry's key file
+ *  only when no reader is left (the validator refuses both at once). */
+function gcpDownloadIdentity(
+  state: Extract<WizardStep, { step: 'confirm'; cloud: 'gcp' }>,
+  existing: ProviderConfig | undefined,
+): { readonly reader: string | undefined; readonly keyFileProvider: string | undefined } {
+  if (state.reader !== '') return { reader: state.reader, keyFileProvider: undefined };
+  const replaced = existing?.type === 'gcp' ? existing : undefined;
+  const carried = state.clearsReader ? undefined : replaced?.impersonateServiceAccount;
+  if (carried !== undefined) return { reader: carried, keyFileProvider: undefined };
+  return { reader: undefined, keyFileProvider: replaced?.keyFile === undefined ? undefined : String(replaced.name) };
+}
+
+/** Whether the collected GCP folders can be DOWNLOADED, not just browsed:
+ *  browsing runs through the Cloud Storage SDK, downloading through `gcloud
+ *  storage rsync` as gcloud's own active account — two identities that
+ *  routinely differ, so a folder the wizard listed can still 403 on
+ *  `storage.objects.get` once the sync runs. Not run for AWS. */
+type DownloadCheck =
+  | { readonly status: 'not-needed' }
+  | { readonly status: 'checking' }
+  | { readonly status: 'ok' }
+  | { readonly status: 'failed'; readonly tier: DataSource; readonly error: string };
+
+const CHECKED_TIER_LABELS: Readonly<Record<DataSource, string>> = {
+  daily: 'daily export',
+  hourly: 'hourly export',
+  costOptimization: 'Cost Optimization data',
+};
+
+/** A field label on Confirm's cards. */
+const CARD_LABEL = 'text-xs text-text-muted uppercase tracking-wider';
+/** The label column of Confirm's label/value grids. */
+const GRID_LABEL = `${CARD_LABEL} whitespace-nowrap`;
+
+/** The Confirm step's Google Cloud card: the project, the reader and the
+ *  download check as rows of one card, so the three facts about one identity
+ *  read together. The check's failure renders through `GcpError` in gcloud-CLI
+ *  mode — the download's own credential — so a signed-out gcloud gets its
+ *  sign-in button and anything else a Retry. */
+function GcpAccessCard({ project, reader, check, readsAs, onRecheck }: Readonly<{
+  project: string | undefined;
+  /** '' when the download runs as the gcloud account or a key file. */
+  reader: string;
+  check: DownloadCheck;
+  /** Who the check ran as; named in its row only when no Reads as row does. */
+  readsAs: string;
+  onRecheck: () => void;
+}>) {
+  const asWhom = reader === '' ? ` as ${readsAs}` : '';
+  return (
+    <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
+      <dl className="m-0 grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-4 gap-y-1.5">
+        {project !== undefined && (
+          <>
+            <dt className={GRID_LABEL}>Google Cloud project</dt>
+            <dd className="m-0 text-sm font-mono text-text-primary break-all">{project}</dd>
+          </>
+        )}
+        {reader !== '' && (
+          <>
+            <dt className={GRID_LABEL}>Reads as</dt>
+            <dd className="m-0 text-sm font-mono text-text-primary break-all">{reader}</dd>
+          </>
+        )}
+        {check.status !== 'not-needed' && (
+          <>
+            <dt className={GRID_LABEL}>Download check</dt>
+            <dd className="m-0 flex items-center gap-1.5 text-sm" aria-live="polite">
+              {check.status === 'checking' && (
+                <>
+                  <Loader2 aria-hidden="true" className="h-3.5 w-3.5 shrink-0 animate-spin motion-reduce:animate-none text-text-muted" />
+                  <span className="text-text-secondary break-words">Checking that gcloud can download the export{asWhom}…</span>
+                </>
+              )}
+              {check.status === 'ok' && (
+                <>
+                  <Check aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-accent" />
+                  <span className="text-text-primary break-words">gcloud can download the export{asWhom}</span>
+                  <button
+                    type="button"
+                    onClick={onRecheck}
+                    className="ml-auto shrink-0 text-xs text-text-muted underline underline-offset-2 hover:text-text-secondary"
+                  >
+                    Check again
+                  </button>
+                </>
+              )}
+              {check.status === 'failed' && (
+                <>
+                  <X aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-negative" />
+                  <span className="text-text-secondary break-words">
+                    gcloud can&apos;t download the {CHECKED_TIER_LABELS[check.tier]}{asWhom}, so syncing it would fail
+                  </span>
+                </>
+              )}
+            </dd>
+          </>
+        )}
+      </dl>
+      {check.status === 'failed' && (
+        <div className="mt-2"><GcpError message={check.error} mode="cli" onRetry={onRecheck} /></div>
+      )}
+    </div>
+  );
 }
 
 function ConfirmStep({ state, providerNaming, existing, retention, optionalTiers, onComplete, onBack }: Readonly<{
@@ -1555,15 +1871,56 @@ function ConfirmStep({ state, providerNaming, existing, retention, optionalTiers
     return retention.picks[tier] ?? existing?.sync[tier]?.retentionDays ?? DEFAULT_RETENTION_DAYS[tier];
   }
 
-  // The credential card names whichever store this provider authenticates
-  // through. Hardcoding "AWS Profile" here was fine while the wizard only
-  // built AWS providers; a GCP run has no profile at all.
-  // A per-tier Configure on a GCP provider has no project (the config records
-  // none), so there is no card to show.
-  const credential = credentialCard(state);
+  const reader = state.cloud === 'gcp' ? state.reader : '';
+
+  // Primitives, so the check below re-runs only when what it checks changes.
+  const identity = state.cloud === 'gcp' ? gcpDownloadIdentity(state, existing) : null;
+  const checkReader = identity?.reader;
+  const checkKeyFileProvider = identity?.keyFileProvider;
+  const checksDownload = state.cloud === 'gcp';
+  const dailyPath = state.s3Path;
+  const hourlyPath = state.hourlyPath;
+  const readsAs = checkReader ?? (checkKeyFileProvider === undefined ? 'your gcloud account' : 'the provider\u2019s service account key');
+  const [check, setCheck] = useState<DownloadCheck>(() => checksDownload ? { status: 'checking' } : { status: 'not-needed' });
+  const [checkRun, setCheckRun] = useState(0);
+  // Token-guarded like the wizard's step loaders: a gcloud answer for an
+  // earlier identity or path — or one landing after ← Back — must not
+  // overwrite the current check.
+  const checkTokenRef = useRef(0);
+  useEffect(() => {
+    if (!checksDownload) return;
+    const token = ++checkTokenRef.current;
+    setCheck({ status: 'checking' });
+    const targets: { tier: DataSource; path: string }[] = [];
+    if (dailyPath.length > 0) targets.push({ tier: 'daily', path: dailyPath });
+    if (hourlyPath.length > 0) targets.push({ tier: 'hourly', path: hourlyPath });
+    // One tier at a time, stopping at the first refusal: each is a gcloud
+    // spawn, and one failure already blocks the save.
+    const run = async (): Promise<DownloadCheck> => {
+      for (const { tier, path } of targets) {
+        let result: GcsDownloadCheckResult;
+        try {
+          result = await api.verifyGcsDownload({
+            bucketPath: path,
+            ...(checkReader === undefined ? {} : { impersonateServiceAccount: checkReader }),
+            ...(checkKeyFileProvider === undefined ? {} : { keyFileProvider: checkKeyFileProvider }),
+          });
+        } catch (err: unknown) {
+          result = { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+        if (!result.ok) return { status: 'failed', tier, error: result.error };
+      }
+      return { status: 'ok' };
+    };
+    void run().then(next => {
+      if (checkTokenRef.current === token) setCheck(next);
+    });
+    return () => { checkTokenRef.current += 1; };
+  }, [api, checksDownload, dailyPath, hourlyPath, checkReader, checkKeyFileProvider, checkRun]);
+  const checkBlocksSave = check.status === 'checking' || check.status === 'failed';
 
   function handleSave() {
-    if (nameError !== null) return;
+    if (nameError !== null || saving) return;
     setSaving(true);
     setSaveError(null);
     api.writeConfig({
@@ -1574,8 +1931,13 @@ function ConfirmStep({ state, providerNaming, existing, retention, optionalTiers
       // string keeps the payload's shape while the gcp arm of
       // `upsertWizardProvider` ignores it.
       profile: state.cloud === 'gcp' ? '' : state.profile,
+      // The reader the GCP chain browsed as becomes the provider's
+      // `impersonateServiceAccount`. '' (clear) only when the user emptied a
+      // reader the wizard showed them; otherwise blank is omitted, so an
+      // existing entry's reader is carried (see `goToGcpConfirm`).
+      ...(state.cloud === 'gcp' && (reader !== '' || state.clearsReader) ? { impersonateServiceAccount: reader } : {}),
       dailyBucket: state.s3Path,
-      // Each collected tier with the retention its card shows.
+      // Each collected tier with the retention its picker shows.
       ...(state.s3Path.length > 0 ? { retentionDays: tierRetention('daily') } : {}),
       ...(state.hourlyPath.length > 0 ? { hourlyBucket: state.hourlyPath, hourlyRetentionDays: tierRetention('hourly') } : {}),
       // GCP has no Cost Optimization Hub analogue and `validateGcpSync`
@@ -1599,6 +1961,7 @@ function ConfirmStep({ state, providerNaming, existing, retention, optionalTiers
   if (state.s3Path.length > 0) paths.push({ value: state.s3Path, tier: 'daily' });
   if (state.hourlyPath.length > 0) paths.push({ value: state.hourlyPath, tier: 'hourly' });
   if (state.costOptPath.length > 0) paths.push({ value: state.costOptPath, tier: 'costOptimization' });
+  const bucketRoot = sharedBucketRoot(paths.map(p => p.value));
 
   return (
     <div className="flex flex-col gap-5">
@@ -1608,71 +1971,100 @@ function ConfirmStep({ state, providerNaming, existing, retention, optionalTiers
       </div>
 
       <div className="flex flex-col gap-3">
+        {/* Label/value rows in one card, as GcpAccessCard lays out the GCP
+            access facts. */}
         <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
-          <p className="text-xs text-text-muted uppercase tracking-wider">Provider name</p>
-          {providerNaming.fixed ? (
-            <p className="text-sm font-mono text-text-primary mt-0.5">{providerNaming.value}</p>
-          ) : (
-            <>
-              <input
-                id="provider-name"
-                aria-label="Provider name"
-                value={providerNaming.value}
-                onChange={(e) => { providerNaming.onChange(e.target.value); }}
-                placeholder={`e.g. ${defaultProviderName(state.cloud)}`}
-                spellCheck={false}
-                className="mt-1 w-full rounded-md border border-border bg-bg-primary px-3 py-1.5 text-sm font-mono text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-              />
-              {nameError !== null && providerNaming.value.length > 0 ? (
-                <p className="text-xs text-negative mt-1">{nameError}</p>
+          <dl className="m-0 grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-4 gap-y-2">
+            <dt className={GRID_LABEL}>Provider name</dt>
+            <dd className="m-0 min-w-0">
+              {providerNaming.fixed ? (
+                <span className="text-sm font-mono text-text-primary break-all">{providerNaming.value}</span>
               ) : (
-                <p className="text-xs text-text-muted mt-1">Names this billing source — it becomes the data folder and the Provider dimension value.</p>
+                <>
+                  <input
+                    id="provider-name"
+                    aria-label="Provider name"
+                    value={providerNaming.value}
+                    onChange={(e) => { providerNaming.onChange(e.target.value); }}
+                    placeholder={`e.g. ${defaultProviderName(state.cloud)}`}
+                    spellCheck={false}
+                    className="w-full rounded-md border border-border bg-bg-primary px-2.5 py-1 text-sm font-mono text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                  />
+                  {nameError !== null && providerNaming.value.length > 0 ? (
+                    <p className="text-xs text-negative mt-1">{nameError}</p>
+                  ) : (
+                    <p className="text-xs text-text-muted mt-1">Names this billing source — it becomes the data folder and the Provider dimension value.</p>
+                  )}
+                </>
               )}
-            </>
-          )}
+            </dd>
+            {state.cloud === 'aws' && (
+              <>
+                <dt className={GRID_LABEL}>AWS Profile</dt>
+                <dd className="m-0 text-sm font-mono text-text-primary break-all">{state.profile}</dd>
+              </>
+            )}
+          </dl>
         </div>
 
-        {credential !== null && (
-          <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
-            <p className="text-xs text-text-muted uppercase tracking-wider">{credential.label}</p>
-            <p className="text-sm font-mono text-text-primary mt-0.5">{credential.value}</p>
-          </div>
+        {state.cloud === 'gcp' && (
+          <GcpAccessCard
+            project={state.project?.id}
+            reader={reader}
+            check={check}
+            readsAs={readsAs}
+            onRecheck={() => { setCheckRun(n => n + 1); }}
+          />
         )}
 
-        {paths.map(({ value, tier }) => {
-          const label = SOURCE_LABELS[tier].title;
-          const selected = tierRetention(tier);
-          // A hand-tuned window that isn't one of the presets still shows,
-          // pressed, so keeping it is the default rather than impossible.
-          const options = RETENTION_OPTIONS[tier].some(opt => opt.days === selected)
-            ? RETENTION_OPTIONS[tier]
-            : [...RETENTION_OPTIONS[tier], { days: selected, label: `${String(selected)} days` }].sort((x, y) => x.days - y.days);
-          return (
-          <div key={tier} className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
-            <p className="text-xs text-text-muted uppercase tracking-wider">{label}</p>
-            <p className="text-sm font-mono text-text-primary mt-0.5">{value}</p>
-            <fieldset aria-label={`${label} retention`} className="m-0 min-w-0 border-0 p-0 flex flex-wrap gap-2 mt-2.5">
-              {options.map(opt => (
-                <button
-                  key={opt.days}
-                  type="button"
-                  aria-pressed={selected === opt.days}
-                  onClick={() => { retention.onPick(tier, opt.days); }}
-                  className={[
-                    'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
-                    selected === opt.days
-                      ? 'bg-accent text-bg-primary'
-                      : 'bg-bg-tertiary/50 text-text-secondary hover:text-text-primary',
-                  ].join(' ')}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </fieldset>
-            <p className="text-xs text-text-muted mt-1.5">How far back to keep this tier</p>
+        {/* Every collected tier in one card. When they share a bucket it is
+            printed once and each tier shows only its folder. */}
+        {paths.length > 0 && (
+          <div className="rounded-lg border border-border bg-bg-tertiary/20 divide-y divide-border">
+            {bucketRoot !== null && (
+              <div className="px-4 py-2.5">
+                <p className={CARD_LABEL}>Bucket</p>
+                <p className="text-sm font-mono text-text-primary mt-0.5 break-all">{bucketRoot}</p>
+              </div>
+            )}
+            {paths.map(({ value, tier }) => {
+              const label = SOURCE_LABELS[tier].title;
+              const selected = tierRetention(tier);
+              // A hand-tuned window that isn't one of the presets still shows,
+              // pressed, so keeping it is the default rather than impossible.
+              const options = RETENTION_OPTIONS[tier].some(opt => opt.days === selected)
+                ? RETENTION_OPTIONS[tier]
+                : [...RETENTION_OPTIONS[tier], { days: selected, label: `${String(selected)} days` }].sort((x, y) => x.days - y.days);
+              return (
+                <div key={tier} className="px-4 py-2.5">
+                  <p className={CARD_LABEL}>{label}</p>
+                  <p className="text-sm font-mono text-text-primary mt-0.5 break-all" title={bucketRoot === null ? undefined : value}>
+                    {bucketRoot === null ? value : value.slice(bucketRoot.length)}
+                  </p>
+                  <fieldset aria-label={`${label} retention`} className="m-0 min-w-0 border-0 p-0 flex flex-wrap items-center gap-1 mt-1.5">
+                    <span aria-hidden="true" className="mr-1 text-xs text-text-muted">Keep</span>
+                    {options.map(opt => (
+                      <button
+                        key={opt.days}
+                        type="button"
+                        aria-pressed={selected === opt.days}
+                        onClick={() => { retention.onPick(tier, opt.days); }}
+                        className={[
+                          'rounded-md px-2 py-0.5 text-xs font-medium transition-colors',
+                          selected === opt.days
+                            ? 'bg-accent text-bg-primary'
+                            : 'bg-bg-tertiary/50 text-text-secondary hover:text-text-primary',
+                        ].join(' ')}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </fieldset>
+                </div>
+              );
+            })}
           </div>
-          );
-        })}
+        )}
 
         {optionalTiers.map(({ tier, onAdd }) => {
           const { title, description } = SOURCE_LABELS[tier];
@@ -1682,7 +2074,7 @@ function ConfirmStep({ state, providerNaming, existing, retention, optionalTiers
           return (
             <div key={tier} className="rounded-lg border border-dashed border-border px-4 py-3">
               <div className="flex items-center gap-2">
-                <p className="text-xs text-text-muted uppercase tracking-wider">{title}</p>
+                <p className={CARD_LABEL}>{title}</p>
                 <span className="rounded-full border border-border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-text-muted">Optional</span>
               </div>
               {kept === undefined
@@ -1705,13 +2097,27 @@ function ConfirmStep({ state, providerNaming, existing, retention, optionalTiers
 
       <div className="flex items-center justify-between pt-2">
         <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
-        <Button
-          onClick={handleSave}
-          disabled={saving || nameError !== null}
-          className="bg-accent hover:bg-accent-hover text-white px-8"
-        >
-          {saving ? 'Saving...' : 'Complete Setup'}
-        </Button>
+        <div className="flex items-center gap-3">
+          {/* Only after a refusal, and deliberately small: for a setup that is
+              genuinely offline now, or a check that misreads a working grant. */}
+          {check.status === 'failed' && (
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving || nameError !== null}
+              className="text-xs text-text-muted underline underline-offset-2 hover:text-text-secondary disabled:opacity-50"
+            >
+              Save anyway
+            </button>
+          )}
+          <Button
+            onClick={handleSave}
+            disabled={saving || nameError !== null || checkBlocksSave}
+            className="bg-accent hover:bg-accent-hover text-white px-8"
+          >
+            {saving ? 'Saving...' : 'Complete Setup'}
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -1799,6 +2205,10 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   // Confirm-step retention picks. Wizard-level, like `providerName`, so ← Back
   // and forward again keeps them; cleared when a cloud chain starts over.
   const [retentionPicks, setRetentionPicks] = useState<Partial<Record<DataSource, number>>>({});
+  // Each configured GCP provider's reader, to prefill the field when the run
+  // reconfigures that provider — so it browses as what the sync will use.
+  const existingGcpReaders = useMemo<ReadonlyMap<string, string>>(() => new Map(existingConfigs.flatMap(p =>
+    p.type === 'gcp' && p.impersonateServiceAccount !== undefined ? [[String(p.name), p.impersonateServiceAccount]] : [])), [existingConfigs]);
   // Whether the user has typed a name. Until they do, the default is DERIVED
   // from the cloud they picked rather than written into state on entry — a
   // one-way `setProviderName('gcp-main')` survived backing out of the GCP
@@ -1831,6 +2241,23 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   }, [initialWorkspaceName]);
   const [wizard, setWizard] = useState<WizardStep>(() => initialWizardStep(sourceMode, workspaceNaming !== undefined));
   const [collectedPaths, setCollectedPaths] = useState(EMPTY_PATHS);
+  // The GCP chain's optional reader, as typed: a full address, or a bare
+  // account name (the default, `costgoblin-reader`) completed with the project
+  // the user picks — see `gcpReaderFor`. Every bucket listing and browse below
+  // runs as it, and it is written as the provider's `impersonateServiceAccount`
+  // — so the wizard sees exactly what the sync will. '' means the ADC login.
+  // Seeded from a per-tier Configure's provider, which never passes the intro.
+  const [gcpReader, setGcpReader] = useState(gcpSource?.impersonateServiceAccount ?? '');
+  // The reader the field was prefilled with, so emptying it reads as a
+  // decision to clear rather than "nothing known".
+  const [gcpReaderSeed, setGcpReaderSeed] = useState(gcpSource?.impersonateServiceAccount ?? '');
+  /** The reader's full address once `project` completes a bare name; undefined
+   *  for none (the ADC login). A per-tier Configure (no project) is seeded
+   *  with the provider's full address, so it resolves without one. */
+  function gcpReaderFor(project: GcpProjectChoice | null): string | undefined {
+    const resolved = resolveReaderInput(gcpReader, project?.id);
+    return resolved.kind === 'address' ? resolved.address : undefined;
+  }
   // Monotonic token for every step loader, AWS and GCP alike. Each resolver
   // rebuilds a whole step object from captured args, so without this a slow
   // response (a cold ADC token refresh, gcloud sitting on a re-auth prompt
@@ -1902,11 +2329,34 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     reloadGcpProjects();
   }
 
-  /** Enter the GCP browse flow with a typed project ID — straight to the
-   *  bucket step, never running `gcloud projects list`. */
+  /** Enter the GCP browse flow with a typed project ID, never running
+   *  `gcloud projects list`. The bucket listing runs while the intro is still
+   *  on screen, so a reader that can't be read as is reported there — beside
+   *  the field to fix — instead of one step later. Any other outcome (buckets,
+   *  a listing denial, a sign-in) is the bucket step's to show. */
   function startGcpFromTypedProject(projectId: string): void {
     setCollectedPaths(EMPTY_PATHS);
-    startGcpBucketStep({ id: projectId, typed: true }, 'daily');
+    const project: GcpProjectChoice = { id: projectId, typed: true };
+    const reader = gcpReaderFor(project);
+    const token = ++stepRequestRef.current;
+    const toBucketStep = (buckets: readonly { name: string }[], error: string): void => {
+      setWizard({ step: 'gcp-bucket', project, source: 'daily', buckets, loading: false, selected: '', error });
+    };
+    setWizard(prev => prev.step === 'gcp' ? { ...prev, check: { status: 'checking' } } : prev);
+    api.listGcsBuckets(projectId, reader).then(result => {
+      if (stepRequestRef.current !== token) return;
+      const error = result.error ?? '';
+      if (reader !== undefined && isGcpImpersonationError(new Error(error))) {
+        setWizard(prev => prev.step === 'gcp'
+          ? { ...prev, check: { status: 'denied', reader, project: projectId, message: error } }
+          : prev);
+        return;
+      }
+      toBucketStep(result.buckets, error);
+    }).catch((err: unknown) => {
+      if (stepRequestRef.current !== token) return;
+      toBucketStep([], err instanceof Error ? err.message : String(err));
+    });
   }
 
   /** The listing half of `goToGcpProjectStep`, without the `collectedPaths`
@@ -1933,7 +2383,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
       return;
     }
     setWizard({ step: 'gcp-bucket', project, source, buckets: [], loading: true, selected: '', error: '' });
-    api.listGcsBuckets(project.id).then(result => {
+    api.listGcsBuckets(project.id, gcpReaderFor(project)).then(result => {
       if (stepRequestRef.current !== token) return;
       setWizard({ step: 'gcp-bucket', project, source, buckets: result.buckets, loading: false, selected: '', error: result.error ?? '' });
     }).catch((err: unknown) => {
@@ -1947,7 +2397,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     const token = ++stepRequestRef.current;
     setWizard({ step: 'gcp-browse', project, source, bucket, prefix, prefixes: [], loading: true, folder: { kind: 'unknown' }, hasParquet: false, truncated: false, error: '', path });
     // Listing a bucket's objects needs no project; '' leaves the SDK to skip it.
-    api.browseGcs({ projectId: project?.id ?? '', bucket, prefix }).then(result => {
+    api.browseGcs({ projectId: project?.id ?? '', bucket, prefix, impersonateServiceAccount: gcpReaderFor(project) }).then(result => {
       if (stepRequestRef.current !== token) return;
       setWizard({ step: 'gcp-browse', project, source, bucket, prefix, prefixes: result.prefixes, loading: false, folder: result.folder, hasParquet: result.hasParquet, truncated: result.truncated, error: result.error ?? '', path });
     }).catch((err: unknown) => {
@@ -1991,6 +2441,14 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
       step: 'confirm',
       cloud: 'gcp',
       project,
+      // The full address, completed with the chosen project — what the
+      // sync will read as, and what Confirm shows and verifies.
+      reader: gcpReaderFor(project) ?? '',
+      // Clearing is only ever sent for a reader the user saw and removed. A
+      // blank field with nothing prefilled is ambiguous — config not loaded
+      // yet, or a rename at Confirm onto an existing provider — so the
+      // upsert carries that entry's reader instead of dropping it.
+      clearsReader: gcpReader.trim() === '' && gcpReaderSeed !== '',
       s3Path: p.daily,
       hourlyPath: p.hourly,
       // GCP never collects a cost-optimization path; carrying one here would
@@ -2052,7 +2510,23 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     // those are also reached by ← Back mid-flow, where clearing a name the
     // user has already typed would be the more surprising behaviour.
     setProviderNameEdited(false);
+    setGcpReader(DEFAULT_READER_ACCOUNT_ID);
+    setGcpReaderSeed(DEFAULT_READER_ACCOUNT_ID);
     setWizard({ step: 'start' });
+  }
+
+  /** Enter the GCP chain, seeding the reader from the provider this run would
+   *  write — its fixed or typed name, else the GCP default. A provider that
+   *  already exists keeps its own reader, or its lack of one (re-running setup
+   *  must not quietly switch who it downloads as); a new one starts on the
+   *  account the setup guide creates, completed with the project picked next. */
+  function enterGcp(): void {
+    const name = providerNameFixed || providerNameEdited || mode === 'add' ? providerName : defaultProviderName('gcp');
+    const existingGcp = existingConfigs.some(p => p.type === 'gcp' && String(p.name) === name);
+    const seed = existingGcp ? existingGcpReaders.get(name) ?? '' : DEFAULT_READER_ACCOUNT_ID;
+    setGcpReader(seed);
+    setGcpReaderSeed(seed);
+    setWizard({ step: 'gcp', scaffolded: false, error: '' });
   }
 
   function handleProfileSelect(profile: string) {
@@ -2278,7 +2752,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
             <StartStep
               workspaceLabel={workspaceNaming !== undefined ? workspaceName : workspaceLabel}
               onSetup={goToProfileStep}
-              onGcp={() => { setWizard({ step: 'gcp', scaffolded: false, error: '' }); }}
+              onGcp={enterGcp}
               onImport={() => { setImportOpen(true); }}
               onBack={workspaceNaming !== undefined ? () => { setWizard({ step: 'welcome' }); } : undefined}
               jumpBack={jumpBack}
@@ -2287,6 +2761,8 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
           {wizard.step === 'gcp' && (
             <GcpIntroStep
               state={wizard}
+              reader={gcpReader}
+              onReaderChange={setGcpReader}
               onBrowse={goToGcpProjectStep}
               onProjectId={startGcpFromTypedProject}
               onScaffold={handleGcpScaffold}
@@ -2307,6 +2783,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
           {wizard.step === 'gcp-bucket' && (
             <GcpBucketStep
               state={wizard}
+              reader={gcpReaderFor(wizard.project)}
               onSelect={(bucket) => { gcpBrowseTo(wizard.project, wizard.source, bucket, ''); }}
               // Per-tier Configure came for this one tier; ✕ is the way out.
               onSkip={wizard.source === 'daily' || gcpSourceMode !== undefined ? undefined : handleGcpSkip}

@@ -41,7 +41,7 @@ export async function queryTrends(
   const groupBy: DimensionId = toDimensionId(params.groupBy);
   const dateRange: DateRange = params.dateRange !== undefined
     ? toDateRange(params.dateRange)
-    : defaultDateRange();
+    : defaultDateRange(ctx.now());
   const filters = toFilterMap(params.filters);
   const deltaThreshold = toDollars(params.deltaThreshold ?? 1);
   const percentThreshold = params.percentThreshold ?? 5;

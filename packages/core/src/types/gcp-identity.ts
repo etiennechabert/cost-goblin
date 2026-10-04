@@ -76,6 +76,10 @@ export interface GcpSplitAccounts {
 export interface GcpIdentities {
   readonly listing: GcpListingIdentity;
   readonly download: GcpDownloadIdentity;
+  /** The provider's `impersonateServiceAccount`: both halves read as it,
+   *  minted from the identities above (listing from ADC, downloads from
+   *  gcloud's account). Null for none, and in the wizard. */
+  readonly reader: string | null;
   /** Set when listing and downloads run as two different users. */
   readonly splitAccounts: GcpSplitAccounts | null;
 }

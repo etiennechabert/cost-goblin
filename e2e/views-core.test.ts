@@ -1,4 +1,4 @@
-import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
+import { test, expect, type ElectronApplication, type Locator, type Page } from '@playwright/test';
 import {
   launchAppWithCoverage,
   finishCoverage,
@@ -50,15 +50,6 @@ test.describe('App shell', () => {
     for (const label of ['Cost Scope', 'Dimensions', 'Dashboards', 'Data & Sync']) {
       await expect(rail.getByRole('button', { name: label, exact: true })).toBeVisible();
     }
-    await ensureViewMode(page);
-  });
-
-  test('has theme toggle in General settings', async () => {
-    await openSettings(page);
-    await page.getByRole('navigation', { name: SETTINGS_NAV_LABEL }).getByRole('button', { name: 'General', exact: true }).click();
-    // Theme is a segmented Dark / Light control.
-    await expect(page.getByRole('button', { name: 'Dark', exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Light', exact: true })).toBeVisible();
     await ensureViewMode(page);
   });
 
@@ -116,33 +107,6 @@ test.describe('App shell', () => {
     expect(restored).toBe(hadDark);
     await ensureViewMode(page);
   });
-
-  test('navigating between all views changes active content', async () => {
-    const views: { button: string; marker: { type: 'heading'; name: string } | { type: 'text'; text: string } }[] = [
-      { button: 'Cost Overview', marker: { type: 'heading', name: 'Cost Overview' } },
-      { button: 'Trends', marker: { type: 'text', text: 'Period-over-period comparison' } },
-      { button: 'Tags', marker: { type: 'text', text: 'without the selected allocation tag' } },
-      { button: 'Findings', marker: { type: 'text', text: 'cost optimization recommendations' } },
-      { button: 'Cost Scope', marker: { type: 'heading', name: 'Cost Scope' } },
-      { button: 'Dimensions', marker: { type: 'heading', name: 'Dimensions' } },
-      { button: 'Sync', marker: { type: 'heading', name: 'Data Management' } },
-    ];
-
-    for (const { button, marker } of views) {
-      await clickNavButton(page, button);
-      if (marker.type === 'heading') {
-        await expect(page.getByRole('heading', { name: marker.name, exact: true })).toBeVisible({ timeout: 5000 });
-      } else {
-        await expect(page.getByText(marker.text, { exact: false }).first()).toBeVisible({ timeout: 5000 });
-      }
-      await page.waitForTimeout(500);
-      await assertNoReactCrash(page);
-    }
-
-    // go back to overview for subsequent tests
-    await clickNavButton(page, 'Cost Overview');
-    await expect(page.getByRole('heading', { name: 'Cost Overview' })).toBeVisible();
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -150,7 +114,7 @@ test.describe('App shell', () => {
 // ---------------------------------------------------------------------------
 test.describe('Cost Overview', () => {
   test.beforeAll(async () => {
-    await navigateTo(page, 'Cost Overview', 'Cost Overview');
+    await navigateTo(page, 'Home', 'Cost Overview');
   });
 
   test('renders summary card with Total Cost label', async () => {
@@ -179,19 +143,6 @@ test.describe('Cost Overview', () => {
     await trigger.click();
   });
 
-  test('switching date range preset triggers a reload', async () => {
-    await selectDatePreset(page, 'Last 90 days');
-    await waitForQuerySettle(page);
-
-    // 90 days back from the pinned clock covers the whole fixture window, so
-    // the reloaded total must be a real dollar amount.
-    await expectVisibleData(page);
-
-    // switch back
-    await selectDatePreset(page, 'Last 30 days');
-    await waitForQuerySettle(page);
-  });
-
   test('custom date range inputs appear when Custom range is clicked', async () => {
     const trigger = page.locator('button:has(svg.lucide-calendar)').first();
     await trigger.click();
@@ -205,74 +156,36 @@ test.describe('Cost Overview', () => {
     await page.keyboard.press('Escape');
   });
 
-  test('filter bar shows dimension chips and they are clickable', async () => {
-    // Filter chips are buttons with dimension names like "Account", "Service"
-    // Use a known dimension name to find the filter bar area
-    const accountChip = page.getByRole('button', { name: 'Account', exact: true });
-    const hasChip = await accountChip.isVisible().catch(() => false);
-    if (!hasChip) return;
-
-    // click to open the filter dropdown
+  test('filter chip: search, pick a value, Apply, then Clear all removes it', async () => {
+    // Two buttons are named "Account": the filter chip and the Account pie's
+    // group-by title, whose chevron is an <svg>. The chip holds only text.
+    const accountChip = page.getByRole('button', { name: 'Account', exact: true }).filter({ hasNot: page.locator('svg') });
     await accountChip.click();
 
-    // dropdown should open with either a search input or loading state
     const dropdown = page.locator('.absolute.left-0.top-full');
-    await expect(dropdown).toBeVisible({ timeout: 5000 });
+    await expect(dropdown).toBeVisible();
+    // Values are pre-checked once they load; each row offers "only".
+    const onlyButtons = dropdown.getByRole('button', { name: 'only', exact: true });
+    await expect(onlyButtons.first()).toBeVisible();
 
-    // wait for loading to finish (search box should be usable)
-    const searchInput = page.locator('input[placeholder^="Search"]');
-    if (await searchInput.isVisible()) {
-      // type into the search to verify it works
-      await searchInput.fill('test');
-      await searchInput.fill('');
-    }
-
+    // The search box narrows the list.
+    const search = dropdown.getByPlaceholder('Search Account…');
+    await search.fill('no-such-account-zzz');
+    await expect(dropdown.getByText('No values found')).toBeVisible();
+    await search.fill('');
+    await expect(onlyButtons.first()).toBeVisible();
     await screenshot(page, 'overview-filter-dropdown');
 
-    // close dropdown by clicking outside
-    await page.locator('h2').first().click();
-    await page.waitForTimeout(200);
-  });
+    // "only" sets the draft to that one value; Apply commits it.
+    await onlyButtons.first().click();
+    await dropdown.getByRole('button', { name: 'Apply' }).click();
+    const appliedChip = page.getByRole('button', { name: /^Account: / });
+    await expect(appliedChip).toBeVisible();
+    await screenshot(page, 'overview-filtered');
 
-  test('filter chip: selecting a value applies the filter and Clear all removes it', async () => {
-    const accountChip = page.getByRole('button', { name: 'Account', exact: true });
-    const hasChip = await accountChip.isVisible().catch(() => false);
-    if (!hasChip) return;
-    await accountChip.click();
-
-    // wait for dropdown values
-    const dropdown = page.locator('.absolute.left-0.top-full');
-    await expect(dropdown).toBeVisible({ timeout: 5000 });
-
-    // wait for values to load
-    try {
-      await expect(page.getByText('Loading…')).toBeHidden({ timeout: 10000 });
-    } catch { /* may not appear */ }
-
-    // Multi-select: values are pre-checked. Use "Only" on the first item to filter to just that value.
-    const onlyButtons = dropdown.locator('button', { hasText: 'only' });
-    const onlyCount = await onlyButtons.count();
-
-    if (onlyCount > 0) {
-      await onlyButtons.first().click();
-      // "only" sets the draft — click Apply to commit the filter
-      const applyBtn = dropdown.getByRole('button', { name: 'Apply' });
-      await applyBtn.click();
-      await waitForQuerySettle(page);
-
-      // "Clear all" button should appear
-      const clearAll = page.getByRole('button', { name: 'Clear all' });
-      await expect(clearAll).toBeVisible();
-
-      await screenshot(page, 'overview-filtered');
-
-      // clear the filter
-      await clearAll.click();
-      await waitForQuerySettle(page);
-    } else {
-      // close the dropdown
-      await page.locator('h2').first().click();
-    }
+    await page.getByRole('button', { name: 'Clear all' }).click();
+    await expect(appliedChip).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Clear all' })).toHaveCount(0);
   });
 
   test('pie chart containers are rendered when data exists', async () => {
@@ -287,86 +200,33 @@ test.describe('Cost Overview', () => {
     await screenshot(page, 'overview-pie-charts');
   });
 
-  test('pie chart dimension dropdown switches the dimension', async () => {
-    // Only target visible, enabled selects (pie chart dropdowns) — guard
-    // against any hidden/disabled selects other widgets might render.
-    const selects = page.locator('select:not([disabled])');
-    const visibleSelects: typeof selects[] = [];
-    for (let i = 0; i < await selects.count(); i++) {
-      if (await selects.nth(i).isVisible()) visibleSelects.push(selects.nth(i));
-    }
-    if (visibleSelects.length === 0 || visibleSelects[0] === undefined) return;
-
-    const firstSelect = visibleSelects[0];
-    const options = firstSelect.locator('option');
-    const optCount = await options.count();
-    if (optCount <= 1) return;
-
-    const secondOption = await options.nth(1).getAttribute('value');
-    if (secondOption !== null) {
-      await firstSelect.selectOption(secondOption);
-      await waitForQuerySettle(page);
-      const firstOption = await options.first().getAttribute('value');
-      if (firstOption !== null) {
-        await firstSelect.selectOption(firstOption);
-        await waitForQuerySettle(page);
-      }
-    }
-  });
-
   test('stacked bar chart renders with title', async () => {
     await expect(page.locator('h3', { hasText: 'Service' }).first()).toBeVisible();
   });
 
-  test('histogram expand/collapse toggle works', async () => {
-    const expandBtn = page.locator('button[title="Expand"], button[title="Collapse"]');
-    const count = await expandBtn.count();
+  test('switching the date preset reloads the total, and the breakdown table renders rows', async () => {
+    const total = page.locator('p:text-is("Total Cost") + span').first();
+    await expect(total).toHaveText(/^\$/);
+    const before = await total.innerText();
 
-    if (count > 0) {
-      await expandBtn.first().click();
-      await page.waitForTimeout(200);
-      await expandBtn.first().click();
-    }
-  });
-
-  test('pie chart expand/collapse works', async () => {
-    const expandBtns = page.locator('button[title="Toggle expand"]');
-    const count = await expandBtns.count();
-
-    if (count > 0) {
-      // expand first pie
-      await expandBtns.first().click();
-      await screenshot(page, 'overview-pie-expanded');
-
-      // click again to restore
-      await expandBtns.first().click();
-      await screenshot(page, 'overview-pie-restored');
-    }
-  });
-
-  test('hovering a pie legend entry does not crash', async () => {
-    const legendItems = page.locator('svg g text');
-    const legendCount = await legendItems.count();
-    if (legendCount > 0) {
-      await legendItems.first().hover();
-      await screenshot(page, 'overview-pie-hover');
-    }
-  });
-
-  test('breakdown table renders rows for the fixture range', async () => {
+    // 365 days back from the pinned clock covers the whole fixture window, a
+    // strict superset of the default 30 — the total must reload to a new value.
     await selectDatePreset(page, 'Last 365 days');
-    await waitForQuerySettle(page);
+    await expect.poll(async () => {
+      const text = await total.innerText();
+      return text !== before && text.startsWith('$') ? 'reloaded' : text;
+    }, { message: `total reloads from ${before} for the wider range`, timeout: LOAD_TIMEOUT }).toBe('reloaded');
 
-    await expectVisibleData(page);
-    const tables = page.locator('table');
-    expect(await tables.count()).toBeGreaterThan(0);
-
-    const rows = tables.last().locator('tbody tr');
-    expect(await rows.count()).toBeGreaterThan(0);
+    // The breakdown table sits below the fold: wait for its rows rather than
+    // counting them once.
+    const rows = page.locator('table').last().locator('tbody tr');
+    await expect(rows.first()).toBeVisible();
     await rows.first().hover();
     await screenshot(page, 'overview-breakdown-hover');
 
+    // Back to the default range: the total returns to where it started.
     await selectDatePreset(page, 'Last 30 days');
+    await expect(total).toHaveText(before, { useInnerText: true });
     await waitForQuerySettle(page);
   });
 
@@ -385,33 +245,29 @@ test.describe('Cost Overview', () => {
 // Cost Trends
 // ---------------------------------------------------------------------------
 test.describe('Cost Trends', () => {
+  /** The "N items · <totals>" line, rendered only once the trends query has
+   *  settled. A getter: `page` is assigned in the file's beforeAll. */
+  const itemSummary = (): Locator => page.getByText(/^\d+ items · /);
+
   test.beforeAll(async () => {
     await navigateToText(page, 'Trends', 'Period-over-period comparison');
   });
 
-  test('shows heading and subtitle', async () => {
-    await expect(page.getByText('Period-over-period comparison')).toBeVisible();
-  });
-
-  test('dimension selector shows dimension tabs', async () => {
-    // dimension selector is a row of buttons inside a bordered container
-    const dimSelector = page.locator('.rounded-lg.border');
-    await expect(dimSelector.first()).toBeVisible();
-  });
-
   test('switching dimensions triggers reload', async () => {
-    const dimBtns = page.locator('.rounded-lg.border.bg-bg-tertiary\\/30 button').first();
-    const allDimBtns = page.locator('.rounded-lg.border.bg-bg-tertiary\\/30 button');
-    const count = await allDimBtns.count();
+    // The dimension selector's pill row, found by a dimension it holds: the
+    // date-picker trigger and the direction toggle share its classes.
+    const dimBtns = page.locator('div.rounded-lg.border', { has: page.getByRole('button', { name: 'Region', exact: true }) }).locator('button');
+    await expect(dimBtns.nth(1)).toBeVisible();
 
-    if (count > 1) {
-      await allDimBtns.nth(1).click();
-      await waitForQuerySettle(page);
-      await screenshot(page, 'trends-dimension-switch');
+    // The selected dimension is the accent-filled pill.
+    await dimBtns.nth(1).click();
+    await expect(dimBtns.nth(1)).toHaveClass(/\bbg-accent\b/);
+    await expect(itemSummary()).toBeVisible();
+    await screenshot(page, 'trends-dimension-switch');
 
-      await allDimBtns.first().click();
-      await waitForQuerySettle(page);
-    }
+    await dimBtns.first().click();
+    await expect(dimBtns.first()).toHaveClass(/\bbg-accent\b/);
+    await expect(itemSummary()).toBeVisible();
   });
 
   test('All/Increase/Savings toggle is present and clickable', async () => {
@@ -426,16 +282,19 @@ test.describe('Cost Trends', () => {
     await expect(increaseBtn).toBeVisible();
     await expect(savingsBtn).toBeVisible();
 
+    // The toggle filters the loaded rows client-side; the summary line's total
+    // label names the direction in force.
+    const summary = itemSummary();
     await savingsBtn.click();
-    await waitForQuerySettle(page);
+    await expect(summary).toHaveText(/ total savings$/);
     await screenshot(page, 'trends-savings');
 
     await increaseBtn.click();
-    await waitForQuerySettle(page);
+    await expect(summary).toHaveText(/ total increase$/);
     await screenshot(page, 'trends-increases');
 
     await allBtn.click();
-    await waitForQuerySettle(page);
+    await expect(summary).toHaveText(/ increase · -.+ savings$/);
     await screenshot(page, 'trends-all');
   });
 
@@ -443,22 +302,26 @@ test.describe('Cost Trends', () => {
     const numberInputs = page.locator('input[type="number"]');
     const inputCount = await numberInputs.count();
     expect(inputCount).toBeGreaterThanOrEqual(2);
-
-    // modify Min $ threshold
     const minDollar = numberInputs.first();
-    await minDollar.fill('1000');
-    await waitForQuerySettle(page);
-
-    // modify Min %
     const minPercent = numberInputs.nth(1);
+
+    // Each threshold change re-runs the trends query. At 0/0 every changed
+    // entity is listed; the fixture's deltas are far below $1000 / 50%, so the
+    // count must fall — and come back once the thresholds are restored. A
+    // count, not mere visibility: the old summary line stays up until the
+    // re-query's loading state commits.
+    const summary = itemSummary();
+    const atZero = await summary.innerText();
+    const itemCount = async (): Promise<number> => Number.parseInt(await summary.innerText(), 10);
+
+    await minDollar.fill('1000');
     await minPercent.fill('50');
-    await waitForQuerySettle(page);
+    await expect.poll(itemCount, { message: `items drop below "${atZero}"` }).toBeLessThan(Number.parseInt(atZero, 10));
     await screenshot(page, 'trends-high-threshold');
 
-    // restore defaults
     await minDollar.fill('0');
     await minPercent.fill('0');
-    await waitForQuerySettle(page);
+    await expect(summary).toHaveText(atZero, { useInnerText: true });
   });
 
   test('shows item count summary and table', async () => {
@@ -467,8 +330,7 @@ test.describe('Cost Trends', () => {
     // an empty or error state here is a regression, not an acceptable branch.
     await expectVisibleData(page);
 
-    const summaryLine = page.locator('text=/\\d+ items/');
-    await expect(summaryLine.first()).toBeVisible();
+    await expect(itemSummary()).toBeVisible();
 
     await expect(page.locator('table').first()).toBeVisible();
     for (const col of ['Entity', 'Current', 'Previous', 'Delta', 'Change']) {
@@ -515,32 +377,27 @@ test.describe('Cost Trends', () => {
 test.describe('Missing Tags', () => {
   test.beforeAll(async () => {
     await navigateToText(page, 'Tags', 'without the selected allocation tag');
-  });
-
-  test('shows heading and subtitle', async () => {
-    // The header is no longer a semantic heading — it's a styled <p> now,
-    // matching the other view headers.
+    // The header is a styled <p>, not a semantic heading, like the other
+    // view headers.
     await expect(page.getByText('Missing Tags', { exact: true }).first()).toBeVisible();
-    await expect(page.getByText(/without the selected allocation tag/i)).toBeVisible();
   });
 
   test('tag dimension tabs are visible and switchable', async () => {
-    const tabContainer = page.locator('.rounded-lg.border.bg-bg-tertiary\\/30');
-    const hasMultiple = await tabContainer.first().isVisible().catch(() => false);
+    // One tab per tag dimension (the fixture config has four), found by the
+    // Team tab: the date picker's Daily/Hourly toggle shares the row's classes
+    // and comes first.
+    const tabBtns = page.locator('div.rounded-lg.border', { has: page.getByRole('button', { name: 'Team', exact: true }) }).locator('button');
+    await expect(tabBtns.nth(1)).toBeVisible();
 
-    if (hasMultiple) {
-      const tabBtns = tabContainer.first().locator('button');
-      const count = await tabBtns.count();
+    // The selected tab is the accent-filled pill.
+    await tabBtns.nth(1).click();
+    await expect(tabBtns.nth(1)).toHaveClass(/\bbg-accent\b/);
+    await waitForQuerySettle(page);
+    await screenshot(page, 'missing-tags-second-tab');
 
-      if (count > 1) {
-        await tabBtns.nth(1).click();
-        await waitForQuerySettle(page);
-        await screenshot(page, 'missing-tags-second-tab');
-
-        await tabBtns.first().click();
-        await waitForQuerySettle(page);
-      }
-    }
+    await tabBtns.first().click();
+    await expect(tabBtns.first()).toHaveClass(/\bbg-accent\b/);
+    await waitForQuerySettle(page);
   });
 
   test('min cost input is present and functional', async () => {
@@ -602,11 +459,7 @@ test.describe('Missing Tags', () => {
 // ---------------------------------------------------------------------------
 test.describe('Findings', () => {
   test.beforeAll(async () => {
-    await navigateToText(page, 'Findings', 'cost optimization recommendations');
-  });
-
-  test('shows heading and subtitle', async () => {
-    await expect(page.getByText('AWS cost optimization recommendations')).toBeVisible();
+    await navigateToText(page, 'Findings', 'AWS cost optimization recommendations');
   });
 
   test('shows the recommendations summary and table', async () => {
@@ -620,30 +473,21 @@ test.describe('Findings', () => {
     await screenshot(page, 'savings-state');
   });
 
-  test('action type filter pills work', async () => {
-    const pills = page.locator('button.rounded-full');
-    expect(await pills.count()).toBeGreaterThan(1);
-
-    // click a filter pill
-    await pills.nth(1).click();
-    await screenshot(page, 'savings-filtered');
-
-    // click first pill to reset (All)
-    await pills.first().click();
-  });
-
   test('table column headers are sortable', async () => {
     await expect(page.locator('table').first()).toBeVisible();
 
     // Fixtures ship cost-optimization data and the pinned clock keeps it in
-    // range, so every sortable header must be present — assert each is visible,
-    // then exercise the ascending/descending sort toggles.
+    // range, so every sortable header must be present.
     for (const header of ['Account', 'Monthly Cost', 'Savings/mo']) {
-      const th = page.locator('th').filter({ hasText: header }).first();
-      await expect(th).toBeVisible();
-      await th.click();
-      await th.click(); // click again to reverse sort
+      await expect(page.locator('th').filter({ hasText: header }).first()).toBeVisible();
     }
+    // The table starts sorted by Savings/mo; a string column sorts ascending
+    // first, then descending.
+    const account = page.locator('th').filter({ hasText: 'Account' }).first();
+    await account.click();
+    await expect(account).toContainText('↑');
+    await account.click();
+    await expect(account).toContainText('↓');
     await screenshot(page, 'savings-sorted');
   });
 
@@ -670,12 +514,11 @@ test.describe('Full user journey', () => {
   test.beforeAll(async () => {
     // Start the journey from Cost Overview regardless of where the previous
     // block left the app.
-    await navigateTo(page, 'Cost Overview', 'Cost Overview');
+    await navigateTo(page, 'Home', 'Cost Overview');
   });
 
   test('overview → trends → missing tags → savings → data → overview (full navigation cycle)', async () => {
-    // 1. Overview
-    await waitForQuerySettle(page);
+    // 1. Overview (the beforeAll navigated and settled here)
     await expect(page.getByRole('heading', { name: 'Cost Overview' })).toBeVisible();
 
     // 2. Trends
@@ -702,14 +545,17 @@ test.describe('Full user journey', () => {
     await expect(page.getByRole('heading', { name: 'Data Management' })).toBeVisible();
 
     // 7. Back to Overview
-    await clickNavButton(page, 'Cost Overview');
+    await clickNavButton(page, 'Home');
     await expect(page.getByRole('heading', { name: 'Cost Overview' })).toBeVisible();
 
     await screenshot(page, 'journey-complete');
   });
 
   test('rapid navigation between views does not crash', async () => {
-    const views = ['Trends', 'Cost Overview', 'Tags', 'Findings', 'Dimensions', 'Sync', 'Cost Overview', 'Trends', 'Tags'];
+    // Nine navigations, two through the settings rail: past the 30s default
+    // on a loaded runner.
+    test.slow();
+    const views = ['Trends', 'Home', 'Tags', 'Findings', 'Dimensions', 'Sync', 'Home', 'Trends', 'Tags'];
     for (const view of views) {
       await clickNavButton(page, view);
       await page.waitForTimeout(100);

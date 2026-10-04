@@ -4,7 +4,7 @@ import { Session } from 'node:inspector';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { logger, parseJsonObject, isStringRecord, parseTelemetryPreferences, parseUpdatePreferences, sqlEscapeString } from '@costgoblin/core';
+import { clockPinnedTo, logger, parseFixedNow, parseJsonObject, isStringRecord, parseTelemetryPreferences, parseUpdatePreferences, sqlEscapeString } from '@costgoblin/core';
 import { telemetry } from './telemetry/controller.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -86,6 +86,23 @@ function formatEntry(entry: LogEntry): string {
 logger.addHandler((entry: LogEntry) => {
   process.stdout.write(formatEntry(entry));
 });
+
+// COSTGOBLIN_NOW (e2e, the homepage screenshot script) pins "today" for every
+// calendar window the IPC handlers compute: default query ranges, previews,
+// baselines, retention. The preload pins the renderer's Date from the same
+// variable with the same parser, so both processes see one date. Never in a
+// packaged build: main's clock decides what prune deletes, so a stray future
+// date there would wipe in-retention data.
+const nowOverride = process.env['COSTGOBLIN_NOW'];
+const pinnedNowMs = app.isPackaged ? null : parseFixedNow(nowOverride);
+const appClock = clockPinnedTo(pinnedNowMs);
+if (pinnedNowMs !== null) {
+  logger.info(`COSTGOBLIN_NOW pins the app clock to ${new Date(pinnedNowMs).toISOString()}`);
+} else if (nowOverride !== undefined && nowOverride !== '') {
+  logger.warn(app.isPackaged
+    ? 'COSTGOBLIN_NOW is ignored in packaged builds; using the real clock'
+    : `COSTGOBLIN_NOW=${JSON.stringify(nowOverride)} is not a date; using the real clock`);
+}
 
 // ---------------------------------------------------------------------------
 // CPU profiling — active only when COSTGOBLIN_PERF_MODE=1
@@ -185,6 +202,7 @@ async function createWindow(db: DuckDBClient, syncClient: SyncClient, rollupConc
     stateDir: wsEnv.stateDir,
     workspaceEnv: wsEnv,
     duckdbWorkerPath: DUCKDB_WORKER_PATH,
+    now: appClock,
   });
 
   // Apply the persisted rollup-build-parallelism override (perf:set updates it

@@ -10,6 +10,10 @@
     "./browser": {
       "import": "./src/browser.ts",
       "types": "./src/browser.ts"
+    },
+    "./clock": {
+      "import": "./src/utils/clock.ts",
+      "types": "./src/utils/clock.ts"
     }
   },
   "scripts": {
@@ -20,11 +24,12 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1141.0",
     "@duckdb/node-api": "^1.5.5-r.5",
-    "@google-cloud/storage": "^7.22.0",
+    "@google-cloud/storage": "^8.2.0",
+    "google-auth-library": "^9.15.1",
     "yaml": "^2.9.1"
   },
   "devDependencies": {
     "typescript": "^6.0.3",
-    "vitest": "^4.1.11"
+    "vitest": "^5.0.2"
   }
 }

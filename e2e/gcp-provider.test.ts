@@ -53,32 +53,37 @@ test.afterAll(async () => {
 
 test.describe('mixed AWS + GCP workspace', () => {
   test('boots and renders without a crash', async () => {
-    await waitForQuerySettle(page);
-    await assertNoReactCrash(page);
+    // The settle only waits on widget slots already in the DOM, so it would
+    // pass vacuously before the dashboard has rendered any.
+    await expect(page.getByRole('heading', { name: 'Cost Overview' })).toBeVisible({ timeout: 15_000 });
+    await waitForQuerySettle(page); // ends with assertNoReactCrash
     await screenshot(page, 'gcp-mixed-dashboard');
-  });
-
-  test('lists both providers on Data & Sync', async () => {
-    await openDataSync();
-    await expect(page.getByLabel('Provider gcp-main')).toBeVisible();
   });
 
   test('runs with cloud credential discovery sandboxed', async () => {
     // This suite is where the leak showed: launched with the runner's env, a
     // developer's real ADC let the app query `gs://test-focus-export` as them,
-    // and the card below sat on "Checking Cloud Storage for available data..."
+    // and the GCP card sat on "Checking Cloud Storage for available data..."
     // while it did. CI holds no credentials to leak, so this check is what
     // keeps a developer's run as credential-free as CI's.
     await expectCloudSandboxed(app);
   });
 
-  test('shows the GCP provider reading a gs:// bucket with ADC', async () => {
+  test('Data & Sync lists both providers, with the GCP one reading gs:// via ADC and offering hourly but not Cost Optimization', async () => {
     await openDataSync();
     const gcp = page.getByLabel('Provider gcp-main');
+    await expect(gcp).toBeVisible();
     // No keyFile in the fixture config, so it must report Application Default
     // Credentials rather than an AWS profile name.
     await expect(gcp.getByText('application default credentials')).toBeVisible();
     await expect(gcp.getByText(/gs:\/\/test-focus-export/).first()).toBeVisible();
+
+    // The exporter publishes an hourly grain, so that panel is real for GCP.
+    // Cost Optimization has no GCP analogue and resolveBucketPath refuses that
+    // tier, so offering the panel would be a button that can only error.
+    await expect(gcp.getByText('Hourly', { exact: true })).toBeVisible();
+    await expect(gcp.getByText('Cost Optimization', { exact: true })).toHaveCount(0);
+    await expect(page.getByLabel('Provider aws-main').getByText('Cost Optimization', { exact: true })).toBeVisible();
   });
 
   test('shows who listing and downloads run as, finding credentials only in the sandbox', async () => {
@@ -103,19 +108,6 @@ test.describe('mixed AWS + GCP workspace', () => {
     await expectCloudSandboxed(app);
   });
 
-  test('offers GCP the hourly tier but not Cost Optimization', async () => {
-    // The exporter publishes an hourly grain, so that panel is real for GCP.
-    // Cost Optimization has no GCP analogue and resolveBucketPath refuses that
-    // tier, so offering the panel would be a button that can only error.
-    await openDataSync();
-    const gcp = page.getByLabel('Provider gcp-main');
-    await expect(gcp.getByText('Hourly', { exact: true })).toBeVisible();
-    await expect(gcp.getByText('Cost Optimization', { exact: true })).toHaveCount(0);
-
-    const aws = page.getByLabel('Provider aws-main');
-    await expect(aws.getByText('Cost Optimization', { exact: true })).toBeVisible();
-  });
-
   test('attributes spend to both providers in one query', async () => {
     await clickNavButton(page, 'Explorer');
     // The synthetic fixture is Jan–Feb 2026; the default 30-day window is well
@@ -137,11 +129,20 @@ test.describe('mixed AWS + GCP workspace', () => {
 
   // Last on purpose: Complete Setup rewrites this launch's costgoblin.yaml.
   test('re-running setup goes straight from daily to Confirm and keeps the tuned hourly retention', async () => {
-    // The wizard's GCS discovery needs credentials, and this launch has none
-    // by design (see expectCloudSandboxed). Stub just the two discovery
-    // channels in the main process; everything after them — the Confirm step,
-    // the real setup:write-config handler and the YAML it writes — runs as is.
+    // The wizard's GCS discovery and its pre-save download check need
+    // credentials, and this launch has none by design (see
+    // expectCloudSandboxed). Stub just those channels in the main process;
+    // everything after them — the Confirm step, the real setup:write-config
+    // handler and the YAML it writes — runs as is. The check records what it
+    // was asked, so the test can see it ran per tier as the right identity.
     await app.evaluate(({ ipcMain }) => {
+      const checks: unknown[] = [];
+      Reflect.set(globalThis, '__gcsDownloadChecks', checks);
+      ipcMain.removeHandler('setup:verify-gcs-download');
+      ipcMain.handle('setup:verify-gcs-download', (_event, params: unknown) => {
+        checks.push(params);
+        return { ok: true };
+      });
       ipcMain.removeHandler('setup:list-gcs-buckets');
       ipcMain.handle('setup:list-gcs-buckets', () => ({ buckets: [{ name: 'test-focus-export' }] }));
       ipcMain.removeHandler('setup:browse-gcs');
@@ -168,8 +169,11 @@ test.describe('mixed AWS + GCP workspace', () => {
     await clickNavButton(page, 'General');
     await page.getByRole('button', { name: 'Run setup again' }).click();
     await page.getByLabel('Set up from Google Cloud').click();
-    await page.getByLabel('Already know the project ID? Skip the project list').fill('test-project');
-    await page.getByLabel('Already know the project ID? Skip the project list').press('Enter');
+    // gcp-main already exists and has no reader: re-running setup keeps it
+    // reading as the user, rather than prefilling the default reader.
+    await expect(page.locator('#gcp-reader')).toHaveValue('');
+    await page.getByLabel('Google Cloud project').fill('test-project');
+    await page.getByLabel('Google Cloud project').press('Enter');
 
     // Daily lands straight on Confirm, as on AWS — hourly is optional.
     await pickTier('daily');
@@ -185,6 +189,17 @@ test.describe('mixed AWS + GCP workspace', () => {
     await expect(hourlyRetention.getByRole('button', { name: '14 days' })).toHaveAttribute('aria-pressed', 'true');
     // The daily pick survived the round trip.
     await expect(dailyRetention.getByRole('button', { name: '2 years' })).toHaveAttribute('aria-pressed', 'true');
+    // Both tiers were checked for download as gcloud's own account before
+    // Complete Setup unlocked.
+    await expect(page.getByText('gcloud can download the export as your gcloud account')).toBeVisible();
+    const checks = await app.evaluate((): unknown => {
+      const recorded: unknown = Reflect.get(globalThis, '__gcsDownloadChecks');
+      return recorded;
+    });
+    expect(checks).toEqual(expect.arrayContaining([
+      { bucketPath: 'gs://test-focus-export/focus/daily/' },
+      { bucketPath: 'gs://test-focus-export/focus/hourly/' },
+    ]));
     await screenshot(page, 'gcp-rerun-confirm');
     await page.getByRole('button', { name: 'Complete Setup' }).click();
     await expect(confirm).toBeHidden();

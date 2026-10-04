@@ -37,7 +37,9 @@ const GCP_PROVIDER = `  - name: gcp-main
     # Bucket the exporter writes to: its BUCKET + PREFIX + the tier folder.
     # Credentials come from Application Default Credentials
     # (gcloud auth application-default login). Add impersonateServiceAccount
-    # to run as a read-only service account instead.
+    # to read as a read-only service account instead — per provider, on top
+    # of that same login (you need roles/iam.serviceAccountTokenCreator on it).
+    # impersonateServiceAccount: costgoblin-reader@your-project.iam.gserviceaccount.com
     sync:
       daily:
         bucket: gs://your-bucket/focus/daily/

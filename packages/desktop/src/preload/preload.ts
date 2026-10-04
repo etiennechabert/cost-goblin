@@ -28,6 +28,8 @@ import type {
   GcpIdentityResult,
   GcpProject,
   GcsBrowseResult,
+  GcsDownloadCheckParams,
+  GcsDownloadCheckResult,
   AccountMappingStatus,
   SavingsPreferences,
   UIPreferences,
@@ -72,6 +74,7 @@ import type {
   TelemetryStatus,
   TelemetryOutboxEntry,
 } from '@costgoblin/core';
+import { parseFixedNow } from '@costgoblin/core/clock';
 import { isTrustedNavigation, trustedRendererFromArgv } from '../main/window-security.js';
 
 // ---------------------------------------------------------------------------
@@ -198,8 +201,8 @@ const api: CostApi = {
   ssoLogin(profile: string): Promise<void> {
     return invoke<undefined>('data:sso-login', profile).then(() => undefined);
   },
-  gcloudLogin(mode?: 'adc' | 'cli', providerName?: string): Promise<void> {
-    return invoke<undefined>('data:gcloud-login', mode, providerName).then(() => undefined);
+  gcloudLogin(mode?: 'adc' | 'cli'): Promise<void> {
+    return invoke<undefined>('data:gcloud-login', mode).then(() => undefined);
   },
   getAccountMapping(): Promise<AccountMappingStatus> {
     return invoke<AccountMappingStatus>('data:account-mapping');
@@ -225,11 +228,14 @@ const api: CostApi = {
   getGcpIdentities(providerName?: string): Promise<GcpIdentityResult> {
     return invoke<GcpIdentityResult>('data:gcp-identities', providerName);
   },
-  listGcsBuckets(projectId: string): Promise<{ buckets: readonly { name: string }[]; error?: string | undefined }> {
-    return invoke<{ buckets: readonly { name: string }[]; error?: string | undefined }>('setup:list-gcs-buckets', projectId);
+  listGcsBuckets(projectId: string, impersonateServiceAccount?: string): ReturnType<CostApi['listGcsBuckets']> {
+    return invoke<{ buckets: readonly { name: string }[]; error?: string | undefined }>('setup:list-gcs-buckets', projectId, impersonateServiceAccount);
   },
-  browseGcs(params: { projectId: string; bucket: string; prefix: string }): Promise<GcsBrowseResult> {
+  browseGcs(params: Parameters<CostApi['browseGcs']>[0]): Promise<GcsBrowseResult> {
     return invoke<GcsBrowseResult>('setup:browse-gcs', params);
+  },
+  verifyGcsDownload(params: GcsDownloadCheckParams): Promise<GcsDownloadCheckResult> {
+    return invoke<GcsDownloadCheckResult>('setup:verify-gcs-download', params);
   },
   scaffoldConfig(providerType?: 'aws' | 'gcp'): Promise<void> {
     return invoke<undefined>('setup:scaffold-config', providerType).then(() => undefined);
@@ -575,12 +581,10 @@ exposeInMainWorld('costgoblinDebug', {
   isE2E(): boolean { return process.env['COSTGOBLIN_E2E'] === '1'; },
   /** COSTGOBLIN_NOW, parsed to epoch ms — e2e runs pin the renderer clock so
    *  relative date presets land inside the fixture data window. Null when the
-   *  variable is unset or unparseable (every real launch). */
+   *  variable is unset or unparseable (every real launch). Same parser as the
+   *  main process's clock (main.ts), so the two processes agree on "today". */
   fakeNowMs(): number | null {
-    const raw = process.env['COSTGOBLIN_NOW'];
-    if (raw === undefined || raw === '') return null;
-    const ms = Date.parse(raw);
-    return Number.isNaN(ms) ? null : ms;
+    return parseFixedNow(process.env['COSTGOBLIN_NOW']);
   },
   getMemoryMB(): Promise<number> { return invoke<number>('debug:get-memory-mb'); },
   getGitBranch(): Promise<string | null> { return invoke<string | null>('debug:get-git-branch'); },

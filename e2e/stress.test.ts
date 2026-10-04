@@ -11,7 +11,6 @@ import {
   clickNavButton,
   launchAppWithCoverage,
   finishCoverage,
-  waitForQuerySettle,
 } from './helpers.js';
 
 // ---------------------------------------------------------------------------
@@ -111,20 +110,25 @@ test.describe('Widget growth', () => {
   });
 
   test('every widget type stays bounded at every size', async () => {
-    // Budget: navigation + waitForQuerySettle (~6s) + widgets on the dashboard
-    // (10s) + every slot mounted (60s) + observation (15s + a window) — the
-    // whole matrix in one test, so well past the 30s default.
+    // Budget: navigation + the cold rollup build and widgets on the dashboard
+    // (20s) + every slot mounted (60s) + observation (15s + a window) — the
+    // whole matrix in one test, so well past the 30s default. No
+    // waitForQuerySettle: the polls below wait for the same things across
+    // every slot, and name the ones still missing, deferred or loading.
     test.setTimeout(120_000);
     const page = widgetPage;
     await clickNavButton(page, VIEW_NAME);
-    await waitForQuerySettle(page);
 
     const slotIds = (selector: string): Promise<(string | null)[]> =>
       page.locator(selector).evaluateAll(els => els.map(el => el.getAttribute('data-widget-id')));
+    // The launch cold-builds the rollup, and until it's done the building
+    // overlay stands in for every slot — report that, not 56 missing widgets.
+    const building = page.getByText('Preparing your cost data', { exact: true });
     await expect.poll(async () => {
+      if (await building.count() > 0) return ['rollup still building'];
       const ids = new Set(await slotIds('[data-widget-id]'));
       return MATRIX_IDS.filter(id => !ids.has(id));
-    }, { message: 'every matrix widget is on the dashboard', timeout: 10_000 }).toEqual([]);
+    }, { message: 'every matrix widget is on the dashboard', timeout: 20_000 }).toEqual([]);
 
     // Slots mount lazily — only once scrolled near the viewport — so walk
     // each one into view; the scheduler then mounts them a few at a time, as
@@ -136,7 +140,7 @@ test.describe('Widget growth', () => {
     await expect.poll(async () => {
       await requestMounts(page);
       return slotIds('[data-widget-state="deferred"]');
-    }, { message: 'every widget slot mounts', timeout: 60_000, intervals: [1_000] }).toEqual([]);
+    }, { message: 'every widget slot mounts', timeout: 60_000, intervals: [100, 250] }).toEqual([]);
 
     const { recent, waitedMs } = await observe(page);
 

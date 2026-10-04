@@ -40,7 +40,7 @@ export async function queryMissingTags(
   const tagDimension: DimensionId = toDimensionId(params.tagDimension);
   const dateRange: DateRange = params.dateRange !== undefined
     ? toDateRange(params.dateRange)
-    : defaultDateRange();
+    : defaultDateRange(ctx.now());
   const filters = toFilterMap(params.filters);
   const minCost = toDollars(params.minCost ?? 10);
   const limit = params.limit ?? 20;
