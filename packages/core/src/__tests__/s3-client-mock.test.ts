@@ -191,6 +191,21 @@ describe('S3 client (mocked) - listFiles', () => {
     );
   });
 
+  it('follows region redirects, so a bucket outside the starting region still lists', async () => {
+    const { S3Client } = await import('@aws-sdk/client-s3');
+    await createS3Handle('default');
+
+    expect(S3Client).toHaveBeenCalledWith({ region: 'eu-central-1', followRegionRedirects: true });
+  });
+
+  it('lets explicit endpoint credentials replace the profile', async () => {
+    const { S3Client } = await import('@aws-sdk/client-s3');
+    const credentials = { accessKeyId: 'test', secretAccessKey: 'secret' };
+    await createS3Handle('my-profile', 'us-west-2', { credentials });
+
+    expect(S3Client).toHaveBeenCalledWith({ region: 'us-west-2', followRegionRedirects: true, credentials });
+  });
+
   it('uses profile when not default', async () => {
     const { S3Client } = await import('@aws-sdk/client-s3');
     await createS3Handle('my-profile', 'eu-west-1');

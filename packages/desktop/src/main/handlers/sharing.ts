@@ -5,6 +5,7 @@ import {
   isStringRecord,
   logger,
   parseConfigBundle,
+  s3ClientConfig,
   serializeConfigBundle,
   splitS3Location,
   suggestedConfigBeaconLocation,
@@ -134,11 +135,7 @@ export function registerSharingHandlers(app: AppContext): void {
       const profile = isStringRecord(raw) && typeof raw['profile'] === 'string' && raw['profile'].trim().length > 0
         ? raw['profile']
         : provider.credentialsProfile;
-      const client = new S3Client({
-        region: 'eu-central-1',
-        followRegionRedirects: true,
-        ...(profile === 'default' ? {} : { profile }),
-      });
+      const client = new S3Client(s3ClientConfig(profile));
       await client.send(new PutObjectCommand({
         Bucket: target.bucket,
         Key: target.key,
@@ -168,11 +165,7 @@ export function registerSharingHandlers(app: AppContext): void {
     const location = `s3://${target.bucket}/${target.key}`;
     try {
       const { S3Client, GetObjectCommand } = await import('@aws-sdk/client-s3');
-      const client = new S3Client({
-        region: 'eu-central-1',
-        followRegionRedirects: true,
-        ...(profile === 'default' ? {} : { profile }),
-      });
+      const client = new S3Client(s3ClientConfig(profile));
       const response = await client.send(new GetObjectCommand({ Bucket: target.bucket, Key: target.key }));
       const content = await response.Body?.transformToString();
       if (content === undefined) {
@@ -197,11 +190,7 @@ export function registerSharingHandlers(app: AppContext): void {
     const location = `s3://${bucket}/${CONFIG_BEACON_KEY}`;
     try {
       const { S3Client, GetObjectCommand } = await import('@aws-sdk/client-s3');
-      const client = new S3Client({
-        region: 'eu-central-1',
-        followRegionRedirects: true,
-        ...(profile === 'default' ? {} : { profile }),
-      });
+      const client = new S3Client(s3ClientConfig(profile));
       const response = await client.send(new GetObjectCommand({ Bucket: bucket, Key: CONFIG_BEACON_KEY }));
       const content = await response.Body?.transformToString();
       if (content === undefined) return { status: 'none' };

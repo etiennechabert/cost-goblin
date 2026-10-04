@@ -6,6 +6,7 @@ import {
   logger,
   parseS3Path,
   isStringRecord,
+  s3ClientConfig,
 } from '@costgoblin/core';
 import type { GcpIdentityResult, GcpProject, GcsBrowseResult } from '@costgoblin/core';
 import { loadSharedConfigFiles } from '@smithy/shared-ini-file-loader';
@@ -72,10 +73,7 @@ export function registerSetupHandlers(app: AppContext): void {
     try {
       const { S3Client, ListObjectsV2Command } = await import('@aws-sdk/client-s3');
       const parsed = parseS3Path(params.bucket);
-      const client = new S3Client({
-        region: 'eu-central-1',
-        ...(params.profile === 'default' ? {} : { profile: params.profile }),
-      });
+      const client = new S3Client(s3ClientConfig(params.profile));
 
       await client.send(new ListObjectsV2Command({
         Bucket: parsed.bucket,
@@ -100,10 +98,7 @@ export function registerSetupHandlers(app: AppContext): void {
   ipcMain.handle('setup:list-buckets', async (_event, profile: string): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }> => {
     try {
       const { S3Client, ListBucketsCommand } = await import('@aws-sdk/client-s3');
-      const client = new S3Client({
-        region: 'us-east-1',
-        ...(profile === 'default' ? {} : { profile }),
-      });
+      const client = new S3Client(s3ClientConfig(profile, 'us-east-1'));
 
       const response = await client.send(new ListBucketsCommand({}));
       const buckets = (response.Buckets ?? [])
@@ -120,10 +115,7 @@ export function registerSetupHandlers(app: AppContext): void {
   ipcMain.handle('setup:browse-s3', async (_event, params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isBillingExport: boolean; detectedType: DetectedReportType; missingColumns: string[]; error?: string | undefined }> => {
     try {
       const { S3Client, ListObjectsV2Command, GetObjectCommand } = await import('@aws-sdk/client-s3');
-      const client = new S3Client({
-        region: 'eu-central-1',
-        ...(params.profile === 'default' ? {} : { profile: params.profile }),
-      });
+      const client = new S3Client(s3ClientConfig(params.profile));
 
       const response = await client.send(new ListObjectsV2Command({
         Bucket: params.bucket,

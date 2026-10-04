@@ -35,6 +35,37 @@ async function getS3Module(): Promise<typeof import('@aws-sdk/client-s3')> {
   return import('@aws-sdk/client-s3');
 }
 
+/** Region a client sends its first request to when the caller names none. */
+const DEFAULT_S3_REGION = 'eu-central-1';
+
+export interface S3ClientBaseConfig {
+  readonly region: string;
+  readonly followRegionRedirects: true;
+  readonly profile?: string;
+}
+
+/** The options every `S3Client` the app builds starts from.
+ *
+ *  Nothing in the config records a bucket's region, so clients are built
+ *  against a fixed one. Without `followRegionRedirects` a bucket in any other
+ *  region fails every call with S3's 301 PermanentRedirect ("The bucket you
+ *  are attempting to access must be addressed using the specified
+ *  endpoint"): the wizard could not browse an eu-west-1 export, and the
+ *  sync's inventory listing could not see it either. With it, the SDK reads
+ *  the bucket's region off the 301's `x-amz-bucket-region` header and retries
+ *  there. `aws s3 sync` needs no equivalent; the CLI follows the redirect
+ *  itself.
+ *
+ *  `profile === 'default'` leaves the profile unset so the SDK's own
+ *  credential chain picks it (honouring `AWS_PROFILE`). */
+export function s3ClientConfig(profile: string, region?: string): S3ClientBaseConfig {
+  return {
+    region: region ?? DEFAULT_S3_REGION,
+    followRegionRedirects: true,
+    ...(profile === 'default' ? {} : { profile }),
+  };
+}
+
 /** Whether an error indicates missing or expired AWS credentials (expired SSO
  *  token, no resolvable profile) rather than a genuine S3/network failure.
  *  Covers both AWS SDK errors (the inventory listing) and the `aws s3 sync`
@@ -123,18 +154,11 @@ export type S3Handle = ObjectStoreHandle;
 export async function createS3Handle(profile: string, region?: string, endpointOptions?: S3EndpointOptions): Promise<ObjectStoreHandle> {
   const { S3Client, ListObjectsV2Command, GetObjectCommand } = await getS3Module();
 
-  let credentialConfig: { credentials: { readonly accessKeyId: string; readonly secretAccessKey: string } } | { profile: string } | Record<string, never>;
-  if (endpointOptions?.credentials !== undefined) {
-    credentialConfig = { credentials: endpointOptions.credentials };
-  } else if (profile === 'default') {
-    credentialConfig = {};
-  } else {
-    credentialConfig = { profile };
-  }
-
+  // Explicit credentials (a custom endpoint such as MinIO) replace the profile.
+  const credentials = endpointOptions?.credentials;
   const client = new S3Client({
-    region: region ?? 'eu-central-1',
-    ...credentialConfig,
+    ...s3ClientConfig(credentials === undefined ? profile : 'default', region),
+    ...(credentials === undefined ? {} : { credentials }),
     ...(endpointOptions?.endpoint === undefined ? {} : { endpoint: endpointOptions.endpoint }),
     ...(endpointOptions?.forcePathStyle === undefined ? {} : { forcePathStyle: endpointOptions.forcePathStyle }),
   });
