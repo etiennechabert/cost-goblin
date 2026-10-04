@@ -487,7 +487,7 @@ export class MockCostApi implements CostApi {
   syncOrgAccounts(): Promise<{ accounts: readonly never[]; orgId: string; syncedAt: string }> { return Promise.resolve({ accounts: [], orgId: 'mock', syncedAt: new Date().toISOString() }); }
   getOrgSyncResult(): Promise<null> { return Promise.resolve(null); }
   getOrgSyncProgress(): Promise<null> { return Promise.resolve(null); }
-  getRegionNamesInfo(): Promise<null> { return Promise.resolve(null); }
+  getRegionNamesInfo(): ReturnType<CostApi['getRegionNamesInfo']> { return Promise.resolve(null); }
   clearOrgData(): Promise<void> { return Promise.resolve(); }
   syncRegionNames(): Promise<{ count: number; syncedAt: string }> { return Promise.resolve({ count: 0, syncedAt: '' }); }
   discoverTagKeys(): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }> { return Promise.resolve({ tags: [{ key: 'team', sampleValues: ['platform', 'payments'], rowCount: 500, distinctCount: 8, coveragePct: 45 }, { key: 'environment', sampleValues: ['production', 'staging'], rowCount: 400, distinctCount: 4, coveragePct: 36 }], samplePeriod: '2026-04' }); }

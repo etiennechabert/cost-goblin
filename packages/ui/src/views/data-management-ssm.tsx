@@ -117,6 +117,12 @@ export function SsmParameterSection({ profile }: Readonly<{ profile: string | nu
     : Object.entries(info.regions).sort(([a], [b]) => a.localeCompare(b));
   const filteredRegions = filterRegions(regionEntries, regionSearch);
 
+  // No AWS provider and nothing cached: SSM names AWS region codes only, so a
+  // GCP-only workspace has nothing to enrich, and "configure an AWS profile"
+  // was a dead end. Cached names (from an AWS provider since removed) stay
+  // listed, with Clear.
+  if (!hasData && profile === null) return null;
+
   if (!hasData) {
     return (
       <NoDataBanner

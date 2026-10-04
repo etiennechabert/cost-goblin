@@ -127,7 +127,10 @@ function isHealthy({ listing, download, warnings }: GcpIdentities): boolean {
   if (download.principal.kind === 'account' && download.principal.account === null) return false;
   switch (listing.kind) {
     case 'user': return !isExpired(listing.account);
-    case 'impersonated': return listing.source.kind !== 'user' || !isExpired(listing.source.account);
+    case 'impersonated':
+      // An unrecognized source is shown with its type in the breakdown.
+      if (listing.source.kind === 'other') return false;
+      return listing.source.kind !== 'user' || !isExpired(listing.source.account);
     case 'service-account':
     case 'external':
       return true;

@@ -390,6 +390,18 @@ describe('DataManagement — Region Names', () => {
     renderDataManagement(mixed);
     await waitFor(() => { expect(screen.getAllByText(/Region Names/).length).toBeGreaterThan(0); });
   });
+  it('keeps names cached before the AWS provider was removed, with Clear', async () => {
+    const api = new MockCostApi();
+    vi.spyOn(api, 'getConfig').mockResolvedValue({ ...MOCK_MIXED_PROVIDER_CONFIG, providers: [MOCK_GCP_PROVIDER] });
+    vi.spyOn(api, 'getRegionNamesInfo').mockResolvedValue({
+      count: 1, syncedAt: '2026-10-01T00:00:00Z', lastError: null,
+      regions: { 'eu-west-1': { longName: 'Europe (Ireland)', country: 'Ireland', continent: 'Europe' } },
+    });
+    renderDataManagement(api);
+    await waitFor(() => { expect(screen.getByText('Region Names')).toBeDefined(); });
+    expect(screen.getByRole('button', { name: 'Clear' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Re-sync' })).toBeNull();
+  });
 });
 
 describe('DataManagement — GCP "Signed in as" panel', () => {

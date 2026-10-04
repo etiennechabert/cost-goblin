@@ -625,7 +625,13 @@ function readerDenialFor(
  *  missing Token Creator grant identically, so the line names both; the
  *  rewritten message — the grant command and the raw denial — is one click
  *  away. */
-function GcpReaderDenied({ reader, project, message }: Readonly<{ reader: string; project: string | undefined; message: string }>) {
+function GcpReaderDenied({ reader, project, message, onRetry }: Readonly<{
+  reader: string;
+  project: string | undefined;
+  message: string;
+  /** The bucket step's re-list; the intro's Continue already re-checks. */
+  onRetry?: (() => void) | undefined;
+}>) {
   return (
     <div role="alert" className="text-left">
       <p className="text-xs text-negative">
@@ -637,6 +643,7 @@ function GcpReaderDenied({ reader, project, message }: Readonly<{ reader: string
         <summary className="text-xs text-text-muted cursor-pointer hover:text-text-secondary">Details</summary>
         <p className="mt-1.5 whitespace-pre-wrap break-words font-mono text-[11px] text-text-muted">{message}</p>
       </details>
+      {onRetry !== undefined && <div className="mt-2"><RetryButton onRetry={onRetry} /></div>}
     </div>
   );
 }
@@ -1045,7 +1052,7 @@ function GcpBucketStep({ state, reader, onSelect, onSkip, onBack, onRetry }: Rea
           />
         )
         : readerRefused
-          ? <GcpReaderDenied reader={reader} project={state.project?.id} message={state.error} />
+          ? <GcpReaderDenied reader={reader} project={state.project?.id} message={state.error} onRetry={onRetry} />
           : <GcpError message={state.error} mode="adc" onRetry={onRetry} />}
 
       {state.loading ? (
@@ -1769,7 +1776,7 @@ function GcpAccessCard({ project, reader, check, readsAs, onRecheck }: Readonly<
   readsAs: string;
   onRecheck: () => void;
 }>) {
-  const as = reader === '' ? ` as ${readsAs}` : '';
+  const asWhom = reader === '' ? ` as ${readsAs}` : '';
   const label = 'text-xs text-text-muted uppercase tracking-wider whitespace-nowrap';
   return (
     <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
@@ -1793,13 +1800,13 @@ function GcpAccessCard({ project, reader, check, readsAs, onRecheck }: Readonly<
               {check.status === 'checking' && (
                 <>
                   <Loader2 aria-hidden="true" className="h-3.5 w-3.5 shrink-0 animate-spin motion-reduce:animate-none text-text-muted" />
-                  <span className="text-text-secondary break-words">Checking that gcloud can download the export{as}…</span>
+                  <span className="text-text-secondary break-words">Checking that gcloud can download the export{asWhom}…</span>
                 </>
               )}
               {check.status === 'ok' && (
                 <>
                   <Check aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-accent" />
-                  <span className="text-text-primary break-words">gcloud can download the export{as}</span>
+                  <span className="text-text-primary break-words">gcloud can download the export{asWhom}</span>
                   <button
                     type="button"
                     onClick={onRecheck}
@@ -1813,7 +1820,7 @@ function GcpAccessCard({ project, reader, check, readsAs, onRecheck }: Readonly<
                 <>
                   <X aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-negative" />
                   <span className="text-text-secondary break-words">
-                    gcloud can&apos;t download the {CHECKED_TIER_LABELS[check.tier]}{as}, so syncing it would fail
+                    gcloud can&apos;t download the {CHECKED_TIER_LABELS[check.tier]}{asWhom}, so syncing it would fail
                   </span>
                 </>
               )}

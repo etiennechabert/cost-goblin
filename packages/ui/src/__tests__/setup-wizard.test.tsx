@@ -2269,5 +2269,10 @@ describe('SetupWizard — GCP reader check on Continue', () => {
     expect(screen.getByText(/^Can't read as/).textContent).toMatch(/costgoblin-reader — it doesn't exist in acme-prod/);
     // Not offered as a sign-in: no login fixes a missing grant.
     expect(screen.queryByText(/Sign in/)).toBeNull();
+
+    // The grant is applied in a terminal; Retry re-lists in place.
+    api.gcsBucketsResult = { buckets: [{ name: 'acme-focus-export' }] };
+    await userClickText(user, 'Retry');
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
   });
 });
