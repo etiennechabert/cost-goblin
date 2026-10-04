@@ -32,12 +32,13 @@ export interface GcpProviderConfig {
    *  `costgoblin-reader@my-project.iam.gserviceaccount.com`.
    *
    *  The least-privilege option, and the one to prefer: it needs no
-   *  long-lived key on disk. Establish it once with
-   *  `gcloud auth application-default login --impersonate-service-account=<sa>`
-   *  — that covers the listing SDK, which reads ADC — and this field passes
-   *  the same identity to the `gcloud storage rsync` download, which uses
-   *  gcloud's own credentials rather than ADC and would otherwise run as the
-   *  signed-in user. */
+   *  long-lived key on disk. Both halves of a sync read as this account,
+   *  minted from the user's own credentials: the listing SDK impersonates it
+   *  on top of a plain `gcloud auth application-default login`
+   *  (`createGcsStorage`), and the `gcloud storage rsync` download passes
+   *  `--impersonate-service-account`. Per provider, so two providers can use
+   *  two readers; the user needs `roles/iam.serviceAccountTokenCreator` on
+   *  each. */
   readonly impersonateServiceAccount?: string | undefined;
   readonly sync: GcpSyncConfig;
 }

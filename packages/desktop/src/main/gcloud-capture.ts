@@ -22,7 +22,14 @@ export type GcloudCaptureResult =
   | { readonly kind: 'timeout' }
   | { readonly kind: 'failed'; readonly message: string };
 
-export async function runGcloudCapture(args: readonly string[], timeoutMs: number): Promise<GcloudCaptureResult> {
+/** `extraEnv` layers per-invocation overrides on the inherited env — the
+ *  wizard's download check passes a provider's key there exactly as the
+ *  sync's rsync does (`CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`). */
+export async function runGcloudCapture(
+  args: readonly string[],
+  timeoutMs: number,
+  extraEnv: Readonly<Record<string, string>> = {},
+): Promise<GcloudCaptureResult> {
   const bin = findGcloudCli();
   if (bin === null) return { kind: 'missing' };
   const { spawn } = await import('node:child_process');
@@ -38,7 +45,7 @@ export async function runGcloudCapture(args: readonly string[], timeoutMs: numbe
     const proc = spawn(shape.command, shape.args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       shell: shape.shell,
-      env: { ...process.env, PATH: gcloudChildPath(process.env['PATH'] ?? '') },
+      env: { ...process.env, ...extraEnv, PATH: gcloudChildPath(process.env['PATH'] ?? '') },
     });
     // StringDecoder, not chunk.toString(): a pipe boundary can fall mid
     // multi-byte character, and two halves each decode to U+FFFD.

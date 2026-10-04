@@ -195,6 +195,27 @@ export interface GcsBrowseResult {
   readonly error?: string | undefined;
 }
 
+/** What the setup wizard asks before saving a GCP provider: can the identity
+ *  the provider's DOWNLOADS run as — gcloud's active account, impersonating
+ *  `impersonateServiceAccount` when set — read this export folder? Listing
+ *  runs through the Cloud Storage SDK and downloading through the gcloud CLI,
+ *  so a folder the wizard could browse can still refuse the download. */
+export interface GcsDownloadCheckParams {
+  /** A `gs://bucket/prefix/` export folder, as the wizard collected it. */
+  readonly bucketPath: string;
+  /** The reader the provider will be saved with; omitted for none. */
+  readonly impersonateServiceAccount?: string | undefined;
+  /** The configured provider this run replaces, when it authenticates with a
+   *  `keyFile` and no reader: the download runs with that key, so the check
+   *  must too. Only ever names a provider — never a path. */
+  readonly keyFileProvider?: string | undefined;
+}
+
+/** No secrets either way: `error` is gcloud's stderr or a remedy. */
+export type GcsDownloadCheckResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly error: string };
+
 export interface DataInventoryResult {
   /** Which configured provider this inventory describes. */
   readonly provider?: string | undefined;
@@ -287,11 +308,10 @@ export interface CostApi {
    *  — a GCP sync authenticates through both stores, and re-running ADC cannot
    *  refresh a stale CLI account. Defaults to `'adc'`.
    *
-   *  `providerName` names the provider whose failure raised the button, so ADC
-   *  is minted with THAT provider's impersonation. Without it a two-GCP
-   *  workspace could stamp provider A's service account onto the machine-wide
-   *  credential while the user was trying to fix provider B. */
-  gcloudLogin(mode?: GcloudLoginMode, providerName?: string): Promise<void>;
+   *  ADC is always the user's own login: a provider's
+   *  `impersonateServiceAccount` is applied per client on top of it, so no
+   *  provider needs to be named here. */
+  gcloudLogin(mode?: GcloudLoginMode): Promise<void>;
   getAccountMapping(): Promise<AccountMappingStatus>;
   /** `postSetup` is true only on the launch immediately following the setup
    *  wizard (carried across the wizard's relaunch), so the UI can land the user
@@ -307,20 +327,28 @@ export interface CostApi {
    *  the Resource Manager client would. */
   listGcpProjects(): Promise<{ projects: readonly GcpProject[]; error?: string | undefined }>;
   /** Who each GCP credential path runs as — read-only, no tokens. The
-   *  listing identity comes from Application Default Credentials (what the
-   *  Cloud Storage SDK reads); the download identity is gcloud's active
-   *  account plus the provider's `impersonateServiceAccount` (what
-   *  `gcloud storage rsync` and `gcloud projects list` run as). `warnings`
-   *  names every disagreement between the two.
+   *  listing identity is what the Cloud Storage SDK reads (the provider's
+   *  `keyFile`, else Application Default Credentials) with the provider's
+   *  `impersonateServiceAccount` minted on top of it; the download identity is
+   *  what `gcloud storage rsync` (and `gcloud projects list`) runs as —
+   *  gcloud's credential, after its `auth/*` overrides, impersonating the
+   *  provider's reader or else gcloud's own setting. `warnings` names every
+   *  disagreement between the two, `notes` what cannot be checked.
    *
    *  `providerName` selects whose `impersonateServiceAccount` / `keyFile` to
    *  apply; omitted (the wizard, before a provider exists) both are treated
    *  as unset. An unknown or non-GCP name is `unavailable`. */
   getGcpIdentities(providerName?: string): Promise<GcpIdentityResult>;
   /** Buckets in one project, read through Application Default Credentials —
-   *  the same store `browseGcs` and the sync's listing half use. */
-  listGcsBuckets(projectId: string): Promise<{ buckets: readonly { name: string }[]; error?: string | undefined }>;
-  browseGcs(params: { projectId: string; bucket: string; prefix: string }): Promise<GcsBrowseResult>;
+   *  the same client `browseGcs` and the sync's listing half build — as the
+   *  user's own login, or as `impersonateServiceAccount` when given, which is
+   *  then exactly the identity the provider will sync as. */
+  listGcsBuckets(projectId: string, impersonateServiceAccount?: string): Promise<{ buckets: readonly { name: string }[]; error?: string | undefined }>;
+  browseGcs(params: { projectId: string; bucket: string; prefix: string; impersonateServiceAccount?: string | undefined }): Promise<GcsBrowseResult>;
+  /** Runs `gcloud storage ls` on one export folder as the identity the
+   *  provider's downloads will run as (see `GcsDownloadCheckParams`), so the
+   *  wizard proves the saved config can actually download before saving it. */
+  verifyGcsDownload(params: GcsDownloadCheckParams): Promise<GcsDownloadCheckResult>;
   /** Write starter `costgoblin.yaml` / `dimensions.yaml` (only where absent)
    *  and reveal the config folder. `providerType` selects which arm is active
    *  in the template and which the other is commented out beside — a GCP user
@@ -421,6 +449,10 @@ export interface CostApi {
     type?: 'aws' | 'gcp' | undefined;
     profile: string;
     keyFile?: string | undefined;
+    /** GCP only: the service account to read the bucket as. Authoritative
+     *  when present — '' clears an existing entry's reader. Omit it to keep
+     *  the entry's value (or none, for a new provider). */
+    impersonateServiceAccount?: string | undefined;
     dailyBucket: string;
     /** Per-tier retention, each from that tier's own picker on the Confirm
      *  step. Omitted keeps the replaced entry's value, else the core default. */

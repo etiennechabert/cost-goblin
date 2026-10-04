@@ -111,11 +111,15 @@ function configuredTiers(provider: ProviderConfig): { id: DataTier; cutoff: stri
 /** Where per-tier Configure opens the GCP wizard: the bucket of the daily
  *  export and its parent folder, where the exporter writes `hourly/` beside
  *  `daily/` — one click from either tier. */
-function gcpConfigureLocation(dailyBucket: string): { bucket: string; prefix: string } {
+function gcpConfigureLocation(dailyBucket: string, impersonateServiceAccount: string | undefined): { bucket: string; prefix: string; impersonateServiceAccount?: string } {
   const { bucket, prefix } = splitGcsLocation(dailyBucket);
   const segments = prefix.split('/').filter(s => s.length > 0);
   const parent = segments.slice(0, -1).join('/');
-  return { bucket, prefix: parent === '' ? '' : `${parent}/` };
+  return {
+    bucket,
+    prefix: parent === '' ? '' : `${parent}/`,
+    ...(impersonateServiceAccount === undefined ? {} : { impersonateServiceAccount }),
+  };
 }
 
 export function DataManagement() {
@@ -391,10 +395,9 @@ export function DataManagement() {
         />
       ))}
 
-      {/* Region names enrichment — provider-independent (AWS region metadata
-          is global), so one section fed by the first AWS provider's profile.
-          Not `providers[0]`: that slot may hold a GCP provider, which has no
-          profile and no SSM to read. */}
+      {/* Region names enrichment — AWS region metadata read from SSM, so one
+          section fed by the first AWS provider's profile. Not `providers[0]`:
+          that slot may hold a GCP provider, which has no profile and no SSM. */}
       <SsmParameterSection profile={providers.find(p => p.type === 'aws')?.credentialsProfile ?? null} />
 
       <SyncLogPanel active={anySyncing} />
@@ -777,10 +780,10 @@ function ProviderSection({ provider, soleProvider, refreshSignal, gcpIdentityRef
             <SsoLoginButton profile={awsProfile} onRetry={retryInventory} />
           )}
           {gcpAdcRemedy && (
-            <GcloudLoginButton mode="adc" providerName={name} onRetry={retryInventory} />
+            <GcloudLoginButton mode="adc" onRetry={retryInventory} />
           )}
           {gcpCliRemedy && (
-            <GcloudLoginButton mode="cli" providerName={name} onRetry={retryInventory} />
+            <GcloudLoginButton mode="cli" onRetry={retryInventory} />
           )}
           {!awsSsoRemedy && !gcpAdcRemedy && !gcpCliRemedy && (
             <div className="mt-2"><RetryButton onRetry={retryInventory} /></div>
@@ -879,7 +882,7 @@ function ProviderSection({ provider, soleProvider, refreshSignal, gcpIdentityRef
             source={configureSource}
             profile={awsProfile ?? 'default'}
             providerName={name}
-            gcpSource={provider.type === 'gcp' ? gcpConfigureLocation(dailyBucket) : undefined}
+            gcpSource={provider.type === 'gcp' ? gcpConfigureLocation(dailyBucket, provider.impersonateServiceAccount) : undefined}
             onComplete={() => { setConfigureSource(null); onConfigChanged(); }}
           />
         </WizardModal>

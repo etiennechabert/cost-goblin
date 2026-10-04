@@ -174,11 +174,11 @@ function runGcloudStorageRsync(options: GcloudRsyncOptions): Promise<void> {
     ];
 
     if (options.impersonateServiceAccount !== undefined) {
-      // The download runs as gcloud's signed-in user by default — ADC
-      // impersonation covers the listing SDK but not the CLI. Without this the
-      // two halves of a sync would authenticate as different identities, and
-      // the least-privilege service account would be bypassed for the half
-      // that actually moves the data.
+      // The download runs as gcloud's signed-in user by default. The listing
+      // SDK impersonates this same account (`createGcsStorage`); without the
+      // flag here the two halves of a sync would authenticate as different
+      // identities, and the least-privilege service account would be bypassed
+      // for the half that actually moves the data.
       args.push(`--impersonate-service-account=${options.impersonateServiceAccount}`);
     }
 

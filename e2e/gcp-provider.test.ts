@@ -129,11 +129,20 @@ test.describe('mixed AWS + GCP workspace', () => {
 
   // Last on purpose: Complete Setup rewrites this launch's costgoblin.yaml.
   test('re-running setup goes straight from daily to Confirm and keeps the tuned hourly retention', async () => {
-    // The wizard's GCS discovery needs credentials, and this launch has none
-    // by design (see expectCloudSandboxed). Stub just the two discovery
-    // channels in the main process; everything after them — the Confirm step,
-    // the real setup:write-config handler and the YAML it writes — runs as is.
+    // The wizard's GCS discovery and its pre-save download check need
+    // credentials, and this launch has none by design (see
+    // expectCloudSandboxed). Stub just those channels in the main process;
+    // everything after them — the Confirm step, the real setup:write-config
+    // handler and the YAML it writes — runs as is. The check records what it
+    // was asked, so the test can see it ran per tier as the right identity.
     await app.evaluate(({ ipcMain }) => {
+      const checks: unknown[] = [];
+      Reflect.set(globalThis, '__gcsDownloadChecks', checks);
+      ipcMain.removeHandler('setup:verify-gcs-download');
+      ipcMain.handle('setup:verify-gcs-download', (_event, params: unknown) => {
+        checks.push(params);
+        return { ok: true };
+      });
       ipcMain.removeHandler('setup:list-gcs-buckets');
       ipcMain.handle('setup:list-gcs-buckets', () => ({ buckets: [{ name: 'test-focus-export' }] }));
       ipcMain.removeHandler('setup:browse-gcs');
@@ -160,8 +169,11 @@ test.describe('mixed AWS + GCP workspace', () => {
     await clickNavButton(page, 'General');
     await page.getByRole('button', { name: 'Run setup again' }).click();
     await page.getByLabel('Set up from Google Cloud').click();
-    await page.getByLabel('Already know the project ID? Skip the project list').fill('test-project');
-    await page.getByLabel('Already know the project ID? Skip the project list').press('Enter');
+    // gcp-main already exists and has no reader: re-running setup keeps it
+    // reading as the user, rather than prefilling the default reader.
+    await expect(page.locator('#gcp-reader')).toHaveValue('');
+    await page.getByLabel('Google Cloud project').fill('test-project');
+    await page.getByLabel('Google Cloud project').press('Enter');
 
     // Daily lands straight on Confirm, as on AWS — hourly is optional.
     await pickTier('daily');
@@ -177,6 +189,17 @@ test.describe('mixed AWS + GCP workspace', () => {
     await expect(hourlyRetention.getByRole('button', { name: '14 days' })).toHaveAttribute('aria-pressed', 'true');
     // The daily pick survived the round trip.
     await expect(dailyRetention.getByRole('button', { name: '2 years' })).toHaveAttribute('aria-pressed', 'true');
+    // Both tiers were checked for download as gcloud's own account before
+    // Complete Setup unlocked.
+    await expect(page.getByText('gcloud can download the export as your gcloud account')).toBeVisible();
+    const checks = await app.evaluate((): unknown => {
+      const recorded: unknown = Reflect.get(globalThis, '__gcsDownloadChecks');
+      return recorded;
+    });
+    expect(checks).toEqual(expect.arrayContaining([
+      { bucketPath: 'gs://test-focus-export/focus/daily/' },
+      { bucketPath: 'gs://test-focus-export/focus/hourly/' },
+    ]));
     await screenshot(page, 'gcp-rerun-confirm');
     await page.getByRole('button', { name: 'Complete Setup' }).click();
     await expect(confirm).toBeHidden();

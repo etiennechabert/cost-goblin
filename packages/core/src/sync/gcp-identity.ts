@@ -1,5 +1,6 @@
 import { posix, win32 } from 'node:path';
 import { isStringRecord, parseJsonObject } from '../utils/json.js';
+import { impersonationTargetFromUrl } from './gcp-adc-classify.js';
 import { isGcpCredentialError } from './gcp-credential-errors.js';
 import type {
   GcpAccountLookup,
@@ -42,20 +43,8 @@ export type ParsedAdc =
 
 const ADC_FILE_NAME = 'application_default_credentials.json';
 
-/** google-auth-library refuses longer impersonation URLs (a ReDoS guard); a
- *  URL it would reject must not be described as working here. */
-const MAX_IMPERSONATION_URL_LENGTH = 256;
-
 function nonEmptyString(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
-}
-
-/** The target service account of an IAM Credentials impersonation URL — the
- *  same extraction `GoogleAuth.fromImpersonatedJSON` performs. */
-export function impersonationTargetFromUrl(url: unknown): string | null {
-  if (typeof url !== 'string' || url.length > MAX_IMPERSONATION_URL_LENGTH) return null;
-  const match = /\/serviceAccounts\/([^/]+):(?:generateAccessToken|generateIdToken)$/.exec(url);
-  return match?.[1] ?? null;
 }
 
 /** Describe a parsed credential file. Null when the payload is not a JSON
@@ -86,6 +75,25 @@ export function parseAdcJson(raw: unknown): ParsedAdc | null {
   return email === null ? { kind: 'other', type } : { kind: 'service-account', email };
 }
 
+/** Longer than any real path; a value past it is not one. */
+const MAX_PATH_LENGTH = 4096;
+
+const NOT_A_PATH_PREFIX = '<value of ';
+const NOT_A_PATH_SUFFIX = ' is not a file path>';
+
+/** `value`, or — when it is not shaped like a path (credential JSON pasted
+ *  into `GOOGLE_APPLICATION_CREDENTIALS`) — a placeholder naming where it came
+ *  from, so a pasted secret never crosses IPC to the panel. */
+export function displayablePath(value: string, source: string): string {
+  const pathLike = value.length <= MAX_PATH_LENGTH && !/[\r\n{]/.test(value) && !value.includes('private_key');
+  return pathLike ? value : `${NOT_A_PATH_PREFIX}${source}${NOT_A_PATH_SUFFIX}`;
+}
+
+/** Whether `path` is `displayablePath`'s placeholder — nothing to read. */
+export function isPathPlaceholder(path: string): boolean {
+  return path.startsWith(NOT_A_PATH_PREFIX) && path.endsWith(NOT_A_PATH_SUFFIX);
+}
+
 function joinFor(platform: NodeJS.Platform): (...parts: string[]) => string {
   return platform === 'win32' ? win32.join : posix.join;
 }
@@ -102,7 +110,7 @@ export function adcCredentialsLocation(
   platform: NodeJS.Platform,
 ): GcpCredentialFile | null {
   const fromEnv = nonEmptyString(env['GOOGLE_APPLICATION_CREDENTIALS']) ?? nonEmptyString(env['google_application_credentials']);
-  if (fromEnv !== null) return { path: fromEnv, origin: 'env' };
+  if (fromEnv !== null) return { path: displayablePath(fromEnv, 'GOOGLE_APPLICATION_CREDENTIALS'), origin: 'env' };
   const join = joinFor(platform);
   if (platform === 'win32') {
     const appData = nonEmptyString(env['APPDATA']);

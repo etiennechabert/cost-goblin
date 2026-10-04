@@ -23,10 +23,12 @@ import { useQuery } from '../hooks/use-query.js';
  *  `context: 'wizard'` renders the compact form: just the account gcloud is
  *  signed in as (it lists the projects the wizard offers), plus one line when
  *  something would stop the setup. `context: 'provider'` (Data Management)
- *  shows both paths. */
+ *  shows both paths, each impersonating the provider's reader when it names
+ *  one — as one line when nothing needs action, with the paths behind
+ *  Details. */
 export function GcpIdentityPanel({ providerName, context, refreshKey = 0 }: Readonly<{
-  /** Whose `keyFile` to apply. Omitted in the wizard, where no provider
-   *  exists yet. */
+  /** Whose `keyFile` / `impersonateServiceAccount` to apply. Omitted in the
+   *  wizard, where no provider exists yet. */
   providerName?: string | undefined;
   context: 'wizard' | 'provider';
   /** Bump to re-read, e.g. after a sign-in the parent ran. */
@@ -144,20 +146,109 @@ function CompactAccount({ download }: Readonly<{ download: GcpDownloadIdentity }
   }
 }
 
-/** Data Management's form: both paths, and a warning when they are two
- *  different people. */
+/** A provider with no reader that lists through an impersonated ADC file:
+ *  listing reads as the file's service account, but downloads run as gcloud's
+ *  own account, which typically cannot read the export. The fix is naming that
+ *  account as the provider's reader, so both paths impersonate it. */
+function readerlessImpersonation({ listing, download, reader }: GcpIdentities): { target: string; account: string } | null {
+  if (reader !== null || listing.kind !== 'impersonated') return null;
+  if (download.kind !== 'gcloud' || download.account === null) return null;
+  return { target: listing.target, account: download.account };
+}
+
+/** Nothing to act on: both paths resolved to someone, nobody signed out or
+ *  expired, no split, and no path bypassing an impersonation. */
+function isHealthy(identities: GcpIdentities): boolean {
+  const { listing, download, splitAccounts } = identities;
+  if (splitAccounts !== null || readerlessImpersonation(identities) !== null) return false;
+  const listingOk = listing.kind === 'impersonated' || listing.kind === 'service-account'
+    || (listing.kind === 'user' && !(listing.account.status === 'unknown' && listing.account.reason === 'expired'));
+  const downloadOk = (download.kind === 'gcloud' && download.account !== null)
+    || (download.kind === 'key-file' && download.email !== null);
+  return listingOk && downloadOk;
+}
+
+/** Who reads the bucket in the end: the provider's reader, else the service
+ *  account an impersonated ADC file acts as. */
+function readsAs({ listing, reader }: GcpIdentities): string | null {
+  return reader ?? (listing.kind === 'impersonated' ? listing.target : null);
+}
+
+/** Data Management's form: one line when nothing needs action — who signs in
+ *  and who it reads as — with both paths behind Details; the paths open, with
+ *  a warning when they are two different people, otherwise. */
 function Identities({ identities }: Readonly<{ identities: GcpIdentities }>): React.JSX.Element {
+  if (!isHealthy(identities)) return <Paths identities={identities} />;
+  const target = readsAs(identities);
+  const { download } = identities;
+  // Healthy guarantees a name here; the configuration is under Details.
+  const account = downloadName(download);
+  return (
+    <div className="mt-1">
+      <p className="min-w-0 break-words">
+        {account !== null && <Principal>{account}</Principal>}
+        {target !== null && <><span className="text-text-muted"> · reads as </span><Principal>{target}</Principal></>}
+      </p>
+      <details className="mt-1">
+        <summary className="cursor-pointer text-[11px] text-text-muted hover:text-text-secondary">Details</summary>
+        <Paths identities={identities} />
+      </details>
+    </div>
+  );
+}
+
+function downloadName(download: GcpDownloadIdentity): string | null {
+  switch (download.kind) {
+    case 'gcloud': return download.account;
+    case 'key-file': return download.email;
+    case 'cli-missing':
+    case 'cli-error':
+      return null;
+  }
+}
+
+function Paths({ identities }: Readonly<{ identities: GcpIdentities }>): React.JSX.Element {
+  const { listing, reader } = identities;
+  const bypassed = readerlessImpersonation(identities);
   return (
     <>
       <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
         <dt className="text-text-muted">Bucket listing</dt>
-        <dd className="min-w-0"><ListingIdentity identity={identities.listing} /></dd>
+        <dd className="min-w-0">
+          {reader !== null && listing.kind === 'impersonated'
+            // With a reader, an impersonated ADC file is unwrapped: the reader
+            // is minted from the login underneath it, not through its account.
+            ? (
+              <>
+                <span className="text-text-secondary">your Google account</span>
+                <Detail>{fileDetail(listing.file)}</Detail>
+              </>
+            )
+            : <ListingIdentity identity={listing} />}
+          {reader !== null && <Impersonating target={reader} />}
+        </dd>
         <dt className="text-text-muted">Downloads</dt>
-        <dd className="min-w-0"><DownloadIdentity identity={identities.download} /></dd>
+        <dd className="min-w-0">
+          <DownloadIdentity identity={identities.download} />
+          {reader !== null && <Impersonating target={reader} />}
+        </dd>
       </dl>
       {identities.splitAccounts !== null && <SplitAccountsWarning split={identities.splitAccounts} />}
+      {bypassed !== null && (
+        <p role="note" aria-label="Credential warning" className="mt-2 rounded-md border border-warning/50 bg-warning/10 px-2.5 py-1.5 text-text-primary break-words">
+          Bucket listing reads as <Principal>{bypassed.target}</Principal>, but downloads run as{' '}
+          <Principal>{bypassed.account}</Principal>. Add{' '}
+          <Command>{`impersonateServiceAccount: ${bypassed.target}`}</Command> to this provider in{' '}
+          <Command>costgoblin.yaml</Command> so both read as it.
+        </p>
+      )}
     </>
   );
+}
+
+/** The provider's reader, which both paths impersonate. */
+function Impersonating({ target }: Readonly<{ target: string }>): React.JSX.Element {
+  return <Detail>impersonating <Principal>{target}</Principal> (this provider&apos;s read-only service account)</Detail>;
 }
 
 function fileDetail(file: GcpCredentialFile): string {
