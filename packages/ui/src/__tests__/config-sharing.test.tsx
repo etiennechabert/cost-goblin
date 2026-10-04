@@ -1,6 +1,6 @@
 import { asBucketPath, asProviderName } from '@costgoblin/core/browser';
 import type { DataSharingStatus, SharedSourcePreview } from '@costgoblin/core/browser';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { BundleSummaryCard, ImportConfigDialog, ShareConfigDialog } from '../components/config-sharing.js';
@@ -46,6 +46,32 @@ describe('BundleSummaryCard', () => {
 });
 
 describe('ShareConfigDialog', () => {
+  it('is a modal dialog named by its title', () => {
+    renderWithApi(new MockCostApi(), <ShareConfigDialog onClose={() => undefined} />);
+    const dialog = screen.getByRole('dialog', { name: 'Share configuration' });
+    expect(dialog.getAttribute('aria-modal')).toBe('true');
+  });
+
+  it('moves focus into the dialog on open', () => {
+    renderWithApi(new MockCostApi(), <ShareConfigDialog onClose={() => undefined} />);
+    const dialog = screen.getByRole('dialog', { name: 'Share configuration' });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+  });
+
+  it('closes from the named ✕, Escape and the aria-hidden backdrop', async () => {
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    renderWithApi(new MockCostApi(), <ShareConfigDialog onClose={onClose} />);
+    const dialog = screen.getByRole('dialog', { name: 'Share configuration' });
+
+    await user.click(within(dialog).getByRole('button', { name: 'Close' }));
+    await user.keyboard('{Escape}');
+    const backdrop = dialog.querySelector(':scope > [aria-hidden="true"]');
+    if (!(backdrop instanceof HTMLElement)) throw new Error('backdrop not found');
+    await user.click(backdrop);
+    expect(onClose).toHaveBeenCalledTimes(3);
+  });
+
   it('exports to a file and shows the saved path', async () => {
     const api = new MockCostApi();
     const exportSpy = vi.spyOn(api, 'exportConfigBundle');
@@ -203,9 +229,10 @@ describe('ImportConfigDialog', () => {
   // on it would drag the window instead of reaching the modal.
   it('opts the modal out of window drag regions', () => {
     const api = new MockCostApi();
-    const { container } = renderWithApi(api, <ImportConfigDialog onClose={() => undefined} onApplied={() => undefined} />);
-    const dialog = container.querySelector('dialog');
-    expect(dialog?.className).toContain('[-webkit-app-region:no-drag]');
+    renderWithApi(api, <ImportConfigDialog onClose={() => undefined} onApplied={() => undefined} />);
+    const dialog = screen.getByRole('dialog', { name: 'Import configuration' });
+    expect(dialog.className).toContain('[-webkit-app-region:no-drag]');
+    expect(dialog.getAttribute('aria-modal')).toBe('true');
   });
 
   it('previews a bundle, applies it with the chosen profile, then reports done', async () => {
@@ -518,8 +545,9 @@ describe('ImportConfigDialog — pull from a teammate', () => {
     const api = new MockCostApi();
     // Hold the pull pending so the blocking state is observable.
     api.addSharedSource = () => new Promise<never>(() => { /* never resolves */ });
+    const onClose = vi.fn();
     const user = userEvent.setup();
-    renderWithApi(api, <ImportConfigDialog onClose={() => undefined} onApplied={() => undefined} />);
+    renderWithApi(api, <ImportConfigDialog onClose={onClose} onApplied={() => undefined} />);
 
     await user.type(screen.getByLabelText('Sharing key from a teammate'), 'CGSHARE1-teammate');
     await user.click(screen.getByText('Continue'));
@@ -532,5 +560,12 @@ describe('ImportConfigDialog — pull from a teammate', () => {
     // No close affordance and the other import options are hidden.
     expect(screen.queryByLabelText('Close')).toBeNull();
     expect(screen.queryByText('Choose bundle file…')).toBeNull();
+    // Still the named dialog, and neither Escape nor the backdrop closes it.
+    const dialog = screen.getByRole('dialog', { name: 'Import configuration' });
+    await user.keyboard('{Escape}');
+    const backdrop = dialog.querySelector(':scope > [aria-hidden="true"]');
+    if (!(backdrop instanceof HTMLElement)) throw new Error('backdrop not found');
+    await user.click(backdrop);
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

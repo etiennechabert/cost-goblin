@@ -123,23 +123,25 @@ test.describe('Workspaces (workspace mode)', () => {
   test('create modal validates the name and lists existing workspaces', async () => {
     await openWorkspacesTab();
     await page.getByRole('button', { name: 'New workspace' }).click();
-    await expect(page.getByText(/Existing:/)).toBeVisible();
-    const nameInput = page.getByLabel('Workspace name');
+    const dialog = page.getByRole('dialog', { name: 'New workspace' });
+    await expect(dialog.getByText(/Existing:/)).toBeVisible();
+    const nameInput = dialog.getByLabel('Workspace name');
     await nameInput.fill('bad name!');
-    await expect(page.getByText(/letters, digits/i)).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Create & Restart' })).toBeDisabled();
+    await expect(dialog.getByText(/letters, digits/i)).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Create & Restart' })).toBeDisabled();
     await nameInput.fill('client-x');
-    await expect(page.getByRole('button', { name: 'Create & Restart' })).toBeEnabled();
-    await page.getByRole('button', { name: 'Cancel' }).click();
-    await expect(page.getByLabel('Workspace name')).toHaveCount(0);
+    await expect(dialog.getByRole('button', { name: 'Create & Restart' })).toBeEnabled();
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toHaveCount(0);
   });
 
   test('renames an inactive workspace', async () => {
     await openWorkspacesTab();
     await page.getByTestId('workspace-row-client-b').getByRole('button', { name: 'Rename' }).click();
-    const input = page.getByLabel('New name');
-    await input.fill('client-c');
-    await page.getByRole('button', { name: 'Rename', exact: true }).last().click();
+    const dialog = page.getByRole('dialog', { name: 'Rename workspace' });
+    await dialog.getByLabel('New name').fill('client-c');
+    await dialog.getByRole('button', { name: 'Rename', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
     await expect(page.getByTestId('workspace-row-client-c')).toBeVisible();
     await expect(page.getByTestId('workspace-row-client-b')).toHaveCount(0);
   });
@@ -147,8 +149,11 @@ test.describe('Workspaces (workspace mode)', () => {
   test('deletes an inactive workspace after confirmation', async () => {
     await openWorkspacesTab();
     await page.getByTestId('workspace-row-client-c').getByRole('button', { name: 'Delete' }).click();
-    await expect(page.getByText(/permanently deletes/i)).toBeVisible();
-    await page.getByRole('button', { name: 'Delete Workspace' }).click();
+    const confirm = page.getByRole('dialog', { name: 'Delete workspace' });
+    await expect(confirm).toHaveAccessibleDescription(/permanently deletes/i);
+    await expect(confirm.getByText(/permanently deletes/i)).toBeVisible();
+    await confirm.getByRole('button', { name: 'Delete Workspace' }).click();
+    await expect(confirm).toHaveCount(0);
     await expect(page.getByTestId('workspace-row-client-c')).toHaveCount(0);
     // Back to one workspace ⇒ chip hides again.
     await expect(page.getByTestId('workspace-chip')).toHaveCount(0);
@@ -157,14 +162,15 @@ test.describe('Workspaces (workspace mode)', () => {
   test('creating a workspace restarts into it (e2e mode quits instead of respawning)', async () => {
     await openWorkspacesTab();
     await page.getByRole('button', { name: 'New workspace' }).click();
-    await page.getByLabel('Workspace name').fill('client-d');
+    const dialog = page.getByRole('dialog', { name: 'New workspace' });
+    await dialog.getByLabel('Workspace name').fill('client-d');
 
     // The click below quits the app, so harvest renderer coverage now — the
     // afterAll runs against an already-closed page where collection would fail.
     await collectCoverage(page);
 
     const closed = app.waitForEvent('close');
-    await page.getByRole('button', { name: 'Create & Restart' }).click();
+    await dialog.getByRole('button', { name: 'Create & Restart' }).click();
     await closed;
 
     // The next launch resolves into the new (empty) workspace and shows the
