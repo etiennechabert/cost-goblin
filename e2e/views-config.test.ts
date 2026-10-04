@@ -1,4 +1,5 @@
 import { test, expect, type ElectronApplication, type Locator, type Page } from '@playwright/test';
+import type { OrgAccount, OrgSyncResult } from '../packages/core/src/types/api.js';
 import {
   launchAppWithCoverage,
   finishCoverage,
@@ -12,8 +13,34 @@ import {
 let app: ElectronApplication;
 let page: Page;
 
+/** A synthetic AWS Organizations sync over the fixture's eight accounts (ids
+ *  and names as in __fixtures__/setup.ts): five OUs, and three account tag
+ *  keys carried by 8, 6 and 4 accounts, so per-key coverage counts differ. */
+const orgAccount = (id: string, name: string, ouPath: string, tags: Readonly<Record<string, string>>): OrgAccount => ({
+  id, name, ouPath, tags,
+  email: `aws+${id}@example.com`,
+  status: 'ACTIVE',
+  joinedTimestamp: '2024-01-15T00:00:00Z',
+});
+const FIXTURE_ORG: OrgSyncResult = {
+  orgId: 'o-fixture0001',
+  syncedAt: '2026-03-01T09:00:00Z',
+  accounts: [
+    orgAccount('100000000000', 'Acme Corp Main', 'Root/Shared', { 'cost-center': 'CC-100', owner: 'finance' }),
+    orgAccount('100000000001', 'Payments Production', 'Root/Production', { 'cost-center': 'CC-200', environment: 'production', owner: 'payments' }),
+    orgAccount('100000000002', 'Cards Production', 'Root/Production', { 'cost-center': 'CC-200', environment: 'production' }),
+    orgAccount('100000000003', 'Identity Production', 'Root/Production', { 'cost-center': 'CC-300', environment: 'production', owner: 'identity' }),
+    orgAccount('100000000004', 'Platform Engineering', 'Root/Platform', { 'cost-center': 'CC-400', environment: 'staging', owner: 'platform' }),
+    orgAccount('100000000005', 'Security Operations', 'Root/Security', { 'cost-center': 'CC-500', environment: 'production' }),
+    orgAccount('100000000006', 'Data Analytics', 'Root/Data', { 'cost-center': 'CC-600', environment: 'staging' }),
+    orgAccount('100000000007', 'CI/CD Platform', 'Root/Platform', { 'cost-center': 'CC-400' }),
+  ],
+};
+
 test.beforeAll(async () => {
-  ({ app, page } = await launchAppWithCoverage());
+  // The org sync result lives in the state dir, where launchApp's
+  // stateFiles land before the app starts.
+  ({ app, page } = await launchAppWithCoverage({ stateFiles: { 'org-accounts.json': JSON.stringify(FIXTURE_ORG) } }));
 });
 
 test.afterAll(async () => {
@@ -45,10 +72,20 @@ test.describe('Data Management', () => {
     await expect(page.getByRole('button', { name: 'Toggle auto-prune' })).toBeVisible();
   });
 
-  test('org section prompts for an AWS Organizations sync', async () => {
-    // The fixtures ship no org data, so the section is the sync prompt.
-    await expect(page.getByText('AWS Organizations not synced')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Sync from AWS Organizations' })).toBeVisible();
+  test('org section shows the synced organization and expands to what it pulled', async () => {
+    await expect(page.getByText('AWS Organizations not synced')).toHaveCount(0);
+    const header = page.getByRole('button').filter({ hasText: 'AWS Organization' });
+    const accounts = page.getByText('8 accounts', { exact: true });
+    await expect(accounts).toBeHidden();
+
+    await header.click();
+    await expect(accounts).toBeVisible();
+    await expect(page.getByText('5 organizational units', { exact: true })).toBeVisible();
+    await expect(page.getByText(/^3 tag keys /)).toBeVisible();
+    await screenshot(page, 'data-management-org');
+
+    await header.click();
+    await expect(accounts).toBeHidden();
   });
 
   /** A tier panel, found from its <h3> title: the nearest rounded-xl card
@@ -202,11 +239,35 @@ test.describe('Dimensions', () => {
     await screenshot(page, 'dimensions-resource-tags');
   });
 
-  test('Account Tags panel says it needs an AWS Organization sync', async () => {
-    // The fixtures ship no org data, so the debug panel's subtitle is the
-    // no-org state — never a key count.
-    const panel = page.getByRole('button').filter({ hasText: 'Account Tags' });
-    await expect(panel).toContainText('Requires an AWS Organization sync');
+  test('Account Tags panel lists the org tag keys and toggles their columns', async () => {
+    // A key count proves the org data loaded: the no-data subtitle is also
+    // what a loading or failed org request shows.
+    const header = page.getByRole('button').filter({ hasText: 'Account Tags' });
+    await expect(header).toContainText('3 keys · across 8 accounts');
+    await header.click();
+
+    // One column per key, headed by how many accounts carry it.
+    const panel = header.locator('xpath=..');
+    for (const { key, carriers } of [
+      { key: 'cost-center', carriers: 8 },
+      { key: 'environment', carriers: 6 },
+      { key: 'owner', carriers: 4 },
+    ]) {
+      await expect(panel.locator('th', { hasText: key })).toContainText(`${String(carriers)}/8 accts`);
+    }
+
+    // A key's badge hides its column (struck through) and brings it back.
+    const badge = panel.getByRole('button', { name: 'owner', exact: true });
+    const column = panel.locator('th', { hasText: 'owner' });
+    await badge.click();
+    await expect(badge).toHaveClass(/\bline-through\b/);
+    await expect(column).toHaveCount(0);
+    await screenshot(page, 'dimensions-account-tags');
+
+    await badge.click();
+    await expect(badge).not.toHaveClass(/\bline-through\b/);
+    await expect(column).toHaveCount(1);
+    await header.click();
   });
 
   test('no React crash on Dimensions view', async () => {

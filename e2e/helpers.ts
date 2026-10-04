@@ -306,7 +306,7 @@ export async function attachCoverage(page: Page): Promise<Page> {
  *  window is really the app. The standard suite opening — see
  *  {@link attachCoverage} for why the ordering inside cannot be rearranged. */
 export async function launchAppWithCoverage(
-  overrides?: { configDir?: string; dataDir?: string },
+  overrides?: { configDir?: string; dataDir?: string; stateFiles?: Readonly<Record<string, string>> },
 ): Promise<{ app: ElectronApplication; page: Page }> {
   const app = await launchApp(overrides);
   // Everything past this point can throw (firstWindow times out, the title
