@@ -367,19 +367,6 @@ const GCP_EXPORTER_DOCS = 'https://github.com/etiennechabert/cost-goblin/tree/ma
 /** The website's Google Cloud onboarding guide; the hash opens its modal. */
 const GCP_SETUP_GUIDE = 'https://costgoblin.com/#get-started-gcp';
 
-/**
- * Step 2b — GCP: the exporter prerequisite, then into browse-and-pick.
- *
- * The prerequisite is real — there is nothing in the bucket until the user's
- * own exporter has run — but it is an ORDERING constraint, not a reason to
- * hand-edit YAML. Once the exporter has run, a GCS bucket browses exactly like
- * an S3 one, so this states the prerequisite and then offers the same
- * pick-from-a-list flow AWS gets. A project ID typed here skips the project
- * list — for an account that can't list its project, or an organisation whose
- * thousands of projects make the list slow and useless (the next step also
- * takes a typed ID, so nobody has to wait the listing out). Hand-editing survives as the escape hatch for setups the wizard
- * can't browse at all.
- */
 /** The reader field's help line for what was typed. */
 function readerHelp(input: ReturnType<typeof resolveReaderInput>): string {
   switch (input.kind) {
@@ -393,24 +380,94 @@ function readerHelp(input: ReturnType<typeof resolveReaderInput>): string {
   }
 }
 
+/** The collapsed reader line: who the browse and the sync will read as, for
+ *  what is typed so far. Undefined for an invalid reader, whose field is open
+ *  with its error instead. */
+function readerSummary(input: ReturnType<typeof resolveReaderInput>): string | undefined {
+  switch (input.kind) {
+    case 'invalid':
+      return undefined;
+    case 'none':
+      return 'your own Google account';
+    case 'needs-project':
+      return `${input.accountId} in the project you pick`;
+    case 'address':
+      return input.address;
+  }
+}
+
+/**
+ * Step 2b — GCP: which project holds the export, then into browse-and-pick.
+ *
+ * Project first, because everything after it is scoped to one: GCS has no
+ * account-wide bucket list, and a bare reader name is completed with the
+ * project (`<name>@<project>.iam.gserviceaccount.com`). Typing the ID is the
+ * primary path — the documented least-privilege account can't list its own
+ * project, and an organisation's thousands of projects make the list slow and
+ * useless — with the `gcloud projects list` picker one click away for anyone
+ * who would rather choose.
+ *
+ * The read-only service account almost always stays the default the setup
+ * guide creates, so it is one line showing who CostGoblin will read as,
+ * resolved live against the typed project, with the field behind "Change".
+ * The field starts open when it holds anything but that default (a
+ * reconfigured provider's own reader, a cleared one, or an invalid value), and
+ * never closes on its own once open — collapsing would hide what is being
+ * edited. Hand-editing survives as the escape hatch for setups the wizard
+ * can't browse at all.
+ */
 function GcpIntroStep({ state, reader, onReaderChange, onBrowse, onProjectId, onScaffold, onDone, onBack }: Readonly<{
   state: { scaffolded: boolean; error: string };
   /** The read-only service account to browse and sync as: a full address,
-   *  or a bare account name completed with the project picked next; '' for
-   *  none. */
+   *  or a bare account name completed with the project; '' for none. */
   reader: string;
   onReaderChange: (reader: string) => void;
+  /** Opens the `gcloud projects list` picker. */
   onBrowse: () => void;
-  /** A project ID typed here skips `gcloud projects list` entirely. */
+  /** Continue with the typed project ID — straight to its buckets. */
   onProjectId: (projectId: string) => void;
   onScaffold: () => void;
   onDone: () => void;
   onBack: () => void;
 }>) {
-  // No project yet — the user picks it next — so a bare name is checked as a
-  // name here and completed with that project at every later use.
-  const readerInput = resolveReaderInput(reader, undefined);
+  const [projectId, setProjectId] = useState('');
+  // The rule is shown after a submit attempt or on blur, not while a valid
+  // ID is still being typed through invalid prefixes (see `ManualEntry`).
+  const [attempted, setAttempted] = useState(false);
+  const trimmedProject = projectId.trim();
+  const projectValid = isValidGcpProjectId(trimmedProject);
+  const projectInvalid = attempted && trimmedProject.length > 0 && !projectValid;
+
+  // Resolved against the project as soon as one is valid, so the line shows
+  // the exact address the browse will impersonate.
+  const readerInput = resolveReaderInput(reader, projectValid ? trimmedProject : undefined);
   const readerInvalid = readerInput.kind === 'invalid';
+  // The picker path resolves later, against the project picked there.
+  const readerNameInvalid = resolveReaderInput(reader, undefined).kind === 'invalid';
+  const canContinue = projectValid && !readerInvalid;
+
+  // A latch, adjusted during render: opens for a non-default or invalid value
+  // (including one prefilled after mount), and is never cleared here — typing
+  // the default back must not collapse the field out from under the cursor.
+  const needsReaderField = reader.trim() !== DEFAULT_READER_ACCOUNT_ID || readerInvalid;
+  const [readerOpen, setReaderOpen] = useState(needsReaderField);
+  if (needsReaderField && !readerOpen) setReaderOpen(true);
+  // "Change" disappears once the field opens, so focus moves into the field
+  // rather than falling back to the document.
+  const [focusReader, setFocusReader] = useState(false);
+  const readerFieldRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!focusReader) return;
+    readerFieldRef.current?.focus();
+    setFocusReader(false);
+  }, [focusReader]);
+
+  const submit = (): void => {
+    if (canContinue) onProjectId(trimmedProject);
+    else setAttempted(true);
+  };
+  const summary = readerSummary(readerInput);
+
   return (
     <div className="flex flex-col items-center gap-5 text-center">
       <span className="text-2xl font-bold text-accent tracking-wider">Set up from Google Cloud</span>
@@ -427,39 +484,84 @@ function GcpIntroStep({ state, reader, onReaderChange, onBrowse, onProjectId, on
           className="text-accent underline underline-offset-2 hover:text-accent-hover"
         >
           Google Cloud setup guide
-        </a>, then find your export below.
+        </a>, then enter the project that holds your export.
       </p>
       <div className="flex w-full max-w-md flex-col gap-1.5 text-left">
-        <label htmlFor="gcp-reader" className="text-xs text-text-muted">
-          Read-only service account
+        <label htmlFor="gcp-project-id" className="text-sm text-text-secondary">
+          Google Cloud project
         </label>
         <input
-          id="gcp-reader"
-          type="text"
-          value={reader}
-          onChange={(e) => { onReaderChange(e.target.value); }}
-          placeholder="costgoblin-reader or name@project.iam.gserviceaccount.com"
+          id="gcp-project-id"
+          value={projectId}
+          onChange={(e) => { setProjectId(e.target.value); }}
+          onBlur={() => { setAttempted(true); }}
+          // `isComposing`: the Enter that commits an IME composition is not a submit.
+          onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) submit(); }}
+          placeholder="my-billing-project"
           spellCheck={false}
           autoComplete="off"
-          aria-invalid={readerInvalid}
-          aria-describedby="gcp-reader-help"
-          className="h-9 rounded-md border border-border bg-bg-primary px-3 font-mono text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent"
+          aria-invalid={projectInvalid}
+          aria-describedby={projectInvalid ? 'gcp-project-id-error' : undefined}
+          className="h-9 rounded-md border border-border bg-bg-primary px-3 font-mono text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent aria-invalid:border-negative"
         />
-        <p id="gcp-reader-help" className={readerInvalid ? 'text-xs text-negative' : 'text-xs text-text-muted'}>
-          {readerHelp(readerInput)}
-        </p>
+        {projectInvalid && (
+          <p id="gcp-project-id-error" className="text-xs text-negative">
+            {`${GCP_PROJECT_ID_RULES} — the ID, not the project's display name.`}
+          </p>
+        )}
+        <button
+          type="button"
+          onClick={onBrowse}
+          disabled={readerNameInvalid}
+          className="self-start text-xs text-accent underline underline-offset-2 hover:text-accent-hover disabled:cursor-not-allowed disabled:text-text-muted disabled:no-underline"
+        >
+          Choose from my projects
+        </button>
+
+        <div className="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          {summary !== undefined && (
+            <p className="text-xs text-text-muted break-all">
+              Reads as <span className="font-mono text-text-secondary">{summary}</span>
+            </p>
+          )}
+          {!readerOpen && (
+            <button
+              type="button"
+              aria-expanded={false}
+              aria-controls="gcp-reader-field"
+              onClick={() => { setReaderOpen(true); setFocusReader(true); }}
+              className="text-xs text-accent underline underline-offset-2 hover:text-accent-hover"
+            >
+              Change
+            </button>
+          )}
+        </div>
+        <div id="gcp-reader-field" hidden={!readerOpen} className="flex flex-col gap-1.5">
+          <label htmlFor="gcp-reader" className="text-xs text-text-muted">
+            Read-only service account
+          </label>
+          <input
+            id="gcp-reader"
+            ref={readerFieldRef}
+            type="text"
+            value={reader}
+            onChange={(e) => { onReaderChange(e.target.value); }}
+            placeholder="costgoblin-reader or name@project.iam.gserviceaccount.com"
+            spellCheck={false}
+            autoComplete="off"
+            aria-invalid={readerInvalid}
+            aria-describedby="gcp-reader-help"
+            className="h-9 rounded-md border border-border bg-bg-primary px-3 font-mono text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent"
+          />
+          <p id="gcp-reader-help" className={readerInvalid ? 'text-xs text-negative' : 'text-xs text-text-muted'}>
+            {readerHelp(readerInput)}
+          </p>
+        </div>
       </div>
       <div className="flex w-full max-w-xs flex-col gap-3">
-        <Button onClick={onBrowse} disabled={readerInvalid} className="bg-accent hover:bg-accent-hover text-white">
-          Find my export
+        <Button onClick={submit} disabled={!canContinue} className="bg-accent hover:bg-accent-hover text-white">
+          Continue
         </Button>
-        <div className="text-left">
-          <GcpProjectIdEntry
-            id="gcp-intro-project-id"
-            label="Already know the project ID? Skip the project list"
-            onSubmit={onProjectId}
-          />
-        </div>
         <button
           type="button"
           onClick={onScaffold}

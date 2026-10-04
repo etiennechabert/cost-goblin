@@ -359,20 +359,25 @@ gcloud storage rm --recursive gs://<BUCKET>/<PREFIX>/<TIER>/billing_period=YYYY-
 
 ## Point CostGoblin at it
 
-Easiest route: pick **Google Cloud** on the setup screen and choose **Find my
-export**. The wizard lists your projects (via `gcloud projects list`) — or, when
-your account can't list the project, takes its ID typed into **Project not
-listed? Enter its ID** — then the buckets in that project, then walks the bucket
-so you can select the tier folder — and writes the config itself. It won't let you select the `<PREFIX>`
-folder above the tiers, which is the mistake that makes the daily tier read the
-hourly shards too.
+Easiest route: pick **Google Cloud** on the setup screen, type the project ID
+that holds the export bucket into **Google Cloud project**, and press
+**Continue**. The wizard then lists the buckets in that project, walks the
+bucket so you can select the tier folder, and writes the config itself. It
+won't let you select the `<PREFIX>` folder above the tiers, which is the mistake
+that makes the daily tier read the hourly shards too. Typing the ID never runs
+`gcloud projects list` — the faster route in an organisation with thousands of
+projects, where that listing is slow and the list too long to scan.
 
-Already know the project ID? Type it into **Already know the project ID? Skip
-the project list**, just under **Find my export**, and the wizard goes straight
-to the bucket step without running `gcloud projects list` at all — the faster
-route in an organisation with thousands of projects, where that listing is slow
-and the list too long to scan. The project step has a similar field, **Project
-not listed? Enter its ID**, usable while the list is still loading.
+Would rather pick it? **Choose from my projects**, just under the project field,
+lists your projects (via `gcloud projects list`); when your account can't list
+the project, type its ID into **Project not listed? Enter its ID** there, usable
+while the list is still loading.
+
+The wizard reads as the read-only service account the setup above creates —
+the line under the project field shows the full
+`costgoblin-reader@<PROJECT>.iam.gserviceaccount.com` address it will use. Press
+**Change** beside it to name a different reader (a bare account name, completed
+with the project, or a full address), or clear it to read as your own account.
 
 > **"Listing the buckets in … isn't allowed for this account" is expected with the read-only reader, not
 > a misconfiguration.** Listing the buckets in a project is a *project-level*
@@ -406,9 +411,9 @@ not listed? Enter its ID**, usable while the list is still loading.
 > **active account** — never ADC, never the impersonated service account — and
 > an account whose only grant is `roles/iam.serviceAccountTokenCreator` on the
 > reader — set up for you by an admin — holds nothing at the project level, so
-> the project is not listed. That is expected: type the project ID into **Project not listed? Enter its ID** (or
-> into the field under **Find my export**, which skips the list) and press
-> **Continue**. The project is only used to list its buckets, which the
+> the project is not listed. That is expected: type the project ID into **Project not listed? Enter its ID** (or,
+> to skip the list, into **Google Cloud project** on the screen before it) and
+> press **Continue**. The project is only used to list its buckets, which the
 > reader can't do anyway, so the bucket step then asks for the bucket name as
 > described above. If you would rather pick the project from the list, granting
 > your account `roles/browser` on the project lists it — optional, not required.

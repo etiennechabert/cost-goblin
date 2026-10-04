@@ -510,10 +510,16 @@ async function walkGcpDailyToConfirm(user: ReturnType<typeof userEvent.setup>): 
   await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
 }
 
+/** Opens the read-only service account field, which the intro keeps behind
+ *  "Change" while it holds the default. */
+async function openReaderField(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.click(screen.getByRole('button', { name: 'Change' }));
+}
+
 /** Hub → GCP intro → project → bucket → bucket root. */
 async function enterGcpBrowse(user: ReturnType<typeof userEvent.setup>): Promise<void> {
   await user.click(screen.getByLabelText('Set up from Google Cloud'));
-  await user.click(screen.getByText('Find my export'));
+  await user.click(screen.getByText('Choose from my projects'));
   await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
   await userClickText(user, 'Acme Production');
   await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
@@ -713,7 +719,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
   it('lists projects from gcloud, since GCS has no account-wide bucket list', async () => {
     const { user } = renderWizard();
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     expect(screen.getByText('acme-prod')).toBeDefined();
     expect(screen.getByText('Acme Dev')).toBeDefined();
@@ -722,7 +728,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
   it('lists the chosen project s buckets', async () => {
     const { api, user } = renderWizard();
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Acme Production');
     await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
@@ -797,9 +803,10 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     const { api, user } = renderWizard();
     gcpExportLayout(api);
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await openReaderField(user);
     await user.clear(screen.getByLabelText('Read-only service account'));
     await user.type(screen.getByLabelText('Read-only service account'), reader);
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Acme Production');
     await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
@@ -827,8 +834,9 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     const { api, user } = renderWizard();
     gcpExportLayout(api);
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await openReaderField(user);
     await user.clear(screen.getByLabelText('Read-only service account'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Acme Production');
     await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
@@ -868,7 +876,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
       await waitFor(() => { expect(screen.getByDisplayValue(reader)).toBe(field); });
 
       await user.clear(field);
-      await user.click(screen.getByText('Find my export'));
+      await user.click(screen.getByText('Choose from my projects'));
       await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
       await userClickText(user, 'Acme Production');
       await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
@@ -887,25 +895,31 @@ describe('SetupWizard — GCP browse-and-pick', () => {
   it('forgets the reader when the user abandons the run with the close button', async () => {
     const { user } = renderWizard();
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await openReaderField(user);
     await user.clear(screen.getByLabelText('Read-only service account'));
     await user.type(screen.getByLabelText('Read-only service account'), 'reader@acme-prod.iam.gserviceaccount.com');
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await user.click(screen.getByLabelText('Back to start'));
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    // Back to the default, not to the typed reader.
+    // Back to the default, not to the typed reader — and folded away again.
     expect(screen.getByLabelText('Read-only service account')).toBe(screen.getByDisplayValue('costgoblin-reader'));
+    expect(screen.getByRole('button', { name: 'Change' })).toBeDefined();
   });
 
   it('holds the browse back on an address that is not a service account', async () => {
     const { api, user } = renderWizard();
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await openReaderField(user);
     await user.clear(screen.getByLabelText('Read-only service account'));
     await user.type(screen.getByLabelText('Read-only service account'), 'me@gmail.com');
     expect(screen.getByText(/^Use an account name like costgoblin-reader, or .*name@project\.iam\.gserviceaccount\.com/)).toBeDefined();
-    const find = screen.getByRole('button', { name: 'Find my export' });
+    const find = screen.getByRole('button', { name: 'Choose from my projects' });
     expect(find.hasAttribute('disabled')).toBe(true);
     await user.click(find);
+    // Nor through a typed project: Continue stays off, and Enter goes nowhere.
+    await user.type(screen.getByLabelText('Google Cloud project'), 'acme-prod{Enter}');
+    expect(screen.getByRole('button', { name: 'Continue' }).hasAttribute('disabled')).toBe(true);
     expect(api.gcsBucketsListedFor).toEqual([]);
   });
 
@@ -1081,7 +1095,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     const { api, user } = renderWizard();
     api.gcpProjectsResult = { projects: [], error: 'You do not currently have an active account' };
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('You do not currently have an active account')).toBeDefined(); });
     expect(screen.getByText('Sign in the gcloud CLI')).toBeDefined();
   });
@@ -1090,7 +1104,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     const { api, user } = renderWizard();
     api.gcpProjectsResult = { projects: [], error: 'GCLOUD_CLI_NOT_FOUND' };
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText(/Google Cloud CLI \(gcloud\) is not installed/)).toBeDefined(); });
     expect(screen.queryByText('GCLOUD_CLI_NOT_FOUND')).toBeNull();
   });
@@ -1107,7 +1121,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     // Walked by hand rather than via enterGcpBrowse: a failing browse renders
     // no folders, so that helper's wait for one would burn the test budget.
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Acme Production');
     await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
@@ -1121,7 +1135,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
   it('keeps the hand-written config route available from the project step', async () => {
     const { api, user } = renderWizard();
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Write the config by hand instead');
     await screen.findByRole('link', { name: 'Google Cloud setup guide' });
@@ -1216,7 +1230,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     const { api, user } = renderWizard();
     api.gcpProjectsResult = { projects: [], error: 'GCLOUD_CLI_NOT_FOUND' };
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText(/is not installed/)).toBeDefined(); });
     // The login button cannot run a CLI that isn't installed; offering it made
     // the user click something guaranteed to fail to reach the real remedy.
@@ -1231,7 +1245,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     gcpExportLayout(api);
     api.gcsBucketsResult = { buckets: [], error: 'does not have storage.buckets.list access' };
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Acme Production');
     await waitFor(() => { expect(screen.getByLabelText('Or enter a bucket name directly')).toBeDefined(); });
@@ -1249,7 +1263,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     gcpExportLayout(api);
     api.gcsBucketsResult = { buckets: [], error: BUCKET_LIST_DENIED };
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Acme Production');
 
@@ -1283,7 +1297,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     gcpExportLayout(api);
     api.gcsBucketsResult = { buckets: [], error: BUCKET_LIST_DENIED };
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Acme Production');
 
@@ -1304,7 +1318,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     gcpExportLayout(api);
     api.gcsBucketsResult = { buckets: Array.from({ length: 6 }, (_, i) => ({ name: `acme-bucket-${String(i)}` })), error: '' };
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Acme Production');
 
@@ -1331,7 +1345,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     gcpExportLayout(api);
     api.gcsBucketsResult = { buckets: [], error: 'connect ETIMEDOUT 142.250.74.208:443' };
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Acme Production');
 
@@ -1347,10 +1361,10 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     // named gcp-main, which becomes its data folder and dimension label.
     const { api, user } = renderWizard();
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, '← Back');
-    await waitFor(() => { expect(screen.getByText('Find my export')).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByText('Choose from my projects')).toBeDefined(); });
     await userClickText(user, '← Back');
     await waitFor(() => { expect(screen.getByLabelText('Set up from AWS')).toBeDefined(); });
 
@@ -1376,10 +1390,10 @@ describe('SetupWizard — GCP browse-and-pick', () => {
   it('walks back from the project step to the GCP intro', async () => {
     const { user, onComplete } = renderWizard();
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, '← Back');
-    await waitFor(() => { expect(screen.getByText('Find my export')).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByText('Choose from my projects')).toBeDefined(); });
     expect(onComplete).not.toHaveBeenCalled();
   });
 });
@@ -1397,7 +1411,7 @@ describe('SetupWizard — GCP "Signed in as" panel', () => {
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
     await waitFor(() => { expect(signedInPanel()).not.toBeNull(); });
 
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     expect(signedInPanel()).not.toBeNull();
     await userClickText(user, 'Acme Production');
@@ -1423,7 +1437,7 @@ describe('SetupWizard — GCP "Signed in as" panel', () => {
   it('asks without a provider name — none exists yet — and does not re-run gcloud per step', async () => {
     const { api, user } = renderWizard();
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Acme Production');
     await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
@@ -1459,7 +1473,7 @@ describe('SetupWizard — GCP "Signed in as" panel', () => {
       },
     };
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     const panel = await screen.findByRole('region', { name: 'Signed in as' });
     await waitFor(() => { expect(panel.textContent).toContain('admin@acme.com'); });
     expect(panel.textContent).toContain('Bucket access is signed in as alice@acme.com — a different account.');
@@ -1487,7 +1501,7 @@ describe('SetupWizard — GCP "Signed in as" panel', () => {
     const { api, user } = renderWizard();
     api.gcpProjectsResult = { projects: [], error: 'ERROR: (gcloud.projects.list) You do not currently have an active account selected.' };
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Retry')).toBeDefined(); });
     const before = api.gcpIdentitiesRequestedFor.length;
     await userClickText(user, 'Retry');
@@ -1498,14 +1512,14 @@ describe('SetupWizard — GCP "Signed in as" panel', () => {
 /** Hub → GCP intro → project step, waiting until the listing has settled. */
 async function enterGcpProjectStep(user: ReturnType<typeof userEvent.setup>): Promise<void> {
   await user.click(screen.getByLabelText('Set up from Google Cloud'));
-  await user.click(screen.getByText('Find my export'));
+  await user.click(screen.getByText('Choose from my projects'));
   await waitFor(() => { expect(screen.queryByText('Loading projects...')).toBeNull(); });
 }
 
 /** Hub → GCP intro → typed project ID → daily bucket step, never listing projects. */
 async function enterGcpBucketFromIntro(user: ReturnType<typeof userEvent.setup>, projectId: string): Promise<void> {
   await user.click(screen.getByLabelText('Set up from Google Cloud'));
-  await user.type(screen.getByLabelText('Already know the project ID? Skip the project list'), `${projectId}{Enter}`);
+  await user.type(screen.getByLabelText('Google Cloud project'), `${projectId}{Enter}`);
   await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
 }
 
@@ -1657,7 +1671,7 @@ describe('SetupWizard — GCP project typed by ID', () => {
     await user.type(screen.getByLabelText('Project not listed? Enter its ID'), 'acme-billing{Enter}');
     await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
     await user.click(screen.getByText('← Back'));
-    await waitFor(() => { expect(screen.getByText('Find my export')).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByText('Choose from my projects')).toBeDefined(); });
     expect(listSpy).not.toHaveBeenCalled();
   });
 });
@@ -1673,7 +1687,7 @@ describe('SetupWizard — GCP project ID before the listing', () => {
     expect(api.gcsBucketsListedFor).toEqual(['billing-504501']);
 
     await user.click(screen.getByText('← Back'));
-    await waitFor(() => { expect(screen.getByText('Find my export')).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByText('Choose from my projects')).toBeDefined(); });
     expect(listSpy).not.toHaveBeenCalled();
   });
 
@@ -1681,7 +1695,7 @@ describe('SetupWizard — GCP project ID before the listing', () => {
     const { api, user } = renderWizard();
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
 
-    await user.type(screen.getByLabelText('Already know the project ID? Skip the project list'), 'Acme Prod{Enter}');
+    await user.type(screen.getByLabelText('Google Cloud project'), 'Acme Prod{Enter}');
     expect(screen.getByRole('button', { name: 'Continue' }).hasAttribute('disabled')).toBe(true);
     expect(api.gcsBucketsListedFor).toEqual([]);
   });
@@ -1691,9 +1705,9 @@ describe('SetupWizard — GCP project ID before the listing', () => {
     const { api, user } = renderWizard();
     await enterGcpBucketFromIntro(user, 'billing-504501');
     await user.click(screen.getByText('← Back'));
-    await waitFor(() => { expect(screen.getByText('Find my export')).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByText('Choose from my projects')).toBeDefined(); });
 
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Acme Production');
     await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
@@ -1706,7 +1720,7 @@ describe('SetupWizard — GCP project ID before the listing', () => {
     const { api, user } = renderWizard();
     const listing = deferProjectListing(api);
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     expect(screen.getByText('Loading projects...')).toBeDefined();
 
     await user.type(screen.getByLabelText('Project not listed? Enter its ID'), 'billing-504501{Enter}');
@@ -1725,13 +1739,13 @@ describe('SetupWizard — GCP project ID before the listing', () => {
     const { api, user } = renderWizard();
     const listing = deferProjectListing(api);
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await user.click(screen.getByText('Write the config by hand instead'));
-    await waitFor(() => { expect(screen.getByText('Find my export')).toBeDefined(); });
-    await user.type(screen.getByLabelText('Already know the project ID? Skip the project list'), 'billing');
+    await waitFor(() => { expect(screen.getByText('Choose from my projects')).toBeDefined(); });
+    await user.type(screen.getByLabelText('Google Cloud project'), 'billing');
 
     await listing.settle();
-    expect(screen.getByText('Find my export')).toBeDefined();
+    expect(screen.getByText('Choose from my projects')).toBeDefined();
     expect(screen.queryByText('Acme Production')).toBeNull();
     expect(screen.getByDisplayValue('billing')).toBeDefined();
   });
@@ -1740,9 +1754,9 @@ describe('SetupWizard — GCP project ID before the listing', () => {
     const { api, user } = renderWizard();
     const listing = deferProjectListing(api);
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await user.click(screen.getByText('Find my export'));
+    await user.click(screen.getByText('Choose from my projects'));
     await user.click(screen.getByText('Write the config by hand instead'));
-    await waitFor(() => { expect(screen.getByText('Find my export')).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByText('Choose from my projects')).toBeDefined(); });
     await user.click(screen.getByText('← Back'));
     await waitFor(() => { expect(screen.getByLabelText('Set up from AWS')).toBeDefined(); });
 
@@ -1794,8 +1808,10 @@ describe('SetupWizard — GCP default reader', () => {
     const { user } = renderWizard();
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
     expect(screen.getByLabelText('Read-only service account')).toBe(screen.getByDisplayValue('costgoblin-reader'));
+    expect(screen.getByText('costgoblin-reader in the project you pick')).toBeDefined();
+    await openReaderField(user);
     expect(screen.getByText(/^Completed with @<the project you pick>\.iam\.gserviceaccount\.com/)).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Find my export' }).hasAttribute('disabled')).toBe(false);
+    expect(screen.getByRole('button', { name: 'Choose from my projects' }).hasAttribute('disabled')).toBe(false);
   });
 
   it('lists, browses, verifies and writes as the default reader in the picked project', async () => {
@@ -1825,9 +1841,10 @@ describe('SetupWizard — GCP default reader', () => {
   it('completes a bare name with a project typed on the intro step', async () => {
     const { api, user } = renderWizard();
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await openReaderField(user);
     await user.clear(screen.getByLabelText('Read-only service account'));
     await user.type(screen.getByLabelText('Read-only service account'), 'billing-reader');
-    await user.type(screen.getByLabelText('Already know the project ID? Skip the project list'), 'billing-504501{Enter}');
+    await user.type(screen.getByLabelText('Google Cloud project'), 'billing-504501{Enter}');
     await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
     expect(api.gcsBucketsListedAs).toEqual(['billing-reader@billing-504501.iam.gserviceaccount.com']);
   });
@@ -1835,10 +1852,11 @@ describe('SetupWizard — GCP default reader', () => {
   it('refuses a value that is neither an account name nor an address', async () => {
     const { api, user } = renderWizard();
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await openReaderField(user);
     await user.clear(screen.getByLabelText('Read-only service account'));
     await user.type(screen.getByLabelText('Read-only service account'), 'Costgoblin Reader');
     expect(screen.getByText(/^Use an account name like costgoblin-reader/)).toBeDefined();
-    const find = screen.getByRole('button', { name: 'Find my export' });
+    const find = screen.getByRole('button', { name: 'Choose from my projects' });
     expect(find.hasAttribute('disabled')).toBe(true);
     await user.click(find);
     expect(api.gcsBucketsListedFor).toEqual([]);
@@ -1851,6 +1869,9 @@ describe('SetupWizard — GCP default reader', () => {
     await act(async () => { await Promise.resolve(); });
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
     expect(screen.getByLabelText('Read-only service account')).toHaveProperty('value', '');
+    // Not the default, so the field is open from the start.
+    expect(screen.queryByRole('button', { name: 'Change' })).toBeNull();
+    expect(screen.getByText('your own Google account')).toBeDefined();
   });
 
   it('starts a new provider in add mode on the default even when others exist', async () => {
@@ -1858,6 +1879,123 @@ describe('SetupWizard — GCP default reader', () => {
     await act(async () => { await Promise.resolve(); });
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
     expect(screen.getByLabelText('Read-only service account')).toBe(screen.getByDisplayValue('costgoblin-reader'));
+  });
+});
+
+/** The disclosure region holding the reader field. */
+function readerRegion(): Element | null {
+  return screen.getByLabelText('Read-only service account').closest('#gcp-reader-field');
+}
+
+describe('SetupWizard — GCP intro: project first', () => {
+  it('asks for the project before the reader, and only continues on a valid project ID', async () => {
+    const { api, user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    const project = screen.getByLabelText('Google Cloud project');
+    const reader = screen.getByLabelText('Read-only service account');
+    expect(project.compareDocumentPosition(reader) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    const next = screen.getByRole('button', { name: 'Continue' });
+    expect(next.hasAttribute('disabled')).toBe(true);
+    await user.type(project, 'acme');
+    expect(next.hasAttribute('disabled')).toBe(true);
+    await user.type(project, '-prod');
+    expect(next.hasAttribute('disabled')).toBe(false);
+
+    await user.click(next);
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    expect(api.gcsBucketsListedFor).toEqual(['acme-prod']);
+    expect(api.gcsBucketsListedAs).toEqual([DEFAULT_READER]);
+  });
+
+  it('names the project rule once the field is left with a malformed ID', async () => {
+    const { user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    const project = screen.getByLabelText('Google Cloud project');
+    await user.type(project, 'Acme Prod');
+    expect(screen.queryByText(PROJECT_ID_RULES)).toBeNull();
+    await user.tab();
+    expect(screen.getByText(PROJECT_ID_RULES)).toBeDefined();
+    expect(project.getAttribute('aria-invalid')).toBe('true');
+    expect(project.getAttribute('aria-describedby')).toBe('gcp-project-id-error');
+  });
+
+  it('keeps the default reader folded into one line, resolved live against the typed project', async () => {
+    const { user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    const change = screen.getByRole('button', { name: 'Change' });
+    expect(change.getAttribute('aria-expanded')).toBe('false');
+    expect(change.getAttribute('aria-controls')).toBe('gcp-reader-field');
+    expect(readerRegion()?.hasAttribute('hidden')).toBe(true);
+    expect(screen.getByText('costgoblin-reader in the project you pick')).toBeDefined();
+
+    await user.type(screen.getByLabelText('Google Cloud project'), 'acme-prod');
+    expect(screen.getByText(DEFAULT_READER)).toBeDefined();
+    // Still folded — typing a project is not a reason to open it.
+    expect(readerRegion()?.hasAttribute('hidden')).toBe(true);
+  });
+
+  it('opens the reader field on Change, moves focus into it, and keeps it open', async () => {
+    const { user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await openReaderField(user);
+    const field = screen.getByLabelText('Read-only service account');
+    expect(readerRegion()?.hasAttribute('hidden')).toBe(false);
+    expect(document.activeElement).toBe(field);
+    expect(screen.queryByRole('button', { name: 'Change' })).toBeNull();
+
+    // Typing the default back must not fold the field out from under the cursor.
+    await user.clear(field);
+    await user.type(field, 'costgoblin-reader');
+    expect(readerRegion()?.hasAttribute('hidden')).toBe(false);
+    expect(document.activeElement).toBe(field);
+
+    await user.clear(field);
+    await user.type(field, 'reader@other-proj.iam.gserviceaccount.com');
+    await user.type(screen.getByLabelText('Google Cloud project'), 'acme-prod');
+    // A full address is used as typed, whatever the project.
+    expect(screen.getByText('reader@other-proj.iam.gserviceaccount.com')).toBeDefined();
+  });
+
+  it('starts with the reader field open for a reconfigured provider s own reader', async () => {
+    const reader = 'old-reader@acme-prod.iam.gserviceaccount.com';
+    const gcpMain = MOCK_GCP_PROVIDER;
+    if (gcpMain.type !== 'gcp') throw new Error('MOCK_GCP_PROVIDER must be a gcp provider');
+    const spy = vi.spyOn(MockCostApi.prototype, 'getConfig').mockResolvedValue({
+      ...MOCK_MIXED_PROVIDER_CONFIG,
+      providers: [{ ...gcpMain, impersonateServiceAccount: reader }],
+    });
+    try {
+      const { user } = renderWizard();
+      await act(async () => { await Promise.resolve(); });
+      await user.click(screen.getByLabelText('Set up from Google Cloud'));
+      await waitFor(() => { expect(screen.getByDisplayValue(reader)).toBe(screen.getByLabelText('Read-only service account')); });
+      expect(readerRegion()?.hasAttribute('hidden')).toBe(false);
+      expect(screen.queryByRole('button', { name: 'Change' })).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('reads as the user s own account once the reader is cleared', async () => {
+    const { api, user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await openReaderField(user);
+    await user.clear(screen.getByLabelText('Read-only service account'));
+    expect(screen.getByText('your own Google account')).toBeDefined();
+    await user.type(screen.getByLabelText('Google Cloud project'), 'acme-prod{Enter}');
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    expect(api.gcsBucketsListedAs).toEqual([undefined]);
+  });
+
+  it('opens the project list from "Choose from my projects"', async () => {
+    const { api, user } = renderWizard();
+    const listSpy = vi.spyOn(api, 'listGcpProjects');
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    expect(listSpy).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Choose from my projects' }));
+    await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
+    expect(listSpy).toHaveBeenCalledOnce();
   });
 });
 

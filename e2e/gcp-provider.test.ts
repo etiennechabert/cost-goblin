@@ -116,32 +116,54 @@ test.describe('mixed AWS + GCP workspace', () => {
 
   test('add-provider wizard takes an optional read-only service account for GCP', async () => {
     // The reader the wizard browses as is written as the provider's
-    // impersonateServiceAccount. Stops before "Find my export", which would
-    // spawn gcloud: the field and its validation are what is exercised here.
+    // impersonateServiceAccount. Never presses Continue or "Choose from my
+    // projects" — either would spawn gcloud: the fields, their validation and
+    // when Continue unlocks are what is exercised here.
     await openDataSync();
     await page.getByRole('button', { name: 'Add Provider' }).click();
     const dialog = page.getByRole('dialog', { name: 'Add provider' });
     await dialog.getByLabel('Set up from Google Cloud').click();
 
+    const project = dialog.getByLabel('Google Cloud project');
     const reader = dialog.locator('#gcp-reader');
-    const find = dialog.getByRole('button', { name: 'Find my export' });
-    // A new provider starts on the account the setup guide creates, completed
-    // with the project picked next.
+    const change = dialog.getByRole('button', { name: 'Change' });
+    const next = dialog.getByRole('button', { name: 'Continue' });
+    // Project first: nothing to continue with until one is typed.
+    await expect(project).toBeVisible();
+    await expect(next).toBeDisabled();
+    await expect(dialog.getByRole('button', { name: 'Choose from my projects' })).toBeEnabled();
+
+    // A new provider starts on the account the setup guide creates — folded
+    // into one line, completed live with the typed project.
+    await expect(reader).toBeHidden();
+    await expect(change).toHaveAttribute('aria-expanded', 'false');
+    await expect(dialog.getByText('costgoblin-reader in the project you pick')).toBeVisible();
+    await project.fill('test-project');
+    await expect(dialog.getByText('costgoblin-reader@test-project.iam.gserviceaccount.com')).toBeVisible();
+    await expect(next).toBeEnabled();
+
+    await change.click();
+    await expect(reader).toBeVisible();
+    await expect(reader).toBeFocused();
     await expect(reader).toHaveValue('costgoblin-reader');
-    await expect(dialog.locator('#gcp-reader-help')).toContainText('the project you pick');
-    await expect(find).toBeEnabled();
+    await expect(dialog.locator('#gcp-reader-help')).toContainText('Token Creator');
 
     await reader.fill('someone@gmail.com');
     await expect(dialog.locator('#gcp-reader-help')).toContainText('name@project.iam.gserviceaccount.com');
-    await expect(find).toBeDisabled();
+    await expect(next).toBeDisabled();
 
     await reader.fill('costgoblin-reader@test-project.iam.gserviceaccount.com');
     await expect(dialog.locator('#gcp-reader-help')).toContainText('Token Creator');
-    await expect(find).toBeEnabled();
+    await expect(next).toBeEnabled();
 
     // Blank reads as the user's own login.
     await reader.fill('');
-    await expect(find).toBeEnabled();
+    await expect(dialog.getByText('your own Google account')).toBeVisible();
+    await expect(next).toBeEnabled();
+
+    // A malformed project ID holds Continue back, whatever the reader.
+    await project.fill('Test Project');
+    await expect(next).toBeDisabled();
     await screenshot(page, 'gcp-wizard-reader-field');
 
     await dialog.getByRole('button', { name: 'Close' }).click();
@@ -213,8 +235,8 @@ test.describe('mixed AWS + GCP workspace', () => {
     // gcp-main already exists and has no reader: re-running setup keeps it
     // reading as the user, rather than prefilling the default reader.
     await expect(page.locator('#gcp-reader')).toHaveValue('');
-    await page.getByLabel('Already know the project ID? Skip the project list').fill('test-project');
-    await page.getByLabel('Already know the project ID? Skip the project list').press('Enter');
+    await page.getByLabel('Google Cloud project').fill('test-project');
+    await page.getByLabel('Google Cloud project').press('Enter');
 
     // Daily lands straight on Confirm, as on AWS — hourly is optional.
     await pickTier('daily');
