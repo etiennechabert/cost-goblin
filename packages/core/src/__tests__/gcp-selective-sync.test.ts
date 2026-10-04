@@ -278,6 +278,8 @@ describe('syncGcpSelectedFiles', () => {
     expect(envs[0]?.['CLOUDSDK_STORAGE_THREAD_COUNT']).toBe('4');
 
     vi.stubEnv('CLOUDSDK_STORAGE_PROCESS_COUNT', '12');
+    // Blank is no setting: gcloud would read '' as the value.
+    vi.stubEnv('CLOUDSDK_STORAGE_THREAD_COUNT', '');
     try {
       capture();
       await run();
@@ -331,6 +333,49 @@ describe('syncGcpSelectedFiles', () => {
     } finally {
       // The queue is module state: a process left open here would block every
       // later case in the file.
+      for (const proc of procs) proc.emit('close', 1, null);
+    }
+  }, 30_000);
+
+  it('says a queued sync is waiting, and cancels it at once rather than when the one ahead ends', async () => {
+    const procs: MockChildProcess[] = [];
+    const dests: string[] = [];
+    mockSpawn.mockImplementation((_bin: unknown, args: unknown) => {
+      const proc = new MockChildProcess();
+      const argv = Array.isArray(args) ? args.map(String) : [];
+      dests.push(argv[3] ?? '');
+      procs.push(proc);
+      return proc;
+    });
+
+    const first = syncGcpSelectedFiles({
+      bucketPath: 'gs://bkt/focus/daily', providerName, dataDir, expectedDataType: 'daily',
+      files: [file('focus/daily/billing_period=2026-01/s.parquet')],
+    });
+    try {
+      await vi.waitFor(() => { expect(procs).toHaveLength(1); }, { timeout: 10_000 });
+
+      const messages: string[] = [];
+      const controller = new AbortController();
+      const queued = syncGcpSelectedFiles({
+        bucketPath: 'gs://bkt/focus/hourly', providerName, dataDir, expectedDataType: 'hourly',
+        files: [file('focus/hourly/billing_period=2026-01/s.parquet')],
+        signal: controller.signal,
+        onProgress: (p) => { if (p.message !== undefined) messages.push(p.message); },
+      });
+      const queuedOutcome = queued.then(() => 'resolved', (err: unknown) => (err instanceof Error ? err.message : String(err)));
+      await vi.waitFor(() => { expect(messages).toContain('Waiting for another Cloud Storage download to finish…'); }, { timeout: 10_000 });
+
+      controller.abort();
+      expect(await queuedOutcome).toBe('Download cancelled');
+      // Cancelled before its turn: never spawned, and the first still runs.
+      expect(procs).toHaveLength(1);
+      expect(procs[0]?.killed).toBe(false);
+
+      await writeBqShard(dests[0] ?? '', 1);
+      procs[0]?.emit('close', 0, null);
+      await expect(first).resolves.toMatchObject({ filesDownloaded: 1 });
+    } finally {
       for (const proc of procs) proc.emit('close', 1, null);
     }
   }, 30_000);
