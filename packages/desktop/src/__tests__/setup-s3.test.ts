@@ -28,6 +28,9 @@ const metadataListing = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // clearAllMocks keeps queued *Once values: drop them so a test that fails
+  // before consuming its responses cannot feed them to the next one.
+  mockSend.mockReset();
 });
 
 describe('browseS3', () => {

@@ -117,16 +117,27 @@ describe('S3 client policy', () => {
         .map(file => ({ file: join(pkg.name, 'src', file), text: readFileSync(join(srcDir, file), 'utf-8') }));
     });
 
+  /** Every `new S3Client(`, including through a namespace or module object
+   *  (`new s3.S3Client(` off `await import('@aws-sdk/client-s3')`). Group 1
+   *  holds the start of the options argument. */
+  const constructions = (text: string): RegExpExecArray[] =>
+    [...text.matchAll(/\bnew\s+(?:[\w$]+\.)*S3Client\(\s*([^)]{0,40})/g)];
+
   it('finds the app sources that build S3 clients', () => {
-    const builders = sources.filter(s => /\bnew S3Client\(/.test(s.text)).map(s => s.file);
+    const builders = sources.filter(s => constructions(s.text).length > 0).map(s => s.file);
     expect(builders).toContain(join('core', 'src', 'sync', 's3-client.ts'));
   });
 
   it('starts every S3Client from s3ClientConfig', () => {
     const bare = sources.flatMap(s =>
-      [...s.text.matchAll(/\bnew S3Client\(\s*([^)]{0,40})/g)]
+      constructions(s.text)
         .filter(m => !/^(?:\{\s*\.\.\.)?s3ClientConfig\(/.test(m[1] ?? ''))
         .map(() => s.file));
     expect(bare).toEqual([]);
+  });
+
+  it('never switches the redirect back off after the helper', () => {
+    const disabled = sources.filter(s => /\bfollowRegionRedirects\s*:\s*false\b/.test(s.text)).map(s => s.file);
+    expect(disabled).toEqual([]);
   });
 });

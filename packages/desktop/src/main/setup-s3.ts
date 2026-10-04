@@ -97,8 +97,10 @@ export async function browseS3(params: { profile: string; bucket: string; prefix
             missingColumns = classification.missingColumns;
           }
         }
-      } catch {
-        // manifest detection failed
+      } catch (err: unknown) {
+        // A manifest read that fails (no s3:GetObject on metadata/, a transient
+        // 5xx) degrades the type detection, never the folder listing above.
+        logger.info('setup:browse-s3 manifest detection failed', { error: err instanceof Error ? err.message : String(err) });
       }
     }
 

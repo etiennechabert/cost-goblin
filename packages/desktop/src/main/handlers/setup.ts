@@ -194,8 +194,8 @@ export function registerSetupHandlers(app: AppContext): void {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       logger.info('setup:browse-gcs failed', { error: message });
-      // Unlike `setup:browse-s3`, which swallows the error into an empty
-      // listing, the message is carried back: a GCP browse fails mostly on
+      // As in `setup:browse-s3`, the message is carried back rather than
+      // swallowed into an empty listing: a GCP browse fails mostly on
       // credentials, and the wizard turns that into an inline sign-in button.
       return { prefixes: [], folder: { kind: 'unknown' }, hasParquet: false, truncated: false, error: message };
     }
