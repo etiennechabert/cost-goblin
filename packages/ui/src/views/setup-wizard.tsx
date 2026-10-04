@@ -330,6 +330,9 @@ function StartStep({ workspaceLabel, onSetup, onGcp, onImport, onBack, jumpBack 
 
 const GCP_EXPORTER_DOCS = 'https://github.com/etiennechabert/cost-goblin/tree/main/scripts/gcp-focus-exporter';
 
+/** The website's Google Cloud onboarding guide; the hash opens its modal. */
+const GCP_SETUP_GUIDE = 'https://costgoblin.com/#get-started-gcp';
+
 /**
  * Step 2b — GCP: the exporter prerequisite, then into browse-and-pick.
  *
@@ -355,32 +358,22 @@ function GcpIntroStep({ state, onBrowse, onProjectId, onScaffold, onDone, onBack
   return (
     <div className="flex flex-col items-center gap-5 text-center">
       <span className="text-2xl font-bold text-accent tracking-wider">Set up from Google Cloud</span>
+      {/* The prerequisites (exporter deploy, sign-in, what the credential can
+          reach) live in the website guide, which approvers read anyway — the
+          wizard stays a picker, short enough for its panels to fit. */}
       <p className="text-text-secondary text-sm max-w-md">
-        CostGoblin reads a GCS bucket that your own exporter fills from the FOCUS 1.2 BigQuery
-        billing export. It never calls BigQuery — it only reads Cloud Storage, plus your project
-        list during setup. Signed in as yourself, it can reach whatever your Google account can; to
-        confine it to the export bucket, use a read-only service account (see the exporter docs).
+        CostGoblin reads the billing export your exporter writes to Cloud Storage. First time?
+        Follow the{' '}
+        <a
+          href={GCP_SETUP_GUIDE}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-accent underline underline-offset-2 hover:text-accent-hover"
+        >
+          Google Cloud setup guide
+        </a>
+        , then find your export below.
       </p>
-      <ol className="flex w-full max-w-md flex-col gap-2 text-left text-sm text-text-secondary list-decimal pl-5">
-        <li>
-          Enable the <span className="text-text-primary">FOCUS usage cost</span> export under
-          Billing → Billing export, and deploy the exporter —{' '}
-          <a
-            href={GCP_EXPORTER_DOCS}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-accent underline underline-offset-2 hover:text-accent-hover"
-          >
-            scripts/gcp-focus-exporter
-          </a>{' '}
-          has a one-command deploy.
-        </li>
-        <li>
-          Sign in so CostGoblin can read the bucket:{' '}
-          <code className="text-text-primary text-xs">gcloud auth application-default login</code>
-        </li>
-        <li>Pick the exported folder below — CostGoblin writes the config for you.</li>
-      </ol>
       <div className="flex w-full max-w-xs flex-col gap-3">
         <Button onClick={onBrowse} className="bg-accent hover:bg-accent-hover text-white">
           Find my export

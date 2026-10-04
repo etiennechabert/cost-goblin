@@ -400,27 +400,24 @@ describe('SetupWizard — GCP', () => {
     expect(screen.getByLabelText('Set up from AWS')).toBeDefined();
   });
 
-  it('states the exporter prerequisite before offering to write anything', async () => {
+  it('sends first-time users to the setup guide before offering to write anything', async () => {
     const { user } = renderWizard();
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await waitFor(() => { expect(screen.getByText('scripts/gcp-focus-exporter')).toBeDefined(); });
-    expect(screen.getByText('gcloud auth application-default login')).toBeDefined();
+    const guide = await screen.findByRole('link', { name: 'Google Cloud setup guide' });
+    expect(guide.getAttribute('href')).toBe('https://costgoblin.com/#get-started-gcp');
     // Nothing to restart into yet — the confirm button appears only once the
     // template has actually been written.
     expect(screen.queryByText(/I've saved it/)).toBeNull();
   });
 
-  it('describes what the GCP sign-in can reach without overstating it', async () => {
-    // Approvers read this screen to decide whether a read-only service account
-    // is required. On the default sign-in CostGoblin acts with all of the
-    // user's permissions, so it must not claim it can't reach BigQuery — only
-    // that it never calls it — and it must point at the confined alternative.
+  it('does not overstate what the GCP sign-in can reach', async () => {
+    // Approvers decide on a read-only service account from what they read.
+    // The full statement lives in the guide; this screen must not contradict
+    // it by claiming CostGoblin cannot reach BigQuery.
     const { user } = renderWizard();
     await user.click(screen.getByLabelText('Set up from Google Cloud'));
-    await waitFor(() => { expect(screen.getByText('scripts/gcp-focus-exporter')).toBeDefined(); });
-    expect(screen.queryByText(/credentials that can reach BigQuery/i)).toBeNull();
-    expect(screen.getByText(/never calls BigQuery/i)).toBeDefined();
-    expect(screen.getByText(/read-only service account/i)).toBeDefined();
+    await screen.findByRole('link', { name: 'Google Cloud setup guide' });
+    expect(screen.queryByText(/reach BigQuery/i)).toBeNull();
   });
 
   it('scaffolds the GCP arm, not the AWS one', async () => {
@@ -714,7 +711,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await user.click(screen.getByText('Find my export'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Write the config by hand instead');
-    await waitFor(() => { expect(screen.getByText('scripts/gcp-focus-exporter')).toBeDefined(); });
+    await screen.findByRole('link', { name: 'Google Cloud setup guide' });
     await userClickText(user, 'Write the config by hand instead');
     await waitFor(() => { expect(api.scaffoldedFor).toEqual(['gcp']); });
   });
