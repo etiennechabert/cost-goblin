@@ -15,15 +15,33 @@
 // x64 first uniformly.) The first input is also the base: its top-level
 // version/path/sha512/size/releaseDate are kept.
 //
-// Usage: node merge-update-manifests.mjs <out.yml> <x64.yml> <arm64.yml> [...]
+// --minimum-system-version sets the manifest's minimumSystemVersion, which
+// electron-updater (checkIfUpdateSupported) compares with semver.lt against
+// os.release(): installs on an older OS skip the update and keep the build they
+// can run. os.release() is the kernel version, so on macOS it is Darwin's
+// (macOS 13 = Darwin 22), not the marketing version.
+//
+// Usage: node merge-update-manifests.mjs [--minimum-system-version <x.y.z>] <out.yml> <x64.yml> <arm64.yml> [...]
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import * as yaml from 'js-yaml';
 
-const [out, ...inputs] = process.argv.slice(2);
+const args = process.argv.slice(2);
+let minimumSystemVersion;
+if (args[0] === '--minimum-system-version') {
+  minimumSystemVersion = args[1] ?? '';
+  args.splice(0, 2);
+  // Anything semver.lt can't parse makes electron-updater warn and offer the
+  // update anyway, which is the case this flag exists to prevent.
+  if (!/^\d+\.\d+\.\d+$/.test(minimumSystemVersion)) {
+    throw new Error(`--minimum-system-version must be x.y.z (a kernel version), got "${minimumSystemVersion}"`);
+  }
+}
+
+const [out, ...inputs] = args;
 if (!out || inputs.length < 2) {
   throw new Error(
-    'usage: merge-update-manifests.mjs <out.yml> <input1.yml> <input2.yml> [...]',
+    'usage: merge-update-manifests.mjs [--minimum-system-version <x.y.z>] <out.yml> <input1.yml> <input2.yml> [...]',
   );
 }
 
@@ -55,6 +73,6 @@ if (/arm64/i.test(files[0].url)) {
   throw new Error(`x64 manifest must be passed first, but files[0] is arm64: ${files[0].url}`);
 }
 
-const merged = { ...docs[0], files };
+const merged = { ...docs[0], files, ...(minimumSystemVersion === undefined ? {} : { minimumSystemVersion }) };
 writeFileSync(out, yaml.dump(merged, { lineWidth: -1, forceQuotes: false }));
 console.log(`merged ${inputs.length} manifests -> ${out} (${files.length} files)`);

@@ -62,7 +62,27 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: "ast-v8-to-istanbul"
         update-types: ["version-update:semver-major"]
+      # google-auth-library must stay the single copy @google-cloud/storage uses:
+      # createGcsStorage hands Storage our GoogleAuth, which it only trusts when it
+      # is `instanceof` its own copy (scripts/ci/packaged-deps.test.mjs pins this).
+      # storage 8 still depends on ^9, so a major of ours installs a second copy,
+      # fails tsc in gcs-storage.ts, and took the whole weekly group down with it
+      # (#673). Remove this entry, bumping both by hand in one PR, once
+      # @google-cloud/storage's own google-auth-library range reaches the latest
+      # google-auth-library major (Dependabot proposes the latest, not the next).
+      - dependency-name: "google-auth-library"
+        update-types: ["version-update:semver-major"]
     groups:
+      # The other half of that coupling: a storage major that moves its
+      # google-auth-library range past the ^9 held above also installs a second
+      # copy. Its own PR (first matching group wins) fails packaged-deps.test.mjs
+      # alone, as the signal to take both majors together, instead of taking
+      # all-dependencies down again.
+      google-cloud-storage-major:
+        patterns:
+          - "@google-cloud/storage"
+        update-types:
+          - "major"
       all-dependencies:
         patterns:
           - "*"
@@ -120,10 +140,10 @@ updates:
         patterns:
           - "*"
 
-  # The GCP FOCUS exporter. It has NO lockfile — its Dockerfile runs a bare
-  # `npm install --omit=dev`, so whatever resolves at image-build time is what
-  # ships. Dependabot can still update the manifest ranges, which is the only
-  # pinning this deployment has.
+  # The GCP FOCUS exporter. It has its OWN package-lock.json, which its
+  # Dockerfile installs verbatim (`npm ci --omit=dev --ignore-scripts`), so the
+  # "/" entry above does not see it. Root .npmrc's min-release-age does not
+  # reach this directory either: the cooldown below is its only soak.
   #
   # NOTE: @google-cloud/bigquery is pinned to an exact version on purpose — the
   # DATE/TIMESTAMP parameter wrapping in export-focus.mjs depends on that
