@@ -122,8 +122,8 @@ export interface AppContext {
   readonly baselineStore: BaselineStore;
   /** The query/config capabilities the baseline store needs to recompute. */
   readonly baselineEngineDeps: BaselineEngineDeps;
-  /** Re-discover + recompute all baselines (fire-and-forget). Hooked into the
-   *  post-sync rollup-maintenance step. */
+  /** Re-discover + recompute all baselines (fire-and-forget). refreshAfterSync
+   *  runs it after a daily sync, once that sync's rollup maintenance settled. */
   readonly recomputeBaselines: () => void;
   readonly runQuery: (sql: string) => Promise<RawRow[]>;
   readonly runPreparedQuery: (sql: string, params: readonly unknown[], materialized?: boolean) => Promise<RawRow[]>;
@@ -132,8 +132,11 @@ export interface AppContext {
   readonly invalidateViews: () => void;
   readonly invalidateCostScope: () => void;
   readonly warmupBase: () => void;
-  /** Re-roll the rollup partitions for the periods a sync changed. */
-  readonly maintainRollup: (changedPeriods: readonly string[]) => void;
+  /** Re-roll the rollup partitions for the periods a sync changed, then drop
+   *  cached results. Settles (never rejects) once that is done — rebuilt,
+   *  skipped or failed — so a reader that needs the fresh data, like the
+   *  post-sync baselines recompute, can wait for it. */
+  readonly maintainRollup: (changedPeriods: readonly string[]) => Promise<void>;
   /** Resolve once the latest cost_base warmup settles (true if the base is
    *  ready, false if it timed out or no base was built). Lets the renderer
    *  hold the startup prewarm until the in-memory base exists, so those probes
@@ -518,7 +521,9 @@ export function createAppContext(ctx: IpcContext): AppContext {
   }
 
   // Re-roll only the periods a sync changed (file replace), then drop cached
-  // results so dashboards re-render from the fresh partitions.
+  // results so dashboards (and the post-sync baselines recompute) read the
+  // fresh data. The raw files changed whatever happens here, so the cache is
+  // dropped on every exit — a skipped or failed re-roll included.
   async function maintainRollupForPeriods(changed: readonly string[]): Promise<void> {
     try {
       const provider = await getFirstProviderName();
@@ -535,8 +540,9 @@ export function createAppContext(ctx: IpcContext): AppContext {
         return null;
       });
       if (!rollupStore.isReady()) {
-        // Queries read raw, so drop the results cached from the replaced files.
-        if (etags === null) { resultCache.clear(); return; }
+        // Queries read raw, and the results cached from the replaced files
+        // are dropped on the way out.
+        if (etags === null) return;
         await rollupStore.loadAndValidate(shape, etags);
       }
       const buildSql = await buildRollupSqlFor();
@@ -544,9 +550,10 @@ export function createAppContext(ctx: IpcContext): AppContext {
         { name: 'rollup.maintain', op: SPAN_OP.rollupMaintain, forceTransaction: true, attributes: { 'rollup.periods': periods.length } },
         () => rollupStore.maintainPeriods(periods, buildSql, etags, shape, { force: true }),
       );
-      resultCache.clear();
     } catch (err: unknown) {
       logger.warn(`rollup-maintain: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      resultCache.clear();
     }
   }
 
@@ -614,7 +621,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
       void rollupStore.invalidate().then(() => { resultCache.clear(); triggerWarmup(); });
     },
     warmupBase: () => { resultCache.clear(); triggerWarmup(); },
-    maintainRollup: (changedPeriods: readonly string[]) => { void maintainRollupForPeriods(changedPeriods); },
+    maintainRollup: (changedPeriods: readonly string[]) => maintainRollupForPeriods(changedPeriods),
     baselineStore,
     baselineEngineDeps,
     recomputeBaselines: () => { void baselineStore.recompute(baselineEngineDeps); },
