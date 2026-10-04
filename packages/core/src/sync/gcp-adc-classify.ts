@@ -12,14 +12,22 @@ import { isStringRecord } from '../utils/json.js';
  *  URL it would reject must not be described as working here. */
 const MAX_IMPERSONATION_URL_LENGTH = 256;
 
+const IMPERSONATION_VERBS: readonly string[] = ['generateAccessToken', 'generateIdToken'];
+
 /** The target service account of an IAM Credentials impersonation URL — the
  *  same extraction `GoogleAuth.fromImpersonatedJSON` performs, with its exact
  *  pattern: anything stricter would make the listing client refuse a file the
  *  SDK loads. */
 export function impersonationTargetFromUrl(url: unknown): string | null {
   if (typeof url !== 'string' || url.length > MAX_IMPERSONATION_URL_LENGTH) return null;
-  const match = /([^/]+):(?:generateAccessToken|generateIdToken)$/.exec(url);
-  return match?.[1] ?? null;
+  // `/([^/]+):(?:generateAccessToken|generateIdToken)$/` without a regex:
+  // the last path segment, minus a trailing `:<verb>`, when anything is left.
+  const segment = url.slice(url.lastIndexOf('/') + 1);
+  for (const verb of IMPERSONATION_VERBS) {
+    const suffix = `:${verb}`;
+    if (segment.length > suffix.length && segment.endsWith(suffix)) return segment.slice(0, -suffix.length);
+  }
+  return null;
 }
 
 function nonEmptyString(value: unknown): string | null {

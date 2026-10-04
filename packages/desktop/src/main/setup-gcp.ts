@@ -241,7 +241,7 @@ export const GCS_DOWNLOAD_CHECK_TIMEOUT_MS = 30_000;
  *  could pass for a folder the download then cannot read. */
 function hasUnsafeLocationChar(value: string): boolean {
   for (const ch of value) {
-    const code = ch.charCodeAt(0);
+    const code = ch.codePointAt(0) ?? 0;
     if (code < 0x20 || code === 0x7f || ch === '*' || ch === '?' || ch === '[' || ch === ']') return true;
   }
   return false;

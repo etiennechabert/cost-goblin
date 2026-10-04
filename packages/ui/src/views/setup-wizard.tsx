@@ -1025,8 +1025,24 @@ function GcpBucketStep({ state, reader, onSelect, onSkip, onBack, onRetry }: Rea
   const sourceLabel = SOURCE_LABELS[state.source];
   // Only a listing can be denied, and only a project can be listed.
   const deniedProject = state.project !== null && isGcpBucketListDeniedMessage(state.error) ? state.project.id : null;
-  // The project picker reaches here without the intro's reader check.
-  const readerRefused = reader !== undefined && isGcpImpersonationError(new Error(state.error));
+  let errorPanel: React.JSX.Element;
+  if (deniedProject !== null) {
+    errorPanel = (
+      <GcpBucketListDenied
+        reader={reader}
+        project={deniedProject}
+        message={state.error}
+        detailsOpen={detailsOpen}
+        onToggleDetails={setDetailsOpen}
+        onRetry={onRetry}
+      />
+    );
+  } else if (reader !== undefined && isGcpImpersonationError(new Error(state.error))) {
+    // The project picker reaches here without the intro's reader check.
+    errorPanel = <GcpReaderDenied reader={reader} project={state.project?.id} message={state.error} onRetry={onRetry} />;
+  } else {
+    errorPanel = <GcpError message={state.error} mode="adc" onRetry={onRetry} />;
+  }
 
   return (
     <div className="flex flex-col gap-5">
@@ -1040,20 +1056,7 @@ function GcpBucketStep({ state, reader, onSelect, onSkip, onBack, onRetry }: Rea
         </p>
       </div>
 
-      {deniedProject !== null
-        ? (
-          <GcpBucketListDenied
-            reader={reader}
-            project={deniedProject}
-            message={state.error}
-            detailsOpen={detailsOpen}
-            onToggleDetails={setDetailsOpen}
-            onRetry={onRetry}
-          />
-        )
-        : readerRefused
-          ? <GcpReaderDenied reader={reader} project={state.project?.id} message={state.error} onRetry={onRetry} />
-          : <GcpError message={state.error} mode="adc" onRetry={onRetry} />}
+      {errorPanel}
 
       {state.loading ? (
         <div className="flex items-center justify-center py-8">
