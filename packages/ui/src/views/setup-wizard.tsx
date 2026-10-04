@@ -1,5 +1,5 @@
-import type { ConfigBundleSummary, GcpProject, GcsFolderKind } from '@costgoblin/core/browser';
-import { GCP_PROJECT_ID_RULES, gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isValidGcpProjectId, isValidWorkspaceName, parseProviderName } from '@costgoblin/core/browser';
+import type { ConfigBundleSummary, GcpProject, GcsFolderKind, ProviderConfig } from '@costgoblin/core/browser';
+import { DEFAULT_RETENTION_DAYS, GCP_PROJECT_ID_RULES, gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isValidGcpProjectId, isValidWorkspaceName, parseProviderName } from '@costgoblin/core/browser';
 import { useState, useEffect, useRef } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { Card, CardContent } from '../components/ui/card.js';
@@ -27,20 +27,46 @@ const SOURCE_LABELS: Record<DataSource, { title: string; description: string }> 
  *  came from: a TYPED ID returns to the intro, which holds the typed entry,
  *  rather than starting the `gcloud projects list` the user just skipped. */
 interface GcpProjectChoice { readonly id: string; readonly typed: boolean }
+// The GCP steps carry `GcpProjectChoice | null`: null is per-tier Configure on
+// a GCP provider, which knows its bucket but no project (the config records
+// none, and browsing a bucket needs none). Listing buckets does need one.
 
 type WizardStep =
   | { step: 'welcome' }
   | { step: 'start' }
   | { step: 'gcp'; scaffolded: boolean; error: string }
   | { step: 'gcp-project'; projects: readonly GcpProject[]; loading: boolean; selected: string; error: string }
-  | { step: 'gcp-bucket'; project: GcpProjectChoice; source: GcpSource; buckets: readonly { name: string }[]; loading: boolean; selected: string; error: string }
-  | { step: 'gcp-browse'; project: GcpProjectChoice; source: GcpSource; bucket: string; prefix: string; prefixes: readonly string[]; loading: boolean; folder: GcsFolderKind; hasParquet: boolean; truncated: boolean; error: string; path: string[] }
+  | { step: 'gcp-bucket'; project: GcpProjectChoice | null; source: GcpSource; buckets: readonly { name: string }[]; loading: boolean; selected: string; error: string }
+  | { step: 'gcp-browse'; project: GcpProjectChoice | null; source: GcpSource; bucket: string; prefix: string; prefixes: readonly string[]; loading: boolean; folder: GcsFolderKind; hasParquet: boolean; truncated: boolean; error: string; path: string[] }
   | { step: 'profile'; profiles: string[]; loading: boolean; selected: string }
   | { step: 'bucket'; profile: string; source: DataSource; buckets: { name: string; region: string }[]; loading: boolean; selected: string; error: string }
   | { step: 'beacon'; profile: string; source: DataSource; bucket: string; content: string; summary: ConfigBundleSummary; applying: boolean; error: string }
   | { step: 'browse'; profile: string; source: DataSource; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[]; path: string[]; error: string }
-  | { step: 'confirm'; cloud: 'aws'; profile: string; s3Path: string; hourlyPath: string; costOptPath: string; retentionDays: number }
-  | { step: 'confirm'; cloud: 'gcp'; project: GcpProjectChoice; s3Path: string; hourlyPath: string; costOptPath: string; retentionDays: number };
+  | { step: 'confirm'; cloud: 'aws'; profile: string; s3Path: string; hourlyPath: string; costOptPath: string }
+  | { step: 'confirm'; cloud: 'gcp'; project: GcpProjectChoice | null; s3Path: string; hourlyPath: string; costOptPath: string };
+
+/** One retention window per tier. Each tier needs its own: a year of daily is
+ *  small, a year of hourly is ~24x that, so a single shared picker either
+ *  over-keeps hourly or under-keeps daily. */
+const RETENTION_OPTIONS: Readonly<Record<DataSource, readonly { days: number; label: string }[]>> = {
+  daily: [
+    { days: 90, label: '3 months' },
+    { days: 180, label: '6 months' },
+    { days: 365, label: '12 months' },
+    { days: 730, label: '2 years' },
+  ],
+  hourly: [
+    { days: 7, label: '7 days' },
+    { days: 14, label: '14 days' },
+    { days: 30, label: '30 days' },
+    { days: 90, label: '90 days' },
+  ],
+  costOptimization: [
+    { days: 30, label: '30 days' },
+    { days: 90, label: '90 days' },
+    { days: 180, label: '6 months' },
+  ],
+};
 
 /** No tier collected yet. Shared safely: every writer spreads a copy first. */
 const EMPTY_PATHS: { readonly daily: string; readonly hourly: string; readonly costOpt: string } = { daily: '', hourly: '', costOpt: '' };
@@ -62,6 +88,12 @@ interface SetupWizardProps {
    *  the name renders read-only. Omitted in source mode, the first
    *  configured provider is targeted. */
   providerName?: string | undefined;
+  /** Source mode for a GCP provider: the bucket holding its exports and the
+   *  folder to open (the daily export's parent, where the exporter writes
+   *  `hourly/` beside `daily/`). The GCP config records no project and
+   *  browsing a bucket needs none, so the wizard opens straight in it —
+   *  the same per-tier Configure the AWS tiers get. `profile` is not used. */
+  gcpSource?: { readonly bucket: string; readonly prefix: string } | undefined;
   /** 'add' opens the wizard to create an ADDITIONAL provider: the name field
    *  starts empty, is required, and must not collide with an existing
    *  provider (the upsert would silently overwrite it). Default: first-run
@@ -786,7 +818,8 @@ function GcpBucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
     ? state.buckets.filter(b => b.name.toLowerCase().includes(filter.toLowerCase()))
     : state.buckets;
   const sourceLabel = SOURCE_LABELS[state.source];
-  const bucketListDenied = isGcpBucketListDeniedMessage(state.error);
+  // Only a listing can be denied, and only a project can be listed.
+  const deniedProject = state.project !== null && isGcpBucketListDeniedMessage(state.error) ? state.project.id : null;
 
   return (
     <div className="flex flex-col gap-5">
@@ -794,14 +827,16 @@ function GcpBucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
         <h2 className="text-xl font-semibold text-text-primary">{sourceLabel.title}</h2>
         <p className="text-sm text-text-secondary mt-1">{sourceLabel.description}</p>
         <p className="text-xs text-text-muted mt-0.5">
-          Select the Cloud Storage bucket in <code className="text-text-secondary">{state.project.id}</code>
+          {state.project === null
+            ? 'Enter the Cloud Storage bucket name'
+            : <>Select the Cloud Storage bucket in <code className="text-text-secondary">{state.project.id}</code></>}
         </p>
       </div>
 
-      {bucketListDenied
+      {deniedProject !== null
         ? (
           <GcpBucketListDenied
-            project={state.project.id}
+            project={deniedProject}
             message={state.error}
             detailsOpen={detailsOpen}
             onToggleDetails={setDetailsOpen}
@@ -831,7 +866,7 @@ function GcpBucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
               merely refused, and guarding only that line left this container
               rendered with no children — still a flex item, so it doubled the
               gap between the panel above and the manual-entry field below. */}
-          {!bucketListDenied && (
+          {deniedProject === null && (
             <div className="flex flex-col gap-1 max-h-64 overflow-y-auto">
               {filtered.map(bucket => (
                 <button
@@ -1428,6 +1463,19 @@ function defaultProviderName(cloud: 'aws' | 'gcp'): string {
   return cloud === 'gcp' ? 'gcp-main' : 'aws-main';
 }
 
+/** The cloud's default name, numbered past any provider that already has it
+ *  (`gcp-main`, `gcp-main-2`, …). Compared case-insensitively, as the
+ *  name check and the loader do. Add mode proposes it instead of an empty
+ *  field — and never an `aws-` name for a GCP provider. */
+function freeProviderName(cloud: 'aws' | 'gcp', taken: readonly string[]): string {
+  const used = new Set(taken.map(n => n.toLowerCase()));
+  const base = defaultProviderName(cloud);
+  if (!used.has(base)) return base;
+  let n = 2;
+  while (used.has(`${base}-${String(n)}`)) n += 1;
+  return `${base}-${String(n)}`;
+}
+
 /** Validation error for the provider-name field, or null when the name is
  *  usable. `takenNames` is checked case-insensitively only when adding —
  *  reconfiguring an existing provider legitimately reuses its name. */
@@ -1451,10 +1499,44 @@ interface ProviderNaming {
   readonly onChange: (value: string) => void;
 }
 
-function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onBack }: Readonly<{
+/** The Confirm step's retention picks. Held by the wizard, not the step, so
+ *  ← Back (to add an optional tier) and forward again keeps them. Only tiers
+ *  the user clicked are present: an untouched tier shows, and writes, the
+ *  provider's current window. */
+interface RetentionChoices {
+  readonly picks: Readonly<Partial<Record<DataSource, number>>>;
+  readonly onPick: (tier: DataSource, days: number) => void;
+}
+
+const OPTIONAL_TIER_ADD_LABEL: Readonly<Record<DataSource, string>> = {
+  daily: 'Add daily export',
+  hourly: 'Add hourly export',
+  costOptimization: 'Add Cost Optimization data',
+};
+
+/** The Confirm step's credential card: the AWS profile, or the GCP project —
+ *  none for per-tier Configure on a GCP provider, whose config records no
+ *  project. */
+function credentialCard(state: Extract<WizardStep, { step: 'confirm' }>): { label: string; value: string } | null {
+  if (state.cloud === 'aws') return { label: 'AWS Profile', value: state.profile };
+  return state.project === null ? null : { label: 'Google Cloud project', value: state.project.id };
+}
+
+/** A tier this run has not collected, offered on Confirm as an optional add. */
+interface OptionalTier {
+  readonly tier: DataSource;
+  readonly onAdd: () => void;
+}
+
+function ConfirmStep({ state, providerNaming, existing, retention, optionalTiers, onComplete, onBack }: Readonly<{
   state: Extract<WizardStep, { step: 'confirm' }>;
   providerNaming: ProviderNaming;
-  onRetentionChange: (days: number) => void;
+  /** The configured provider this run will replace (same name and cloud),
+   *  whose retention windows seed the pickers. */
+  existing: ProviderConfig | undefined;
+  retention: RetentionChoices;
+  /** Empty in per-tier Configure, which came for one tier. */
+  optionalTiers: readonly OptionalTier[];
   onComplete: () => void;
   onBack: () => void;
 }>) {
@@ -1466,30 +1548,19 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onB
     ? null
     : providerNameError(providerNaming.value, providerNaming.checkTaken, providerNaming.takenNames);
 
-  const isDaily = state.s3Path.length > 0;
-  const isHourlyOnly = !isDaily && state.hourlyPath.length > 0;
-  const isCostOptOnly = !isDaily && !isHourlyOnly && state.costOptPath.length > 0;
+  // What each tier will keep: the user's pick, else what the provider being
+  // replaced already has (a re-run must not quietly reset a tuned window),
+  // else the shared default the prune paths also use.
+  function tierRetention(tier: DataSource): number {
+    return retention.picks[tier] ?? existing?.sync[tier]?.retentionDays ?? DEFAULT_RETENTION_DAYS[tier];
+  }
 
   // The credential card names whichever store this provider authenticates
   // through. Hardcoding "AWS Profile" here was fine while the wizard only
   // built AWS providers; a GCP run has no profile at all.
-  const credential = state.cloud === 'gcp'
-    ? { label: 'Google Cloud project', value: state.project.id }
-    : { label: 'AWS Profile', value: state.profile };
-
-  const retentionOptions = isHourlyOnly
-    ? [
-        { days: 7, label: '7 days' },
-        { days: 14, label: '14 days' },
-        { days: 30, label: '30 days' },
-        { days: 90, label: '90 days' },
-      ]
-    : [
-        { days: 90, label: '3 months' },
-        { days: 180, label: '6 months' },
-        { days: 365, label: '12 months' },
-        { days: 730, label: '2 years' },
-      ];
+  // A per-tier Configure on a GCP provider has no project (the config records
+  // none), so there is no card to show.
+  const credential = credentialCard(state);
 
   function handleSave() {
     if (nameError !== null) return;
@@ -1504,18 +1575,14 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onB
       // `upsertWizardProvider` ignores it.
       profile: state.cloud === 'gcp' ? '' : state.profile,
       dailyBucket: state.s3Path,
-      // The Confirm step shows ONE retention picker; it configures whichever
-      // tier is primary for this run. In daily mode it sets daily retention; in
-      // hourly-only mode hourly; in a cost-opt-only run cost-opt — each of which
-      // upsertWizardProvider used to ignore, hardcoding the tier and silently
-      // discarding the choice.
-      retentionDays: isDaily ? state.retentionDays : undefined,
-      ...(isHourlyOnly ? { hourlyRetentionDays: state.retentionDays } : {}),
-      ...(isCostOptOnly ? { costOptRetentionDays: state.retentionDays } : {}),
-      ...(state.hourlyPath.length > 0 ? { hourlyBucket: state.hourlyPath } : {}),
+      // Each collected tier with the retention its card shows.
+      ...(state.s3Path.length > 0 ? { retentionDays: tierRetention('daily') } : {}),
+      ...(state.hourlyPath.length > 0 ? { hourlyBucket: state.hourlyPath, hourlyRetentionDays: tierRetention('hourly') } : {}),
       // GCP has no Cost Optimization Hub analogue and `validateGcpSync`
       // rejects the key, so it is never collected — but never sent, either.
-      ...(state.cloud !== 'gcp' && state.costOptPath.length > 0 ? { costOptBucket: state.costOptPath } : {}),
+      ...(state.cloud !== 'gcp' && state.costOptPath.length > 0
+        ? { costOptBucket: state.costOptPath, costOptRetentionDays: tierRetention('costOptimization') }
+        : {}),
     }).then(() => {
       onComplete();
     }).catch((err: unknown) => {
@@ -1528,10 +1595,10 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onB
     });
   }
 
-  const paths: { label: string; value: string }[] = [];
-  if (state.s3Path.length > 0) paths.push({ label: 'Daily FOCUS export', value: state.s3Path });
-  if (state.hourlyPath.length > 0) paths.push({ label: 'Hourly FOCUS export', value: state.hourlyPath });
-  if (state.costOptPath.length > 0) paths.push({ label: 'Cost Optimization', value: state.costOptPath });
+  const paths: { value: string; tier: DataSource }[] = [];
+  if (state.s3Path.length > 0) paths.push({ value: state.s3Path, tier: 'daily' });
+  if (state.hourlyPath.length > 0) paths.push({ value: state.hourlyPath, tier: 'hourly' });
+  if (state.costOptPath.length > 0) paths.push({ value: state.costOptPath, tier: 'costOptimization' });
 
   return (
     <div className="flex flex-col gap-5">
@@ -1552,7 +1619,7 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onB
                 aria-label="Provider name"
                 value={providerNaming.value}
                 onChange={(e) => { providerNaming.onChange(e.target.value); }}
-                placeholder="e.g. aws-main"
+                placeholder={`e.g. ${defaultProviderName(state.cloud)}`}
                 spellCheck={false}
                 className="mt-1 w-full rounded-md border border-border bg-bg-primary px-3 py-1.5 text-sm font-mono text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               />
@@ -1565,39 +1632,68 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onB
           )}
         </div>
 
-        <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
-          <p className="text-xs text-text-muted uppercase tracking-wider">{credential.label}</p>
-          <p className="text-sm font-mono text-text-primary mt-0.5">{credential.value}</p>
-        </div>
+        {credential !== null && (
+          <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
+            <p className="text-xs text-text-muted uppercase tracking-wider">{credential.label}</p>
+            <p className="text-sm font-mono text-text-primary mt-0.5">{credential.value}</p>
+          </div>
+        )}
 
-        {paths.map(({ label, value }) => (
-          <div key={label} className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
+        {paths.map(({ value, tier }) => {
+          const label = SOURCE_LABELS[tier].title;
+          const selected = tierRetention(tier);
+          // A hand-tuned window that isn't one of the presets still shows,
+          // pressed, so keeping it is the default rather than impossible.
+          const options = RETENTION_OPTIONS[tier].some(opt => opt.days === selected)
+            ? RETENTION_OPTIONS[tier]
+            : [...RETENTION_OPTIONS[tier], { days: selected, label: `${String(selected)} days` }].sort((x, y) => x.days - y.days);
+          return (
+          <div key={tier} className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
             <p className="text-xs text-text-muted uppercase tracking-wider">{label}</p>
             <p className="text-sm font-mono text-text-primary mt-0.5">{value}</p>
+            <fieldset aria-label={`${label} retention`} className="m-0 min-w-0 border-0 p-0 flex flex-wrap gap-2 mt-2.5">
+              {options.map(opt => (
+                <button
+                  key={opt.days}
+                  type="button"
+                  aria-pressed={selected === opt.days}
+                  onClick={() => { retention.onPick(tier, opt.days); }}
+                  className={[
+                    'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                    selected === opt.days
+                      ? 'bg-accent text-bg-primary'
+                      : 'bg-bg-tertiary/50 text-text-secondary hover:text-text-primary',
+                  ].join(' ')}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </fieldset>
+            <p className="text-xs text-text-muted mt-1.5">How far back to keep this tier</p>
           </div>
-        ))}
+          );
+        })}
 
-        <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
-          <p className="text-xs text-text-muted uppercase tracking-wider mb-2">Data Retention</p>
-          <div className="flex gap-2">
-            {retentionOptions.map(opt => (
-              <button
-                key={opt.days}
-                type="button"
-                onClick={() => { onRetentionChange(opt.days); }}
-                className={[
-                  'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
-                  state.retentionDays === opt.days
-                    ? 'bg-accent text-bg-primary'
-                    : 'bg-bg-tertiary/50 text-text-secondary hover:text-text-primary',
-                ].join(' ')}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-          <p className="text-xs text-text-muted mt-1.5">How far back to download billing data</p>
-        </div>
+        {optionalTiers.map(({ tier, onAdd }) => {
+          const { title, description } = SOURCE_LABELS[tier];
+          // A tier this run did not touch but the provider already has: the
+          // writer keeps it, so say so rather than inviting a duplicate add.
+          const kept = existing?.sync[tier]?.bucket;
+          return (
+            <div key={tier} className="rounded-lg border border-dashed border-border px-4 py-3">
+              <div className="flex items-center gap-2">
+                <p className="text-xs text-text-muted uppercase tracking-wider">{title}</p>
+                <span className="rounded-full border border-border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-text-muted">Optional</span>
+              </div>
+              {kept === undefined
+                ? <p className="text-xs text-text-muted mt-1">{description}. Skip it now and add it any time from Data &amp; Sync.</p>
+                : <p className="text-xs text-text-muted mt-1">Kept as configured: <span className="font-mono text-text-secondary">{String(kept)}</span></p>}
+              <Button variant="outline" size="sm" onClick={onAdd} className="mt-2.5">
+                {kept === undefined ? OPTIONAL_TIER_ADD_LABEL[tier] : 'Change'}
+              </Button>
+            </div>
+          );
+        })}
       </div>
 
       {saveError !== null && (
@@ -1621,14 +1717,88 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onB
   );
 }
 
-export function SetupWizard({ onComplete, source: initialSource, profile: initialProfile, providerName: initialProviderName, mode, workspaceNaming, workspaceLabel, otherWorkspaces }: Readonly<SetupWizardProps>): React.JSX.Element {
+/** How per-tier Configure from Data & Sync opened the wizard, if it did: a
+ *  GCP provider on its own bucket (no cost-optimization tier there), an AWS
+ *  one on its profile. Null for every other run. */
+type SourceMode =
+  | { readonly kind: 'gcp'; readonly tier: GcpSource; readonly bucket: string; readonly prefix: string }
+  | { readonly kind: 'aws'; readonly tier: DataSource; readonly profile: string }
+  | null;
+
+function resolveSourceMode(
+  source: DataSource | undefined,
+  profile: string | undefined,
+  gcpSource: SetupWizardProps['gcpSource'],
+): SourceMode {
+  if (source === undefined) return null;
+  if (gcpSource !== undefined) {
+    return source === 'costOptimization' ? null : { kind: 'gcp', tier: source, bucket: gcpSource.bucket, prefix: gcpSource.prefix };
+  }
+  return profile === undefined ? null : { kind: 'aws', tier: source, profile };
+}
+
+function initialWizardStep(sourceMode: SourceMode, firstRun: boolean): WizardStep {
+  if (sourceMode?.kind === 'gcp') {
+    const { tier, bucket, prefix } = sourceMode;
+    return { step: 'gcp-browse', project: null, source: tier, bucket, prefix, prefixes: [], loading: true, folder: { kind: 'unknown' }, hasParquet: false, truncated: false, error: '', path: prefix.split('/').filter(s => s.length > 0) };
+  }
+  if (sourceMode?.kind === 'aws') {
+    return { step: 'bucket', profile: sourceMode.profile, source: sourceMode.tier, buckets: [], loading: true, selected: '', error: '' };
+  }
+  // Naming comes first on a true first run; otherwise (workspace already
+  // named, e.g. created via Settings → New workspace) start at the hub.
+  return firstRun ? { step: 'welcome' } : { step: 'start' };
+}
+
+/** The cloud a step belongs to. Steps before a cloud is chosen count as AWS,
+ *  the wizard's historical default. */
+function wizardCloudOf(wizard: WizardStep): 'aws' | 'gcp' {
+  if (wizard.step === 'confirm') return wizard.cloud;
+  return isGcpStep(wizard) ? 'gcp' : 'aws';
+}
+
+/** The name this run writes under until the user types one: the cloud's
+ *  default, or in add mode the first one no provider has yet. */
+function derivedProviderName(cloud: 'aws' | 'gcp', addMode: boolean, taken: readonly string[]): string {
+  return addMode ? freeProviderName(cloud, taken) : defaultProviderName(cloud);
+}
+
+/** The optional tiers a Confirm step offers to add: those this run has not
+ *  collected. GCP has hourly only — no Cost Optimization Hub analogue. */
+function optionalTiersFor(
+  state: Extract<WizardStep, { step: 'confirm' }>,
+  add: { readonly gcpHourly: (project: GcpProjectChoice | null) => void; readonly awsTier: (profile: string, tier: DataSource) => void },
+): OptionalTier[] {
+  if (state.cloud === 'gcp') {
+    const { project } = state;
+    return state.hourlyPath.length === 0 ? [{ tier: 'hourly', onAdd: () => { add.gcpHourly(project); } }] : [];
+  }
+  const { profile } = state;
+  const missing: DataSource[] = [];
+  if (state.hourlyPath.length === 0) missing.push('hourly');
+  if (state.costOptPath.length === 0) missing.push('costOptimization');
+  return missing.map(tier => ({ tier, onAdd: () => { add.awsTier(profile, tier); } }));
+}
+
+export function SetupWizard({ onComplete, source: initialSource, profile: initialProfile, providerName: initialProviderName, gcpSource, mode, workspaceNaming, workspaceLabel, otherWorkspaces }: Readonly<SetupWizardProps>): React.JSX.Element {
   const api = useCostApi();
-  const isSourceMode = initialSource !== undefined && initialProfile !== undefined;
+  // Resolved once: the props that set it do not change for the wizard's
+  // lifetime, and a stable object keeps the start effect from re-running
+  // whenever the parent passes a fresh `gcpSource`.
+  const [sourceMode] = useState(() => resolveSourceMode(initialSource, initialProfile, gcpSource));
+  const gcpSourceMode = sourceMode?.kind === 'gcp' ? sourceMode : undefined;
+  const isSourceMode = sourceMode !== null;
   const [workspaceName, setWorkspaceName] = useState(workspaceNaming?.initialName ?? '');
   // Provider identity: fixed when reconfiguring an existing provider (source
   // mode), free-text when adding one, prefilled 'aws-main' on first run.
   const [providerName, setProviderName] = useState(initialProviderName ?? (mode === 'add' ? '' : 'aws-main'));
-  const [existingProviders, setExistingProviders] = useState<readonly string[]>([]);
+  // The configured providers: their names guard add mode, and the one this
+  // run replaces seeds the Confirm step's retention windows.
+  const [existingConfigs, setExistingConfigs] = useState<readonly ProviderConfig[]>([]);
+  const existingProviders = existingConfigs.map(p => String(p.name));
+  // Confirm-step retention picks. Wizard-level, like `providerName`, so ← Back
+  // and forward again keeps them; cleared when a cloud chain starts over.
+  const [retentionPicks, setRetentionPicks] = useState<Partial<Record<DataSource, number>>>({});
   // Whether the user has typed a name. Until they do, the default is DERIVED
   // from the cloud they picked rather than written into state on entry — a
   // one-way `setProviderName('gcp-main')` survived backing out of the GCP
@@ -1639,7 +1809,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   useEffect(() => {
     api.getConfig().then(config => {
       const names = config.providers.map(p => String(p.name));
-      setExistingProviders(names);
+      setExistingConfigs(config.providers);
       // Source mode without an explicit target: writeConfig upserts by name,
       // so per-tier Configure must land on the provider it came from — the
       // first configured one, matching the page that opened us.
@@ -1659,14 +1829,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
       setWorkspaceName((current) => (current === '' ? initialWorkspaceName : current));
     }
   }, [initialWorkspaceName]);
-  const [wizard, setWizard] = useState<WizardStep>(() => {
-    if (isSourceMode) {
-      return { step: 'bucket', profile: initialProfile, source: initialSource, buckets: [], loading: true, selected: '', error: '' };
-    }
-    // Naming comes first on a true first run; otherwise (workspace already
-    // named, e.g. created via Settings → New workspace) start at the hub.
-    return workspaceNaming !== undefined ? { step: 'welcome' } : { step: 'start' };
-  });
+  const [wizard, setWizard] = useState<WizardStep>(() => initialWizardStep(sourceMode, workspaceNaming !== undefined));
   const [collectedPaths, setCollectedPaths] = useState(EMPTY_PATHS);
   // Monotonic token for every step loader, AWS and GCP alike. Each resolver
   // rebuilds a whole step object from captured args, so without this a slow
@@ -1675,7 +1838,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   // would land AFTER the user navigated away and teleport them back.
   // `handleBeaconApply` already guards the same way via a functional update.
   const stepRequestRef = useRef(0);
-  const [bucketsLoaded, setBucketsLoaded] = useState(false);
+  const [sourceStarted, setSourceStarted] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [switchingTo, setSwitchingTo] = useState<string | null>(null);
   const [switchError, setSwitchError] = useState('');
@@ -1735,6 +1898,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   function goToGcpProjectStep(): void {
     // See `goToProfileStep`: the two chains share `collectedPaths`.
     setCollectedPaths(EMPTY_PATHS);
+    setRetentionPicks({});
     reloadGcpProjects();
   }
 
@@ -1760,8 +1924,14 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     });
   }
 
-  function startGcpBucketStep(project: GcpProjectChoice, source: GcpSource): void {
+  function startGcpBucketStep(project: GcpProjectChoice | null, source: GcpSource): void {
     const token = ++stepRequestRef.current;
+    // Per-tier Configure knows the bucket but not the project, and listing
+    // buckets needs one: offer the typed entry instead of an error.
+    if (project === null) {
+      setWizard({ step: 'gcp-bucket', project, source, buckets: [], loading: false, selected: '', error: '' });
+      return;
+    }
     setWizard({ step: 'gcp-bucket', project, source, buckets: [], loading: true, selected: '', error: '' });
     api.listGcsBuckets(project.id).then(result => {
       if (stepRequestRef.current !== token) return;
@@ -1772,11 +1942,12 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     });
   }
 
-  function gcpBrowseTo(project: GcpProjectChoice, source: GcpSource, bucket: string, prefix: string): void {
+  function gcpBrowseTo(project: GcpProjectChoice | null, source: GcpSource, bucket: string, prefix: string): void {
     const path = prefix.split('/').filter(s => s.length > 0);
     const token = ++stepRequestRef.current;
     setWizard({ step: 'gcp-browse', project, source, bucket, prefix, prefixes: [], loading: true, folder: { kind: 'unknown' }, hasParquet: false, truncated: false, error: '', path });
-    api.browseGcs({ projectId: project.id, bucket, prefix }).then(result => {
+    // Listing a bucket's objects needs no project; '' leaves the SDK to skip it.
+    api.browseGcs({ projectId: project?.id ?? '', bucket, prefix }).then(result => {
       if (stepRequestRef.current !== token) return;
       setWizard({ step: 'gcp-browse', project, source, bucket, prefix, prefixes: result.prefixes, loading: false, folder: result.folder, hasParquet: result.hasParquet, truncated: result.truncated, error: result.error ?? '', path });
     }).catch((err: unknown) => {
@@ -1791,19 +1962,17 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     const gcsPath = `gs://${bucket}/${prefix}`;
     const updated = { ...collectedPaths };
 
+    // Daily straight to Confirm, exactly as the AWS chain does: hourly is
+    // optional (the exporter publishes it only when deployed with
+    // TIERS=daily,hourly), so it sits one ← Back away on Confirm rather than
+    // being a step every user has to skip.
     if (source === 'daily') {
       updated.daily = gcsPath;
-      setCollectedPaths(updated);
-      // Offer the hourly tier next, exactly as the AWS chain does. Skipping
-      // it lands on Confirm — the exporter publishes hourly only when it was
-      // deployed with TIERS=daily,hourly.
-      startGcpBucketStep(project, 'hourly');
-      return;
+    } else {
+      updated.hourly = gcsPath;
     }
-
-    updated.hourly = gcsPath;
     setCollectedPaths(updated);
-    goToGcpConfirm(project, updated, 365);
+    goToGcpConfirm(project, updated);
   }
 
   /** Leave the GCP browse chain for the Confirm screen, keeping whatever
@@ -1813,7 +1982,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     goToGcpConfirm(wizard.project);
   }
 
-  function goToGcpConfirm(project: GcpProjectChoice, paths?: { daily: string; hourly: string; costOpt: string }, retention?: number): void {
+  function goToGcpConfirm(project: GcpProjectChoice | null, paths?: { daily: string; hourly: string; costOpt: string }): void {
     // Skip is offered while the hourly bucket step is still loading; without
     // this its late listing would pull the user back from Confirm.
     ++stepRequestRef.current;
@@ -1827,18 +1996,21 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
       // GCP never collects a cost-optimization path; carrying one here would
       // put a key in the config that `validateGcpSync` refuses to load.
       costOptPath: '',
-      retentionDays: retention ?? 365,
     });
   }
+
 
   // Goes through `startBucketStep` rather than repeating its body, so the
   // token guard and the error path stay in one place.
   useEffect(() => {
-    if (isSourceMode && !bucketsLoaded) {
-      setBucketsLoaded(true);
-      startBucketStep(initialProfile, initialSource);
+    if (sourceStarted || sourceMode === null) return;
+    setSourceStarted(true);
+    if (sourceMode.kind === 'gcp') {
+      gcpBrowseTo(null, sourceMode.tier, sourceMode.bucket, sourceMode.prefix);
+    } else {
+      startBucketStep(sourceMode.profile, sourceMode.tier);
     }
-  }, [isSourceMode, bucketsLoaded, api, initialProfile, initialSource]);
+  }, [sourceStarted, api, sourceMode]);
 
   function goToProfileStep() {
     // `collectedPaths` is shared by both chains, so entering one must clear
@@ -1846,6 +2018,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     // the AWS leg survived a ← Back to the hub and was written into a gcp
     // provider, whose loader then refuses the config on the next launch.
     setCollectedPaths(EMPTY_PATHS);
+    setRetentionPicks({});
     // Token-guarded like the other step loaders: a slow profile listing landing
     // after the user navigated on would otherwise teleport them back here.
     const token = ++stepRequestRef.current;
@@ -1980,34 +2153,27 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     const source = wizard.source;
 
     const updated = { ...collectedPaths };
-    let defaultRetention: number;
     if (source === 'daily') {
       updated.daily = s3Path;
-      defaultRetention = 365;
     } else if (source === 'hourly') {
       updated.hourly = s3Path;
-      defaultRetention = 30;
     } else {
       updated.costOpt = s3Path;
-      defaultRetention = 90;
     }
     setCollectedPaths(updated);
-    goToConfirm(profile, updated, defaultRetention);
+    goToConfirm(profile, updated);
   }
 
   function handleBrowseSkip() {
     if (wizard.step !== 'browse' && wizard.step !== 'bucket') return;
-    const profile = wizard.profile;
-    const source = wizard.source;
-
-    if (source === 'hourly') {
-      startBucketStep(profile, 'costOptimization');
-    } else {
-      goToConfirm(profile);
-    }
+    // Optional tiers are offered one by one on Confirm, so skipping one goes
+    // back there rather than on to the next tier.
+    goToConfirm(wizard.profile);
   }
 
-  function goToConfirm(profile: string, paths?: { daily: string; hourly: string; costOpt: string }, retention?: number) {
+
+
+  function goToConfirm(profile: string, paths?: { daily: string; hourly: string; costOpt: string }) {
     // See `goToGcpConfirm`: Skip can leave a loader in flight.
     ++stepRequestRef.current;
     const p = paths ?? collectedPaths;
@@ -2018,7 +2184,6 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
       s3Path: p.daily,
       hourlyPath: p.hourly,
       costOptPath: p.costOpt,
-      retentionDays: retention ?? 365,
     });
   }
 
@@ -2046,8 +2211,9 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     } else if (wizard.step === 'gcp-bucket') {
       if (wizard.source === 'daily') {
         // A typed ID returns to the intro, which holds the typed entry; only a
-        // project picked from the listing goes back to the listing.
-        if (wizard.project.typed) {
+        // project picked from the listing goes back to the listing. No project
+        // (per-tier Configure) has no listing to return to either.
+        if (wizard.project === null || wizard.project.typed) {
           setWizard({ step: 'gcp', scaffolded: false, error: '' });
         } else {
           goToGcpProjectStep();
@@ -2058,13 +2224,26 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     } else if (wizard.step === 'gcp-browse') {
       startGcpBucketStep(wizard.project, wizard.source);
     } else if (wizard.step === 'confirm') {
-      if (wizard.cloud === 'gcp') {
+      if (wizard.cloud === 'gcp' && gcpSourceMode !== undefined) {
+        // Per-tier Configure: back to the folder it opened on, not a bucket
+        // step that cannot list without a project.
+        gcpBrowseTo(wizard.project, gcpSourceMode.tier, gcpSourceMode.bucket, gcpSourceMode.prefix);
+      } else if (wizard.cloud === 'gcp') {
         startGcpBucketStep(wizard.project, 'hourly');
       } else {
         startBucketStep(wizard.profile, 'costOptimization');
       }
     }
   }
+
+  // The name this run will write under, and so the configured provider it
+  // replaces: that provider's other tier guards the overlap check, and its
+  // windows seed the Confirm step's retention pickers.
+  const wizardCloud = wizardCloudOf(wizard);
+  const targetProviderName = providerNameFixed || providerNameEdited
+    ? providerName
+    : derivedProviderName(wizardCloud, mode === 'add', existingProviders);
+  const targetProvider = existingConfigs.find(c => String(c.name) === targetProviderName && c.type === wizardCloud);
 
   // Standalone onboarding renders without the app header — the window's only
   // macOS drag region (titleBarStyle: hiddenInset means no native title bar) —
@@ -2129,7 +2308,8 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
             <GcpBucketStep
               state={wizard}
               onSelect={(bucket) => { gcpBrowseTo(wizard.project, wizard.source, bucket, ''); }}
-              onSkip={wizard.source === 'daily' ? undefined : handleGcpSkip}
+              // Per-tier Configure came for this one tier; ✕ is the way out.
+              onSkip={wizard.source === 'daily' || gcpSourceMode !== undefined ? undefined : handleGcpSkip}
               onBack={handleBack}
               onRetry={() => { setGcpIdentityRefresh(n => n + 1); startGcpBucketStep(wizard.project, wizard.source); }}
             />
@@ -2140,11 +2320,13 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
               // Both legs: Back-navigation lets the user re-pick daily after
               // hourly is already collected, and validateGcpSync rejects the
               // overlap in either direction.
-              conflictsWith={wizard.source === 'hourly' ? collectedPaths.daily : collectedPaths.hourly}
+              conflictsWith={(wizard.source === 'hourly' ? collectedPaths.daily : collectedPaths.hourly)
+                || (targetProvider?.sync[wizard.source === 'hourly' ? 'daily' : 'hourly']?.bucket ?? '')}
               onNavigate={(prefix) => { gcpBrowseTo(wizard.project, wizard.source, wizard.bucket, prefix); }}
               onRetry={() => { setGcpIdentityRefresh(n => n + 1); gcpBrowseTo(wizard.project, wizard.source, wizard.bucket, wizard.prefix); }}
               onConfirm={handleGcpBrowseConfirm}
-              onSkip={wizard.source === 'daily' ? undefined : handleGcpSkip}
+              // Per-tier Configure came for this one tier; ✕ is the way out.
+              onSkip={wizard.source === 'daily' || gcpSourceMode !== undefined ? undefined : handleGcpSkip}
               onBack={handleBack}
             />
           )}
@@ -2180,15 +2362,23 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
             <ConfirmStep
               state={wizard}
               providerNaming={{
-                value: providerNameFixed || providerNameEdited || mode === 'add'
-                  ? providerName
-                  : defaultProviderName(wizard.cloud),
+                value: targetProviderName,
                 fixed: providerNameFixed,
                 checkTaken: mode === 'add',
                 takenNames: existingProviders,
                 onChange: (value) => { setProviderNameEdited(true); setProviderName(value); },
               }}
-              onRetentionChange={(days) => { setWizard(prev => prev.step === 'confirm' ? { ...prev, retentionDays: days } : prev); }}
+              // Only a same-cloud entry: a different-cloud one is refused by
+              // the writer, so its values must not seed anything.
+              existing={targetProvider}
+              retention={{
+                picks: retentionPicks,
+                onPick: (tier, days) => { setRetentionPicks(prev => ({ ...prev, [tier]: days })); },
+              }}
+              optionalTiers={isSourceMode ? [] : optionalTiersFor(wizard, {
+                gcpHourly: (project) => { startGcpBucketStep(project, 'hourly'); },
+                awsTier: startBucketStep,
+              })}
               onComplete={finish}
               onBack={handleBack}
             />
@@ -2197,12 +2387,13 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
               step changes instead of re-running gcloud on every click. The
               steps' Retry buttons bump it: the usual reason to retry is a
               sign-in that just changed who these identities are.
-              No provider name: the GCP chain always creates a provider (the
-              only fixed-name entry, per-tier Configure, is AWS-only), so
-              there is no existing `impersonateServiceAccount` to apply. */}
+              Per-tier Configure names its provider, whose
+              `impersonateServiceAccount` decides who downloads; any other GCP
+              run creates or replaces one by a name not yet final, so it asks
+              without one. */}
           {isGcpStep(wizard) && (
             <div className="mt-5">
-              <GcpIdentityPanel context="wizard" refreshKey={gcpIdentityRefresh} />
+              <GcpIdentityPanel context="wizard" refreshKey={gcpIdentityRefresh} providerName={gcpSourceMode === undefined ? undefined : initialProviderName} />
             </div>
           )}
         </CardContent>

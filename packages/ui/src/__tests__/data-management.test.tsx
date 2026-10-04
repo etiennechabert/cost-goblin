@@ -264,6 +264,21 @@ describe('DataManagement', () => {
   });
 });
 
+describe('DataManagement — GCP tier Configure', () => {
+  it('offers Configure on an unconfigured GCP hourly tier, as on AWS', async () => {
+    // It used to say "add a hourly section to costgoblin.yaml" — the only way
+    // to add hourly to a GCP provider after setup.
+    const api = new MockCostApi();
+    vi.spyOn(api, 'getConfig').mockResolvedValue({ ...MOCK_MIXED_PROVIDER_CONFIG, providers: [MOCK_GCP_PROVIDER] });
+    renderDataManagement(api);
+    const section = await screen.findByRole('region', { name: 'Provider gcp-main' });
+    const configure = await within(section).findByRole('button', { name: 'Configure hourly data source' });
+    await userEvent.setup().click(configure);
+    // The wizard opens browsing the provider's own bucket.
+    await waitFor(() => { expect(screen.getByText('costgoblin-focus-export')).toBeDefined(); });
+  });
+});
+
 describe('DataManagement — GCP "Signed in as" panel', () => {
   const SECOND_GCP: ProviderConfig = { ...MOCK_GCP_PROVIDER, name: asProviderName('gcp-second') };
 
