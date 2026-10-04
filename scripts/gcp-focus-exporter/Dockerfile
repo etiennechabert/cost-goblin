@@ -1,6 +1,10 @@
 # Deliberately minimal: one dependency install, one file, no build step — what
 # you read in export-focus.mjs is exactly what runs.
-FROM node:25-slim
+#
+# An LTS line, and the one CI runs export-focus.test.mjs on (the root vitest
+# suite, Node 24). Odd-numbered lines like 25 never become LTS and reach
+# end-of-life within months; move to 26 once it enters LTS.
+FROM node:24-slim
 
 WORKDIR /app
 

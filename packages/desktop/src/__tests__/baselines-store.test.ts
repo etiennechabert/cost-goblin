@@ -124,12 +124,10 @@ function filterValues(scope: BaselineScope, dim: string): readonly string[] {
 }
 
 /** Reloaded specs re-validate their basis, which re-seeds built-in exclusion
- *  rules and the default marketplace attribution — drop the basis when
+ *  rules and the default marketplace attribution — blank the basis when
  *  comparing records across a persistence round-trip. */
-function withoutBasis(r: BaselineRecord): Omit<BaselineRecord, 'spec'> & { spec: Omit<BaselineSpec, 'basis'> } {
-  const { basis: dropped, ...spec } = r.spec;
-  void dropped;
-  return { ...r, spec };
+function withoutBasis(r: BaselineRecord): Omit<BaselineRecord, 'spec'> & { spec: Omit<BaselineSpec, 'basis'> & { basis: null } } {
+  return { ...r, spec: { ...r.spec, basis: null } };
 }
 
 describe('BaselineStore', () => {
