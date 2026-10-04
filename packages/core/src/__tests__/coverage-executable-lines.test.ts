@@ -77,6 +77,28 @@ describe('executableLines', () => {
     expect(lines.statements).toEqual(new Set([3, 5]));
   });
 
+  it('drops a declarator that reads a member of an imported binding, as @vitest/coverage-v8 5 does', async () => {
+    // The runner rewrites line 5 to `const viaImport =
+    // __vite_ssr_import_0__.REGISTRY[type]`, which coverage-v8 5 no longer
+    // lists (vitest-dev/vitest#11023). A bare imported binding (line 6:
+    // `__vite_ssr_import_0__.fallback`) and a local object's member (line 7)
+    // stay statements.
+    const source = [
+      "import { REGISTRY, fallback } from './registry.js';",
+      '',
+      'const LOCAL = { a: 1 };',
+      'export function pick(type: string): unknown {',
+      '  const viaImport = REGISTRY[type];',
+      '  const direct = fallback;',
+      '  const viaLocal = LOCAL.a;',
+      '  return viaImport ?? direct ?? viaLocal;',
+      '}',
+      '',
+    ].join('\n');
+    const lines = await executableLines(source, CORE_FILE);
+    expect(lines.statements).toEqual(new Set([3, 6, 7, 8]));
+  });
+
   it('honours v8 ignore start/stop regions', async () => {
     const source = [
       'export function f(x: number): number {',
