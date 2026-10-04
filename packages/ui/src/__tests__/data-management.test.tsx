@@ -298,13 +298,14 @@ describe('DataManagement — GCP "Signed in as" panel', () => {
         download: {
           kind: 'gcloud',
           principal: { kind: 'account', account: 'admin@acme.com', fromEnv: false },
-          impersonate: { target: sa, origin: 'gcloud-config' },
+          impersonate: { target: sa, origin: 'gcloud-config', delegates: [] },
           configuration: 'default',
         },
         adcLoginPath: null,
+        gcloudImpersonation: { target: sa, origin: 'gcloud-config', delegates: [] },
         warnings: [
-          { kind: 'target-mismatch', listingTarget: other, gcloudTarget: sa },
-          { kind: 'split-accounts', listingAccount: 'alice@acme.com', downloadAccount: 'admin@acme.com', listingKeyFile: null, downloadAccountFromEnv: false, sharedTarget: null },
+          { kind: 'target-mismatch', listingTarget: other, gcloud: { target: sa, origin: 'gcloud-config', delegates: [] }, advice: { kind: 'set-reader', target: other } },
+          { kind: 'split-accounts', listingAccount: 'alice@acme.com', downloadAccount: 'admin@acme.com', listingKeyFile: null, downloadPrincipal: { kind: 'account', account: 'admin@acme.com', fromEnv: false }, sharedTarget: null },
         ],
         notes: [],
       },
@@ -312,7 +313,7 @@ describe('DataManagement — GCP "Signed in as" panel', () => {
     renderDataManagement(api);
     const warnings = await screen.findByRole('list', { name: 'Credential warnings' });
     expect(warnings.textContent).toContain(`Bucket listing impersonates ${other} through your Application Default Credentials, but gcloud is set to impersonate ${sa}`);
-    expect(warnings.textContent).toContain(`set impersonateServiceAccount: ${other} on this provider`);
+    expect(warnings.textContent).toContain(`add impersonateServiceAccount: ${other} to this provider in costgoblin.yaml`);
     expect(warnings.textContent).toContain('Downloads run as admin@acme.com, but bucket listing runs as alice@acme.com');
   });
 

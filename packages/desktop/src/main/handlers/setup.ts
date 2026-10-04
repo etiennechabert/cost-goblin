@@ -226,7 +226,6 @@ export function registerSetupHandlers(app: AppContext): void {
   ipcMain.handle('setup:list-gcs-buckets', (_event, projectId: string, rawReader?: unknown) =>
     listGcsBucketsAs(projectId, rawReader, createGcsStorage));
 
-
   ipcMain.handle('setup:browse-gcs', async (_event, params: { projectId: string; bucket: string; prefix: string; impersonateServiceAccount?: unknown }): Promise<GcsBrowseResult> => {
     const prefix = normalizeGcsPrefix(params.prefix);
     const parsed = parseWizardReader(params.impersonateServiceAccount);

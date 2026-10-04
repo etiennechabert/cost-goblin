@@ -5,23 +5,30 @@ import {
   adcLoginPath,
   applyProviderImpersonation,
   assembleDownloadIdentity,
-  credentialEmail,
   emailFromIdToken,
   logger,
+  gcloudEnvFacts,
+  gcloudImpersonationSetting,
+  gcloudTokenWins,
   gcpIdentityNotes,
   gcpIdentityWarnings,
   grantsEmailScope,
+  isPathPlaceholder,
+  looksLikeFilePath,
   parseAdcJson,
   parseGcloudConfigList,
   parseJsonObject,
   resolveListingIdentity,
+  summarizeCredentialFile,
 } from '@costgoblin/core';
 import { readFile } from 'node:fs/promises';
 import type {
   AccountLookupFn,
   AuthorizedUserSecret,
   CostGoblinConfig,
+  CredentialFileSummary,
   GcloudConfigValues,
+  GcloudEnvFacts,
   GcpAccountLookup,
   GcpCredentialFile,
   GcpDownloadIdentity,
@@ -72,9 +79,10 @@ type GcloudState =
     readonly kind: 'ok';
     readonly config: GcloudConfigValues;
     readonly configuration: string;
-    readonly accountFromEnv: boolean;
-    /** Who gcloud's own `auth/credential_file_override` authenticates as. */
-    readonly overrideFileEmail: string | null;
+    readonly facts: GcloudEnvFacts;
+    /** gcloud's own `auth/credential_file_override`, described — null when
+     *  unset, or not consulted because a token outranks it. */
+    readonly overrideFile: CredentialFileSummary | null;
   }
   | { readonly kind: 'cli-missing' }
   | { readonly kind: 'cli-error'; readonly message: string };
@@ -86,6 +94,9 @@ function isEnoent(err: unknown): boolean {
 /** Describe one credential file the way the SDK will read it. A missing
  *  ADC file means "not signed in"; a missing key file is a broken config. */
 async function describeCredentialFile(file: GcpCredentialFile, deps: IdentityDeps): Promise<GcpListingIdentity> {
+  // A value that was not a path (pasted credential JSON) is shown redacted;
+  // there is nothing to read.
+  if (isPathPlaceholder(file.path)) return { kind: 'unreadable', file };
   let text: string;
   try {
     text = await deps.readFile(file.path);
@@ -142,15 +153,20 @@ async function readGcloud(deps: IdentityDeps): Promise<GcloudState> {
   if (config === null) {
     return { kind: 'cli-error', message: 'gcloud printed something other than its configuration. Run `gcloud config list` in a terminal to see what.' };
   }
+  const facts = gcloudEnvFacts(deps.env);
+  // gcloud never consults its credential file override while a token wins,
+  // so neither does this: describing it could mean a token refresh against
+  // a credential the download does not use.
   const override = config.credentialFileOverride;
-  const overrideIdentity = override === null ? null : await describeCredentialFile({ path: override, origin: 'key-file' }, deps);
-  const accountOverride = deps.env['CLOUDSDK_CORE_ACCOUNT'];
+  const overrideIdentity = override === null || gcloudTokenWins(config, facts) || !looksLikeFilePath(override)
+    ? null
+    : await describeCredentialFile({ path: override, origin: 'key-file' }, deps);
   return {
     kind: 'ok',
     config,
     configuration: activeGcloudConfiguration(deps.env, activeConfigFile),
-    accountFromEnv: accountOverride !== undefined && accountOverride.length > 0,
-    overrideFileEmail: overrideIdentity === null ? null : credentialEmail(overrideIdentity),
+    facts,
+    overrideFile: overrideIdentity === null ? null : summarizeCredentialFile(overrideIdentity),
   };
 }
 
@@ -159,12 +175,12 @@ function downloadIdentity(gcloud: GcloudState, provider: IdentityProviderOptions
   return assembleDownloadIdentity({
     config: gcloud.config,
     configuration: gcloud.configuration,
-    accountFromEnv: gcloud.accountFromEnv,
+    facts: gcloud.facts,
     providerKeyFile: provider.keyFile === undefined
       ? null
-      : { path: provider.keyFile, email: keyListing === null ? null : credentialEmail(keyListing) },
+      : { path: provider.keyFile, summary: keyListing === null ? { email: null, impersonates: null } : summarizeCredentialFile(keyListing) },
     providerTarget: provider.impersonateServiceAccount ?? null,
-    overrideFileEmail: gcloud.overrideFileEmail,
+    overrideFile: gcloud.overrideFile,
   });
 }
 
@@ -205,6 +221,7 @@ export function createGcpIdentityResolver(deps: IdentityDeps): GcpIdentityResolv
         listing,
         download,
         adcLoginPath: keyListing === null ? adcLoginPath(deps.env, deps.platform) : null,
+        gcloudImpersonation: gcloudState.kind === 'ok' ? gcloudImpersonationSetting(gcloudState.config, gcloudState.facts) : null,
         warnings: gcpIdentityWarnings(listing, download),
         notes: gcpIdentityNotes(listing, download),
       };

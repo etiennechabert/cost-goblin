@@ -401,6 +401,7 @@ export class MockCostApi implements CostApi {
         configuration: 'default',
       },
       adcLoginPath: null,
+      gcloudImpersonation: null,
       warnings: [],
       notes: [],
     },

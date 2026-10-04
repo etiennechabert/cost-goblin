@@ -98,6 +98,7 @@ describe('createGcpIdentityResolver', () => {
         configuration: 'acme',
       },
       adcLoginPath: null,
+      gcloudImpersonation: null,
       warnings: [],
       notes: [],
     });
@@ -125,7 +126,7 @@ describe('createGcpIdentityResolver', () => {
   it('warns when a provider without a reader reads a legacy impersonated ADC: downloads bypass it', async () => {
     const result = await resolve({}, legacyAdc);
     expect(result.listing).toMatchObject({ kind: 'impersonated', target: SA, via: { kind: 'credential' } });
-    expect(result.warnings).toEqual([{ kind: 'download-not-impersonated', listingTarget: SA }]);
+    expect(result.warnings).toEqual([{ kind: 'download-not-impersonated', listingTarget: SA, advice: { kind: 'set-reader', target: SA } }]);
   });
 
   it('reproduces the switched-to-admin trap — both accounts then need Token Creator on the reader', async () => {
@@ -134,26 +135,106 @@ describe('createGcpIdentityResolver', () => {
     });
     expect(result.download).toMatchObject({ principal: { account: 'admin@acme.com' } });
     expect(result.warnings).toEqual([{
-      kind: 'split-accounts', listingAccount: 'alice@acme.com', downloadAccount: 'admin@acme.com', listingKeyFile: null, downloadAccountFromEnv: false, sharedTarget: SA,
+      kind: 'split-accounts', listingAccount: 'alice@acme.com', downloadAccount: 'admin@acme.com', listingKeyFile: null,
+      downloadPrincipal: { kind: 'account', account: 'admin@acme.com', fromEnv: false }, sharedTarget: SA,
     }]);
   });
 
   it('sees gcloud s own impersonation setting, which rsync honours without a flag', async () => {
-    const gcloudImpersonates = { runGcloud: () => Promise.resolve(configList({ account: 'alice@acme.com', impersonate: 'ops@corp.iam.gserviceaccount.com' })) };
+    const gcloudImpersonates = { runGcloud: () => Promise.resolve(configList({ account: 'alice@acme.com', impersonate: 'ops-reader@corp.iam.gserviceaccount.com' })) };
     const legacy = await resolve({}, { ...legacyAdc, ...gcloudImpersonates });
-    expect(legacy.download).toMatchObject({ impersonate: { target: 'ops@corp.iam.gserviceaccount.com', origin: 'gcloud-config' } });
-    expect(legacy.warnings).toEqual([{ kind: 'target-mismatch', listingTarget: SA, gcloudTarget: 'ops@corp.iam.gserviceaccount.com' }]);
+    const ops = { origin: 'gcloud-config', target: 'ops-reader@corp.iam.gserviceaccount.com', delegates: [] };
+    expect(legacy.download).toMatchObject({ impersonate: ops });
+    expect(legacy.warnings).toEqual([{ kind: 'target-mismatch', listingTarget: SA, gcloud: ops, advice: { kind: 'set-reader', target: SA } }]);
     const plain = await resolve({}, gcloudImpersonates);
-    expect(plain.warnings).toEqual([{ kind: 'listing-not-impersonated', gcloudTarget: 'ops@corp.iam.gserviceaccount.com', listingFromKeyFile: false }]);
-    // A provider s reader is passed as a flag, which beats gcloud s setting on the download half too.
+    expect(plain.warnings).toEqual([{ kind: 'listing-not-impersonated', gcloud: ops, advice: { kind: 'set-reader', target: ops.target } }]);
+    // A provider s reader is passed as a flag, which beats gcloud s setting on the download half too...
     const withReader = await resolve({ impersonateServiceAccount: SA }, gcloudImpersonates);
     expect(withReader.download).toMatchObject({ impersonate: { target: SA, origin: 'provider' } });
     expect(withReader.warnings).toEqual([]);
+    // ...but a terminal sign-in still honours gcloud s setting, so the panel is told about it.
+    expect(withReader.gcloudImpersonation).toEqual(ops);
   });
 
-  it('marks an account forced by CLOUDSDK_CORE_ACCOUNT, which `config set` cannot change', async () => {
+  it('marks an account forced by CLOUDSDK_CORE_ACCOUNT, which `config set` cannot change — an empty one too', async () => {
     const result = await resolve({}, { env: { HOME, CLOUDSDK_CORE_ACCOUNT: 'admin@acme.com' } });
     expect(result.download).toMatchObject({ principal: { kind: 'account', fromEnv: true } });
+    const empty = await resolve({}, { env: { HOME, CLOUDSDK_CORE_ACCOUNT: '' }, runGcloud: () => Promise.resolve(configList({})) });
+    expect(empty.download).toMatchObject({ principal: { kind: 'account', account: null, fromEnv: true } });
+  });
+
+  it('marks gcloud settings that come from CostGoblin s environment, so their remedy names the variable', async () => {
+    const result = await resolve({}, {
+      env: { HOME, CLOUDSDK_AUTH_IMPERSONATE_SERVICE_ACCOUNT: OTHER_SA },
+      runGcloud: () => Promise.resolve(configList({ account: 'alice@acme.com', impersonate: OTHER_SA })),
+    });
+    const fromEnv = { origin: 'env', target: OTHER_SA, delegates: [] };
+    expect(result.download).toMatchObject({ impersonate: fromEnv });
+    expect(result.gcloudImpersonation).toEqual(fromEnv);
+    expect(result.warnings).toEqual([{ kind: 'listing-not-impersonated', gcloud: fromEnv, advice: { kind: 'set-reader', target: OTHER_SA } }]);
+  });
+
+  it('reports a pre-minted CLOUDSDK_AUTH_ACCESS_TOKEN without its value, and reads nothing it outranks', async () => {
+    const readFile = vi.fn(files({ [ADC_PATH]: USER_ADC, '/g.json': USER_ADC }));
+    const lookupEmail = vi.fn((): Promise<GcpAccountLookup> => Promise.resolve({ status: 'known', email: 'alice@acme.com' }));
+    const result = await resolve({}, {
+      env: { HOME, CLOUDSDK_AUTH_ACCESS_TOKEN: 'ya29.FAKE-TOKEN' },
+      readFile,
+      lookupEmail,
+      runGcloud: () => Promise.resolve(configList({ account: 'alice@acme.com', credentialFileOverride: '/g.json' })),
+    });
+    expect(result.download).toMatchObject({ principal: { kind: 'access-token' } });
+    expect(JSON.stringify(result)).not.toContain('FAKE-TOKEN');
+    // The override is never read or refreshed: gcloud would not use it.
+    expect(readFile.mock.calls.map(([path]) => path)).not.toContain('/g.json');
+    expect(lookupEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not describe a credential file override that an access-token file outranks', async () => {
+    const readFile = vi.fn(files({ [ADC_PATH]: USER_ADC, '/g.json': KEY_FILE }));
+    const result = await resolve({}, {
+      env: { HOME, CLOUDSDK_AUTH_ACCESS_TOKEN_FILE: '/sandbox/token' },
+      readFile,
+      runGcloud: () => Promise.resolve(configList({ credentialFileOverride: '/g.json', accessTokenFile: '/sandbox/token' })),
+    });
+    expect(result.download).toMatchObject({ principal: { kind: 'access-token-file', path: '/sandbox/token', origin: 'env' } });
+    expect(readFile.mock.calls.map(([path]) => path)).not.toContain('/g.json');
+  });
+
+  it('redacts an inline-JSON GOOGLE_APPLICATION_CREDENTIALS rather than echoing or reading it', async () => {
+    const readFile = vi.fn(files({}));
+    const result = await resolve({}, { env: { HOME, GOOGLE_APPLICATION_CREDENTIALS: KEY_FILE }, readFile });
+    expect(result.listing).toEqual({ kind: 'unreadable', file: { path: '<value of GOOGLE_APPLICATION_CREDENTIALS is not a file path>', origin: 'env' } });
+    expect(JSON.stringify(result)).not.toContain('FAKE-KEY');
+    expect(readFile.mock.calls.map(([path]) => path)).not.toContain(KEY_FILE);
+  });
+
+  it('describes a provider key file that impersonates by itself as the download s impersonation — no warning, no reader advice', async () => {
+    const result = await resolve({ keyFile: '/keys/legacy.json' }, { readFile: files({ '/keys/legacy.json': IMPERSONATED_ADC }) });
+    expect(result.listing).toMatchObject({ kind: 'impersonated', target: SA, via: { kind: 'credential' }, file: { origin: 'key-file' } });
+    expect(result.download).toMatchObject({
+      principal: { kind: 'key-file', origin: 'provider', email: null },
+      impersonate: { origin: 'credential-file', target: SA, fileOrigin: 'provider' },
+    });
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('lists a provider whose reader is the ADC key s own account with that key — no self-impersonation, no warning', async () => {
+    const readerKey = JSON.stringify({ type: 'service_account', client_email: SA, private_key: 'FAKE-KEY' });
+    const result = await resolve({ impersonateServiceAccount: SA }, { readFile: files({ [ADC_PATH]: readerKey }) });
+    expect(result.listing).toEqual({ kind: 'service-account', file: { path: ADC_PATH, origin: 'well-known' }, email: SA });
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('lists a provider whose reader is federation s own target through that federation — no self-impersonation', async () => {
+    const federated = JSON.stringify({
+      type: 'external_account',
+      audience: 'aud',
+      service_account_impersonation_url: `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${SA}:generateAccessToken`,
+    });
+    const result = await resolve({ impersonateServiceAccount: SA }, { readFile: files({ [ADC_PATH]: federated }) });
+    expect(result.listing).toEqual({ kind: 'external', file: { path: ADC_PATH, origin: 'well-known' }, target: SA });
+    expect(result.warnings).toEqual([]);
   });
 
   it('reads ADC from GOOGLE_APPLICATION_CREDENTIALS when set, and reports a missing file as not signed in there', async () => {
@@ -192,6 +273,7 @@ describe('createGcpIdentityResolver', () => {
         configuration: 'default',
       },
       adcLoginPath: null,
+      gcloudImpersonation: null,
       warnings: [],
       notes: [],
     });

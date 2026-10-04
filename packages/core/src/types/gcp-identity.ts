@@ -94,29 +94,53 @@ export type GcpListingIdentity =
   /** A credential type the SDK would reject, or this build cannot describe. */
   | { readonly kind: 'unrecognized'; readonly file: GcpCredentialFile; readonly type: string | null };
 
+/** Where one of gcloud's own settings comes from — which decides how to undo
+ *  it: `gcloud config unset …` for the configuration file, unsetting the
+ *  `CLOUDSDK_*` variable in CostGoblin's environment for `env` (an env value
+ *  beats the configuration file, so `config unset` cannot win there). */
+export type GcloudSettingOrigin = 'gcloud-config' | 'env';
+
 /** The base credential gcloud authenticates with, before any impersonation.
- *  gcloud's precedence: `auth/access_token_file`, then a credential file
- *  override (the provider's `keyFile`, else gcloud's own
- *  `auth/credential_file_override`), then the active account. */
+ *  gcloud's precedence: `CLOUDSDK_AUTH_ACCESS_TOKEN`, then
+ *  `auth/access_token_file`, then a credential file override (the provider's
+ *  `keyFile`, else gcloud's own `auth/credential_file_override`), then the
+ *  active account. */
 export type GcpDownloadPrincipal =
   /** gcloud's active account (`core/account`); null when none is set.
-   *  `fromEnv`: set by `CLOUDSDK_CORE_ACCOUNT` in CostGoblin's environment,
-   *  which `gcloud config set account` cannot override. */
+   *  `fromEnv`: set by `CLOUDSDK_CORE_ACCOUNT` in CostGoblin's environment
+   *  (an empty value included), which `gcloud config set account` cannot
+   *  override. */
   | { readonly kind: 'account'; readonly account: string | null; readonly fromEnv: boolean }
-  /** A credential file passed to gcloud. `email` is null when the file is
-   *  not a readable service-account key. */
-  | { readonly kind: 'key-file'; readonly path: string; readonly origin: 'provider' | 'gcloud-config'; readonly email: string | null }
+  /** A credential file passed to gcloud: the provider's `keyFile`, or
+   *  gcloud's own `auth/credential_file_override`. `email` is null when the
+   *  file is not a readable service-account key (a file that impersonates by
+   *  itself names its target as the download's impersonation instead). */
+  | { readonly kind: 'key-file'; readonly path: string; readonly origin: 'provider' | GcloudSettingOrigin; readonly email: string | null }
   /** A pre-minted token (`auth/access_token_file`): whoever it was minted
    *  for, which gcloud does not say. */
-  | { readonly kind: 'access-token-file'; readonly path: string };
+  | { readonly kind: 'access-token-file'; readonly path: string; readonly origin: GcloudSettingOrigin }
+  /** A pre-minted token in `CLOUDSDK_AUTH_ACCESS_TOKEN` itself. Nothing but
+   *  its presence is ever read. */
+  | { readonly kind: 'access-token' };
 
-/** The service account the download impersonates, and who asked for it:
- *  the provider's `impersonateServiceAccount` (passed as a flag, so it wins),
- *  or gcloud's own `auth/impersonate_service_account`. */
-export interface GcpDownloadImpersonation {
-  readonly target: string;
-  readonly origin: 'provider' | 'gcloud-config';
-}
+/** The service account the download impersonates, and who asked for it. */
+export type GcpDownloadImpersonation =
+  /** The provider's `impersonateServiceAccount`, passed as a flag: it wins. */
+  | { readonly origin: 'provider'; readonly target: string }
+  /** gcloud's own `auth/impersonate_service_account`. `delegates`: the hops
+   *  of a comma-separated delegation chain before `target`, in order. */
+  | { readonly origin: GcloudSettingOrigin; readonly target: string; readonly delegates: readonly string[] }
+  /** The credential file passed to gcloud impersonates by itself (an
+   *  `impersonated_service_account` file, or federation with a
+   *  `service_account_impersonation_url`). `fileOrigin` is who passed it. */
+  | { readonly origin: 'credential-file'; readonly target: string; readonly fileOrigin: 'provider' | GcloudSettingOrigin };
+
+/** An impersonation the provider did not ask for: gcloud's own setting, or
+ *  one built into the credential file gcloud is given. */
+export type GcpGcloudImpersonation = Exclude<GcpDownloadImpersonation, { readonly origin: 'provider' }>;
+
+/** gcloud's own `auth/impersonate_service_account`. */
+export type GcpGcloudImpersonationSetting = Extract<GcpDownloadImpersonation, { readonly origin: GcloudSettingOrigin }>;
 
 /** The identity `gcloud storage rsync` downloads as (and, for the wizard,
  *  `gcloud projects list` lists projects as). */
@@ -131,41 +155,58 @@ export type GcpDownloadIdentity =
   | { readonly kind: 'cli-missing' }
   | { readonly kind: 'cli-error'; readonly message: string };
 
+/** Whether naming a read-only service account on the provider would settle
+ *  an impersonation disagreement — and if not, why not. */
+export type GcpReaderAdvice =
+  /** Naming `target` as `impersonateServiceAccount` drives both halves. */
+  | { readonly kind: 'set-reader'; readonly target: string }
+  /** The provider lists with a `keyFile`, which excludes a reader. */
+  | { readonly kind: 'key-file-provider' }
+  /** `target` is not a service-account address a provider can name. */
+  | { readonly kind: 'not-a-reader'; readonly target: string }
+  /** gcloud reaches `target` through a delegation chain; a provider names a
+   *  single account, so naming `target` alone would skip the hops. */
+  | { readonly kind: 'delegation-chain'; readonly target: string; readonly delegates: readonly string[] }
+  /** gcloud already authenticates as `target` itself: naming it would make
+   *  downloads impersonate the account they already are. */
+  | { readonly kind: 'download-is-target'; readonly target: string };
+
 /** A disagreement between the two paths that will fail a sync, or run one
  *  half of it as someone unexpected. In the order the panel shows them.
  *
- *  A provider with `impersonateServiceAccount` raises none of the first
- *  three: both halves impersonate it (the download flag beats gcloud's
- *  `auth/impersonate_service_account`). They describe a provider WITHOUT a
- *  reader, and their remedy is to give it one. */
+ *  The first three compare EFFECTIVE identities — a half's impersonation
+ *  target when it impersonates, else its principal — and stay quiet when
+ *  both halves end up as the same account. A provider with
+ *  `impersonateServiceAccount` raises none of them: both halves impersonate
+ *  it (the download flag beats gcloud's own setting). `advice` says whether
+ *  naming a reader is the fix. */
 export type GcpIdentityWarning =
-  /** Listing impersonates `listingTarget` through ADC itself (a legacy
-   *  impersonated login, or federation), while gcloud's own
-   *  `auth/impersonate_service_account` makes downloads impersonate
-   *  `gcloudTarget`, a different account. */
-  | { readonly kind: 'target-mismatch'; readonly listingTarget: string; readonly gcloudTarget: string }
-  /** gcloud's own `auth/impersonate_service_account` makes downloads
-   *  impersonate `gcloudTarget`; listing impersonates nothing.
-   *  `listingFromKeyFile`: the provider's `keyFile` is behind listing, which
-   *  rules out naming a reader (the two are exclusive). */
-  | { readonly kind: 'listing-not-impersonated'; readonly gcloudTarget: string; readonly listingFromKeyFile: boolean }
-  /** Listing impersonates `listingTarget` through ADC itself; downloads
-   *  impersonate nothing, so they run as gcloud's own identity — a provider
-   *  without a reader on a machine whose ADC was signed in with
+  /** Listing impersonates `listingTarget` through its credential itself (a
+   *  legacy impersonated login, federation, or an impersonating key file),
+   *  while `gcloud` makes downloads impersonate a different account. */
+  | { readonly kind: 'target-mismatch'; readonly listingTarget: string; readonly gcloud: GcpGcloudImpersonation; readonly advice: GcpReaderAdvice }
+  /** `gcloud` makes downloads impersonate an account listing does not end
+   *  up as. */
+  | { readonly kind: 'listing-not-impersonated'; readonly gcloud: GcpGcloudImpersonation; readonly advice: GcpReaderAdvice }
+  /** Listing impersonates `listingTarget` through its credential itself;
+   *  downloads impersonate nothing, so they run as gcloud's own identity — a
+   *  provider without a reader on a machine whose ADC was signed in with
    *  `--impersonate-service-account`. */
-  | { readonly kind: 'download-not-impersonated'; readonly listingTarget: string }
+  | { readonly kind: 'download-not-impersonated'; readonly listingTarget: string; readonly advice: GcpReaderAdvice }
   /** Listing and downloads start from two different principals.
    *  `listingKeyFile` is the key behind listing when that principal is a
    *  service account read from a key (gcloud can only become it through
-   *  one). `sharedTarget` is the service account both halves impersonate,
-   *  when they impersonate the same one — then each principal needs Token
-   *  Creator on it. */
+   *  one). `downloadPrincipal` is what gcloud authenticates as — its kind and
+   *  origin decide the remedy. `sharedTarget` is the service account both
+   *  halves mint, when they mint the same one — then each principal needs
+   *  Token Creator on it. Not raised when both halves end up as the same
+   *  account and only one of them mints it. */
   | {
     readonly kind: 'split-accounts';
     readonly listingAccount: string;
     readonly downloadAccount: string;
     readonly listingKeyFile: GcpCredentialFile | null;
-    readonly downloadAccountFromEnv: boolean;
+    readonly downloadPrincipal: GcpDownloadPrincipal;
     readonly sharedTarget: string | null;
   };
 
@@ -188,6 +229,12 @@ export interface GcpIdentities {
    *  the latter). Null when they agree, or when `GOOGLE_APPLICATION_CREDENTIALS`
    *  names the file. */
   readonly adcLoginPath: string | null;
+  /** gcloud's own `auth/impersonate_service_account`, when set. A provider's
+   *  reader hides it from `download`, but a plain
+   *  `application-default login` typed in a terminal still honours it, so
+   *  every sign-in remedy has to blank it. Null when unset, or when gcloud
+   *  could not be read. */
+  readonly gcloudImpersonation: GcpGcloudImpersonationSetting | null;
   readonly warnings: readonly GcpIdentityWarning[];
   readonly notes: readonly GcpIdentityNote[];
 }

@@ -2270,9 +2270,11 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
               step changes instead of re-running gcloud on every click. The
               steps' Retry buttons bump it: the usual reason to retry is a
               sign-in that just changed who these identities are.
-              No provider name: the GCP chain always creates a provider (the
-              only fixed-name entry, per-tier Configure, is AWS-only), so
-              there is no existing `impersonateServiceAccount` to apply. */}
+              No provider name: the GCP chain always creates a NEW provider
+              (the only fixed-name entry, per-tier Configure, is AWS-only), so
+              no saved provider's `keyFile` / `impersonateServiceAccount`
+              applies; the reader typed into this wizard is browsed with
+              directly, and the compact panel leaves impersonation out. */}
           {isGcpStep(wizard) && (
             <div className="mt-5">
               <GcpIdentityPanel context="wizard" refreshKey={gcpIdentityRefresh} />

@@ -306,11 +306,13 @@ export interface CostApi {
    *  the Resource Manager client would. */
   listGcpProjects(): Promise<{ projects: readonly GcpProject[]; error?: string | undefined }>;
   /** Who each GCP credential path runs as — read-only, no tokens. The
-   *  listing identity comes from Application Default Credentials (what the
-   *  Cloud Storage SDK reads); the download identity is gcloud's active
-   *  account plus the provider's `impersonateServiceAccount` (what
-   *  `gcloud storage rsync` and `gcloud projects list` run as). `warnings`
-   *  names every disagreement between the two.
+   *  listing identity is what the Cloud Storage SDK reads (the provider's
+   *  `keyFile`, else Application Default Credentials) with the provider's
+   *  `impersonateServiceAccount` minted on top of it; the download identity is
+   *  what `gcloud storage rsync` (and `gcloud projects list`) runs as —
+   *  gcloud's credential, after its `auth/*` overrides, impersonating the
+   *  provider's reader or else gcloud's own setting. `warnings` names every
+   *  disagreement between the two, `notes` what cannot be checked.
    *
    *  `providerName` selects whose `impersonateServiceAccount` / `keyFile` to
    *  apply; omitted (the wizard, before a provider exists) both are treated

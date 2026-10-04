@@ -93,7 +93,9 @@ test.describe('mixed AWS + GCP workspace', () => {
     // download row must name — never an account from the developer's gcloud.
     await expect(panel.getByText(/a pre-minted access token|The gcloud CLI is not installed/)).toBeVisible();
     if (await panel.getByText(/a pre-minted access token/).count() > 0) {
-      await expect(panel.getByText(/auth\/access_token_file · .*cloud-sandbox/)).toBeVisible();
+      // The pin is an env var, which `gcloud config unset` cannot undo — the
+      // panel says where it came from.
+      await expect(panel.getByText(/auth\/access_token_file · .*cloud-sandbox.* · set by CLOUDSDK_AUTH_ACCESS_TOKEN_FILE/)).toBeVisible();
     }
     await expect(panel.getByText('Checking Google Cloud credentials…')).toHaveCount(0);
 

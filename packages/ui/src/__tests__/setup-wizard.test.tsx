@@ -1162,7 +1162,8 @@ describe('SetupWizard — GCP "Signed in as" panel', () => {
         listing: { kind: 'user', file: { path: '/adc.json', origin: 'well-known' }, account: { status: 'known', email: 'alice@acme.com' } },
         download: { kind: 'gcloud', principal: { kind: 'account', account: 'admin@acme.com', fromEnv: false }, impersonate: null, configuration: 'admin' },
         adcLoginPath: null,
-        warnings: [{ kind: 'split-accounts', listingAccount: 'alice@acme.com', downloadAccount: 'admin@acme.com', listingKeyFile: null, downloadAccountFromEnv: false, sharedTarget: null }],
+        gcloudImpersonation: null,
+        warnings: [{ kind: 'split-accounts', listingAccount: 'alice@acme.com', downloadAccount: 'admin@acme.com', listingKeyFile: null, downloadPrincipal: { kind: 'account', account: 'admin@acme.com', fromEnv: false }, sharedTarget: null }],
         notes: [],
       },
     };

@@ -48,26 +48,43 @@ export {
 export {
   type AccountLookupFn,
   type AuthorizedUserSecret,
+  type CredentialFileSummary,
   type GcloudConfigValues,
+  type GcloudEnvFacts,
+  type GcpProviderCredentialOptions,
   type ParsedAdc,
   type ParsedAdcSource,
   activeGcloudConfigPath,
   activeGcloudConfiguration,
   adcCredentialsLocation,
+  adcLoginImpersonationToKeep,
   adcLoginPath,
   applyProviderImpersonation,
   assembleDownloadIdentity,
   classifyAccountLookupError,
   credentialEmail,
+  displayablePath,
   emailFromIdToken,
   gcloudConfigDir,
+  gcloudEnvFacts,
+  gcloudImpersonationSetting,
+  gcloudTokenWins,
   gcpIdentityNotes,
   gcpIdentityWarnings,
   grantsEmailScope,
+  isPathPlaceholder,
+  looksLikeFilePath,
   parseAdcJson,
   parseGcloudConfigList,
   resolveListingIdentity,
+  summarizeCredentialFile,
 } from './gcp-identity.js';
+
+export {
+  type ImpersonatedAdc,
+  type ImpersonatedAdcSource,
+  classifyImpersonatedAdc,
+} from './gcp-adc-classify.js';
 
 export {
   GCS_BUCKET_NAME_RULES,

@@ -28,6 +28,7 @@ import type {
   AccountMappingStatus,
   AccountMappingEntry,
   GcloudLoginMode,
+  GcpProviderConfig,
   ProviderAuth,
   ProviderName,
   PruneResult,
@@ -41,7 +42,7 @@ import {
   toUserFriendlyError,
 } from './context.js';
 import { triggerAutoSyncNow } from '../auto-sync.js';
-import { gcloudLoginArgs, gcloudLoginEnv } from '../gcloud-login.js';
+import { adcImpersonationToKeep, gcloudLoginArgs, gcloudLoginEnv } from '../gcloud-login.js';
 import { SYNC_ALREADY_RUNNING } from '../sync-client.js';
 import { parseSyncId, resolveProvider, resolveSyncId } from '../sync-id.js';
 import { recordSyncLog } from '../sync-log.js';
@@ -412,7 +413,22 @@ export function registerSyncHandlers(app: AppContext): void {
 
     const mode: GcloudLoginMode = rawMode === 'cli' ? 'cli' : 'adc';
 
-    const loginArgs = gcloudLoginArgs(mode);
+    // A provider with neither a reader nor a key file lists through ADC as
+    // it is; when ADC is a legacy impersonated sign-in, re-signing in plainly
+    // would widen that provider to the user's own access. Keep it until every
+    // provider names its reader. An unloadable config keeps nothing — the
+    // plain sign-in this button has always run.
+    let keepImpersonation: string | null = null;
+    if (mode === 'adc') {
+      const config = await getConfig().catch(() => null);
+      const gcpProviders = (config?.providers ?? []).filter((p): p is GcpProviderConfig => p.type === 'gcp');
+      const { readFile } = await import('node:fs/promises');
+      keepImpersonation = await adcImpersonationToKeep(
+        { env: process.env, platform: process.platform, readFile: (path) => readFile(path, 'utf8') },
+        gcpProviders,
+      );
+    }
+    const loginArgs = gcloudLoginArgs(mode, keepImpersonation);
 
     // `findGcloudCli` returning null is the "not installed" signal on every
     // platform — it cannot come from spawn: on Windows gcloud is a `.cmd`
@@ -428,7 +444,7 @@ export function registerSyncHandlers(app: AppContext): void {
         stdio: 'ignore',
         detached: true,
         shell: shape.shell,
-        env: gcloudLoginEnv(mode, process.env, fullPath),
+        env: gcloudLoginEnv(mode, process.env, fullPath, keepImpersonation),
       });
       child.on('error', (err: NodeJS.ErrnoException) => {
         if (err.code === 'ENOENT') {

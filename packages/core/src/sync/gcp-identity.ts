@@ -1,18 +1,27 @@
 import { posix, win32 } from 'node:path';
+import { isServiceAccountEmail } from '../config/service-account.js';
 import { isStringRecord, parseJsonObject } from '../utils/json.js';
+import { classifyImpersonatedAdc, impersonationTargetFromUrl } from './gcp-adc-classify.js';
+import type { ImpersonatedAdcSource } from './gcp-adc-classify.js';
 import { isGcpCredentialError } from './gcp-credential-errors.js';
 import type {
+  GcloudSettingOrigin,
   GcpAccountLookup,
   GcpAccountLookupFailure,
   GcpCredentialFile,
   GcpDownloadIdentity,
   GcpDownloadImpersonation,
   GcpDownloadPrincipal,
+  GcpGcloudImpersonation,
+  GcpGcloudImpersonationSetting,
   GcpIdentityNote,
   GcpIdentityWarning,
   GcpImpersonationSource,
   GcpListingIdentity,
+  GcpReaderAdvice,
 } from '../types/gcp-identity.js';
+
+export { impersonationTargetFromUrl } from './gcp-adc-classify.js';
 
 /** Pure half of "which identities does a GCP provider run as": reading the
  *  credential files the Cloud Storage SDK uses, gcloud's effective
@@ -54,20 +63,8 @@ export type ParsedAdc =
 
 const ADC_FILE_NAME = 'application_default_credentials.json';
 
-/** google-auth-library refuses longer impersonation URLs (a ReDoS guard); a
- *  URL it would reject must not be described as working here. */
-const MAX_IMPERSONATION_URL_LENGTH = 256;
-
 function nonEmptyString(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
-}
-
-/** The target service account of an IAM Credentials impersonation URL — the
- *  same extraction `GoogleAuth.fromImpersonatedJSON` performs. */
-export function impersonationTargetFromUrl(url: unknown): string | null {
-  if (typeof url !== 'string' || url.length > MAX_IMPERSONATION_URL_LENGTH) return null;
-  const match = /\/serviceAccounts\/([^/]+):(?:generateAccessToken|generateIdToken)$/.exec(url);
-  return match?.[1] ?? null;
 }
 
 function parseUser(record: Readonly<Record<string, unknown>>): ParsedUser {
@@ -90,12 +87,12 @@ function serviceAccountEmail(record: Readonly<Record<string, unknown>>): string 
   return nonEmptyString(record['client_email']);
 }
 
-function parseSource(raw: unknown): ParsedAdcSource {
-  if (!isStringRecord(raw)) return { kind: 'other', type: null };
-  const type = nonEmptyString(raw['type']);
-  if (type === 'authorized_user') return parseUser(raw);
-  const email = serviceAccountEmail(raw);
-  return email === null ? { kind: 'other', type } : { kind: 'service-account', email };
+function parseSource(source: ImpersonatedAdcSource): ParsedAdcSource {
+  switch (source.kind) {
+    case 'user': return parseUser(source.record);
+    case 'service-account': return { kind: 'service-account', email: source.email };
+    case 'other': return { kind: 'other', type: source.type };
+  }
 }
 
 /** Describe a parsed credential file. Null when the payload is not a JSON
@@ -107,8 +104,12 @@ export function parseAdcJson(raw: unknown): ParsedAdc | null {
     case 'authorized_user':
       return parseUser(raw);
     case 'impersonated_service_account': {
-      const target = impersonationTargetFromUrl(raw['service_account_impersonation_url']);
-      return target === null ? { kind: 'unrecognized', type } : { kind: 'impersonated', target, source: parseSource(raw['source_credentials']) };
+      // The same classification the listing client unwraps with, so a file
+      // it would reject is never shown as a working impersonation.
+      const legacy = classifyImpersonatedAdc(raw);
+      return legacy.kind === 'impersonated'
+        ? { kind: 'impersonated', target: legacy.target, source: parseSource(legacy.source) }
+        : { kind: 'unrecognized', type };
     }
     case 'external_account':
       return { kind: 'external', target: impersonationTargetFromUrl(raw['service_account_impersonation_url']) };
@@ -120,6 +121,30 @@ export function parseAdcJson(raw: unknown): ParsedAdc | null {
       return email === null ? { kind: 'unrecognized', type } : { kind: 'service-account', email };
     }
   }
+}
+
+/** Longer than any real path; a value this long is a pasted credential. */
+const MAX_PATH_LENGTH = 1024;
+
+/** Whether a variable or setting that should name a file plausibly does.
+ *  Users paste credential JSON (or a raw token) where a path belongs; such a
+ *  value must never be echoed to the renderer. */
+export function looksLikeFilePath(value: string): boolean {
+  return value.length <= MAX_PATH_LENGTH && !/[\r\n{]/.test(value) && !value.includes('private_key');
+}
+
+const NOT_A_PATH_PREFIX = '<value of ';
+const NOT_A_PATH_SUFFIX = ' is not a file path>';
+
+/** `value`, or — when it does not look like a path — a placeholder naming
+ *  where it came from, so a pasted secret never crosses IPC verbatim. */
+export function displayablePath(value: string, source: string): string {
+  return looksLikeFilePath(value) ? value : `${NOT_A_PATH_PREFIX}${source}${NOT_A_PATH_SUFFIX}`;
+}
+
+/** Whether `path` is `displayablePath`'s placeholder — nothing to read. */
+export function isPathPlaceholder(path: string): boolean {
+  return path.startsWith(NOT_A_PATH_PREFIX) && path.endsWith(NOT_A_PATH_SUFFIX);
 }
 
 function joinFor(platform: NodeJS.Platform): (...parts: string[]) => string {
@@ -137,8 +162,10 @@ export function adcCredentialsLocation(
   env: Readonly<Record<string, string | undefined>>,
   platform: NodeJS.Platform,
 ): GcpCredentialFile | null {
-  const fromEnv = nonEmptyString(env['GOOGLE_APPLICATION_CREDENTIALS']) ?? nonEmptyString(env['google_application_credentials']);
-  if (fromEnv !== null) return { path: fromEnv, origin: 'env' };
+  for (const variable of ['GOOGLE_APPLICATION_CREDENTIALS', 'google_application_credentials']) {
+    const fromEnv = nonEmptyString(env[variable]);
+    if (fromEnv !== null) return { path: displayablePath(fromEnv, variable), origin: 'env' };
+  }
   const join = joinFor(platform);
   if (platform === 'win32') {
     const appData = nonEmptyString(env['APPDATA']);
@@ -256,15 +283,21 @@ export async function resolveListingIdentity(
   }
 }
 
+function samePrincipal(a: string, b: string): boolean {
+  return a.toLowerCase() === b.toLowerCase();
+}
+
 /** What bucket listing does for a provider, given what ADC holds — the
  *  mirror of `createGcsStorage`. Without a reader (`target` null), listing
  *  uses ADC as it is, so a legacy impersonated ADC file still lists as its
  *  own target. With one, listing impersonates `target`, minted from ADC's
  *  own principal: a plain user's login, a service-account key, a federated
  *  credential — or, for a legacy impersonated file, the login underneath it
- *  (unwrapped, never chained through the file's target). A missing,
- *  unreadable or unusable ADC stays as it is: there is nothing to mint from,
- *  and signing in is the remedy either way. */
+ *  (unwrapped, never chained through the file's target). A principal that
+ *  already IS `target` (its key, or federation impersonating it) is used as
+ *  it is: nothing mints an account from itself. A missing, unreadable or
+ *  unusable ADC stays as it is: there is nothing to mint from, and signing
+ *  in is the remedy either way. */
 export function applyProviderImpersonation(adc: GcpListingIdentity, target: string | null): GcpListingIdentity {
   if (target === null) return adc;
   const minted = (file: GcpCredentialFile, source: GcpImpersonationSource, adcTarget: string | null): GcpListingIdentity => (
@@ -278,11 +311,27 @@ export function applyProviderImpersonation(adc: GcpListingIdentity, target: stri
     case 'user':
       return minted(adc.file, { kind: 'user', account: adc.account }, null);
     case 'service-account':
-      return minted(adc.file, { kind: 'service-account', email: adc.email }, null);
+      return samePrincipal(adc.email, target) ? adc : minted(adc.file, { kind: 'service-account', email: adc.email }, null);
     case 'external':
-      return minted(adc.file, { kind: 'federated', target: adc.target }, null);
-    case 'impersonated':
-      return minted(adc.file, adc.source, adc.via.kind === 'credential' ? adc.target : adc.via.adcTarget);
+      return adc.target !== null && samePrincipal(adc.target, target) ? adc : minted(adc.file, { kind: 'federated', target: adc.target }, null);
+    case 'impersonated': {
+      const adcTarget = adc.via.kind === 'credential' ? adc.target : adc.via.adcTarget;
+      switch (adc.source.kind) {
+        case 'other':
+          // The listing client unwraps a user login or a key only; it refuses
+          // to mint a reader from anything else underneath a legacy file.
+          return { kind: 'unrecognized', file: adc.file, type: 'impersonated_service_account' };
+        case 'federated':
+          // Already minted from federation (applied twice): unchanged.
+          return minted(adc.file, adc.source, adcTarget);
+        case 'service-account':
+          return samePrincipal(adc.source.email, target)
+            ? { kind: 'service-account', file: adc.file, email: adc.source.email }
+            : minted(adc.file, adc.source, adcTarget);
+        case 'user':
+          return minted(adc.file, adc.source, adcTarget);
+      }
+    }
   }
 }
 
@@ -291,6 +340,18 @@ export function credentialEmail(identity: GcpListingIdentity): string | null {
   if (identity.kind === 'service-account') return identity.email;
   if (identity.kind === 'user' && identity.account.status === 'known') return identity.account.email;
   return null;
+}
+
+/** What matters about a credential file handed to gcloud: who it is (a key's
+ *  email), and whom it impersonates by itself. */
+export interface CredentialFileSummary {
+  readonly email: string | null;
+  readonly impersonates: string | null;
+}
+
+export function summarizeCredentialFile(identity: GcpListingIdentity): CredentialFileSummary {
+  const impersonates = identity.kind === 'impersonated' || identity.kind === 'external' ? identity.target : null;
+  return { email: credentialEmail(identity), impersonates };
 }
 
 /** The `email` claim of an OpenID Connect id_token, decoded locally. Only
@@ -311,6 +372,8 @@ export interface GcloudConfigValues {
   /** The final target: gcloud accepts a comma-separated delegation chain and
    *  impersonates the last account in it. */
   readonly impersonateServiceAccount: string | null;
+  /** The chain's earlier hops, in order; empty for a single account. */
+  readonly impersonationDelegates: readonly string[];
   readonly credentialFileOverride: string | null;
   readonly accessTokenFile: string | null;
 }
@@ -320,15 +383,9 @@ function section(record: Readonly<Record<string, unknown>>, name: string): Reado
   return isStringRecord(value) ? value : {};
 }
 
-/** The last non-empty entry of a comma-separated list. A loop because the
- *  ES2022 lib this repo targets has no `findLast`. */
-function lastListEntry(list: string): string | null {
-  let last: string | null = null;
-  for (const part of list.split(',')) {
-    const trimmed = part.trim();
-    if (trimmed.length > 0) last = trimmed;
-  }
-  return last;
+/** The non-empty entries of a comma-separated list. */
+function listEntries(list: string): string[] {
+  return list.split(',').map(part => part.trim()).filter(part => part.length > 0);
 }
 
 /** Parse `gcloud config list --format=json`. Null when stdout is not a JSON
@@ -338,11 +395,11 @@ export function parseGcloudConfigList(stdout: string): GcloudConfigValues | null
   if (parsed === null) return null;
   const core = section(parsed, 'core');
   const auth = section(parsed, 'auth');
-  const chain = nonEmptyString(auth['impersonate_service_account']);
-  const target = chain === null ? null : lastListEntry(chain);
+  const chain = listEntries(nonEmptyString(auth['impersonate_service_account']) ?? '');
   return {
     account: nonEmptyString(core['account']),
-    impersonateServiceAccount: target,
+    impersonateServiceAccount: chain[chain.length - 1] ?? null,
+    impersonationDelegates: chain.slice(0, -1),
     credentialFileOverride: nonEmptyString(auth['credential_file_override']),
     accessTokenFile: nonEmptyString(auth['access_token_file']),
   };
@@ -362,37 +419,92 @@ export function activeGcloudConfiguration(
     ?? 'default';
 }
 
+/** Which of gcloud's credential settings CostGoblin's own environment sets.
+ *  `config list` reports effective values without saying where they came
+ *  from; an env value beats the configuration file (an EMPTY one included),
+ *  so it decides whether `gcloud config unset` can undo it. */
+export interface GcloudEnvFacts {
+  /** `CLOUDSDK_CORE_ACCOUNT` is set, an empty value included. */
+  readonly accountFromEnv: boolean;
+  /** `CLOUDSDK_AUTH_ACCESS_TOKEN` is non-empty: gcloud authenticates with
+   *  that token before consulting anything else. */
+  readonly accessTokenInEnv: boolean;
+  readonly impersonation: GcloudSettingOrigin;
+  readonly credentialFileOverride: GcloudSettingOrigin;
+  readonly accessTokenFile: GcloudSettingOrigin;
+}
+
+export function gcloudEnvFacts(env: Readonly<Record<string, string | undefined>>): GcloudEnvFacts {
+  const origin = (variable: string): GcloudSettingOrigin => (env[variable] === undefined ? 'gcloud-config' : 'env');
+  return {
+    accountFromEnv: env['CLOUDSDK_CORE_ACCOUNT'] !== undefined,
+    accessTokenInEnv: nonEmptyString(env['CLOUDSDK_AUTH_ACCESS_TOKEN']) !== null,
+    impersonation: origin('CLOUDSDK_AUTH_IMPERSONATE_SERVICE_ACCOUNT'),
+    credentialFileOverride: origin('CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE'),
+    accessTokenFile: origin('CLOUDSDK_AUTH_ACCESS_TOKEN_FILE'),
+  };
+}
+
+/** Whether a pre-minted token decides gcloud's identity, so nothing below it
+ *  in gcloud's precedence (a credential file override, the active account)
+ *  is consulted — and must not be read or refreshed to describe it. */
+export function gcloudTokenWins(config: GcloudConfigValues, facts: GcloudEnvFacts): boolean {
+  return facts.accessTokenInEnv || config.accessTokenFile !== null;
+}
+
+/** gcloud's own `auth/impersonate_service_account`, with where it came from. */
+export function gcloudImpersonationSetting(config: GcloudConfigValues, facts: GcloudEnvFacts): GcpGcloudImpersonationSetting | null {
+  return config.impersonateServiceAccount === null
+    ? null
+    : { origin: facts.impersonation, target: config.impersonateServiceAccount, delegates: config.impersonationDelegates };
+}
+
 /** Who `gcloud storage rsync` authenticates as, from gcloud's effective
  *  config plus what the sync passes it. gcloud's precedence:
- *  `auth/access_token_file`, then a credential file override — the
- *  provider's `keyFile` (passed as `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`,
- *  so it beats gcloud's own `auth/credential_file_override`) — then the
- *  active account. Impersonation is applied on top: the provider's
+ *  `CLOUDSDK_AUTH_ACCESS_TOKEN`, `auth/access_token_file`, then a credential
+ *  file override — the provider's `keyFile` (passed as
+ *  `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`, so it beats gcloud's own
+ *  `auth/credential_file_override`) — then the active account.
+ *  Impersonation is applied on top: the provider's
  *  `impersonateServiceAccount` is passed as a flag and so beats gcloud's
- *  `auth/impersonate_service_account`. */
+ *  `auth/impersonate_service_account`; with neither, a credential file that
+ *  impersonates by itself does. */
 export function assembleDownloadIdentity(params: {
   readonly config: GcloudConfigValues;
   readonly configuration: string;
-  readonly accountFromEnv: boolean;
-  readonly providerKeyFile: { readonly path: string; readonly email: string | null } | null;
+  readonly facts: GcloudEnvFacts;
+  readonly providerKeyFile: { readonly path: string; readonly summary: CredentialFileSummary } | null;
   readonly providerTarget: string | null;
-  /** The email in gcloud's own `auth/credential_file_override`, when set. */
-  readonly overrideFileEmail: string | null;
+  /** gcloud's own `auth/credential_file_override`, described; null when
+   *  unset or not read (a token wins). */
+  readonly overrideFile: CredentialFileSummary | null;
 }): GcpDownloadIdentity {
-  const { config } = params;
+  const { config, facts } = params;
   let principal: GcpDownloadPrincipal;
-  if (config.accessTokenFile !== null) {
-    principal = { kind: 'access-token-file', path: config.accessTokenFile };
+  let fileImpersonates: string | null = null;
+  if (facts.accessTokenInEnv) {
+    principal = { kind: 'access-token' };
+  } else if (config.accessTokenFile !== null) {
+    principal = { kind: 'access-token-file', path: displayablePath(config.accessTokenFile, 'auth/access_token_file'), origin: facts.accessTokenFile };
   } else if (params.providerKeyFile !== null) {
-    principal = { kind: 'key-file', path: params.providerKeyFile.path, origin: 'provider', email: params.providerKeyFile.email };
+    principal = { kind: 'key-file', path: params.providerKeyFile.path, origin: 'provider', email: params.providerKeyFile.summary.email };
+    fileImpersonates = params.providerKeyFile.summary.impersonates;
   } else if (config.credentialFileOverride !== null) {
-    principal = { kind: 'key-file', path: config.credentialFileOverride, origin: 'gcloud-config', email: params.overrideFileEmail };
+    principal = {
+      kind: 'key-file',
+      path: displayablePath(config.credentialFileOverride, 'auth/credential_file_override'),
+      origin: facts.credentialFileOverride,
+      email: params.overrideFile?.email ?? null,
+    };
+    fileImpersonates = params.overrideFile?.impersonates ?? null;
   } else {
-    principal = { kind: 'account', account: config.account, fromEnv: params.accountFromEnv };
+    principal = { kind: 'account', account: config.account, fromEnv: facts.accountFromEnv };
   }
-  let impersonate: GcpDownloadImpersonation | null = null;
-  if (params.providerTarget !== null) impersonate = { target: params.providerTarget, origin: 'provider' };
-  else if (config.impersonateServiceAccount !== null) impersonate = { target: config.impersonateServiceAccount, origin: 'gcloud-config' };
+  let impersonate: GcpDownloadImpersonation | null = gcloudImpersonationSetting(config, facts);
+  if (params.providerTarget !== null) impersonate = { origin: 'provider', target: params.providerTarget };
+  else if (impersonate === null && fileImpersonates !== null && principal.kind === 'key-file') {
+    impersonate = { origin: 'credential-file', target: fileImpersonates, fileOrigin: principal.origin };
+  }
   return { kind: 'gcloud', principal, impersonate, configuration: params.configuration };
 }
 
@@ -420,19 +532,27 @@ function sourcePrincipal(source: GcpImpersonationSource): Principal {
   }
 }
 
-/** The principal behind listing — the human (or key) before any
- *  impersonation. For a provider's reader minted from a legacy impersonated
- *  ADC file, that is the login underneath the file. */
-function listingPrincipal(listing: GcpListingIdentity): Principal {
+/** Listing as two facts: the principal it authenticates as (the human or key
+ *  before any impersonation — for a reader minted from a legacy impersonated
+ *  ADC file, the login underneath it), and the service account it then
+ *  impersonates, if any. Null when listing is absent or unusable, so no
+ *  claim about it can be made. */
+interface ListingSide {
+  readonly file: GcpCredentialFile;
+  readonly principal: Principal;
+  readonly impersonates: string | null;
+}
+
+function listingSide(listing: GcpListingIdentity): ListingSide | null {
   switch (listing.kind) {
-    case 'user': return lookupPrincipal(listing.account);
-    case 'service-account': return { status: 'known', email: listing.email };
-    case 'impersonated': return sourcePrincipal(listing.source);
+    case 'user': return { file: listing.file, principal: lookupPrincipal(listing.account), impersonates: null };
+    case 'service-account': return { file: listing.file, principal: { status: 'known', email: listing.email }, impersonates: null };
+    case 'impersonated': return { file: listing.file, principal: sourcePrincipal(listing.source), impersonates: listing.target };
+    case 'external': return { file: listing.file, principal: { status: 'unknown' }, impersonates: listing.target };
     case 'not-signed-in':
     case 'unreadable':
-    case 'external':
     case 'unrecognized':
-      return { status: 'unknown' };
+      return null;
   }
 }
 
@@ -449,58 +569,74 @@ function listingKeyFile(listing: GcpListingIdentity): GcpCredentialFile | null {
   return null;
 }
 
-/** The service account listing ends up as; null when it uses its own
- *  identity directly; undefined when listing is absent or opaque, so no
- *  impersonation claim can be made. */
-function listingTarget(listing: GcpListingIdentity): string | null | undefined {
-  switch (listing.kind) {
-    case 'impersonated': return listing.target;
-    case 'external': return listing.target;
-    case 'user': return null;
-    case 'service-account': return null;
-    case 'not-signed-in':
-    case 'unreadable':
-    case 'unrecognized':
-      return undefined;
-  }
-}
-
 function downloadAccount(principal: GcpDownloadPrincipal): string | null {
   switch (principal.kind) {
     case 'account': return principal.account;
     case 'key-file': return principal.email;
-    case 'access-token-file': return null;
+    case 'access-token-file':
+    case 'access-token':
+      return null;
   }
 }
 
-function samePrincipal(a: string, b: string): boolean {
-  return a.toLowerCase() === b.toLowerCase();
+/** Whether naming `target` as the provider's reader would settle a
+ *  disagreement. Never offered to a key-file provider (the two are
+ *  exclusive), for a delegation chain (a reader is one account), for an
+ *  address a provider cannot name, or when gcloud already IS the target —
+ *  the flag would make it impersonate itself. */
+function readerAdvice(
+  side: ListingSide,
+  target: string,
+  chain: GcpGcloudImpersonation | null,
+  downloadPrincipal: GcpDownloadPrincipal,
+): GcpReaderAdvice {
+  if (side.file.origin === 'key-file') return { kind: 'key-file-provider' };
+  if (chain !== null && chain.origin !== 'credential-file' && chain.delegates.length > 0) {
+    return { kind: 'delegation-chain', target, delegates: chain.delegates };
+  }
+  if (!isServiceAccountEmail(target)) return { kind: 'not-a-reader', target };
+  const gcloudIs = downloadAccount(downloadPrincipal);
+  if (gcloudIs !== null && samePrincipal(gcloudIs, target)) return { kind: 'download-is-target', target };
+  return { kind: 'set-reader', target };
 }
 
-/** The impersonation half: whether listing and downloads end up as the same
- *  service account. Only gcloud's own `auth/impersonate_service_account` can
- *  disagree with listing — a provider's `impersonateServiceAccount` drives
- *  BOTH halves (`applyProviderImpersonation` and the download flag), so a
- *  provider-origin download impersonation always matches a listing built
- *  for that provider, and is never reported. */
-function impersonationWarning(listing: GcpListingIdentity, download: GcpDownloadImpersonation | null): GcpIdentityWarning | null {
-  const fromListing = listingTarget(listing);
-  if (fromListing === undefined) return null;
-  if (download === null) {
-    return fromListing === null ? null : { kind: 'download-not-impersonated', listingTarget: fromListing };
+/** The impersonation half, compared by EFFECTIVE identity — the account each
+ *  half ends up as (its impersonation target, else its principal) — so a
+ *  half that already IS the other's target is not reported. Only an
+ *  impersonation the provider did not ask for can disagree with listing: a
+ *  provider's `impersonateServiceAccount` drives BOTH halves
+ *  (`applyProviderImpersonation` and the download flag), so a
+ *  provider-origin download impersonation always matches a listing built for
+ *  that provider, and is never reported. */
+function impersonationWarning(
+  listing: GcpListingIdentity,
+  download: Extract<GcpDownloadIdentity, { readonly kind: 'gcloud' }>,
+): GcpIdentityWarning | null {
+  const side = listingSide(listing);
+  if (side === null) return null;
+  const gcloud = download.impersonate;
+  if (gcloud?.origin === 'provider') return null;
+  const gcloudIs = downloadAccount(download.principal);
+  if (gcloud === null) {
+    if (side.impersonates === null) return null;
+    if (gcloudIs !== null && samePrincipal(gcloudIs, side.impersonates)) return null;
+    return {
+      kind: 'download-not-impersonated',
+      listingTarget: side.impersonates,
+      advice: readerAdvice(side, side.impersonates, null, download.principal),
+    };
   }
-  if (download.origin === 'provider') return null;
-  if (fromListing === null) {
-    return { kind: 'listing-not-impersonated', gcloudTarget: download.target, listingFromKeyFile: listing.kind === 'service-account' && listing.file.origin === 'key-file' };
+  if (side.impersonates === null) {
+    if (side.principal.status === 'known' && samePrincipal(side.principal.email, gcloud.target)) return null;
+    return { kind: 'listing-not-impersonated', gcloud, advice: readerAdvice(side, gcloud.target, gcloud, download.principal) };
   }
-  return samePrincipal(fromListing, download.target) ? null : { kind: 'target-mismatch', listingTarget: fromListing, gcloudTarget: download.target };
-}
-
-/** The service account both halves impersonate, when it is the same one. */
-function sharedTarget(listing: GcpListingIdentity, download: GcpDownloadImpersonation | null): string | null {
-  const fromListing = listingTarget(listing);
-  if (fromListing === null || fromListing === undefined || download === null) return null;
-  return samePrincipal(fromListing, download.target) ? download.target : null;
+  if (samePrincipal(side.impersonates, gcloud.target)) return null;
+  return {
+    kind: 'target-mismatch',
+    listingTarget: side.impersonates,
+    gcloud,
+    advice: readerAdvice(side, side.impersonates, null, download.principal),
+  };
 }
 
 /** Every disagreement between the two credential paths: the impersonation
@@ -510,20 +646,28 @@ export function gcpIdentityWarnings(listing: GcpListingIdentity, download: GcpDo
   if (download.kind !== 'gcloud') return [];
   const warnings: GcpIdentityWarning[] = [];
 
-  const impersonation = impersonationWarning(listing, download.impersonate);
+  const impersonation = impersonationWarning(listing, download);
   if (impersonation !== null) warnings.push(impersonation);
 
-  const listingWho = listingPrincipal(listing);
+  const side = listingSide(listing);
   const downloadWho = downloadAccount(download.principal);
-  if (listingWho.status === 'known' && downloadWho !== null && !samePrincipal(listingWho.email, downloadWho)) {
-    warnings.push({
-      kind: 'split-accounts',
-      listingAccount: listingWho.email,
-      downloadAccount: downloadWho,
-      listingKeyFile: listingKeyFile(listing),
-      downloadAccountFromEnv: download.principal.kind === 'account' && download.principal.fromEnv,
-      sharedTarget: sharedTarget(listing, download.impersonate),
-    });
+  if (side?.principal.status === 'known' && downloadWho !== null && !samePrincipal(side.principal.email, downloadWho)) {
+    const listingEnd = side.impersonates ?? side.principal.email;
+    const downloadEnd = download.impersonate?.target ?? downloadWho;
+    const sameEnd = samePrincipal(listingEnd, downloadEnd);
+    const bothMint = side.impersonates !== null && download.impersonate !== null;
+    // Ending as the same account with only one half minting it is one
+    // identity reached two ways — nothing to reconcile.
+    if (!sameEnd || bothMint) {
+      warnings.push({
+        kind: 'split-accounts',
+        listingAccount: side.principal.email,
+        downloadAccount: downloadWho,
+        listingKeyFile: listingKeyFile(listing),
+        downloadPrincipal: download.principal,
+        sharedTarget: sameEnd ? downloadEnd : null,
+      });
+    }
   }
   return warnings;
 }
@@ -531,17 +675,44 @@ export function gcpIdentityWarnings(listing: GcpListingIdentity, download: GcpDo
 /** What the panel cannot verify but should point out. Today one case: the
  *  human behind listing is `not-recorded` (the login inside a legacy
  *  impersonated ADC file — used as it is, or unwrapped to mint a provider's
- *  reader), so
- *  whether gcloud's active account is the same person — the check
- *  `split-accounts` makes when it can — is left to the user, with the
+ *  reader), so whether gcloud's active account is the same person — the
+ *  check `split-accounts` makes when it can — is left to the user, with the
  *  account to compare against. Not raised for an expired or unreachable
  *  lookup: the listing row already says that, and its remedy comes first. */
 export function gcpIdentityNotes(listing: GcpListingIdentity, download: GcpDownloadIdentity): GcpIdentityNote[] {
   if (download.kind !== 'gcloud' || download.principal.kind !== 'account' || download.principal.account === null) return [];
-  if (listingPrincipal(listing).status !== 'unrecorded') return [];
+  if (listingSide(listing)?.principal.status !== 'unrecorded') return [];
   return [{
     kind: 'listing-account-unrecorded',
     downloadAccount: download.principal.account,
     downloadTarget: download.impersonate?.target ?? null,
   }];
+}
+
+/** The provider fields that decide how a provider lists. */
+export interface GcpProviderCredentialOptions {
+  readonly keyFile?: string | undefined;
+  readonly impersonateServiceAccount?: string | undefined;
+}
+
+/** The impersonation the app's ADC Sign in button must keep, as the
+ *  `--impersonate-service-account` value — or null for a plain sign-in.
+ *
+ *  A provider with neither a reader nor a key file lists through ADC as it
+ *  is. When ADC is a legacy impersonated file, that provider reads as the
+ *  file's service account; a plain sign-in would silently widen it to the
+ *  user's own access. So while any such provider exists, signing in again
+ *  re-creates the same impersonation (delegation chain included). Once every
+ *  provider names its reader, the plain sign-in is safe. Only well-formed
+ *  service-account addresses are passed on: the value becomes an argv
+ *  entry. */
+export function adcLoginImpersonationToKeep(
+  adcContent: unknown,
+  providers: readonly GcpProviderCredentialOptions[],
+): string | null {
+  const legacy = classifyImpersonatedAdc(adcContent);
+  if (legacy.kind !== 'impersonated') return null;
+  if (!providers.some(p => p.impersonateServiceAccount === undefined && p.keyFile === undefined)) return null;
+  const chain = [...legacy.delegates, legacy.target];
+  return chain.every(isServiceAccountEmail) ? chain.join(',') : null;
 }

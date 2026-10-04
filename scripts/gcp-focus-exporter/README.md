@@ -556,10 +556,14 @@ read as their own. Grant yourself `roles/iam.serviceAccountTokenCreator` on
 each reader.
 
 > Set up before this changed, with `application-default login
-> --impersonate-service-account=…`? Nothing to redo: CostGoblin mints every
-> provider's reader from *your* login underneath that file, so a second
-> provider with a different reader works too. The app's **Sign in** button
-> rewrites ADC as the plain login the next time you use it.
+> --impersonate-service-account=…`? Providers that name their reader
+> (`impersonateServiceAccount`) work immediately: CostGoblin mints each one from
+> *your* login underneath that file, so a second provider with a different
+> reader works too. A provider *without* one keeps reading as that file's
+> service account — and since a plain sign-in would widen it to your own
+> access, the app's **Sign in** button keeps that impersonation until every
+> provider names its reader. Add `impersonateServiceAccount` to each provider
+> in `costgoblin.yaml`; the next sign-in is then the plain login.
 
 Two limits apply even then, so weigh them before telling an approver the app is
 confined to the bucket:
@@ -606,7 +610,8 @@ signed in as a different account.)
 The panel is read-only. It reads the credential files and runs
 `gcloud config list`. To name the account behind ADC it asks Google — one
 token refresh, plus a tokeninfo call when the refresh doesn't say. It displays
-and stores no token, and every remedy it offers is a command for you to run.
+and stores no token, and every remedy it offers is a command for you to run or
+a config change for you to make.
 It warns, in plain words, when:
 
 - **downloads and listing start from two different accounts**. The common
@@ -621,15 +626,27 @@ It warns, in plain words, when:
   listing doesn't), and ADC left over from an
   `application-default login --impersonate-service-account` (listing
   impersonates, downloads bypass it). The fix is the same either way: set
-  `impersonateServiceAccount` on the provider — the wizard's field, or the
-  config — and both halves impersonate it. A provider *with* a reader never
-  raises these.
+  `impersonateServiceAccount` on the provider in `costgoblin.yaml` (or the
+  wizard's field when adding a provider) and both halves impersonate it. A
+  provider *with* a reader never raises these. The panel doesn't suggest a
+  reader where one can't help: for a `keyFile` provider (the two are
+  exclusive), for a delegation chain, or when a half already runs as that
+  account itself — and it stays quiet when both halves end up as the same
+  account by different routes.
 
 If `GOOGLE_APPLICATION_CREDENTIALS` names the ADC file, or `CLOUDSDK_CONFIG`
 makes gcloud write its sign-ins somewhere the SDK doesn't read, the panel says
 so: running `gcloud auth application-default login` would not change what
 CostGoblin uses. Every sign-in remedy is that plain login — never with
-`--impersonate-service-account`.
+`--impersonate-service-account` — typed as
+`CLOUDSDK_AUTH_IMPERSONATE_SERVICE_ACCOUNT= gcloud auth application-default login`
+when gcloud's own `auth/impersonate_service_account` is set (a terminal sign-in
+honours that setting otherwise). One exception: for a provider with no reader
+that still reads through an older impersonated sign-in, the panel first asks
+you to add that service account as the provider's `impersonateServiceAccount`,
+so signing in again cannot widen its access. A setting that comes from a
+`CLOUDSDK_*` variable in CostGoblin's environment is undone by unsetting the
+variable, not with `gcloud config unset`, and the panel says which.
 
 One limit: ADC from the older `--impersonate-service-account` login doesn't
 record which account signed it in — gcloud mints its source credential with
@@ -639,7 +656,8 @@ instead of the first warning above it shows a note naming gcloud's active
 account: that should be the one you signed in with, and it also needs Token
 Creator on the service account the downloads impersonate. Signing in again
 with the plain `gcloud auth application-default login` records the account,
-and the check runs automatically.
+and the check runs automatically (for a provider without a reader, name its
+reader first, as above).
 
 Press **Re-check** after changing either sign-in.
 
