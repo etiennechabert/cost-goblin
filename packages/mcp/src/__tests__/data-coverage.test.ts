@@ -54,6 +54,7 @@ function ctxWith(config: CostGoblinConfig, latestDay: string | null): McpContext
     getOrgAccountsPath: stub,
     materializedBase: { getSource: () => undefined },
     warmup: () => Promise.resolve(),
+    now: () => Date.now(),
   };
 }
 
@@ -92,6 +93,12 @@ describe('computeDataCoverage — multi-provider', () => {
     const coverage = await computeDataCoverage(ctxWith(firstProviderEmpty, '2026-07-15'));
     expect(coverage.availableMonths.length).toBeGreaterThan(0);
     expect(coverage.availableMonths).toContain('2026-07');
+  });
+
+  it('measures the data lag from the injected clock, not Date', async () => {
+    const pinned: McpContext = { ...ctxWith(TWO_PROVIDERS, '2026-07-15'), now: () => Date.UTC(2026, 6, 20, 12) };
+    const coverage = await computeDataCoverage(pinned);
+    expect(coverage.lagDays).toBe(5);
   });
 
   it('flags the missing interior month across the union', async () => {

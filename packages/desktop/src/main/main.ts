@@ -4,7 +4,7 @@ import { Session } from 'node:inspector';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { logger, parseJsonObject, isStringRecord, parseTelemetryPreferences, parseUpdatePreferences, sqlEscapeString } from '@costgoblin/core';
+import { clockFromEnv, logger, parseFixedNow, parseJsonObject, isStringRecord, parseTelemetryPreferences, parseUpdatePreferences, sqlEscapeString } from '@costgoblin/core';
 import { telemetry } from './telemetry/controller.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -51,6 +51,14 @@ if (envLevel === 'debug' || envLevel === 'info' || envLevel === 'warn' || envLev
 } else if (isDev) {
   logger.setLevel('debug');
 }
+
+// COSTGOBLIN_NOW (e2e, the homepage screenshot script) pins "today" for every
+// calendar window the IPC handlers compute: default query ranges, previews,
+// baselines, retention. The preload pins the renderer's Date from the same
+// variable with the same parser, so both processes see one date. Parsed once.
+const appClock = clockFromEnv(process.env['COSTGOBLIN_NOW']);
+const pinnedNowMs = parseFixedNow(process.env['COSTGOBLIN_NOW']);
+if (pinnedNowMs !== null) logger.info(`COSTGOBLIN_NOW pins the app clock to ${new Date(pinnedNowMs).toISOString()}`);
 
 /**
  * Format a LogEntry for stdout. Short fields go on the header line
@@ -185,6 +193,7 @@ async function createWindow(db: DuckDBClient, syncClient: SyncClient, rollupConc
     stateDir: wsEnv.stateDir,
     workspaceEnv: wsEnv,
     duckdbWorkerPath: DUCKDB_WORKER_PATH,
+    now: appClock,
   });
 
   // Apply the persisted rollup-build-parallelism override (perf:set updates it

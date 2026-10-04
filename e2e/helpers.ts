@@ -1,4 +1,4 @@
-import { expect, _electron, type ElectronApplication, type Page } from '@playwright/test';
+import { expect, _electron, type ElectronApplication, type Locator, type Page } from '@playwright/test';
 import { join } from 'node:path';
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -60,7 +60,10 @@ export const HEADLESS = process.env['COSTGOBLIN_HEADLESS'] === '0' ? '0' : '1';
 /** "Today" for every app launched by `launchApp`: the day after the fixture
  *  window (generate.ts pins 2026-01-01..2026-03-01), so relative presets like
  *  "Last 30 days" resolve to dates that actually hold fixture data. The app
- *  honours it via COSTGOBLIN_NOW (see packages/desktop/src/renderer/fake-clock.ts). */
+ *  honours it via COSTGOBLIN_NOW in both processes: the renderer's Date is
+ *  patched (packages/desktop/src/renderer/fake-clock.ts) and the main process
+ *  hands handlers a pinned clock (IpcContext.now), so main-computed windows
+ *  (Cost Scope preview, tag discovery, baselines, retention) hold it too. */
 export const FIXTURE_NOW = '2026-03-02T12:00:00Z';
 
 // Per-launch temp root, keyed by the app it was created for, so closeApp can
@@ -427,23 +430,20 @@ export async function waitForQuerySettle(page: Page): Promise<void> {
   await assertNoReactCrash(page);
 }
 
-/** Wait for the Cost Scope preview to finish its debounced first load. The
- *  preview effect debounces 300ms and then runs several IPC queries
- *  serially (per-rule + totals + daily + sample + count). Polling for the
- *  in-header "loading…" marker to disappear is the only reliable settle
- *  signal — waitForQuerySettle's generic "Loading" check doesn't fire here
- *  because the preview uses its own marker to stay scoped to this view. */
+/** The Cost Scope preview histogram's day bars (title "<date>\nkept: …").
+ *  Scoped to the visible card: at lg+ the preview renders twice (a hidden
+ *  mobile copy plus the sticky aside). */
+export function costScopePreviewBars(page: Page): Locator {
+  return page.getByTestId('cost-scope-preview').filter({ visible: true }).locator('div[title*="kept:"]');
+}
+
+/** Wait for the Cost Scope preview's debounced first load to paint fixture
+ *  data. The main process computes the preview window from the pinned clock,
+ *  so it always covers fixture days: an empty preview fails here rather than
+ *  passing as "settled". */
 export async function waitForCostScopePreview(page: Page): Promise<void> {
-  // The marker only appears once the first debounce fires (~300ms). Give
-  // it a little room to show up before checking for its disappearance.
-  await page.waitForTimeout(400);
-  const marker = page.getByTestId('preview-loading');
-  try {
-    await expect(marker).toBeHidden({ timeout: LOAD_TIMEOUT });
-  } catch {
-    // Marker may have finished before we attached the locator; that's fine.
-  }
-  await page.waitForTimeout(200);
+  await expect(costScopePreviewBars(page).first()).toBeVisible({ timeout: LOAD_TIMEOUT });
+  await expect(page.getByTestId('preview-loading')).toHaveCount(0, { timeout: LOAD_TIMEOUT });
   await assertNoReactCrash(page);
 }
 

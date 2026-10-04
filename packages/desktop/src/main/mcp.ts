@@ -29,6 +29,7 @@ function adaptAppContext(app: AppContext, mcpDb: DuckDBClient): McpContext {
     // they always read raw. (McpContext wants a structural getSource provider.)
     materializedBase: { getSource: () => undefined },
     warmup: () => Promise.resolve(),
+    now: app.ctx.now,
   };
 }
 

@@ -39,7 +39,7 @@ export async function getFilterValues(
   const dimensionId = params.dimensionId;
   const dateRange: DateRange = params.dateRange !== undefined
     ? toDateRange(params.dateRange)
-    : defaultDateRange();
+    : defaultDateRange(ctx.now());
   const limit = params.limit ?? 50;
 
   const dimensions = await ctx.getQueryDimensions();

@@ -27,7 +27,7 @@ export async function getCostOverview(
   const format = resolveFormat(params.format);
   const dateRange: DateRange = params.dateRange !== undefined
     ? toDateRange(params.dateRange)
-    : defaultDateRange();
+    : defaultDateRange(ctx.now());
 
   const allProviders = await getQueryProviders(ctx, 'daily');
   const anyData = allProviders.some(p => (p.availablePeriods ?? []).length > 0);

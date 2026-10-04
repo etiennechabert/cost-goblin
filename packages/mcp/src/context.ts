@@ -1,4 +1,5 @@
 import type {
+  Clock,
   CostGoblinConfig,
   CostScopeConfig,
   DimensionsConfig,
@@ -21,4 +22,7 @@ export interface McpContext {
   readonly getOrgAccountsPath: () => Promise<string | undefined>;
   readonly materializedBase: { getSource(dateRange: { readonly start: string; readonly end: string }, tier: string): string | undefined };
   readonly warmup: () => Promise<void>;
+  /** The host app's clock: default date ranges and the data-lag figure anchor
+   *  on it (pinned by COSTGOBLIN_NOW in e2e). Session timeouts keep Date. */
+  readonly now: Clock;
 }

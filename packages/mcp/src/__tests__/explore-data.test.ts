@@ -76,6 +76,7 @@ describe('explore_data', () => {
       getOrgAccountsPath: () => Promise.resolve(undefined),
       materializedBase: { getSource: () => undefined },
       warmup: () => Promise.resolve(),
+      now: () => Date.now(),
     };
   });
 
