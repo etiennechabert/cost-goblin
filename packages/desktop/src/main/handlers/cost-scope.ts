@@ -1,5 +1,4 @@
 import { ipcMain, shell } from 'electron';
-import { writeFile } from 'node:fs/promises';
 import { stringify } from 'yaml';
 import {
   DEFAULT_COST_SCOPE,
@@ -11,8 +10,10 @@ import {
   buildSource,
   buildRuleMatchExpr,
   computePeriodsInRange,
+  hasErrnoCode,
   logger,
   tagDimColumn,
+  writeFileAtomic,
 } from '@costgoblin/core';
 import type {
   CostScopeConfig,
@@ -87,12 +88,6 @@ function assertRuleDimensionsExist(config: CostScopeConfig, dimensions: Dimensio
   }
 }
 
-function isEnoent(err: unknown): boolean {
-  if (typeof err !== 'object' || err === null) return false;
-  if (!('code' in err)) return false;
-  return err.code === 'ENOENT';
-}
-
 export function registerCostScopeHandlers(app: AppContext): void {
   const { ctx, getCostScope, invalidateCostScope, getQueryDimensions, getOrgAccountsPath, getQueryProviders, runQuery } = app;
 
@@ -103,8 +98,8 @@ export function registerCostScopeHandlers(app: AppContext): void {
       // Seed the file only when it's missing. Validation / YAML errors bubble
       // up to the UI so the user can fix their hand-edit — silently
       // overwriting would destroy their custom rules.
-      if (!isEnoent(err)) throw err;
-      await writeFile(ctx.costScopePath, stringify(costScopeToYaml(DEFAULT_COST_SCOPE)));
+      if (!hasErrnoCode(err, ['ENOENT'])) throw err;
+      await writeFileAtomic(ctx.costScopePath, stringify(costScopeToYaml(DEFAULT_COST_SCOPE)));
       invalidateCostScope();
       return DEFAULT_COST_SCOPE;
     }
@@ -114,7 +109,7 @@ export function registerCostScopeHandlers(app: AppContext): void {
     const dimensions = await getQueryDimensions();
     const validated = validateCostScope(raw, dimensionIdSet(dimensions));
     assertRuleDimensionsExist(validated, dimensions);
-    await writeFile(ctx.costScopePath, stringify(costScopeToYaml(validated)));
+    await writeFileAtomic(ctx.costScopePath, stringify(costScopeToYaml(validated)));
     invalidateCostScope();
   });
 

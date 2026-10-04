@@ -3,13 +3,16 @@ import {
   buildConfigBundle,
   bundleConfigWithProfile,
   bundleSectionIds,
-  loadConfig,
   costGoblinConfigToYaml,
   costScopeToYaml,
   dimensionsConfigToYaml,
   orgTreeToYaml,
   parseConfigBundle,
+  pathExists,
+  readTextIfExists,
+  validateConfig,
   viewsConfigToYaml,
+  writeFileAtomic,
 } from '@costgoblin/core';
 import type { BundleSectionId, ConfigBundle, ConfigBundleSections, ProviderConfig } from '@costgoblin/core';
 import type { AppContext } from './context.js';
@@ -46,12 +49,10 @@ export async function backupExistingConfig(ctx: ConfigFilePaths): Promise<string
   const candidates = [ctx.configPath, ctx.dimensionsPath, ctx.orgTreePath, ctx.costScopePath, ctx.viewsPath];
   const existing: string[] = [];
   for (const file of candidates) {
-    try {
-      await fs.access(file);
-      existing.push(file);
-    } catch {
-      // not present — nothing to back up
-    }
+    // Only a missing file has nothing to back up: one that merely can't be
+    // checked throws (pathExists), failing the import before it overwrites
+    // a file with no copy made.
+    if (await pathExists(file)) existing.push(file);
   }
   if (existing.length === 0) return null;
   const stamp = new Date().toISOString().replaceAll(':', '-');
@@ -74,10 +75,20 @@ export interface AppliedBundle {
  *  chosen AWS profile is injected into every provider. Does NOT clear caches —
  *  the caller decides when. */
 /** The providers currently on disk, or none when there is no config yet (a
- *  first-run import). Never throws: a config too broken to parse must not
- *  block the import that is probably meant to replace it. */
+ *  first-run import). A config too broken to parse or validate reads as none
+ *  too: it must not block the import that is probably meant to replace it
+ *  (and it has just been backed up). One that can't be READ throws — transient
+ *  errors are retried first — rather than drop the credentials of providers
+ *  that are intact on disk. */
 async function readExistingProviders(ctx: ConfigFilePaths): Promise<readonly ProviderConfig[]> {
-  return loadConfig(ctx.configPath).then(c => c.providers).catch(() => []);
+  const text = await readTextIfExists(ctx.configPath);
+  if (text === null) return [];
+  const { parse } = await import('yaml');
+  try {
+    return validateConfig(parse(text)).providers;
+  } catch {
+    return [];
+  }
 }
 
 export async function applyBundleSectionsToDisk(ctx: ConfigFilePaths, content: string, profile: string): Promise<AppliedBundle> {
@@ -95,16 +106,16 @@ export async function applyBundleSectionsToDisk(ctx: ConfigFilePaths, content: s
   // keyFile / impersonateServiceAccount have to be carried across by name.
   const existingProviders = await readExistingProviders(ctx);
   const config = bundleConfigWithProfile(sections.config, profile, existingProviders);
-  await fs.writeFile(ctx.configPath, stringify(costGoblinConfigToYaml(config)), 'utf-8');
-  await fs.writeFile(ctx.dimensionsPath, stringify(dimensionsConfigToYaml(sections.dimensions)), 'utf-8');
+  await writeFileAtomic(ctx.configPath, stringify(costGoblinConfigToYaml(config)));
+  await writeFileAtomic(ctx.dimensionsPath, stringify(dimensionsConfigToYaml(sections.dimensions)));
   if (sections.orgTree !== undefined) {
-    await fs.writeFile(ctx.orgTreePath, stringify(orgTreeToYaml(sections.orgTree)), 'utf-8');
+    await writeFileAtomic(ctx.orgTreePath, stringify(orgTreeToYaml(sections.orgTree)));
   }
   if (sections.costScope !== undefined) {
-    await fs.writeFile(ctx.costScopePath, stringify(costScopeToYaml(sections.costScope)), 'utf-8');
+    await writeFileAtomic(ctx.costScopePath, stringify(costScopeToYaml(sections.costScope)));
   }
   if (sections.views !== undefined) {
-    await fs.writeFile(ctx.viewsPath, stringify(viewsConfigToYaml(sections.views)), 'utf-8');
+    await writeFileAtomic(ctx.viewsPath, stringify(viewsConfigToYaml(sections.views)));
   }
 
   return { sections, sectionIds: bundleSectionIds(sections), backupDir };

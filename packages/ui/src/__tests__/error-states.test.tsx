@@ -267,6 +267,34 @@ describe('ViewsEditor error states', () => {
       expect(screen.getByText('Config file corrupted')).toBeDefined();
     });
   });
+
+  it('cannot write over views.yaml after its load failed', async () => {
+    // The editor holds an empty config then: saving, resetting the built-ins
+    // or importing would replace every dashboard in the file it couldn't read.
+    const api = new MockCostApi();
+    vi.spyOn(api, 'getViewsConfig').mockRejectedValue(new Error('views.yaml: bad indentation'));
+    const save = vi.spyOn(api, 'saveViewsConfig');
+    const confirm = vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+    render(
+      <CostApiProvider value={api}>
+        <ViewsEditor />
+      </CostApiProvider>,
+    );
+    await waitFor(() => {
+      expect(screen.getByText('views.yaml: bad indentation')).toBeDefined();
+    });
+
+    fireEvent.click(screen.getByText('+ New view'));
+    fireEvent.click(screen.getByText('Reset built-ins'));
+    fireEvent.click(screen.getByText('Save changes'));
+
+    expect(screen.getByText('Reset built-ins').closest('button')?.disabled).toBe(true);
+    expect(screen.getByText('Import').closest('button')?.disabled).toBe(true);
+    expect(screen.getByText('Save changes').closest('button')?.disabled).toBe(true);
+    await Promise.resolve();
+    expect(save).not.toHaveBeenCalled();
+    confirm.mockRestore();
+  });
 });
 
 // ---------------------------------------------------------------------------

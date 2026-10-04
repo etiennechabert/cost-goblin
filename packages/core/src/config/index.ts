@@ -1,11 +1,11 @@
-export { loadConfig, loadDimensions, loadOrgTree, loadViews, loadCostScope } from './loader.js';
+export { loadConfig, loadDimensions, loadOrgTree, loadViews, loadCostScope, readYamlMappingIfExists } from './loader.js';
 export { validateConfig, validateDimensions, validateOrgTree, ConfigValidationError, assertObject, assertArray, assertString, assertNumber, hasControlChar } from './validator.js';
 export type { StripPatternLimitMode, ValidateDimensionsOptions } from './validator.js';
 export { MAX_NAME_STRIP_PATTERNS, MAX_NAME_STRIP_PATTERN_LENGTH, nameStripPatternViolations } from './strip-pattern-limits.js';
 export { validateViews } from './views-validator.js';
 export { LEGACY_DIMENSION_ID_RENAMES, dimensionIdSet, migrateLegacyDimensionId } from './legacy-renames.js';
 export { validateCostScope } from './cost-scope-validator.js';
-export { validateBaselines } from './baselines-validator.js';
+export { BASELINES_STATE_VERSION, createBaselineValidator, validateBaselines } from './baselines-validator.js';
 export { widgetToYaml, viewToYaml, viewsConfigToYaml } from './views-serialize.js';
 export { costScopeToYaml } from './cost-scope-serialize.js';
 export { baselineSpecToYaml, baselinesToYaml } from './baselines-serialize.js';

@@ -1,26 +1,25 @@
-import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   asDateString,
   asDollars,
+  BASELINES_STATE_VERSION,
   computeBands,
   computeCurrent,
   computeSavings,
+  createBaselineValidator,
   deriveStatus,
   effectiveBands,
+  parseJsonObjectFile,
+  readTextIfExists,
   runRateSeries,
 } from '@costgoblin/core';
-import type { BaselineDailyPoint, BaselineStatus, ManualBand } from '@costgoblin/core';
+import type { BaselineDailyPoint, BaselineScope, BaselineSpec, BaselineStatus } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
 import type { Cell, Column, MetaField, StructuredResult } from '../formatters/result.js';
 import { resolveFormat, structuredToolResult, toolResult } from './tool-helpers.js';
 
-interface Spec {
-  readonly id: string;
-  readonly name: string | undefined;
-  readonly source: string;
+interface Spec extends BaselineSpec {
   readonly scopeLabel: string;
-  readonly manualBand: ManualBand | undefined;
 }
 
 interface Derived extends Spec {
@@ -55,26 +54,13 @@ function envNum(key: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
-function scopeLabel(scope: unknown): string {
-  if (!isRecord(scope)) return 'All';
-  if (scope['kind'] === 'view') return `View: ${str(scope['viewId'])}`;
-  if (!isRecord(scope['filters'])) return 'All';
+function scopeLabel(scope: BaselineScope): string {
+  if (scope.kind === 'view') return `View: ${scope.viewId}`;
   const parts: string[] = [];
-  for (const [dim, vals] of Object.entries(scope['filters'])) {
-    if (Array.isArray(vals)) parts.push(`${dim}=${vals.map(String).join(',')}`);
+  for (const [dim, vals] of Object.entries(scope.filters)) {
+    if (vals !== undefined) parts.push(`${dim}=${vals.join(',')}`);
   }
   return parts.join(' · ') || 'All';
-}
-
-function parseManualBand(v: unknown): ManualBand | undefined {
-  if (!isRecord(v)) return undefined;
-  const mode = v['mode'];
-  if (mode !== 'absolute' && mode !== 'percentile') return undefined;
-  return {
-    mode,
-    ...(typeof v['lower'] === 'number' ? { lower: v['lower'] } : {}),
-    ...(typeof v['upper'] === 'number' ? { upper: v['upper'] } : {}),
-  };
 }
 
 /** Band config: persisted user override wins, else the same env-configurable
@@ -91,18 +77,19 @@ function parseBandConfig(config: unknown): { lowerPct: number; upperPct: number;
   return { lowerPct, upperPct, windowDays };
 }
 
-function parseSpecs(baselines: unknown): Spec[] {
+/** The specs the desktop app shows: entries keyed by id (a later duplicate
+ *  replaces an earlier one), then only those that validate against today's
+ *  dimensions. The rest are hidden there — kept in the file until they
+ *  validate again — so they are hidden here too. */
+function parseSpecs(entries: readonly unknown[], validate: (raw: unknown) => BaselineSpec | null): Spec[] {
+  const byId = new Map<string, unknown>();
+  for (const entry of entries) {
+    if (isRecord(entry) && typeof entry['id'] === 'string') byId.set(entry['id'], entry);
+  }
   const specs: Spec[] = [];
-  if (!Array.isArray(baselines)) return specs;
-  for (const s of baselines) {
-    if (!isRecord(s)) continue;
-    specs.push({
-      id: str(s['id']),
-      name: typeof s['name'] === 'string' ? s['name'] : undefined,
-      source: str(s['source']) || 'discovered',
-      scopeLabel: scopeLabel(s['scope']),
-      manualBand: parseManualBand(s['manualBand']),
-    });
+  for (const entry of byId.values()) {
+    const spec = validate(entry);
+    if (spec !== null) specs.push({ ...spec, scopeLabel: scopeLabel(spec.scope) });
   }
   return specs;
 }
@@ -126,19 +113,41 @@ function parseSnapshots(snapshotsRaw: unknown): Map<string, readonly Record<stri
   return snapshots;
 }
 
+/** One of the baselines state files, {} only when it doesn't exist yet. A read
+ *  failure (transient ones are retried) or a file from a newer format throws —
+ *  the desktop refuses those too — so the tool reports an error rather than a
+ *  misread. A file that isn't a JSON object is one the desktop sets aside on
+ *  its next load: an error for the specs, but only a lost trend for the
+ *  history file, whose specs the desktop still shows. */
+async function readStateFile(path: string, unparseable: 'error' | 'empty'): Promise<Readonly<Record<string, unknown>>> {
+  const text = await readTextIfExists(path);
+  if (text === null) return {};
+  const doc = parseJsonObjectFile(text);
+  if (doc === null) {
+    if (unparseable === 'empty') return {};
+    throw new Error(`${path} is unreadable`);
+  }
+  const version = doc['version'];
+  if (typeof version === 'number' && version > BASELINES_STATE_VERSION) {
+    throw new Error(`${path} was written by a newer version of CostGoblin (format ${String(version)})`);
+  }
+  return doc;
+}
+
 async function load(ctx: McpContext): Promise<Loaded> {
   const base = ctx.stateDir;
-  let specsRaw: unknown;
-  let dataRaw: unknown;
-  try { specsRaw = JSON.parse(await readFile(join(base, 'baselines.json'), 'utf-8')); } catch { specsRaw = {}; }
-  try { dataRaw = JSON.parse(await readFile(join(base, 'baselines-data.json'), 'utf-8')); } catch { dataRaw = {}; }
-
   // The two state files' top-level layout is narrowed HERE, once — the parsers
   // below receive only the slice they own.
-  const specsRoot = isRecord(specsRaw) ? specsRaw : {};
-  const dataRoot = isRecord(dataRaw) ? dataRaw : {};
+  const [specsRoot, dataRoot] = await Promise.all([
+    readStateFile(join(base, 'baselines.json'), 'error'),
+    readStateFile(join(base, 'baselines-data.json'), 'empty'),
+  ]);
+  const entries: readonly unknown[] = Array.isArray(specsRoot['baselines']) ? specsRoot['baselines'] : [];
+  // Dimensions only once there is something to validate, as in the desktop
+  // store: a broken dimensions config must not fail a tool with nothing to list.
+  const specs = entries.length === 0 ? [] : parseSpecs(entries, createBaselineValidator(await ctx.getQueryDimensions()));
   return {
-    specs: parseSpecs(specsRoot['baselines']),
+    specs,
     history: parseHistory(dataRoot['history']),
     snapshots: parseSnapshots(dataRoot['snapshots']),
     ...parseBandConfig(specsRoot['config']),

@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   computePartitionEtagHash,
@@ -7,6 +7,7 @@ import {
   logger,
   ROLLUP_SCHEMA_VERSION,
   validateManifest,
+  writeFileAtomic,
   type ProviderName,
   type RollupManifest,
   type RollupPartitionMeta,
@@ -222,9 +223,7 @@ export class RollupStore {
 
   private async writeManifestAtomic(manifest: RollupManifest): Promise<void> {
     await mkdir(this.rollupDir(), { recursive: true });
-    const tmp = `${this.manifestPath()}.tmp`;
-    await writeFile(tmp, JSON.stringify(manifest, null, 2));
-    await rename(tmp, this.manifestPath());
+    await writeFileAtomic(this.manifestPath(), JSON.stringify(manifest, null, 2));
   }
 
   /** Read + validate the persisted manifest against the current shape and raw

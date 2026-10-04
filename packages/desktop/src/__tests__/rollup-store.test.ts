@@ -3,7 +3,7 @@ import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
-import { mkdtemp, readFile, rm, stat, readdir } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, readdir, writeFile } from 'node:fs/promises';
 import { buildRollupPartitionQuery, rollupGrainColumns, type DimensionsConfig, type CostScopeConfig, type ProviderName, type RollupStatus, asDimensionId, asProviderName } from '@costgoblin/core';
 import { RollupStore, type RollupShape } from '../main/rollup-store.js';
 import type { RawRow } from '../main/duckdb-client.js';
@@ -207,6 +207,27 @@ describe('RollupStore', () => {
       // Both periods fail with the same cause → one distinct reason, no "+N".
       expect(captured.reason).toBe('Binder Error: column "service" not found');
     }
+    await rm(failDir, { recursive: true, force: true });
+  });
+
+  it('a manifest write that fails leaves no temp file behind', async () => {
+    const failDir = await mkdtemp(join(tmpdir(), 'cg-rollup-manifest-fail-'));
+    // A non-empty directory where the manifest goes: the temp write succeeds,
+    // the rename over it cannot.
+    const manifestPath = join(failDir, 'aws', 'rollup', 'manifest.json');
+    await mkdir(manifestPath, { recursive: true });
+    await writeFile(join(manifestPath, 'keep'), 'x');
+    let captured: RollupStatus | undefined;
+    const store = new RollupStore({ dataDir: failDir, providerName, runQuery });
+    store.onStatusChanged((s) => { captured = s; });
+
+    await store.maintainPeriods(['2026-01'], buildSql, etags, shape);
+
+    // The build succeeded and the manifest rename is what failed.
+    await expect(stat(join(failDir, 'aws', 'rollup', 'daily-2026-01', 'rollup.parquet'))).resolves.toBeDefined();
+    expect(captured).toMatchObject({ state: 'failed', reason: expect.stringMatching(/manifest\.json/) });
+    const dir = await readdir(join(failDir, 'aws', 'rollup'));
+    expect(dir.filter(f => f.endsWith('.tmp'))).toEqual([]);
     await rm(failDir, { recursive: true, force: true });
   });
 

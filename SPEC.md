@@ -338,6 +338,8 @@ Everything lives under Electron `userData`, organized into named **workspaces**
                                     # (+ org-accounts.<provider>.json sidecars,
                                     #  org-account-tags.json, region-names.json)
         baselines.json / baselines-data.json
+                                    # (written atomically; an unparseable one is
+                                    #  moved aside to <name>.corrupt-<timestamp>-<id>)
         dismissed-suggestions.json
         telemetry-outbox.jsonl
         raw/                        # Optional account-mapping CSV drop-in

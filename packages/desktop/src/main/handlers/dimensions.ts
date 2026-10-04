@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { applyNormalizationRule, buildGrainProbeQuery, buildSource, computeRollupEstimate, dimensionsConfigToYaml, emptyRollupEstimate, generateAliasSuggestions, isStringRecord, rollupGrainColumns, rollupGrainDimensions, sqlEscapeString } from '@costgoblin/core';
+import { applyNormalizationRule, buildGrainProbeQuery, buildSource, computeRollupEstimate, dimensionsConfigToYaml, emptyRollupEstimate, generateAliasSuggestions, isStringRecord, rollupGrainColumns, rollupGrainDimensions, sqlEscapeString, writeFileAtomic } from '@costgoblin/core';
 import type { AliasSuggestion, ColumnValuesPreview, DimensionsConfig, NormalizationRule, RollupGrainEstimate } from '@costgoblin/core';
 import { type AppContext, loadOrgAccountsMap } from './context.js';
 import { parseDimensionsPayload, parseDimensionsSavePayload } from './dimensions-payload.js';
@@ -216,8 +216,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
     // Persisting: over-limit nameStripPatterns are rejected, not dropped.
     const config = parseDimensionsSavePayload(payload);
     const yaml = await import('yaml');
-    const fs = await import('node:fs/promises');
-    await fs.writeFile(ctx.dimensionsPath, yaml.stringify(dimensionsConfigToYaml(config)));
+    await writeFileAtomic(ctx.dimensionsPath, yaml.stringify(dimensionsConfigToYaml(config)));
     invalidateDimensions();
   }
 
