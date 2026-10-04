@@ -13,7 +13,7 @@ import type {
 } from '@costgoblin/core/browser';
 import { isDiscoverableBeaconLocation, splitS3Location, suggestedConfigBeaconLocation } from '@costgoblin/core/browser';
 import { Check, CloudDownload, CloudUpload, Copy, FileDown, FileUp, Network, Plug, RotateCw, TriangleAlert } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { formatBytes } from './format.js';
 import { ProfilePicker } from './profile-picker.js';
@@ -92,6 +92,7 @@ function SharingModal({ title, onClose, children, dismissable = true }: Readonly
    *  no ✕) — used to hold the window open during an in-progress pull. */
   dismissable?: boolean;
 }>): React.JSX.Element {
+  const titleId = useId();
   useEffect(() => {
     if (!dismissable) return undefined;
     function handleKey(e: KeyboardEvent): void {
@@ -105,7 +106,7 @@ function SharingModal({ title, onClose, children, dismissable = true }: Readonly
     // no-drag: the modal can open above a window drag region (the standalone
     // setup wizard's backdrop, or the app header) — without the opt-out,
     // clicks there would drag the window instead of reaching the modal. (#317)
-    <dialog open className="fixed inset-0 z-[100] flex items-center justify-center bg-transparent m-0 p-0 max-w-none max-h-none w-full h-full border-none [-webkit-app-region:no-drag]" aria-modal="true">
+    <dialog open className="fixed inset-0 z-[100] flex items-center justify-center bg-transparent m-0 p-0 max-w-none max-h-none w-full h-full border-none [-webkit-app-region:no-drag]" aria-modal="true" aria-labelledby={titleId}>
       <div
         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
         {...(dismissable ? { onClick: onClose } : {})}
@@ -113,7 +114,7 @@ function SharingModal({ title, onClose, children, dismissable = true }: Readonly
       />
       <div className="relative rounded-xl border border-border bg-bg-secondary p-6 shadow-2xl max-w-md w-full mx-4 max-h-[85vh] overflow-y-auto">
         <div className="flex items-center justify-between">
-          <h3 className="text-base font-semibold text-text-primary">{title}</h3>
+          <h3 id={titleId} className="text-base font-semibold text-text-primary">{title}</h3>
           {dismissable && (
             <button
               type="button"

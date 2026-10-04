@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { parse, stringify } from 'yaml';
 import { validateViews, viewToYaml, ConfigValidationError } from '@costgoblin/core/browser';
 import type { ViewSpec } from '@costgoblin/core/browser';
@@ -31,6 +31,8 @@ function asCustomView(v: ViewSpec): ViewSpec {
 
 export function ViewYamlModal(props: ViewYamlModalProps): React.JSX.Element {
   const closeRef = useRef<HTMLButtonElement>(null);
+  const titleId = useId();
+  const hintId = useId();
   const [text, setText] = useState(() =>
     props.mode === 'export' ? stringify(viewToYaml(asCustomView(props.view))) : '',
   );
@@ -83,7 +85,7 @@ export function ViewYamlModal(props: ViewYamlModalProps): React.JSX.Element {
   const isExport = props.mode === 'export';
 
   return (
-    <dialog open className="fixed inset-0 z-[100] flex items-center justify-center bg-transparent m-0 p-0 max-w-none max-h-none w-full h-full border-none" aria-modal="true">
+    <dialog open className="fixed inset-0 z-[100] flex items-center justify-center bg-transparent m-0 p-0 max-w-none max-h-none w-full h-full border-none" aria-modal="true" aria-labelledby={titleId} aria-describedby={hintId}>
       <div
         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
         onClick={props.onClose}
@@ -92,10 +94,10 @@ export function ViewYamlModal(props: ViewYamlModalProps): React.JSX.Element {
 
       <div className="relative rounded-xl border border-border bg-bg-secondary p-5 shadow-2xl max-w-2xl w-full mx-4 flex flex-col gap-3">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-text-primary">
+          <h3 id={titleId} className="text-sm font-semibold text-text-primary">
             {isExport ? 'Export view' : 'Import view'}
           </h3>
-          <span className="text-[11px] text-text-muted">
+          <span id={hintId} className="text-[11px] text-text-muted">
             {isExport ? 'Copy this YAML to share or back up the view.' : 'Paste a view YAML (from Export) to add it.'}
           </span>
         </div>

@@ -323,10 +323,10 @@ describe('DataManagement — modal dialogs', () => {
     const { user, dialog } = await openAddProvider();
     await user.click(within(dialog).getByRole('button', { name: 'Import from a teammate' }));
     // The Import dialog renders inside the wizard (it is not portalled).
-    await within(dialog).findByText('Import configuration');
+    await within(dialog).findByRole('dialog', { name: 'Import configuration' });
 
     await user.keyboard('{Escape}');
-    await waitFor(() => { expect(screen.queryByText('Import configuration')).toBeNull(); });
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Import configuration' })).toBeNull(); });
     expect(screen.getByRole('dialog', { name: 'Add provider' })).toBeDefined();
 
     await user.keyboard('{Escape}');

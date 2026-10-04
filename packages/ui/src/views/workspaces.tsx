@@ -1,7 +1,7 @@
 import type { WorkspaceSummary, WorkspacesInfo } from '@costgoblin/core/browser';
 import { WORKSPACE_NAME_PATTERN, WorkspaceNameError, isValidWorkspaceName, parseWorkspaceName } from '@costgoblin/core/browser';
 import { Boxes, Info, Plus } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { ConfirmModal } from '../components/confirm-modal.js';
 import { formatBytes } from '../components/format.js';
 import { Button } from '../components/ui/button.js';
@@ -72,6 +72,7 @@ function WorkspaceModal({ title, onClose, children }: Readonly<{
   onClose: () => void;
   children: React.ReactNode;
 }>): React.JSX.Element {
+  const titleId = useId();
   useEffect(() => {
     function handleKey(e: KeyboardEvent): void {
       if (e.key === 'Escape') onClose();
@@ -84,7 +85,7 @@ function WorkspaceModal({ title, onClose, children }: Readonly<{
     // no-drag: the modal can open above a window drag region (the app header) —
     // without the opt-out, clicks there would drag the window instead of
     // reaching the modal.
-    <dialog open className="fixed inset-0 z-[100] flex items-center justify-center bg-transparent m-0 p-0 max-w-none max-h-none w-full h-full border-none [-webkit-app-region:no-drag]" aria-modal="true">
+    <dialog open className="fixed inset-0 z-[100] flex items-center justify-center bg-transparent m-0 p-0 max-w-none max-h-none w-full h-full border-none [-webkit-app-region:no-drag]" aria-modal="true" aria-labelledby={titleId}>
       <div
         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
         onClick={onClose}
@@ -92,7 +93,7 @@ function WorkspaceModal({ title, onClose, children }: Readonly<{
       />
       <div className="relative rounded-xl border border-border bg-bg-secondary p-6 shadow-2xl max-w-md w-full mx-4 max-h-[85vh] overflow-y-auto">
         <div className="flex items-center justify-between">
-          <h3 className="text-base font-semibold text-text-primary">{title}</h3>
+          <h3 id={titleId} className="text-base font-semibold text-text-primary">{title}</h3>
           <button
             type="button"
             onClick={onClose}

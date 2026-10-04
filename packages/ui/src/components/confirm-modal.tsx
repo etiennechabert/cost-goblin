@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useId, useRef } from 'react';
 
 interface ConfirmModalProps {
   title: string;
@@ -20,6 +20,8 @@ export function ConfirmModal({
   onCancel,
 }: Readonly<ConfirmModalProps>) {
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const titleId = useId();
+  const messageId = useId();
 
   useEffect(() => {
     cancelRef.current?.focus();
@@ -32,7 +34,7 @@ export function ConfirmModal({
   }, [onCancel]);
 
   return (
-    <dialog open className="fixed inset-0 z-[100] flex items-center justify-center bg-transparent m-0 p-0 max-w-none max-h-none w-full h-full border-none" aria-modal="true">
+    <dialog open className="fixed inset-0 z-[100] flex items-center justify-center bg-transparent m-0 p-0 max-w-none max-h-none w-full h-full border-none" aria-modal="true" aria-labelledby={titleId} aria-describedby={messageId}>
       <div
         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
         onClick={onCancel}
@@ -41,8 +43,8 @@ export function ConfirmModal({
 
       {/* Modal */}
       <div className="relative rounded-xl border border-border bg-bg-secondary p-6 shadow-2xl max-w-sm w-full mx-4">
-        <h3 className="text-sm font-semibold text-text-primary">{title}</h3>
-        <p className="text-sm text-text-secondary mt-2 leading-relaxed">{message}</p>
+        <h3 id={titleId} className="text-sm font-semibold text-text-primary">{title}</h3>
+        <p id={messageId} className="text-sm text-text-secondary mt-2 leading-relaxed">{message}</p>
         <div className="flex items-center justify-end gap-2 mt-5">
           <button
             ref={cancelRef}
