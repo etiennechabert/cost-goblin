@@ -21,8 +21,11 @@ function handleFetchSuccess<T>(
   urgent: boolean,
   setState: (s: QueryState<T>) => void,
 ): void {
-  if (urgent) {
+  const commit = (): void => {
     if (!cancelled.current) setState({ status: 'success', data });
+  };
+  if (urgent) {
+    commit();
     return;
   }
   // Apply the result inside a transition so the (potentially heavy) render it
@@ -33,9 +36,7 @@ function handleFetchSuccess<T>(
   // drains. As a transition, React time-slices the work and lets a click (e.g.
   // opening the menu) preempt it. The `loading` state stays urgent so spinners
   // still appear instantly.
-  startTransition(() => {
-    if (!cancelled.current) setState({ status: 'success', data });
-  });
+  startTransition(commit);
 }
 
 function handleFetchError<T>(

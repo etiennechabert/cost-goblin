@@ -1,11 +1,17 @@
 import { render, screen } from '@testing-library/react';
 import { startTransition } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useQuery } from '../hooks/use-query.js';
 
 vi.mock('react', async (importOriginal) => {
   const actual = await importOriginal<typeof import('react')>();
   return { ...actual, startTransition: vi.fn(actual.startTransition) };
+});
+
+// Each test counts calls on the shared spy; don't depend on the runner's
+// clearMocks default to isolate them.
+beforeEach(() => {
+  vi.mocked(startTransition).mockClear();
 });
 
 function Probe({ urgent }: Readonly<{ urgent: boolean }>) {

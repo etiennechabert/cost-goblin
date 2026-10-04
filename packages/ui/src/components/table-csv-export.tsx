@@ -24,19 +24,16 @@ export function escapeCsv(value: unknown): string {
 
 export function CsvExportButton<TFeatures extends TableFeatures, TData extends RowData>({ table, filename }: Readonly<{ table: Table<TFeatures, TData>; filename: string }>) {
   function handleExport() {
-    const visibleColumns = table.getAllLeafColumns();
-    const headers = visibleColumns.map(col => {
+    // Every leaf column: callers hand DataTable only the columns on screen.
+    const columns = table.getAllLeafColumns();
+    const headers = columns.map(col => {
       const header = col.columnDef.header;
       return typeof header === 'string' ? header : col.id;
     });
 
     const csvRows = [headers.map(escapeCsv).join(',')];
     for (const row of table.getSortedRowModel().rows) {
-      const cells = visibleColumns.map(col => {
-        const cell = row.getAllCells().find(c => c.column.id === col.id);
-        return escapeCsv(cell?.getValue());
-      });
-      csvRows.push(cells.join(','));
+      csvRows.push(columns.map(col => escapeCsv(row.getValue(col.id))).join(','));
     }
 
     const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { flexRender, useTable } from '@tanstack/react-table';
+import { flexRender, functionalUpdate, useTable } from '@tanstack/react-table';
 import type { Cell, Row, RowData, SortingState, TableOptions } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { ExplorerTagColumn } from '@costgoblin/core/browser';
@@ -261,22 +261,18 @@ export function DataTable<TData extends RowData>({
   // The sorted row model is registered statically in dataTableFeatures; a
   // table without an onSortingChange owner keeps v8's behaviour by switching
   // it off with manualSorting (rows render in the order they were passed).
+  // The handler is always set: useTable merges each render's options into the
+  // previous ones, so leaving it out would keep an earlier owner's handler.
   const tableOptions = useMemo((): TableOptions<DataTableFeatures, TData> => {
     const currentSorting = sorting ?? [];
-    const base: TableOptions<DataTableFeatures, TData> = {
+    return {
       features: dataTableFeatures,
       data,
       columns: columnDefs,
       state: { sorting: currentSorting },
-      enableMultiSort: true,
       manualSorting: onSortingChange === undefined,
-    };
-    if (onSortingChange === undefined) return base;
-    const handler = onSortingChange;
-    return {
-      ...base,
       onSortingChange: (updater) => {
-        handler(typeof updater === 'function' ? updater(currentSorting) : updater);
+        onSortingChange?.(functionalUpdate(updater, currentSorting));
       },
     };
   }, [data, columnDefs, sorting, onSortingChange]);

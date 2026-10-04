@@ -38,16 +38,11 @@ export const dataTableFeatures = tableFeatures({
 
 export type DataTableFeatures = typeof dataTableFeatures;
 
-export interface TableColumn<TData> {
+export interface TableColumn<TData> extends DataTableColumnMeta {
   readonly id: string;
   readonly header: string;
   readonly accessorFn?: ((row: TData) => unknown) | undefined;
   readonly cell?: ((value: unknown, row: TData) => React.ReactNode) | undefined;
-  readonly align?: 'left' | 'right' | undefined;
-  readonly mono?: boolean | undefined;
-  readonly truncate?: boolean | undefined;
-  readonly dimId?: string | null | undefined;
-  readonly clickable?: boolean | undefined;
   readonly sortable?: boolean | undefined;
 }
 
