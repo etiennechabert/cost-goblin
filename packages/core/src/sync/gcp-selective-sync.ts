@@ -92,6 +92,34 @@ function unitBytes(unit: string): number | null {
   }
 }
 
+/** gcloud's own default is one worker process per CPU core with 4 threads
+ *  each — up to ~60 parallel connections on a 15-core Mac — and with
+ *  `--impersonate-service-account` every worker also mints its own token
+ *  (one oauth2 refresh plus one iamcredentials call). Networks that inspect
+ *  traffic (a corporate Zero Trust client, say) refuse such bursts outright:
+ *  measured here, 25 of 30 simultaneous connections to oauth2.googleapis.com
+ *  failed within 20 ms as `[Errno 65] No route to host`, while one at a time
+ *  succeeded. Billing shards are small, so a few workers lose little
+ *  throughput. A user who sets either property in the environment keeps it. */
+export const GCLOUD_RSYNC_PARALLELISM: Readonly<Record<string, string>> = {
+  CLOUDSDK_STORAGE_PROCESS_COUNT: '4',
+  CLOUDSDK_STORAGE_THREAD_COUNT: '4',
+};
+
+/** One `gcloud storage rsync` at a time. Every sync request (each provider,
+ *  each tier) lands in the one sync worker, which used to run them
+ *  concurrently — daily and hourly together doubled the burst above. Each
+ *  call waits for the previous one to settle, success or failure; a request
+ *  cancelled while queued is refused by the abort check at the head of
+ *  `runGcloudStorageRsync` once its turn comes. */
+let rsyncQueue: Promise<unknown> = Promise.resolve();
+
+function oneRsyncAtATime<T>(run: () => Promise<T>): Promise<T> {
+  const next = rsyncQueue.then(run, run);
+  rsyncQueue = next.catch(() => undefined);
+  return next;
+}
+
 interface GcloudRsyncOptions {
   readonly source: string;
   readonly dest: string;
@@ -122,7 +150,7 @@ function runGcloudStorageRsync(options: GcloudRsyncOptions): Promise<void> {
       args.push(`--impersonate-service-account=${options.impersonateServiceAccount}`);
     }
 
-    const env: NodeJS.ProcessEnv = { ...process.env };
+    const env: NodeJS.ProcessEnv = { ...GCLOUD_RSYNC_PARALLELISM, ...process.env };
     if (options.keyFile !== undefined) {
       // Points this invocation at a service-account key without touching the
       // user's global gcloud credential store (which `gcloud auth
@@ -397,7 +425,7 @@ export async function syncGcpSelectedFiles(
     await mkdir(stagingDir, { recursive: true });
 
     try {
-      await runGcloudStorageRsync({
+      await oneRsyncAtATime(() => runGcloudStorageRsync({
         source,
         dest: stagingDir,
         ...(options.keyFile === undefined ? {} : { keyFile: options.keyFile }),
@@ -432,7 +460,7 @@ export async function syncGcpSelectedFiles(
             ...(parsed === null ? {} : { message: line }),
           });
         },
-      });
+      }));
 
       // A clean exit means every file in the period landed, whatever the
       // running count reached — the last announced file has no successor to

@@ -253,6 +253,88 @@ describe('syncGcpSelectedFiles', () => {
     expect(argv.some(a => a.startsWith('--impersonate-service-account'))).toBe(false);
   });
 
+  it('caps gcloud s parallelism, unless the user set it themselves', async () => {
+    // gcloud defaults to a process per core x 4 threads, each minting its own
+    // impersonated token; bursts that size are refused by inspecting networks.
+    const envs: Record<string, unknown>[] = [];
+    const capture = (): void => {
+      mockSpawn.mockImplementationOnce((_bin: unknown, args: unknown, opts: unknown) => {
+        const proc = new MockChildProcess();
+        const env: unknown = typeof opts === 'object' && opts !== null ? Reflect.get(opts, 'env') : undefined;
+        envs.push(typeof env === 'object' && env !== null ? { ...env } : {});
+        const argv = Array.isArray(args) ? args.map(String) : [];
+        queueMicrotask(() => { void writeBqShard(argv[3] ?? '', 1).then(() => { proc.emit('close', 0, null); }); });
+        return proc;
+      });
+    };
+    const run = (): Promise<unknown> => syncGcpSelectedFiles({
+      bucketPath: 'gs://bkt/focus', providerName, dataDir, expectedDataType: 'daily',
+      files: [file('focus/billing_period=2026-01/s.parquet')],
+    });
+
+    capture();
+    await run();
+    expect(envs[0]?.['CLOUDSDK_STORAGE_PROCESS_COUNT']).toBe('4');
+    expect(envs[0]?.['CLOUDSDK_STORAGE_THREAD_COUNT']).toBe('4');
+
+    vi.stubEnv('CLOUDSDK_STORAGE_PROCESS_COUNT', '12');
+    try {
+      capture();
+      await run();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(envs[1]?.['CLOUDSDK_STORAGE_PROCESS_COUNT']).toBe('12');
+    expect(envs[1]?.['CLOUDSDK_STORAGE_THREAD_COUNT']).toBe('4');
+  });
+
+  it('runs one gcloud rsync at a time across concurrent syncs, and moves on after a failure', async () => {
+    // Daily and hourly used to download together, doubling the burst.
+    const procs: MockChildProcess[] = [];
+    const dests: string[] = [];
+    mockSpawn.mockImplementation((_bin: unknown, args: unknown) => {
+      const proc = new MockChildProcess();
+      const argv = Array.isArray(args) ? args.map(String) : [];
+      dests.push(argv[3] ?? '');
+      procs.push(proc);
+      return proc;
+    });
+    const settle = async (index: number, code: number): Promise<void> => {
+      if (code === 0) await writeBqShard(dests[index] ?? '', 1);
+      procs[index]?.emit('close', code, null);
+    };
+
+    const daily = syncGcpSelectedFiles({
+      bucketPath: 'gs://bkt/focus/daily', providerName, dataDir, expectedDataType: 'daily',
+      files: [file('focus/daily/billing_period=2026-01/s.parquet')],
+    });
+    const hourly = syncGcpSelectedFiles({
+      bucketPath: 'gs://bkt/focus/hourly', providerName, dataDir, expectedDataType: 'hourly',
+      files: [file('focus/hourly/billing_period=2026-01/s.parquet')],
+    });
+    // Which tier reaches the queue first is a race of their staging steps,
+    // so outcomes are counted, not assigned. Attached now so neither promise
+    // is unhandled while the other is awaited.
+    const outcomes = Promise.all([daily, hourly].map(p => p.then(r => r.filesDownloaded, () => -1)));
+
+    try {
+      await vi.waitFor(() => { expect(procs).toHaveLength(1); }, { timeout: 10_000 });
+      // The second waits for the first, however long it runs.
+      await new Promise(resolve => { setTimeout(resolve, 50); });
+      expect(procs).toHaveLength(1);
+
+      // A failed download still releases the queue.
+      await settle(0, 1);
+      await vi.waitFor(() => { expect(procs).toHaveLength(2); }, { timeout: 10_000 });
+      await settle(1, 0);
+      expect([...await outcomes].sort((x, y) => x - y)).toEqual([-1, 1]);
+    } finally {
+      // The queue is module state: a process left open here would block every
+      // later case in the file.
+      for (const proc of procs) proc.emit('close', 1, null);
+    }
+  }, 30_000);
+
   it('removes the staging directory once the period is installed', async () => {
     nextProcess(dest => writeBqShard(dest, 1));
     await syncGcpSelectedFiles({
