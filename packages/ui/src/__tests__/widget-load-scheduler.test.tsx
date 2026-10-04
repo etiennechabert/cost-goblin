@@ -1,16 +1,50 @@
-import { describe, it, expect } from 'vitest';
-import { act, render, screen } from '@testing-library/react';
+import { StrictMode, useEffect, useRef, useState } from 'react';
+import { describe, it, expect, vi } from 'vitest';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { LazyWidgetSlot, WidgetSchedulerProvider, useWidgetSlot } from '../hooks/widget-load-scheduler.js';
 import { useQuery } from '../hooks/use-query.js';
 import { fireIntersections, setAutoIntersect } from './setup.js';
 
-// A test widget that renders its label once mounted and frees its scheduler
-// slot when clicked (standing in for "its query settled").
-function Child({ label }: Readonly<{ label: string }>): React.JSX.Element {
+// A test widget that renders its label once mounted and holds its scheduler
+// lane until clicked (standing in for "its one query settled"). `onRender`
+// counts its renders.
+function Child({ label, onRender }: Readonly<{ label: string; onRender?: () => void }>): React.JSX.Element {
   const slot = useWidgetSlot();
-  return <button type="button" onClick={() => { slot?.onSettled(); }}>{label}</button>;
+  const doneRef = useRef<(() => void) | null>(null);
+  onRender?.();
+  useEffect(() => {
+    const done = slot?.trackQuery() ?? null;
+    doneRef.current = done;
+    return () => { done?.(); };
+  }, [slot]);
+  return <button type="button" onClick={() => { doneRef.current?.(); }}>{label}</button>;
 }
+
+// A widget backed by the real useQuery: shows `<label>-loading`, then the data.
+function QueryWidget({ label, fetcher }: Readonly<{ label: string; fetcher: () => Promise<string> }>): React.JSX.Element {
+  const q = useQuery(fetcher, [label]);
+  return <span>{q.status === 'success' ? q.data : `${label}-loading`}</span>;
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve: (value: T) => void = () => undefined;
+  const promise = new Promise<T>((r) => { resolve = r; });
+  return { promise, resolve };
+}
+
+const hang = (): Promise<string> => new Promise<string>(() => undefined);
+
+/** Let pending promises, effects and scheduler pumps run their course, so an
+ *  assertion that something did NOT mount isn't just racing the grant. */
+async function settle(): Promise<void> {
+  await act(async () => { await new Promise((r) => { setTimeout(r, 30); }); });
+}
+
+// Widgets that must mount BEFORE the 5s fallback release (which would otherwise
+// mask a leaked lane) wait at most this long: under the fallback and asyncUtilTimeout
+// (both 5s), with room for transition commits on a loaded CI runner.
+const BEFORE_FALLBACK = { timeout: 3000 };
 
 describe('WidgetSchedulerProvider + LazyWidgetSlot', () => {
   // The global test setup mocks IntersectionObserver as always-intersecting, so
@@ -130,6 +164,166 @@ describe('WidgetSchedulerProvider + LazyWidgetSlot', () => {
     act(() => { fireIntersections(true); });
     expect(await screen.findByText('a')).toBeDefined();
     expect(slot?.getAttribute('data-widget-state')).toBe('mounted');
+  });
+
+  it('frees the lane of a slot that unmounts mid-load, and never grants a queued slot that unmounted', async () => {
+    // A dashboard switch: CustomView isn't keyed by view, so one provider
+    // outlives the first dashboard's slots. `a` unmounts mid-query holding the
+    // only lane; `b` unmounts while still queued for it. Slots are keyed by
+    // widget id as in custom-view, so the rerender really unmounts them rather
+    // than reusing them for the new widgets.
+    const { rerender } = render(
+      <WidgetSchedulerProvider maxConcurrent={1}>
+        <LazyWidgetSlot key="a" id="a" priority={0} minHeight={10}><QueryWidget label="a" fetcher={hang} /></LazyWidgetSlot>
+        <LazyWidgetSlot key="b" id="b" priority={1} minHeight={10}><QueryWidget label="b" fetcher={hang} /></LazyWidgetSlot>
+      </WidgetSchedulerProvider>,
+    );
+    expect(await screen.findByText('a-loading')).toBeDefined();
+    expect(screen.queryByText('b-loading')).toBeNull();
+
+    const c = deferred<string>();
+    rerender(
+      <WidgetSchedulerProvider maxConcurrent={1}>
+        <LazyWidgetSlot key="c" id="c" priority={0} minHeight={10}><QueryWidget label="c" fetcher={() => c.promise} /></LazyWidgetSlot>
+        <LazyWidgetSlot key="e" id="e" priority={2} minHeight={10}><QueryWidget label="e" fetcher={() => Promise.resolve('e-data')} /></LazyWidgetSlot>
+      </WidgetSchedulerProvider>,
+    );
+    // c takes a's lane at once. a's unmount cleared its fallback timer, so
+    // nothing else would ever have freed that lane.
+    expect(await screen.findByText('c-loading', undefined, BEFORE_FALLBACK)).toBeDefined();
+
+    // When c settles, the lane goes to e, not to the unmounted b, whose
+    // priority 1 would otherwise win it and pin it forever.
+    await act(async () => { c.resolve('c-data'); await Promise.resolve(); });
+    expect(await screen.findByText('e-data', undefined, BEFORE_FALLBACK)).toBeDefined();
+    expect(document.querySelector('[data-widget-state="deferred"]')).toBeNull();
+  });
+
+  it('holds the lane until EVERY query in the widget has settled, not just the first', async () => {
+    // Most widgets pair their real query with a Compare query that resolves
+    // null at once while Compare is off. That instant query must not free the
+    // lane while the real one is still running.
+    const main = deferred<string>();
+    function TwoQueryWidget(): React.JSX.Element {
+      const compare = useQuery(() => Promise.resolve(null), []);
+      const q = useQuery(() => main.promise, []);
+      return (
+        <>
+          <span>{compare.status === 'success' ? 'compare-done' : 'compare-loading'}</span>
+          <span>{q.status === 'success' ? q.data : 'a-loading'}</span>
+        </>
+      );
+    }
+    render(
+      <WidgetSchedulerProvider maxConcurrent={1}>
+        <LazyWidgetSlot id="a" priority={0} minHeight={10}><TwoQueryWidget /></LazyWidgetSlot>
+        <LazyWidgetSlot id="b" priority={1} minHeight={10}><Child label="b" /></LazyWidgetSlot>
+      </WidgetSchedulerProvider>,
+    );
+    expect(await screen.findByText('compare-done')).toBeDefined();
+    await settle();
+    expect(screen.getByText('a-loading')).toBeDefined();
+    expect(screen.queryByText('b')).toBeNull();
+
+    await act(async () => { main.resolve('a-data'); await Promise.resolve(); });
+    expect(await screen.findByText('b', undefined, BEFORE_FALLBACK)).toBeDefined();
+  });
+
+  it('keeps the lane while a query restarts mid-flight', async () => {
+    // A deps change (or a cancel-retry) abandons the running query and starts
+    // its replacement in the same effect flush. The momentary zero in-flight
+    // count between the two must not free the lane.
+    const user = userEvent.setup();
+    function RestartingWidget(): React.JSX.Element {
+      const [n, setN] = useState(0);
+      const q = useQuery(hang, [n]);
+      return <button type="button" onClick={() => { setN(v => v + 1); }}>{`a-${q.status}-${String(n)}`}</button>;
+    }
+    render(
+      <WidgetSchedulerProvider maxConcurrent={1}>
+        <LazyWidgetSlot id="a" priority={0} minHeight={10}><RestartingWidget /></LazyWidgetSlot>
+        <LazyWidgetSlot id="b" priority={1} minHeight={10}><Child label="b" /></LazyWidgetSlot>
+      </WidgetSchedulerProvider>,
+    );
+    await user.click(await screen.findByText('a-loading-0'));
+    expect(await screen.findByText('a-loading-1')).toBeDefined();
+    await settle();
+    expect(screen.queryByText('b')).toBeNull();
+  });
+
+  it('neither leaks nor frees a lane early under StrictMode', async () => {
+    // The app renders under StrictMode, so each query tracks, untracks and
+    // re-tracks on mount. (The slot's ticket effect first fires on the
+    // inView update, not on mount, so StrictMode doesn't double it.)
+    const a = deferred<string>();
+    render(
+      <StrictMode>
+        <WidgetSchedulerProvider maxConcurrent={1}>
+          <LazyWidgetSlot id="a" priority={0} minHeight={10}><QueryWidget label="a" fetcher={() => a.promise} /></LazyWidgetSlot>
+          <LazyWidgetSlot id="b" priority={1} minHeight={10}><QueryWidget label="b" fetcher={() => Promise.resolve('b-data')} /></LazyWidgetSlot>
+        </WidgetSchedulerProvider>
+      </StrictMode>,
+    );
+    expect(await screen.findByText('a-loading')).toBeDefined();
+    await settle();
+    expect(screen.queryByText('b-loading')).toBeNull();
+    expect(screen.queryByText('b-data')).toBeNull();
+
+    await act(async () => { a.resolve('a-data'); await Promise.resolve(); });
+    expect(await screen.findByText('b-data', undefined, BEFORE_FALLBACK)).toBeDefined();
+  });
+
+  it('a grant does not re-render the widgets already mounted', async () => {
+    const user = userEvent.setup();
+    const renders = new Map<string, number>();
+    const counter = (label: string) => () => { renders.set(label, (renders.get(label) ?? 0) + 1); };
+    render(
+      <WidgetSchedulerProvider maxConcurrent={2}>
+        <LazyWidgetSlot id="a" priority={0} minHeight={10}><Child label="a" onRender={counter('a')} /></LazyWidgetSlot>
+        <LazyWidgetSlot id="b" priority={1} minHeight={10}><Child label="b" onRender={counter('b')} /></LazyWidgetSlot>
+        <LazyWidgetSlot id="c" priority={2} minHeight={10}><Child label="c" onRender={counter('c')} /></LazyWidgetSlot>
+      </WidgetSchedulerProvider>,
+    );
+    expect(await screen.findByText('a')).toBeDefined();
+    expect(await screen.findByText('b')).toBeDefined();
+    await settle();
+    const before = { a: renders.get('a'), b: renders.get('b') };
+
+    // a settles → c is granted a's lane. Neither a nor b has anything to redo.
+    await user.click(screen.getByText('a'));
+    expect(await screen.findByText('c')).toBeDefined();
+    await settle();
+    expect({ a: renders.get('a'), b: renders.get('b') }).toEqual(before);
+  });
+
+  it("a grant does not restart the other mounted widgets' fallback timers", async () => {
+    vi.useFakeTimers();
+    try {
+      render(
+        <WidgetSchedulerProvider maxConcurrent={2}>
+          <LazyWidgetSlot id="a" priority={0} minHeight={10}><Child label="a" /></LazyWidgetSlot>
+          <LazyWidgetSlot id="b" priority={1} minHeight={10}><Child label="b" /></LazyWidgetSlot>
+          <LazyWidgetSlot id="c" priority={2} minHeight={10}><Child label="c" /></LazyWidgetSlot>
+          <LazyWidgetSlot id="d" priority={3} minHeight={10}><Child label="d" /></LazyWidgetSlot>
+        </WidgetSchedulerProvider>,
+      );
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(screen.getByText('a')).toBeDefined();
+      expect(screen.getByText('b')).toBeDefined();
+
+      // t=4s: b settles and c is granted its lane; a is still hanging.
+      await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+      await act(async () => { fireEvent.click(screen.getByText('b')); await Promise.resolve(); });
+      expect(screen.getByText('c')).toBeDefined();
+      expect(screen.queryByText('d')).toBeNull();
+
+      // t=5.1s: a's fallback, armed when a mounted, has freed its lane for d.
+      // c's grant must not have re-armed it (which would hold d until t=9s).
+      await act(async () => { await vi.advanceTimersByTimeAsync(1100); });
+      expect(screen.getByText('d')).toBeDefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('ignores non-intersecting entries', () => {
