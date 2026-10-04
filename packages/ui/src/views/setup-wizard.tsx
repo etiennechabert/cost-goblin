@@ -1463,6 +1463,19 @@ function defaultProviderName(cloud: 'aws' | 'gcp'): string {
   return cloud === 'gcp' ? 'gcp-main' : 'aws-main';
 }
 
+/** The cloud's default name, numbered past any provider that already has it
+ *  (`gcp-main`, `gcp-main-2`, …). Compared case-insensitively, as the
+ *  name check and the loader do. Add mode proposes it instead of an empty
+ *  field — and never an `aws-` name for a GCP provider. */
+function freeProviderName(cloud: 'aws' | 'gcp', taken: readonly string[]): string {
+  const used = new Set(taken.map(n => n.toLowerCase()));
+  const base = defaultProviderName(cloud);
+  if (!used.has(base)) return base;
+  let n = 2;
+  while (used.has(`${base}-${String(n)}`)) n += 1;
+  return `${base}-${String(n)}`;
+}
+
 /** Validation error for the provider-name field, or null when the name is
  *  usable. `takenNames` is checked case-insensitively only when adding —
  *  reconfiguring an existing provider legitimately reuses its name. */
@@ -1495,13 +1508,27 @@ interface RetentionChoices {
   readonly onPick: (tier: DataSource, days: number) => void;
 }
 
-function ConfirmStep({ state, providerNaming, existing, retention, onComplete, onBack }: Readonly<{
+const OPTIONAL_TIER_ADD_LABEL: Readonly<Record<DataSource, string>> = {
+  daily: 'Add daily export',
+  hourly: 'Add hourly export',
+  costOptimization: 'Add Cost Optimization data',
+};
+
+/** A tier this run has not collected, offered on Confirm as an optional add. */
+interface OptionalTier {
+  readonly tier: DataSource;
+  readonly onAdd: () => void;
+}
+
+function ConfirmStep({ state, providerNaming, existing, retention, optionalTiers, onComplete, onBack }: Readonly<{
   state: Extract<WizardStep, { step: 'confirm' }>;
   providerNaming: ProviderNaming;
   /** The configured provider this run will replace (same name and cloud),
    *  whose retention windows seed the pickers. */
   existing: ProviderConfig | undefined;
   retention: RetentionChoices;
+  /** Empty in per-tier Configure, which came for one tier. */
+  optionalTiers: readonly OptionalTier[];
   onComplete: () => void;
   onBack: () => void;
 }>) {
@@ -1586,7 +1613,7 @@ function ConfirmStep({ state, providerNaming, existing, retention, onComplete, o
                 aria-label="Provider name"
                 value={providerNaming.value}
                 onChange={(e) => { providerNaming.onChange(e.target.value); }}
-                placeholder="e.g. aws-main"
+                placeholder={`e.g. ${defaultProviderName(state.cloud)}`}
                 spellCheck={false}
                 className="mt-1 w-full rounded-md border border-border bg-bg-primary px-3 py-1.5 text-sm font-mono text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               />
@@ -1638,6 +1665,27 @@ function ConfirmStep({ state, providerNaming, existing, retention, onComplete, o
             </div>
             <p className="text-xs text-text-muted mt-1.5">How far back to keep this tier</p>
           </div>
+          );
+        })}
+
+        {optionalTiers.map(({ tier, onAdd }) => {
+          const { title, description } = SOURCE_LABELS[tier];
+          // A tier this run did not touch but the provider already has: the
+          // writer keeps it, so say so rather than inviting a duplicate add.
+          const kept = existing?.sync[tier]?.bucket;
+          return (
+            <div key={tier} className="rounded-lg border border-dashed border-border px-4 py-3">
+              <div className="flex items-center gap-2">
+                <p className="text-xs text-text-muted uppercase tracking-wider">{title}</p>
+                <span className="rounded-full border border-border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-text-muted">Optional</span>
+              </div>
+              {kept === undefined
+                ? <p className="text-xs text-text-muted mt-1">{description}. Skip it now and add it any time from Data &amp; Sync.</p>
+                : <p className="text-xs text-text-muted mt-1">Kept as configured: <span className="font-mono text-text-secondary">{String(kept)}</span></p>}
+              <Button variant="outline" size="sm" onClick={onAdd} className="mt-2.5">
+                {kept === undefined ? OPTIONAL_TIER_ADD_LABEL[tier] : 'Change'}
+              </Button>
+            </div>
           );
         })}
       </div>
@@ -2065,14 +2113,27 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
 
   function handleBrowseSkip() {
     if (wizard.step !== 'browse' && wizard.step !== 'bucket') return;
-    const profile = wizard.profile;
-    const source = wizard.source;
+    // Optional tiers are offered one by one on Confirm, so skipping one goes
+    // back there rather than on to the next tier.
+    goToConfirm(wizard.profile);
+  }
 
-    if (source === 'hourly') {
-      startBucketStep(profile, 'costOptimization');
-    } else {
-      goToConfirm(profile);
+  /** The optional tiers a Confirm step offers to add: those this run has not
+   *  collected. GCP has hourly only — no Cost Optimization Hub analogue. */
+  function confirmOptionalTiers(state: Extract<WizardStep, { step: 'confirm' }>): OptionalTier[] {
+    const tiers: OptionalTier[] = [];
+    if (state.hourlyPath.length === 0) {
+      tiers.push({
+        tier: 'hourly',
+        onAdd: state.cloud === 'gcp'
+          ? () => { startGcpBucketStep(state.project, 'hourly'); }
+          : () => { startBucketStep(state.profile, 'hourly'); },
+      });
     }
+    if (state.cloud === 'aws' && state.costOptPath.length === 0) {
+      tiers.push({ tier: 'costOptimization', onAdd: () => { startBucketStep(state.profile, 'costOptimization'); } });
+    }
+    return tiers;
   }
 
   function goToConfirm(profile: string, paths?: { daily: string; hourly: string; costOpt: string }) {
@@ -2142,9 +2203,11 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   // replaces: that provider's other tier guards the overlap check, and its
   // windows seed the Confirm step's retention pickers.
   const wizardCloud = wizard.step === 'confirm' ? wizard.cloud : (isGcpStep(wizard) ? 'gcp' : 'aws');
-  const targetProviderName = providerNameFixed || providerNameEdited || mode === 'add'
+  // Until the user types a name it is derived from the cloud: the cloud's
+  // default, or in add mode the first one no provider has yet.
+  const targetProviderName = providerNameFixed || providerNameEdited
     ? providerName
-    : defaultProviderName(wizardCloud);
+    : (mode === 'add' ? freeProviderName(wizardCloud, existingProviders) : defaultProviderName(wizardCloud));
   const targetProvider = existingConfigs.find(c => String(c.name) === targetProviderName && c.type === wizardCloud);
 
   // Standalone onboarding renders without the app header — the window's only
@@ -2277,6 +2340,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
                 picks: retentionPicks,
                 onPick: (tier, days) => { setRetentionPicks(prev => ({ ...prev, [tier]: days })); },
               }}
+              optionalTiers={isSourceMode ? [] : confirmOptionalTiers(wizard)}
               onComplete={finish}
               onBack={handleBack}
             />
