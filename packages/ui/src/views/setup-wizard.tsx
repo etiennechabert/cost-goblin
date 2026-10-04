@@ -3,6 +3,7 @@ import { DEFAULT_READER_ACCOUNT_ID, DEFAULT_RETENTION_DAYS, GCP_PROJECT_ID_RULES
 import { Check, Loader2, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
+import { sharedBucketRoot } from '../lib/bucket-paths.js';
 import { Card, CardContent } from '../components/ui/card.js';
 import { Button } from '../components/ui/button.js';
 import { BundleSummaryCard, ImportConfigDialog } from '../components/config-sharing.js';
@@ -1766,6 +1767,11 @@ const CHECKED_TIER_LABELS: Readonly<Record<DataSource, string>> = {
   costOptimization: 'Cost Optimization data',
 };
 
+/** A field label on Confirm's cards. */
+const CARD_LABEL = 'text-xs text-text-muted uppercase tracking-wider';
+/** The label column of Confirm's label/value grids. */
+const GRID_LABEL = `${CARD_LABEL} whitespace-nowrap`;
+
 /** The Confirm step's Google Cloud card: the project, the reader and the
  *  download check as rows of one card, so the three facts about one identity
  *  read together. The check's failure renders through `GcpError` in gcloud-CLI
@@ -1781,25 +1787,24 @@ function GcpAccessCard({ project, reader, check, readsAs, onRecheck }: Readonly<
   onRecheck: () => void;
 }>) {
   const asWhom = reader === '' ? ` as ${readsAs}` : '';
-  const label = 'text-xs text-text-muted uppercase tracking-wider whitespace-nowrap';
   return (
     <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
       <dl className="m-0 grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-4 gap-y-1.5">
         {project !== undefined && (
           <>
-            <dt className={label}>Google Cloud project</dt>
+            <dt className={GRID_LABEL}>Google Cloud project</dt>
             <dd className="m-0 text-sm font-mono text-text-primary break-all">{project}</dd>
           </>
         )}
         {reader !== '' && (
           <>
-            <dt className={label}>Reads as</dt>
+            <dt className={GRID_LABEL}>Reads as</dt>
             <dd className="m-0 text-sm font-mono text-text-primary break-all">{reader}</dd>
           </>
         )}
         {check.status !== 'not-needed' && (
           <>
-            <dt className={label}>Download check</dt>
+            <dt className={GRID_LABEL}>Download check</dt>
             <dd className="m-0 flex items-center gap-1.5 text-sm" aria-live="polite">
               {check.status === 'checking' && (
                 <>
@@ -1932,7 +1937,7 @@ function ConfirmStep({ state, providerNaming, existing, retention, optionalTiers
       // existing entry's reader is carried (see `goToGcpConfirm`).
       ...(state.cloud === 'gcp' && (reader !== '' || state.clearsReader) ? { impersonateServiceAccount: reader } : {}),
       dailyBucket: state.s3Path,
-      // Each collected tier with the retention its card shows.
+      // Each collected tier with the retention its picker shows.
       ...(state.s3Path.length > 0 ? { retentionDays: tierRetention('daily') } : {}),
       ...(state.hourlyPath.length > 0 ? { hourlyBucket: state.hourlyPath, hourlyRetentionDays: tierRetention('hourly') } : {}),
       // GCP has no Cost Optimization Hub analogue and `validateGcpSync`
@@ -1956,6 +1961,7 @@ function ConfirmStep({ state, providerNaming, existing, retention, optionalTiers
   if (state.s3Path.length > 0) paths.push({ value: state.s3Path, tier: 'daily' });
   if (state.hourlyPath.length > 0) paths.push({ value: state.hourlyPath, tier: 'hourly' });
   if (state.costOptPath.length > 0) paths.push({ value: state.costOptPath, tier: 'costOptimization' });
+  const bucketRoot = sharedBucketRoot(paths.map(p => p.value));
 
   return (
     <div className="flex flex-col gap-5">
@@ -1965,36 +1971,43 @@ function ConfirmStep({ state, providerNaming, existing, retention, optionalTiers
       </div>
 
       <div className="flex flex-col gap-3">
+        {/* Label/value rows in one card, as GcpAccessCard lays out the GCP
+            access facts. */}
         <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
-          <p className="text-xs text-text-muted uppercase tracking-wider">Provider name</p>
-          {providerNaming.fixed ? (
-            <p className="text-sm font-mono text-text-primary mt-0.5">{providerNaming.value}</p>
-          ) : (
-            <>
-              <input
-                id="provider-name"
-                aria-label="Provider name"
-                value={providerNaming.value}
-                onChange={(e) => { providerNaming.onChange(e.target.value); }}
-                placeholder={`e.g. ${defaultProviderName(state.cloud)}`}
-                spellCheck={false}
-                className="mt-1 w-full rounded-md border border-border bg-bg-primary px-3 py-1.5 text-sm font-mono text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-              />
-              {nameError !== null && providerNaming.value.length > 0 ? (
-                <p className="text-xs text-negative mt-1">{nameError}</p>
+          <dl className="m-0 grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-4 gap-y-2">
+            <dt className={GRID_LABEL}>Provider name</dt>
+            <dd className="m-0 min-w-0">
+              {providerNaming.fixed ? (
+                <span className="text-sm font-mono text-text-primary break-all">{providerNaming.value}</span>
               ) : (
-                <p className="text-xs text-text-muted mt-1">Names this billing source — it becomes the data folder and the Provider dimension value.</p>
+                <>
+                  <input
+                    id="provider-name"
+                    aria-label="Provider name"
+                    value={providerNaming.value}
+                    onChange={(e) => { providerNaming.onChange(e.target.value); }}
+                    placeholder={`e.g. ${defaultProviderName(state.cloud)}`}
+                    spellCheck={false}
+                    className="w-full rounded-md border border-border bg-bg-primary px-2.5 py-1 text-sm font-mono text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                  />
+                  {nameError !== null && providerNaming.value.length > 0 ? (
+                    <p className="text-xs text-negative mt-1">{nameError}</p>
+                  ) : (
+                    <p className="text-xs text-text-muted mt-1">Names this billing source — it becomes the data folder and the Provider dimension value.</p>
+                  )}
+                </>
               )}
-            </>
-          )}
+            </dd>
+            {state.cloud === 'aws' && (
+              <>
+                <dt className={GRID_LABEL}>AWS Profile</dt>
+                <dd className="m-0 text-sm font-mono text-text-primary break-all">{state.profile}</dd>
+              </>
+            )}
+          </dl>
         </div>
 
-        {state.cloud === 'aws' ? (
-          <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
-            <p className="text-xs text-text-muted uppercase tracking-wider">AWS Profile</p>
-            <p className="text-sm font-mono text-text-primary mt-0.5">{state.profile}</p>
-          </div>
-        ) : (
+        {state.cloud === 'gcp' && (
           <GcpAccessCard
             project={state.project?.id}
             reader={reader}
@@ -2004,40 +2017,54 @@ function ConfirmStep({ state, providerNaming, existing, retention, optionalTiers
           />
         )}
 
-        {paths.map(({ value, tier }) => {
-          const label = SOURCE_LABELS[tier].title;
-          const selected = tierRetention(tier);
-          // A hand-tuned window that isn't one of the presets still shows,
-          // pressed, so keeping it is the default rather than impossible.
-          const options = RETENTION_OPTIONS[tier].some(opt => opt.days === selected)
-            ? RETENTION_OPTIONS[tier]
-            : [...RETENTION_OPTIONS[tier], { days: selected, label: `${String(selected)} days` }].sort((x, y) => x.days - y.days);
-          return (
-          <div key={tier} className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-2.5">
-            <p className="text-xs text-text-muted uppercase tracking-wider">{label}</p>
-            <p className="text-sm font-mono text-text-primary mt-0.5 break-all">{value}</p>
-            <fieldset aria-label={`${label} retention`} className="m-0 min-w-0 border-0 p-0 flex flex-wrap items-center gap-1.5 mt-2">
-              <span aria-hidden="true" className="mr-1 text-xs text-text-muted">Keep</span>
-              {options.map(opt => (
-                <button
-                  key={opt.days}
-                  type="button"
-                  aria-pressed={selected === opt.days}
-                  onClick={() => { retention.onPick(tier, opt.days); }}
-                  className={[
-                    'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
-                    selected === opt.days
-                      ? 'bg-accent text-bg-primary'
-                      : 'bg-bg-tertiary/50 text-text-secondary hover:text-text-primary',
-                  ].join(' ')}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </fieldset>
+        {/* Every collected tier in one card. When they share a bucket it is
+            printed once and each tier shows only its folder. */}
+        {paths.length > 0 && (
+          <div className="rounded-lg border border-border bg-bg-tertiary/20 divide-y divide-border">
+            {bucketRoot !== null && (
+              <div className="px-4 py-2.5">
+                <p className={CARD_LABEL}>Bucket</p>
+                <p className="text-sm font-mono text-text-primary mt-0.5 break-all">{bucketRoot}</p>
+              </div>
+            )}
+            {paths.map(({ value, tier }) => {
+              const label = SOURCE_LABELS[tier].title;
+              const selected = tierRetention(tier);
+              // A hand-tuned window that isn't one of the presets still shows,
+              // pressed, so keeping it is the default rather than impossible.
+              const options = RETENTION_OPTIONS[tier].some(opt => opt.days === selected)
+                ? RETENTION_OPTIONS[tier]
+                : [...RETENTION_OPTIONS[tier], { days: selected, label: `${String(selected)} days` }].sort((x, y) => x.days - y.days);
+              return (
+                <div key={tier} className="px-4 py-2.5">
+                  <p className={CARD_LABEL}>{label}</p>
+                  <p className="text-sm font-mono text-text-primary mt-0.5 break-all" title={bucketRoot === null ? undefined : value}>
+                    {bucketRoot === null ? value : value.slice(bucketRoot.length)}
+                  </p>
+                  <fieldset aria-label={`${label} retention`} className="m-0 min-w-0 border-0 p-0 flex flex-wrap items-center gap-1 mt-1.5">
+                    <span aria-hidden="true" className="mr-1 text-xs text-text-muted">Keep</span>
+                    {options.map(opt => (
+                      <button
+                        key={opt.days}
+                        type="button"
+                        aria-pressed={selected === opt.days}
+                        onClick={() => { retention.onPick(tier, opt.days); }}
+                        className={[
+                          'rounded-md px-2 py-0.5 text-xs font-medium transition-colors',
+                          selected === opt.days
+                            ? 'bg-accent text-bg-primary'
+                            : 'bg-bg-tertiary/50 text-text-secondary hover:text-text-primary',
+                        ].join(' ')}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </fieldset>
+                </div>
+              );
+            })}
           </div>
-          );
-        })}
+        )}
 
         {optionalTiers.map(({ tier, onAdd }) => {
           const { title, description } = SOURCE_LABELS[tier];
@@ -2047,7 +2074,7 @@ function ConfirmStep({ state, providerNaming, existing, retention, optionalTiers
           return (
             <div key={tier} className="rounded-lg border border-dashed border-border px-4 py-3">
               <div className="flex items-center gap-2">
-                <p className="text-xs text-text-muted uppercase tracking-wider">{title}</p>
+                <p className={CARD_LABEL}>{title}</p>
                 <span className="rounded-full border border-border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-text-muted">Optional</span>
               </div>
               {kept === undefined

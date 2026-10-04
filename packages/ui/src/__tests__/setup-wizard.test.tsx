@@ -602,6 +602,21 @@ describe('SetupWizard — optional tiers on Confirm', () => {
     await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
   });
 
+  it('shows a lone tier with its full location and no separate bucket row', async () => {
+    const { user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from AWS'));
+    await waitFor(() => { expect(screen.getByText('prod')).toBeDefined(); });
+    await user.click(screen.getByText('prod'));
+    await walkToConfirm(user);
+
+    expect(screen.queryByText('Bucket')).toBeNull();
+    const location = screen.getByText(/^s3:\/\/my-cur-bucket\//);
+    expect(location.getAttribute('title')).toBeNull();
+    // The profile now sits in the provider-name grid rather than its own card.
+    expect(screen.getByText('AWS Profile')).toBeDefined();
+    expect(screen.getByText('prod')).toBeDefined();
+  });
+
   it('shows no optional tiers in per-tier Configure, which came for one tier', async () => {
     const { user } = renderWizard({ source: 'daily', profile: 'prod' });
     await walkToConfirm(user);
@@ -959,7 +974,20 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     expect(written?.hourlyBucket).toBe('gs://acme-focus-export/focus/hourly/');
   });
 
-  it('sets each tier retention in its own card instead of one shared picker', async () => {
+  it('prints a shared bucket once on Confirm, with each tier as its folder', async () => {
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    await walkGcpBothTiersToConfirm(user);
+
+    expect(screen.getByText('Bucket')).toBeDefined();
+    expect(screen.getByText('gs://acme-focus-export/')).toBeDefined();
+    // The folder alone fits one line; the full location stays on hover.
+    expect(screen.getByText('focus/daily/').getAttribute('title')).toBe('gs://acme-focus-export/focus/daily/');
+    expect(screen.getByText('focus/hourly/').getAttribute('title')).toBe('gs://acme-focus-export/focus/hourly/');
+    expect(screen.queryByText('gs://acme-focus-export/focus/daily/')).toBeNull();
+  });
+
+  it('sets each tier retention in its own picker instead of one shared one', async () => {
     // One shared picker configured only the daily tier; hourly silently took
     // its default, and the two need very different windows.
     const { api, user } = renderWizard();
