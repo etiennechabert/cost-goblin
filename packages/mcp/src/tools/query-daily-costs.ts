@@ -108,7 +108,7 @@ export async function queryDailyCosts(
     : asDimensionId('service');
   const dateRange: DateRange = params.dateRange !== undefined
     ? toDateRange(params.dateRange)
-    : defaultDateRange();
+    : defaultDateRange(ctx.now());
   const filters = toFilterMap(params.filters);
 
   const { opts, empty } = await buildQueryContextOpts(ctx, dateRange);

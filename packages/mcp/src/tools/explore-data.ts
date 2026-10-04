@@ -61,7 +61,7 @@ export async function exploreData(
   const format = resolveFormat(params.format);
   const dateRange: DateRange = params.dateRange !== undefined
     ? toDateRange(params.dateRange)
-    : defaultDateRange();
+    : defaultDateRange(ctx.now());
   // The schema already rejects non-integers and values < 1; this is the second
   // layer for direct callers.
   const limit = Math.min(Math.max(Math.trunc(params.limit ?? DEFAULT_LIMIT), 1), MAX_LIMIT);

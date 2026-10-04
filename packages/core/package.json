@@ -10,6 +10,10 @@
     "./browser": {
       "import": "./src/browser.ts",
       "types": "./src/browser.ts"
+    },
+    "./clock": {
+      "import": "./src/utils/clock.ts",
+      "types": "./src/utils/clock.ts"
     }
   },
   "scripts": {

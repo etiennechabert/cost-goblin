@@ -1,5 +1,5 @@
 import { logger, parseJsonObject, configuredTierRetentions, periodsOutsideRetention, retentionCutoffPeriod, isCredentialError, isGcpCredentialError, isGcpImpersonationError, LocalSyncStateError } from '@costgoblin/core';
-import type { AutoSyncStatus, ProviderSyncError, SyncLogLevel } from '@costgoblin/core';
+import type { AutoSyncStatus, Clock, ProviderSyncError, SyncLogLevel } from '@costgoblin/core';
 import { updatePrefsFile } from './handlers/prefs-file.js';
 
 /** Structural view of one configured provider — just enough for the scheduler
@@ -16,6 +16,10 @@ export interface AutoSyncProvider {
 }
 
 export interface AutoSyncDeps {
+  /** The app clock the retention cutoffs are measured from (pinned by
+   *  COSTGOBLIN_NOW in e2e). Scheduling and lastRun/nextRun stay on the real
+   *  clock: they measure elapsed time, not a calendar window. */
+  now: Clock;
   /** Optional sink for the Data & Sync activity log. The actual downloads
    *  stream through the sync worker already; this surfaces the local-only
    *  breadcrumbs (checking / nothing-to-sync / prune) that never hit it. */
@@ -133,7 +137,7 @@ async function syncTier(
   providerName: string,
   tier: { name: string; retention: number },
 ): Promise<'ok' | 'skip'> {
-  const cutoff = retentionCutoffPeriod(tier.retention);
+  const cutoff = retentionCutoffPeriod(tier.retention, deps.now());
   let inventory: Awaited<ReturnType<typeof deps.getInventory>>;
   try {
     inventory = await deps.getInventory(providerName, tier.name);
@@ -198,7 +202,7 @@ async function prunePass(deps: AutoSyncDeps, provider: AutoSyncProvider): Promis
       note(deps, 'warn', `Auto-prune: failed to read ${provider.name}/${tier} local data — ${errorMessage(err)}`);
       continue;
     }
-    const expired = periodsOutsideRetention(local, retentionDays);
+    const expired = periodsOutsideRetention(local, retentionDays, deps.now());
     if (expired.length === 0) continue;
     note(deps, 'info', `Auto-prune: ${provider.name}/${tier} — removing ${String(expired.length)} period(s) outside ${String(retentionDays)}d retention: ${expired.join(', ')}`);
     try {

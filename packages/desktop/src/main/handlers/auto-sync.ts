@@ -55,6 +55,7 @@ export function registerAutoSyncHandlers(app: AppContext): void {
 
   function buildAutoSyncDeps(syncClient: SyncClient) {
     return {
+      now: ctx.now,
       onLog: recordSyncLog,
       getPrefsPath: autoSyncPrefsPath,
       getConfig: async () => {

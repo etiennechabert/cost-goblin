@@ -5,11 +5,13 @@ import {
   asTagValue,
   assertDateString,
   computePeriodsInRange,
+  daysBefore,
   DEFAULT_LAG_DAYS,
   listLocalMonths,
   logger,
   sqlStringLiteral,
   tagDimColumn,
+  trailingWindow,
 } from '@costgoblin/core';
 import type {
   DateRange,
@@ -57,15 +59,11 @@ export function toDateRange(dr: { start: string; end: string }): DateRange {
   return { start: asDateString(dr.start), end: asDateString(dr.end) };
 }
 
-export function defaultDateRange(lagDays?: number): DateRange {
-  const lag = lagDays ?? DEFAULT_LAG_DAYS;
-  const dayMs = 86_400_000;
-  const end = new Date(Date.now() - lag * dayMs);
-  const start = new Date(end.getTime() - 29 * dayMs);
-  return {
-    start: asDateString(start.toISOString().slice(0, 10)),
-    end: asDateString(end.toISOString().slice(0, 10)),
-  };
+/** The 30 days ending at the default lag before `nowMs` (the context's
+ *  injected clock, never Date). */
+export function defaultDateRange(nowMs: number, lagDays?: number): DateRange {
+  const { start, end } = trailingWindow(nowMs, lagDays ?? DEFAULT_LAG_DAYS, 30);
+  return { start: asDateString(start), end: asDateString(end) };
 }
 
 export function toDimensionId(raw: string): DimensionId {
@@ -250,7 +248,7 @@ export async function computeDataCoverage(
   let lagDays: number | null = null;
   if (latestDay !== null) {
     const latestMs = new Date(`${latestDay}T00:00:00Z`).getTime();
-    const todayMs = new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00Z').getTime();
+    const todayMs = new Date(`${daysBefore(ctx.now(), 0)}T00:00:00Z`).getTime();
     lagDays = Math.max(0, Math.round((todayMs - latestMs) / 86_400_000));
   }
 

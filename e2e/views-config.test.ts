@@ -5,6 +5,8 @@ import {
   finishCoverage,
   screenshot,
   assertNoReactCrash,
+  waitForCostScopePreview,
+  costScopePreviewBars,
   navigateTo,
   clickNavButton,
   LOAD_TIMEOUT,
@@ -158,6 +160,17 @@ test.describe('Data Management', () => {
     await expect(page.getByText('Delete all local data')).toBeHidden();
   });
 
+  test('Prune removes nothing: main measures retention from the pinned clock too', async () => {
+    // As of FIXTURE_NOW every fixture month is inside its tier's window
+    // (hourly 30d, cost-opt 90d, daily 365d), so the renderer counts nothing
+    // to prune and the button reads plain "Prune". Main must decide from the
+    // same date: on the wall clock it would delete the Feb-2026 hourly and
+    // cost-optimization months.
+    await page.getByRole('button', { name: 'Prune', exact: true }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Prune', exact: true }).click();
+    await expect(page.getByText('Nothing to prune — all local data is within retention.')).toBeVisible({ timeout: LOAD_TIMEOUT });
+  });
+
   test('Add Provider and the tier gear open their setup wizard dialogs and Close dismisses them', async () => {
     // Two different wizard dialogs behind two buttons: the header's Add
     // Provider and the Daily panel's gear. Role queries reach them only
@@ -229,16 +242,6 @@ test.describe('Dimensions', () => {
     await expect(page.getByText('Resource Tag', { exact: true })).toBeHidden();
   });
 
-  test('Resource Tags section loads or shows loading/error state', async () => {
-    // Wait for either the table, loading, or error to appear
-    const hasTable = await page.getByText('Resource Tags').first().isVisible().catch(() => false);
-    const hasLoading = await page.getByText('Scanning billing data').isVisible().catch(() => false);
-    const hasError = await page.locator('.text-negative').first().isVisible().catch(() => false);
-
-    expect(hasTable || hasLoading || hasError).toBe(true);
-    await screenshot(page, 'dimensions-resource-tags');
-  });
-
   test('Account Tags panel lists the org tag keys and toggles their columns', async () => {
     // A key count proves the org data loaded: the no-data subtitle is also
     // what a loading or failed org request shows.
@@ -268,6 +271,38 @@ test.describe('Dimensions', () => {
     await expect(badge).not.toHaveClass(/\bline-through\b/);
     await expect(column).toHaveCount(1);
     await header.click();
+  });
+
+  test('Resource Tags panel lists the fixture tag keys and toggles their columns', async () => {
+    // Discovery samples the 30 days before the main process's clock. The
+    // window's start date proves main honours COSTGOBLIN_NOW; on the wall
+    // clock the sample would hold no fixture rows and report 0 keys.
+    const header = page.getByRole('button').filter({ hasText: 'Resource Tags' });
+    await header.click();
+    await expect(header).toHaveAttribute('aria-expanded', 'true');
+    await expect(header).toContainText('3 keys · sampled from last 30 days (since 2026-01-31)', { timeout: LOAD_TIMEOUT });
+
+    // One badge and one sample-value column per discovered key.
+    const panel = header.locator('xpath=..');
+    for (const key of ['environment', 'team', 'system']) {
+      await expect(panel.getByRole('button', { name: key, exact: true })).toHaveAttribute('aria-pressed', 'true');
+      await expect(panel.locator('th', { hasText: key })).toHaveCount(1);
+    }
+
+    // A key's badge hides its column and brings it back.
+    const badge = panel.getByRole('button', { name: 'team', exact: true });
+    const column = panel.locator('th', { hasText: 'team' });
+    await badge.click();
+    await expect(badge).toHaveAttribute('aria-pressed', 'false');
+    await expect(badge).toHaveClass(/\bline-through\b/);
+    await expect(column).toHaveCount(0);
+    await screenshot(page, 'dimensions-badge-toggled');
+
+    await badge.click();
+    await expect(badge).toHaveAttribute('aria-pressed', 'true');
+    await expect(column).toHaveCount(1);
+    await header.click();
+    await expect(header).toHaveAttribute('aria-expanded', 'false');
   });
 
   test('no React crash on Dimensions view', async () => {
@@ -340,6 +375,7 @@ test.describe('Cost Scope', () => {
       await discardBtn.click();
     }
     await expect(page.getByRole('heading', { name: 'Cost Scope', exact: true })).toBeVisible({ timeout: 5000 });
+    await waitForCostScopePreview(page);
   });
 
   test('shows heading and intro copy', async () => {
@@ -410,18 +446,34 @@ test.describe('Cost Scope', () => {
     await expect(card.getByRole('heading', { name: 'Line items' })).toBeVisible();
   });
 
-  test('line-items table renders rows when data exists', async () => {
+  test('preview histogram plots every day of the fixture window', async () => {
+    // Main computes the window from the pinned clock: the 30 days ending at
+    // the 2-day lag before FIXTURE_NOW, every one of them a fixture day.
+    const bars = costScopePreviewBars(page);
+    await expect(bars).toHaveCount(30);
+    await expect(bars.first()).toHaveAttribute('title', /^2026-01-30\nkept: /);
+    await expect(bars.last()).toHaveAttribute('title', /^2026-02-28\nkept: /);
+    const card = page.getByTestId('cost-scope-preview').filter({ visible: true });
+    await expect(card.getByText('2026-01-30', { exact: true })).toBeVisible();
+    await expect(card.getByText('2026-02-28', { exact: true })).toBeVisible();
+
+    await bars.first().hover();
+    await screenshot(page, 'cost-scope-histogram-hover');
+  });
+
+  test('line-items table renders the fixture window rows', async () => {
     const lineItemsCard = page.getByTestId('cost-scope-line-items');
     await lineItemsCard.scrollIntoViewIfNeeded();
+    // The preview window always holds fixture data (see the histogram test),
+    // so the table must render.
     const table = lineItemsCard.locator('table');
-    const tableVisible = await table.isVisible().catch(() => false);
+    await expect(table).toBeVisible();
 
-    if (!tableVisible) return; // No data in the current window
-
-    // Header columns we expect to see
-    for (const header of ['Date', 'Account', 'Region', 'Service', 'Cost', 'List']) {
-      await expect(table.getByRole('columnheader', { name: header, exact: true })).toBeVisible();
-    }
+    // Fixed columns lead in scan order; one column per tag dimension follows
+    // (the fixture's `system` tag is labelled "Service", so that name repeats).
+    const headers = await table.locator('thead th').allTextContents();
+    expect(headers.slice(0, 7)).toEqual(['Date', 'Cost', 'List', 'Service', 'Account', 'Charge category', 'Region']);
+    expect(headers).toEqual(expect.arrayContaining(['Team', 'Environment']));
 
     // At least one data row
     const rows = table.locator('tbody tr');

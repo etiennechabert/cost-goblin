@@ -5,6 +5,7 @@ import { type AppContext, loadOrgAccountsMap } from './context.js';
 import { parseDimensionsPayload, parseDimensionsSavePayload } from './dimensions-payload.js';
 import { applyNormalizeAndStrip, mergeValuesByLabel, NO_STRIP_ISSUES, parsePreviewStripPatterns, type ValueCostPair } from './dimensions-preview.js';
 import { rawGlobLiteral, toNum, toStr } from './query-utils.js';
+import { tagDiscoverySince } from './query-windows.js';
 
 async function applyRegionPreview(
   values: ValueCostPair[],
@@ -71,7 +72,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
     const rawParquet = recentDirs.length > 0
       ? `read_parquet([${parquetGlobs}])`
       : `read_parquet(${rawGlobLiteral(ctx.dataDir, String(provider.name), 'daily-*/*.parquet')})`;
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const thirtyDaysAgo = tagDiscoverySince(ctx.now());
 
     const totalSql = `SELECT COUNT(*) AS total FROM ${rawParquet} WHERE ChargePeriodStart >= '${thirtyDaysAgo}'`;
     const totalRows = await runQuery(totalSql);

@@ -130,6 +130,7 @@ describe('MCP output neutralization (DuckDB)', () => {
       getOrgAccountsPath: () => Promise.resolve(undefined),
       materializedBase: { getSource: () => undefined },
       warmup: () => Promise.resolve(),
+      now: () => Date.now(),
     };
   }, 30_000);
 

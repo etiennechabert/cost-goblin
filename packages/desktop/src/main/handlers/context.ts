@@ -39,6 +39,7 @@ import { applyAccountNameTransforms } from './account-name-transforms.js';
 import { type TemplateProviderType } from '../config-templates.js';
 import { mergeDefaultBuiltIns } from './dimensions-merge.js';
 import type {
+  Clock,
   CostGoblinConfig,
   CostScopeConfig,
   DimensionsConfig,
@@ -68,6 +69,12 @@ export interface IpcContext {
   /** The built DuckDB worker bundle — the MCP server spawns its own sandboxed
    *  instance from it (the shared `db` above is never used for MCP SQL). */
   readonly duckdbWorkerPath: string;
+  /** "Now" for every window anchored on today: default query ranges, the
+   *  Cost Scope preview, tag discovery, baselines, retention cutoffs. Pinned
+   *  by COSTGOBLIN_NOW (e2e) so main agrees with the renderer's patched Date.
+   *  Elapsed-time uses (query durations, sync scheduling, audit timestamps)
+   *  read Date directly and must not take this. */
+  readonly now: Clock;
 }
 
 export interface OrgTreeConfig {
@@ -568,7 +575,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     rerollTimer = setTimeout(() => { rerollTimer = null; triggerWarmup(); }, ROLLUP_REROLL_DEBOUNCE_MS);
   }
 
-  const baselineStore = new BaselineStore(ctx.stateDir);
+  const baselineStore = new BaselineStore(ctx.stateDir, ctx.now);
   const baselineEngineDeps: BaselineEngineDeps = {
     dataDir: ctx.dataDir,
     stateDir: ctx.stateDir,
