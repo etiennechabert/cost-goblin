@@ -6,10 +6,12 @@ import {
   DEFAULT_LAG_DAYS,
   dimensionIdSet,
   validateCostScope,
+  buildDateRangeWhere,
   buildSource,
   buildRuleMatchExpr,
   computePeriodsInRange,
   logger,
+  QueryBuilder,
   tagDimColumn,
 } from '@costgoblin/core';
 import type {
@@ -62,7 +64,7 @@ function logSettledError(label: string, result: PromiseSettledResult<unknown>): 
 
 export type CostScopePreviewDeps = Pick<
   AppContext,
-  'getQueryDimensions' | 'getQueryProviders' | 'getOrgAccountsPath' | 'getAccountReverseMap' | 'runQuery'
+  'getQueryDimensions' | 'getQueryProviders' | 'getOrgAccountsPath' | 'getAccountReverseMap' | 'runPreparedQuery'
 > & {
   readonly dataDir: string;
   /** The app clock (pinned by COSTGOBLIN_NOW in e2e). */
@@ -71,7 +73,7 @@ export type CostScopePreviewDeps = Pick<
 
 /** Preview the scope in `payload` (validated here, like a save). */
 export async function previewCostScope(deps: CostScopePreviewDeps, payload: unknown): Promise<CostScopePreviewResult> {
-  const { dataDir, now, getQueryDimensions, getQueryProviders, getOrgAccountsPath, getAccountReverseMap, runQuery } = deps;
+  const { dataDir, now, getQueryDimensions, getQueryProviders, getOrgAccountsPath, getAccountReverseMap, runPreparedQuery } = deps;
   const dimensions = await getQueryDimensions();
   const config = validateCostScope(payload, dimensionIdSet(dimensions));
   const enabledRules = config.rules.filter(r => r.enabled);
@@ -127,12 +129,21 @@ export async function previewCostScope(deps: CostScopePreviewDeps, payload: unkn
   // per-rule tally, the daily breakdown, and the sample row flag. Rules
   // whose expression is null (all conditions empty) are treated as
   // no-ops and don't appear in the SQL at all.
+  //
+  // Rule values and the date window bind as parameters on one builder. All
+  // three queries reference every placeholder (each embeds the combined
+  // predicate, which holds every live rule, and the date window), so they
+  // share its params.
+  const qb = new QueryBuilder();
   const ruleExprs: { readonly rule: typeof enabledRules[number]; readonly expr: string | null }[] =
-    enabledRules.map(rule => ({ rule, expr: buildRuleMatchExpr(rule, dimensions, accountReverseMap) }));
+    enabledRules.map(rule => ({ rule, expr: buildRuleMatchExpr(rule, dimensions, accountReverseMap, qb) }));
   const liveExprs = ruleExprs.flatMap(e => e.expr === null ? [] : [e.expr]);
   const excludedPredicate = liveExprs.length > 0
     ? liveExprs.map(e => `(${e})`).join(' OR ')
     : 'FALSE';
+
+  const dateWindow = buildDateRangeWhere(qb, { start: startStr, end: endStr });
+  const params = qb.build().params;
 
   const tagColumns = dimensions.tags.map(t => ({
     id: tagDimColumn(t),
@@ -159,7 +170,7 @@ export async function previewCostScope(deps: CostScopePreviewDeps, payload: unkn
       CAST(COALESCE(SUM(CASE WHEN (${excludedPredicate}) THEN 1 ELSE 0 END), 0) AS DOUBLE) AS combined_excluded_rows,
       CAST(COUNT(*) AS DOUBLE) AS total_rows${ruleAggSelects.length > 0 ? `,\n          ${ruleAggSelects}` : ''}
     FROM ${source}
-    WHERE usage_date BETWEEN '${startStr}' AND '${endStr}'
+    WHERE ${dateWindow}
   `.trim();
 
   // === Query 2: daily breakdown (separate because GROUP BY) ===
@@ -169,7 +180,7 @@ export async function previewCostScope(deps: CostScopePreviewDeps, payload: unkn
       CAST(COALESCE(SUM(CASE WHEN (${excludedPredicate}) THEN 0 ELSE cost END), 0) AS DOUBLE) AS kept_cost,
       CAST(COALESCE(SUM(CASE WHEN (${excludedPredicate}) THEN cost ELSE 0 END), 0) AS DOUBLE) AS excluded_cost
     FROM ${source}
-    WHERE usage_date BETWEEN '${startStr}' AND '${endStr}'
+    WHERE ${dateWindow}
     GROUP BY usage_date
     ORDER BY usage_date
   `.trim();
@@ -197,7 +208,7 @@ export async function previewCostScope(deps: CostScopePreviewDeps, payload: unkn
         CAST(list_cost AS DOUBLE) AS list_cost,
         CASE WHEN (${excludedPredicate}) THEN 1 ELSE 0 END AS excluded${tagSelectSql === null ? '' : `,\n          ${tagSelectSql}`}
       FROM ${source}
-      WHERE usage_date BETWEEN '${startStr}' AND '${endStr}'
+      WHERE ${dateWindow}
     ),
     ranked AS (
       SELECT *,
@@ -218,9 +229,9 @@ export async function previewCostScope(deps: CostScopePreviewDeps, payload: unkn
   // lets independent queries execute concurrently. `allSettled` so one
   // failing query doesn't drop the other two's results.
   const [aggResult, dailyResult, sampleResult] = await Promise.allSettled([
-    runQuery(aggSql),
-    runQuery(dailySql),
-    runQuery(sampleSql),
+    runPreparedQuery(aggSql, params),
+    runPreparedQuery(dailySql, params),
+    runPreparedQuery(sampleSql, params),
   ]);
 
   // Agg → totals + per-rule + combined

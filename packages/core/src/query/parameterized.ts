@@ -15,7 +15,13 @@ export interface ParameterizedQuery {
 
 /** Collects parameterized values and generates numbered placeholders ($1, $2, ...). */
 export class QueryBuilder {
-  private readonly parameters: unknown[] = [];
+  private readonly parameters: unknown[];
+
+  /** `seed`: the params of SQL this query reuses (e.g. a shared WHERE), so the
+   *  values added here are numbered after them. The list is copied. */
+  constructor(seed: readonly unknown[] = []) {
+    this.parameters = [...seed];
+  }
 
   /** Register a value and return its placeholder string (e.g. "$1"). */
   addParam(value: unknown): string {

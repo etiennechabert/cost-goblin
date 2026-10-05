@@ -299,9 +299,9 @@ export function buildExclusionClauses(
 
 /** `buildExclusionClauses` with the rule values inlined as escaped literals,
  *  for SQL that can't take parameters: the DDL builders (DuckDB has no
- *  prepared DDL) and the Explorer, whose WHERE is still assembled as a
- *  literal string. Every other query path binds through
- *  `buildExclusionClauses`, which requires the QueryBuilder. */
+ *  prepared DDL) and the grain probe, which mirrors the rollup build's SQL.
+ *  Every other query path binds through `buildExclusionClauses`, which
+ *  requires the QueryBuilder. */
 export function buildLiteralExclusionClauses(
   rules: readonly ExclusionRule[] | undefined,
   dimensions: DimensionsConfig,
@@ -703,8 +703,9 @@ function effectiveTier(requestedTier: string, dateRange: DateRangeLike): string 
 /** WHERE expression for the date range. With hour bounds set we filter at the
  *  hour level (inclusive on both ends) — `usage_hour BETWEEN startHour AND endHour`.
  *  Without them we keep the cheaper day-level filter. Both forms use parameter
- *  placeholders so untrusted values stay out of the SQL string. */
-function buildDateRangeWhere(qb: QueryBuilder, dateRange: DateRangeLike): string {
+ *  placeholders so untrusted values stay out of the SQL string. Pass hour
+ *  bounds only for an hourly-tier source: the daily tier has no `usage_hour`. */
+export function buildDateRangeWhere(qb: QueryBuilder, dateRange: DateRangeLike): string {
   if (dateRange.startHour !== undefined && dateRange.endHour !== undefined) {
     assertHourString(dateRange.startHour);
     assertHourString(dateRange.endHour);

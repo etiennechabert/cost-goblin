@@ -41,7 +41,7 @@ function isEnoent(err: unknown): boolean {
 }
 
 export function registerCostScopeHandlers(app: AppContext): void {
-  const { ctx, getCostScope, invalidateCostScope, getQueryDimensions, getOrgAccountsPath, getQueryProviders, getAccountReverseMap, runQuery } = app;
+  const { ctx, getCostScope, invalidateCostScope, getQueryDimensions, getOrgAccountsPath, getQueryProviders, getAccountReverseMap, runPreparedQuery } = app;
 
   ipcMain.handle('cost-scope:get-config', async (): Promise<CostScopeConfig> => {
     try {
@@ -67,7 +67,7 @@ export function registerCostScopeHandlers(app: AppContext): void {
 
   ipcMain.handle('cost-scope:preview', (_event, payload: unknown): Promise<CostScopePreviewResult> => previewCostScope({
     dataDir: ctx.dataDir, now: ctx.now,
-    getQueryDimensions, getQueryProviders, getOrgAccountsPath, getAccountReverseMap, runQuery,
+    getQueryDimensions, getQueryProviders, getOrgAccountsPath, getAccountReverseMap, runPreparedQuery,
   }, payload));
 
   ipcMain.handle('cost-scope:reveal-folder', (): void => {

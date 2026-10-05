@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api';
 import { ConfigValidationError, asProviderName } from '@costgoblin/core';
 import { previewCostScope, type CostScopePreviewDeps } from '../main/handlers/cost-scope-preview.js';
-import { fetchRows } from './helpers/duckdb-rows.js';
+import { fetchRows, fetchRowsPrepared } from './helpers/duckdb-rows.js';
 import {
   FIXTURE_DIMENSIONS,
   FIXTURE_NOW,
@@ -32,7 +32,7 @@ describe('previewCostScope (DuckDB over the synthetic fixtures)', () => {
       getQueryProviders: () => Promise.resolve(FIXTURE_PROVIDERS),
       getOrgAccountsPath: () => Promise.resolve(undefined),
       getAccountReverseMap: () => Promise.resolve(accountReverseMap),
-      runQuery: (sql) => fetchRows(conn, sql),
+      runPreparedQuery: (sql, params) => fetchRowsPrepared(conn, sql, params),
     };
   });
 
@@ -118,7 +118,7 @@ describe('previewCostScope (DuckDB over the synthetic fixtures)', () => {
 
   it('reports zeros, not a failure, when its queries fail', async () => {
     const result = await previewCostScope(
-      { ...deps, runQuery: () => Promise.reject(new Error('worker gone')) },
+      { ...deps, runPreparedQuery: () => Promise.reject(new Error('worker gone')) },
       { costMetric: 'effective', rules: [rule('identity', 'tag_team', ['identity'])] },
     );
     expect(result.unscopedTotalCost).toBe(0);
