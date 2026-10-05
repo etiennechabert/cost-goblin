@@ -32,7 +32,7 @@ import type {
 } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
 import type { AppContext } from './context.js';
-import { buildAccountReverseMap, columnForDimension, resolveRollupSource, toNum, toStr } from './query-utils.js';
+import { columnForDimension, resolveRollupSource, toNum, toStr } from './query-utils.js';
 import { resolveScopeMetric } from './explorer-scope.js';
 import { resolveExplorerDateRange } from './query-windows.js';
 import {
@@ -90,6 +90,8 @@ interface QueryContext {
   readonly tagIdSet: ReadonlySet<string>;
   readonly dimensions: DimensionsConfig;
   readonly accountMap: ReadonlyMap<string, string>;
+  /** Display name → account ids, for filters that name an account. */
+  readonly accountReverseMap: ReadonlyMap<string, readonly string[]>;
 }
 
 interface BuildFreshSourceOptions {
@@ -150,7 +152,7 @@ async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source
 }
 
 async function prepareQueryContext(deps: ExplorerDeps, params: ExplorerBaseParams): Promise<QueryContext> {
-  const { getQueryDimensions, getAccountMap, getQueryProviders } = deps;
+  const { getQueryDimensions, getAccountMap, getAccountReverseMap, getQueryProviders } = deps;
   const { startStr, endStr, windowDays, startHour, endHour } = resolveExplorerDateRange(params.dateRange, deps.now());
   // Hour bounds (sub-day drag-zoom) require the hourly tier — that's where
   // usage_hour lives. Promote tier when present, regardless of what
@@ -169,19 +171,20 @@ async function prepareQueryContext(deps: ExplorerDeps, params: ExplorerBaseParam
 
   const dimensions = await getQueryDimensions();
   const accountMap = await getAccountMap();
+  // The app context caches this map (built from the same account map), so
+  // every query and the overview's rollup route expand names alike.
+  const accountReverseMap = await getAccountReverseMap();
 
   const tagColumns: readonly ExplorerTagColumn[] = dimensions.tags.map(t => ({
     id: tagDimColumn(t),
     label: t.label,
   }));
   const tagIdSet = new Set(tagColumns.map(t => t.id));
-  const shared = { providers, startStr, endStr, windowDays, tier, tagColumns, tagIdSet, dimensions, accountMap } as const;
+  const shared = { providers, startStr, endStr, windowDays, tier, tagColumns, tagIdSet, dimensions, accountMap, accountReverseMap } as const;
 
   if (periods.length === 0) {
     return { empty: true, source: '', where: { sql: '', params: [] }, ...shared };
   }
-
-  const accountReverseMap = buildAccountReverseMap(accountMap);
 
   // Explorer always reads Parquet directly — the materialized base uses a
   // slim schema (no description, usage_amount, list_cost) that Explorer's
@@ -234,7 +237,7 @@ function readOverviewDaily(result: PromiseSettledResult<RawRow[]>): readonly Exp
 }
 
 export async function queryExplorerOverview(deps: ExplorerDeps, params: ExplorerOverviewParams): Promise<ExplorerOverviewResult> {
-  const { runPreparedQuery, rollupStore, getAccountReverseMap } = deps;
+  const { runPreparedQuery, rollupStore } = deps;
   const qc = await prepareQueryContext(deps, params);
 
   const zero: ExplorerOverviewResult = {
@@ -288,7 +291,7 @@ export async function queryExplorerOverview(deps: ExplorerDeps, params: Explorer
     source = rollupSource;
     where = buildExplorerWhere({
       startStr: qc.startStr, endStr: qc.endStr, tier: 'daily',
-      filters: params.filters, dimensions: qc.dimensions, accountReverseMap: await getAccountReverseMap(),
+      filters: params.filters, dimensions: qc.dimensions, accountReverseMap: qc.accountReverseMap,
     });
     rowsExpr = 'COALESCE(SUM(line_items), 0)';
     bucketExpr = 'usage_date';

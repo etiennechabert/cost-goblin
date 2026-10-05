@@ -6,6 +6,7 @@ import {
   DEFAULT_LAG_DAYS,
   dimensionIdSet,
   validateCostScope,
+  buildDateRangeWhere,
   buildSource,
   buildRuleMatchExpr,
   computePeriodsInRange,
@@ -147,7 +148,7 @@ export async function previewCostScope(deps: CostScopePreviewDeps, payload: unkn
     ? liveExprs.map(e => `(${e})`).join(' OR ')
     : 'FALSE';
 
-  const dateWindow = `usage_date BETWEEN ${qb.addParam(startStr)} AND ${qb.addParam(endStr)}`;
+  const dateWindow = buildDateRangeWhere(qb, { start: startStr, end: endStr });
   const params = qb.build().params;
 
   const tagColumns = dimensions.tags.map(t => ({
