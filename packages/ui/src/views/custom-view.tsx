@@ -17,6 +17,7 @@ import type {
   ViewSpec,
 } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
+import { useDefaultDateRange } from '../hooks/use-default-date-range.js';
 import { useLagDays } from '../hooks/use-lag-days.js';
 import { useQuery } from '../hooks/use-query.js';
 import {
@@ -35,10 +36,7 @@ import {
 import { FilterBar } from '../components/filter-bar.js';
 import { FilterActiveBanner } from '../components/filter-active-banner.js';
 import { ListMetricBanner } from '../components/list-metric-banner.js';
-import {
-  DateRangePicker,
-  getDefaultDateRange,
-} from '../components/date-range-picker.js';
+import { DateRangePicker } from '../components/date-range-picker.js';
 import type { DateRange, Granularity } from '../components/date-range-picker.js';
 import { WIDGET_REGISTRY } from '../widgets/registry.js';
 import { widgetFlexBasis } from '../widgets/widget.js';
@@ -107,9 +105,9 @@ function previousRangeFor(dr: DateRange): DateRange {
 
 function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: CustomViewProps) {
   const api = useCostApi();
-  const lagDays = useLagDays();
+  const lag = useLagDays();
   const hourlyConfigured = useHourlyConfigured();
-  const [dateRange, setDateRange] = useState<DateRange>(() => getDefaultDateRange(lagDays));
+  const [dateRange, setDateRange, rangeTouched] = useDefaultDateRange(lag);
 
   // Rollup can't serve the viewed months and is building them (cold build or a
   // cleared rollup) → block with the build overlay; widgets don't mount, so
@@ -174,19 +172,19 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
   // the save merges onto the on-disk prefs, leaving the user's curated column
   // set (owned by the Explorer) untouched.
   //
-  // The gate is a plain mount-skip: this view restores nothing from prefs
-  // (date range, granularity and comparison always start at defaults for a
-  // clean session), so the only thing to suppress is the save that the mount
-  // render would otherwise fire, writing those defaults over the shared file.
+  // Nothing is saved until the user changes something: this view restores
+  // nothing from prefs (date range, granularity and comparison always start at
+  // defaults for a clean session), so the saves to suppress are the ones that
+  // would write those defaults over the shared file — from the mount render,
+  // and from re-seeding the range once the configured lag arrives. Changing
+  // the range (granularity only ever changes with it) or the comparison flips
+  // the gate in the same update, so the save that update fires sees it.
   // Gating on an async prefs read instead would drop any change the user made
   // while that read was still in flight — a ref flip doesn't re-run the effect.
-  const saveReadyRef = useRef(false);
+  const compareTouchedRef = useRef(false);
   const savePendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (!saveReadyRef.current) {
-      saveReadyRef.current = true;
-      return;
-    }
+    if (!rangeTouched && !compareTouchedRef.current) return;
     if (savePendingRef.current !== null) clearTimeout(savePendingRef.current);
     savePendingRef.current = setTimeout(() => {
       savePendingRef.current = null;
@@ -199,7 +197,12 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
     return () => {
       if (savePendingRef.current !== null) clearTimeout(savePendingRef.current);
     };
-  }, [dateRange, granularity, compareEnabled, api]);
+  }, [dateRange, granularity, compareEnabled, rangeTouched, api]);
+
+  const handleCompareChange = useCallback((enabled: boolean) => {
+    compareTouchedRef.current = true;
+    setCompareEnabled(enabled);
+  }, []);
 
   // Pre-fetch filter values for all dimensions so dropdowns open instantly.
   // Cache is keyed by date range — invalidated when the range changes.
@@ -283,9 +286,9 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
           value={dateRange}
           granularity={granularity}
           onChange={(range, g) => { setDateRange(range); setGranularity(g); }}
-          lagDays={lagDays}
+          lagDays={lag.lagDays}
           compareEnabled={compareEnabled}
-          onCompareChange={setCompareEnabled}
+          onCompareChange={handleCompareChange}
         />
       </div>
 

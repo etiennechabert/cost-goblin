@@ -9,12 +9,13 @@ import type {
 } from '@costgoblin/core/browser';
 import { asDateString, asDimensionId, asEntityRef, asHourString, asTagValue } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
+import { useDefaultDateRange } from '../hooks/use-default-date-range.js';
 import { useLagDays } from '../hooks/use-lag-days.js';
 import { useQuery } from '../hooks/use-query.js';
 import { useHourlyConfigured } from '../hooks/use-hourly-configured.js';
 import { formatDollars, formatPercent } from '../components/format.js';
-import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
-import type { DateRange, Granularity } from '../components/date-range-picker.js';
+import { DateRangePicker } from '../components/date-range-picker.js';
+import type { Granularity } from '../components/date-range-picker.js';
 import { HourlyHintBanner } from '../components/hourly-hint-banner.js';
 import { PieChart } from '../components/pie-chart.js';
 import type { PieSlice } from '../components/pie-chart.js';
@@ -80,9 +81,9 @@ function handleCsvExport(data: EntityDetailResult, entity: string) {
 
 export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetailProps>) {
   const api = useCostApi();
-  const lagDays = useLagDays();
+  const lag = useLagDays();
   const hourlyConfigured = useHourlyConfigured();
-  const [dateRange, setDateRange] = useState<DateRange>(() => getDefaultDateRange(lagDays));
+  const [dateRange, setDateRange, rangeTouched] = useDefaultDateRange(lag);
   const [granularity, setGranularity] = useState<Granularity>('daily');
   const [histogramTab, setHistogramTab] = useState<HistogramTab>('service');
   const [histogramExpanded, setHistogramExpanded] = useState(false);
@@ -121,22 +122,25 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
     });
   }, [api]);
 
-  // Save date range and granularity whenever they change. The gate only
-  // suppresses the save on the very first render, before the mount effect
-  // below has loaded (or failed to load) prefs — it does NOT suppress the
-  // save caused by the restore itself, which sets the ref in the same batched
-  // callback as the state it restores, so opening the view writes back the
-  // values it just read. This view doesn't manage column visibility, so it
-  // omits hiddenColumns/columnOrder entirely — the save merges onto the
-  // on-disk prefs, leaving the user's curated column set (owned by the
-  // Explorer) untouched.
+  // Save date range and granularity whenever they change, once the range is
+  // more than the default (`rangeTouched`: picked, or restored from prefs; a
+  // user's granularity change always comes with a range change). Re-seeding
+  // the default once the configured lag arrives is not a range anyone picked,
+  // so it isn't saved. The prefs gate suppresses the save on the very first
+  // render, before the mount effect above has loaded (or failed to load)
+  // prefs — it does NOT suppress the save caused by the restore itself, which
+  // sets the ref in the same batched callback as the state it restores, so
+  // opening the view writes back the values it just read. This view doesn't
+  // manage column visibility, so it omits hiddenColumns/columnOrder entirely —
+  // the save merges onto the on-disk prefs, leaving the user's curated column
+  // set (owned by the Explorer) untouched.
   useEffect(() => {
-    if (!prefsLoadedRef.current) return;
+    if (!prefsLoadedRef.current || !rangeTouched) return;
     api.saveExplorerPreferences({
       lastUsedDateRange: dateRange,
       lastUsedGranularity: granularity,
     }).catch(() => undefined);
-  }, [dateRange, granularity, api]);
+  }, [dateRange, granularity, rangeTouched, api]);
 
   // Entity detail summary (total, previous, percent change)
   const detailQuery = useQuery(
@@ -275,7 +279,7 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <DateRangePicker value={dateRange} granularity={granularity} onChange={(range, g) => { setDateRange(range); setGranularity(g); }} lagDays={lagDays} />
+          <DateRangePicker value={dateRange} granularity={granularity} onChange={(range, g) => { setDateRange(range); setGranularity(g); }} lagDays={lag.lagDays} />
           {data !== null && (
             <button
               type="button"

@@ -1,13 +1,14 @@
-import { render, screen, waitFor, cleanup } from '@testing-library/react';
+import { act, render, screen, waitFor, cleanup } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { afterEach, describe, it, expect } from 'vitest';
-import { asDimensionId } from '@costgoblin/core/browser';
-import type { ViewSpec } from '@costgoblin/core/browser';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
+import { DEFAULT_COST_SCOPE, asDimensionId } from '@costgoblin/core/browser';
+import type { CostQueryParams, CostResult, CostScopeConfig, ViewSpec } from '@costgoblin/core/browser';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { PaletteProvider } from '../hooks/use-palette.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CustomView } from '../views/custom-view.js';
-import { daysBetween } from '../lib/dates.js';
+import { getDefaultDateRange } from '../components/date-range-picker.js';
+import { daysAgo, daysBetween } from '../lib/dates.js';
 
 
 const SPEC: ViewSpec = {
@@ -114,5 +115,88 @@ describe('CustomView', () => {
     }
     expect(saved?.lastUsedGranularity).toBe('daily');
     expect(saved?.compareEnabled).toBe(false);
+  });
+});
+
+/** Records the range of every queryCosts call (the pie and top-N widgets),
+ *  i.e. the range the view actually committed. */
+class RecordingCostsApi extends MockCostApi {
+  readonly costCalls: CostQueryParams[] = [];
+  override queryCosts(params?: CostQueryParams): Promise<CostResult> {
+    if (params !== undefined) this.costCalls.push(params);
+    return super.queryCosts();
+  }
+}
+
+const LAG_5_SCOPE: CostScopeConfig = { ...DEFAULT_COST_SCOPE, lagDays: 5 };
+
+describe('CustomView with a configured lag', () => {
+  // Pin the clock so the range the view seeds and the one each assertion
+  // recomputes can't straddle a UTC midnight. Only Date is faked: the save
+  // debounce and waitFor need real timers.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-03-15T12:00:00Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('opens on the default window for the configured lag, without persisting it', async () => {
+    const api = new RecordingCostsApi();
+    api.getCostScope = () => Promise.resolve(LAG_5_SCOPE);
+    render(
+      <PaletteProvider>
+        <CostApiProvider value={api}>
+          <CustomView spec={SPEC} headerSubtitle="hello" />
+        </CostApiProvider>
+      </PaletteProvider>,
+    );
+
+    await waitFor(() => {
+      expect(api.costCalls.at(-1)?.dateRange).toEqual(getDefaultDateRange(5));
+    });
+    // The picker's presets use the same lag, so the committed range reads as
+    // its "Last 30 days" rather than as raw dates.
+    expect(screen.getByRole('button', { name: /Last 30 days/ })).toBeDefined();
+
+    // Re-seeding for the lag is still the clean-mount default, not a change
+    // the user made: past the 500ms debounce, nothing may reach the shared file.
+    await new Promise(resolve => setTimeout(resolve, 700));
+    expect(api.savedExplorerPreferences).toHaveLength(0);
+  });
+
+  it('keeps a range the user picked before the configured lag arrived', async () => {
+    const api = new RecordingCostsApi();
+    const scopeReads: ((scope: CostScopeConfig) => void)[] = [];
+    api.getCostScope = () => new Promise(resolve => { scopeReads.push(resolve); });
+    const user = userEvent.setup();
+    render(
+      <PaletteProvider>
+        <CostApiProvider value={api}>
+          <CustomView spec={SPEC} headerSubtitle="hello" />
+        </CostApiProvider>
+      </PaletteProvider>,
+    );
+    await waitFor(() => {
+      expect(screen.getByText('Total Cost')).toBeDefined();
+    });
+
+    // Picked while the default lag (2) is still in force.
+    await user.click(screen.getByRole('button', { name: /Last 30 days/ }));
+    await user.click(screen.getByRole('button', { name: 'Last 90 days' }));
+    const picked = { start: daysAgo(92), end: daysAgo(2) };
+    await waitFor(() => {
+      expect(api.costCalls.at(-1)?.dateRange).toEqual(picked);
+    });
+
+    await act(async () => {
+      for (const resolve of scopeReads) resolve(LAG_5_SCOPE);
+      await Promise.resolve();
+    });
+    // Give a wrongful re-seed the chance to commit and re-query.
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(api.costCalls.at(-1)?.dateRange).toEqual(picked);
   });
 });
