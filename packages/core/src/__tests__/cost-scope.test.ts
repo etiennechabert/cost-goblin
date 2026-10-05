@@ -129,8 +129,9 @@ describe('exclusion clauses', () => {
       } },
       5,
     );
-    // Single-condition rules are merged into `dim NOT IN (...)` form
-    expect(result.sql).toContain('service_code NOT IN ($');
+    // Single-condition rules are merged into `dim NOT IN (...)` form, wrapped
+    // so a NULL dimension value keeps the row (#451)
+    expect(result.sql).toContain('COALESCE(service_code NOT IN ($1), TRUE)');
     expect(result.params).toContain('AWSSupportEnterprise');
   });
 
@@ -144,7 +145,7 @@ describe('exclusion clauses', () => {
       5,
     );
     // Single-condition rules merge into `dim NOT IN (...)` form
-    expect(result.sql).toContain('charge_category NOT IN ($');
+    expect(result.sql).toContain('COALESCE(charge_category NOT IN ($1, $2), TRUE)');
     expect(result.params).toContain('Purchase');
     expect(result.params).toContain('Tax');
   });
@@ -161,8 +162,8 @@ describe('exclusion clauses', () => {
       } },
       5,
     );
-    expect(result.sql).toContain('NOT (service IN ($');
-    expect(result.sql).toContain('AND service_category IN ($');
+    // Each condition is COALESCEd to FALSE so the NOT (...) never sees a NULL
+    expect(result.sql).toContain('NOT (COALESCE(service IN ($1), FALSE) AND COALESCE(service_category IN ($2), FALSE))');
     expect(result.params).toContain('EC2');
     expect(result.params).toContain('Compute');
   });
@@ -257,7 +258,7 @@ describe('exclusion clauses', () => {
       5,
     );
     // Resolvable condition still applies; dangling one is silently dropped.
-    expect(result.sql).toContain('NOT (service IN ($');
+    expect(result.sql).toContain('NOT (COALESCE(service IN ($1), FALSE))');
     expect(result.params).toContain('EC2');
     expect(result.sql).not.toContain('nonexistent_dim');
   });

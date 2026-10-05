@@ -1,8 +1,8 @@
 import { ipcMain } from 'electron';
 import {
   asDimensionId,
+  buildExclusionClauses,
   buildSource,
-  buildRuleMatchExpr,
   computePeriodsInRange,
   resolveField,
   QueryBuilder,
@@ -72,22 +72,6 @@ function buildFilterWhereClauses(
   return clauses;
 }
 
-function buildExclusionWhereClauses(
-  costScope: import('@costgoblin/core').CostScopeConfig | undefined,
-  dimensions: import('@costgoblin/core').DimensionsConfig,
-  accountReverseMap: Map<string, readonly string[]>,
-  qb: QueryBuilder,
-): string[] {
-  if (costScope === undefined) return [];
-  const clauses: string[] = [];
-  for (const rule of costScope.rules) {
-    if (!rule.enabled) continue;
-    const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap, qb);
-    if (matchExpr !== null) clauses.push(`NOT (${matchExpr})`);
-  }
-  return clauses;
-}
-
 function mergeAccountRows(
   rows: import('../duckdb-client.js').RawRow[],
   accountMap: Map<string, string>,
@@ -131,7 +115,7 @@ export function registerFilterHandlers(app: AppContext): void {
     const filterClauses = buildFilterWhereClauses(filterEntries, dimensions, accountReverseMap, qb);
     // Exclusions are baked into the rollup; only apply them on the raw path.
     const exclusionClauses = matSource === undefined
-      ? buildExclusionWhereClauses(costScope, dimensions, accountReverseMap, qb)
+      ? buildExclusionClauses(costScope?.rules, dimensions, accountReverseMap, qb)
       : [];
     const whereClauses = [...filterClauses, ...exclusionClauses];
 

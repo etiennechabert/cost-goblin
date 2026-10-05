@@ -95,7 +95,7 @@ function isEnoent(err: unknown): boolean {
 }
 
 export function registerCostScopeHandlers(app: AppContext): void {
-  const { ctx, getCostScope, invalidateCostScope, getQueryDimensions, getOrgAccountsPath, getQueryProviders, runQuery } = app;
+  const { ctx, getCostScope, invalidateCostScope, getQueryDimensions, getOrgAccountsPath, getQueryProviders, getAccountReverseMap, runQuery } = app;
 
   ipcMain.handle('cost-scope:get-config', async (): Promise<CostScopeConfig> => {
     try {
@@ -155,6 +155,10 @@ export function registerCostScopeHandlers(app: AppContext): void {
     if (branches.length === 0) return zero;
 
     const orgPath = await getOrgAccountsPath();
+    // Account rules can name accounts by display name; the dashboards expand
+    // those to ids through this map, so the preview must too or it reports
+    // $0 excluded for a rule that does drop spend.
+    const accountReverseMap = await getAccountReverseMap();
 
     const source = buildSource({
       dataDir: ctx.dataDir, tier: 'daily', dimensions, orgAccountsPath: orgPath,
@@ -168,8 +172,8 @@ export function registerCostScopeHandlers(app: AppContext): void {
     // whose expression is null (all conditions empty) are treated as
     // no-ops and don't appear in the SQL at all.
     const ruleExprs: { readonly rule: typeof enabledRules[number]; readonly expr: string | null }[] =
-      enabledRules.map(rule => ({ rule, expr: buildRuleMatchExpr(rule, dimensions) }));
-    const liveExprs = ruleExprs.filter(e => e.expr !== null).map(e => e.expr as string);
+      enabledRules.map(rule => ({ rule, expr: buildRuleMatchExpr(rule, dimensions, accountReverseMap) }));
+    const liveExprs = ruleExprs.flatMap(e => e.expr === null ? [] : [e.expr]);
     const excludedPredicate = liveExprs.length > 0
       ? liveExprs.map(e => `(${e})`).join(' OR ')
       : 'FALSE';
