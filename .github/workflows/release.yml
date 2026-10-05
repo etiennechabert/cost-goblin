@@ -305,7 +305,9 @@ jobs:
           # electron-updater compares minimumSystemVersion with the Darwin kernel
           # version (macOS 13 = Darwin 22). This keeps macOS 12 installs on the
           # build they can run instead of updating them to one that won't launch.
-          # Raise it whenever an Electron major raises its macOS floor.
+          # Raise it whenever an Electron major raises its macOS floor:
+          # scripts/ci/merge-update-manifests.test.mjs fails on every Electron
+          # major until this value has been re-checked against it.
           node .github/scripts/merge-update-manifests.mjs --minimum-system-version 22.0.0 upload/latest-mac.yml \
             artifacts/dist-mac-x64/latest-mac.yml \
             artifacts/dist-mac-arm64/latest-mac.yml
