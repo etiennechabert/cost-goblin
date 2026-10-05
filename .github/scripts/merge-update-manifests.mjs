@@ -32,8 +32,9 @@ if (args[0] === '--minimum-system-version') {
   minimumSystemVersion = args[1] ?? '';
   args.splice(0, 2);
   // Anything semver.lt can't parse makes electron-updater warn and offer the
-  // update anyway, which is the case this flag exists to prevent.
-  if (!/^\d+\.\d+\.\d+$/.test(minimumSystemVersion)) {
+  // update anyway, which is the case this flag exists to prevent. That includes
+  // a leading zero in any component (022.0.0): strict semver rejects it.
+  if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(minimumSystemVersion)) {
     throw new Error(`--minimum-system-version must be x.y.z (a kernel version), got "${minimumSystemVersion}"`);
   }
 }

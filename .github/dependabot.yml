@@ -83,6 +83,15 @@ updates:
           - "@google-cloud/storage"
         update-types:
           - "major"
+      # An Electron major can raise the macOS floor that release.yml publishes as
+      # latest-mac.yml's minimumSystemVersion, so merge-update-manifests.test.mjs
+      # fails on each one until that floor is re-checked. Its own PR keeps that
+      # (deliberate) failure from holding back all-dependencies.
+      electron-major:
+        patterns:
+          - "electron"
+        update-types:
+          - "major"
       all-dependencies:
         patterns:
           - "*"
