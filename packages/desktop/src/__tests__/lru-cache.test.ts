@@ -53,6 +53,21 @@ describe('LRUCache', () => {
     expect(cache.get('a')).toBeUndefined();
   });
 
+  it('generation advances on every clear, and only on clear', () => {
+    // A writer that started before a clear must not re-cache what it read
+    // (context.ts compares the generation it started under before set()).
+    const cache = new LRUCache<string, number>(3);
+    const start = cache.generation;
+    cache.set('a', 1);
+    cache.get('a');
+    cache.delete('a');
+    expect(cache.generation).toBe(start);
+    cache.clear();
+    expect(cache.generation).toBe(start + 1);
+    cache.clear();
+    expect(cache.generation).toBe(start + 2);
+  });
+
   it('maxSize 0 stores nothing', () => {
     const cache = new LRUCache<string, number>(0);
     cache.set('a', 1);

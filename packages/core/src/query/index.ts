@@ -30,6 +30,9 @@ export { QUERY_CANCELLED_MESSAGE } from './cancellation.js';
 export { buildDuckDbSandboxStatements, isDuckDbSandboxOptions } from './duckdb-sandbox.js';
 export type { DuckDbSandboxOptions } from './duckdb-sandbox.js';
 
+export { bindParams } from './duckdb-bind.js';
+export type { DuckDBParamBinder } from './duckdb-bind.js';
+
 export { assertBillingPeriod, assertDateString, assertHourString, assertSafeColumnIdentifier, assertTier, isDateString, isHourString, isSafeColumnIdentifier, SecurityError } from './identifier-validator.js';
 
 export type { ParameterizedQuery } from './parameterized.js';

@@ -2,6 +2,7 @@
 export class LRUCache<K, V> {
   private readonly maxSize: number;
   private readonly cache = new Map<K, V>();
+  private clears = 0;
 
   constructor(maxSize: number) {
     if (maxSize < 0) throw new Error('LRUCache maxSize must be non-negative');
@@ -27,6 +28,10 @@ export class LRUCache<K, V> {
 
   has(key: K): boolean { return this.cache.has(key); }
   delete(key: K): boolean { return this.cache.delete(key); }
-  clear(): void { this.cache.clear(); }
+  clear(): void { this.clears += 1; this.cache.clear(); }
   get size(): number { return this.cache.size; }
+  /** Advances on every clear(). A writer that read its value before a clear
+   *  compares the generation it started under, so it can't re-cache data the
+   *  clear was meant to drop. */
+  get generation(): number { return this.clears; }
 }

@@ -1,10 +1,12 @@
-import type { DuckDBConnection, DuckDBPreparedStatement, DuckDBResult } from '@duckdb/node-api';
+import type { DuckDBConnection, DuckDBResult } from '@duckdb/node-api';
+import { bindParams } from '@costgoblin/core';
 import type { RawRow } from '../../context.js';
 
 // Copied from packages/desktop/src/__tests__/helpers/duckdb-rows.ts — the mcp
 // package must not import from desktop. Keep the two in step: these mirror the
-// duckdb-worker's row shape and $1..$n binding, so a test that runs a tool's
-// prepared SQL here exercises the same binding the desktop app does.
+// duckdb-worker's row shape. The $1..$n binding is core's bindParams, the one
+// the worker itself uses, so a test that runs a tool's prepared SQL here
+// exercises the same binding the desktop app does.
 
 /** Drain a DuckDB result into name-keyed rows (the duckdb-worker's row shape). */
 async function collectRows(result: DuckDBResult): Promise<RawRow[]> {
@@ -26,28 +28,6 @@ async function collectRows(result: DuckDBResult): Promise<RawRow[]> {
 
 export async function fetchRows(conn: DuckDBConnection, sql: string): Promise<RawRow[]> {
   return collectRows(await conn.run(sql));
-}
-
-/** Positional $1..$n binding, mirroring the duckdb-worker's bindParams. */
-function bindParams(stmt: DuckDBPreparedStatement, params: readonly unknown[]): void {
-  for (let i = 0; i < params.length; i++) {
-    const idx = i + 1;
-    const val = params[i];
-    if (val === null || val === undefined) {
-      stmt.bindNull(idx);
-    } else if (typeof val === 'string') {
-      stmt.bindVarchar(idx, val);
-    } else if (typeof val === 'number') {
-      if (Number.isInteger(val)) stmt.bindInteger(idx, val);
-      else stmt.bindDouble(idx, val);
-    } else if (typeof val === 'boolean') {
-      stmt.bindBoolean(idx, val);
-    } else if (typeof val === 'bigint') {
-      stmt.bindInteger(idx, Number(val));
-    } else {
-      stmt.bindVarchar(idx, JSON.stringify(val));
-    }
-  }
 }
 
 export async function fetchRowsPrepared(conn: DuckDBConnection, sql: string, params: readonly unknown[]): Promise<RawRow[]> {

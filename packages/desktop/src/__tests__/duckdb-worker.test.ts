@@ -173,6 +173,13 @@ describe('DuckDB Worker', () => {
     expect(rows[0]).toHaveProperty('num');
   });
 
+  it('binds integers wider than int32 (numbers and bigints) without truncation', async () => {
+    const id = nextId++;
+    sendPreparedQuery(id, 'SELECT $1 AS wide, $2 AS negative, $3 AS big', [2 ** 31, -(2 ** 31) - 1, 2n ** 62n]);
+    const { rows } = expectRows(await waitForResult(id));
+    expect(rows[0]).toEqual({ wide: 2n ** 31n, negative: -(2n ** 31n) - 1n, big: 2n ** 62n });
+  });
+
   it('returns error for invalid SQL', async () => {
     const id = nextId++;
     sendQuery(id, 'SELECT FROM INVALID SYNTAX');
