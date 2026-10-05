@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { DuckDBInstance } from '@duckdb/node-api';
-import { mkdtemp, mkdir } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FOCUS_TABLE_DDL } from '../__fixtures__/focus-fixture.js';
@@ -69,7 +69,8 @@ function scope(rules: readonly ExclusionRule[]): CostScopeConfig {
   return { costMetric: 'effective', rules: [...rules] };
 }
 
-type Conn = Awaited<ReturnType<Awaited<ReturnType<typeof DuckDBInstance.create>>['connect']>>;
+type Db = Awaited<ReturnType<typeof DuckDBInstance.create>>;
+type Conn = Awaited<ReturnType<Db['connect']>>;
 
 async function scalar(conn: Conn, sql: string, column: string): Promise<number> {
   const rows = await (await conn.run(sql)).getRowObjects();
@@ -77,6 +78,7 @@ async function scalar(conn: Conn, sql: string, column: string): Promise<number> 
 }
 
 describe('exclusion rules keep untagged (NULL) rows (#451)', () => {
+  let db: Db;
   let conn: Conn;
   let dataDir: string;
   let outDir: string;
@@ -115,7 +117,7 @@ describe('exclusion rules keep untagged (NULL) rows (#451)', () => {
   }
 
   beforeAll(async () => {
-    const db = await DuckDBInstance.create();
+    db = await DuckDBInstance.create();
     conn = await db.connect();
     dataDir = await mkdtemp(join(tmpdir(), 'cg-exclusion-null-'));
     outDir = await mkdtemp(join(tmpdir(), 'cg-exclusion-null-out-'));
@@ -131,6 +133,13 @@ describe('exclusion rules keep untagged (NULL) rows (#451)', () => {
         (TIMESTAMP '2026-05-02', '222', 'data', 'S3', 'Usage', 8, 8, MAP {})
     `);
     await conn.run(`COPY (SELECT * FROM synthetic) TO ${sqlStringLiteral(join(partDir, 'data.parquet'))} (FORMAT PARQUET)`);
+  });
+
+  afterAll(async () => {
+    conn.disconnectSync();
+    db.closeSync();
+    await rm(dataDir, { recursive: true, force: true });
+    await rm(outDir, { recursive: true, force: true });
   });
 
   describe.each([

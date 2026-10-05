@@ -269,7 +269,8 @@ function tryMergeSingleConditionRule(
  *  NULL-safe: a row whose dimension value is NULL (an untagged resource on a
  *  tag dimension) matches no rule, so it is kept (#451). Values bind on `qb`
  *  when one is given; without it they are inlined as escaped literals, for
- *  the DDL builders (DuckDB has no prepared DDL). */
+ *  the DDL builders (DuckDB has no prepared DDL) and the Explorer, whose WHERE
+ *  is still assembled as a literal string. Pass `qb` on any other query path. */
 export function buildExclusionClauses(
   rules: readonly ExclusionRule[] | undefined,
   dimensions: DimensionsConfig,

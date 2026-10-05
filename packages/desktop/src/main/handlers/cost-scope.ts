@@ -160,10 +160,14 @@ export function registerCostScopeHandlers(app: AppContext): void {
     // $0 excluded for a rule that does drop spend.
     const accountReverseMap = await getAccountReverseMap();
 
+    // Marketplace re-attribution rewrites `service` (and the list-metric cost)
+    // in every dashboard source, so the preview applies it too: otherwise a rule
+    // on a re-attributed service (Amazon Bedrock) previews only its native rows.
     const source = buildSource({
       dataDir: ctx.dataDir, tier: 'daily', dimensions, orgAccountsPath: orgPath,
       providers: branches,
       costMetric: config.costMetric,
+      marketplaceAttribution: config.marketplaceAttribution,
     });
 
     // Pre-compute each rule's positive match expression once — used to
