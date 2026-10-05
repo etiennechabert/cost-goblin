@@ -12,6 +12,7 @@ import {
   buildRuleMatchExpr,
   computePeriodsInRange,
   logger,
+  QueryBuilder,
   tagDimColumn,
 } from '@costgoblin/core';
 import type {
@@ -95,7 +96,7 @@ function isEnoent(err: unknown): boolean {
 }
 
 export function registerCostScopeHandlers(app: AppContext): void {
-  const { ctx, getCostScope, invalidateCostScope, getQueryDimensions, getOrgAccountsPath, getQueryProviders, getAccountReverseMap, runQuery } = app;
+  const { ctx, getCostScope, invalidateCostScope, getQueryDimensions, getOrgAccountsPath, getQueryProviders, getAccountReverseMap, runPreparedQuery } = app;
 
   ipcMain.handle('cost-scope:get-config', async (): Promise<CostScopeConfig> => {
     try {
@@ -175,12 +176,21 @@ export function registerCostScopeHandlers(app: AppContext): void {
     // per-rule tally, the daily breakdown, and the sample row flag. Rules
     // whose expression is null (all conditions empty) are treated as
     // no-ops and don't appear in the SQL at all.
+    //
+    // Rule values and the date window bind as parameters on one builder. All
+    // three queries reference every placeholder (each embeds the combined
+    // predicate, which holds every live rule, and the date window), so they
+    // share its params.
+    const qb = new QueryBuilder();
     const ruleExprs: { readonly rule: typeof enabledRules[number]; readonly expr: string | null }[] =
-      enabledRules.map(rule => ({ rule, expr: buildRuleMatchExpr(rule, dimensions, accountReverseMap) }));
+      enabledRules.map(rule => ({ rule, expr: buildRuleMatchExpr(rule, dimensions, accountReverseMap, qb) }));
     const liveExprs = ruleExprs.flatMap(e => e.expr === null ? [] : [e.expr]);
     const excludedPredicate = liveExprs.length > 0
       ? liveExprs.map(e => `(${e})`).join(' OR ')
       : 'FALSE';
+
+    const dateWindow = `usage_date BETWEEN ${qb.addParam(startStr)} AND ${qb.addParam(endStr)}`;
+    const params = qb.build().params;
 
     const tagColumns = dimensions.tags.map(t => ({
       id: tagDimColumn(t),
@@ -207,7 +217,7 @@ export function registerCostScopeHandlers(app: AppContext): void {
         CAST(COALESCE(SUM(CASE WHEN (${excludedPredicate}) THEN 1 ELSE 0 END), 0) AS DOUBLE) AS combined_excluded_rows,
         CAST(COUNT(*) AS DOUBLE) AS total_rows${ruleAggSelects.length > 0 ? `,\n          ${ruleAggSelects}` : ''}
       FROM ${source}
-      WHERE usage_date BETWEEN '${startStr}' AND '${endStr}'
+      WHERE ${dateWindow}
     `.trim();
 
     // === Query 2: daily breakdown (separate because GROUP BY) ===
@@ -217,7 +227,7 @@ export function registerCostScopeHandlers(app: AppContext): void {
         CAST(COALESCE(SUM(CASE WHEN (${excludedPredicate}) THEN 0 ELSE cost END), 0) AS DOUBLE) AS kept_cost,
         CAST(COALESCE(SUM(CASE WHEN (${excludedPredicate}) THEN cost ELSE 0 END), 0) AS DOUBLE) AS excluded_cost
       FROM ${source}
-      WHERE usage_date BETWEEN '${startStr}' AND '${endStr}'
+      WHERE ${dateWindow}
       GROUP BY usage_date
       ORDER BY usage_date
     `.trim();
@@ -245,7 +255,7 @@ export function registerCostScopeHandlers(app: AppContext): void {
           CAST(list_cost AS DOUBLE) AS list_cost,
           CASE WHEN (${excludedPredicate}) THEN 1 ELSE 0 END AS excluded${tagSelectSql === null ? '' : `,\n          ${tagSelectSql}`}
         FROM ${source}
-        WHERE usage_date BETWEEN '${startStr}' AND '${endStr}'
+        WHERE ${dateWindow}
       ),
       ranked AS (
         SELECT *,
@@ -266,9 +276,9 @@ export function registerCostScopeHandlers(app: AppContext): void {
     // lets independent queries execute concurrently. `allSettled` so one
     // failing query doesn't drop the other two's results.
     const [aggResult, dailyResult, sampleResult] = await Promise.allSettled([
-      runQuery(aggSql),
-      runQuery(dailySql),
-      runQuery(sampleSql),
+      runPreparedQuery(aggSql, params),
+      runPreparedQuery(dailySql, params),
+      runPreparedQuery(sampleSql, params),
     ]);
 
     // Agg → totals + per-rule + combined

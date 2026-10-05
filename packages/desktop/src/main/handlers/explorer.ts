@@ -1,27 +1,23 @@
 import { ipcMain } from 'electron';
 import { originStore } from '../query-log.js';
 import {
+  QueryBuilder,
   asDimensionId,
   dimensionIdSet,
-  buildExclusionClauses,
   buildSource,
-  buildRuleMatchExpr,
   computePeriodsInRange,
   logger,
   resolveField,
   tagDimColumn,
 } from '@costgoblin/core';
 import type {
-  ExclusionRule,
   ExplorerBaseParams,
   ExplorerFilterMap,
   ExplorerFilterValue,
-  ExplorerFilterValuesParams,
   ExplorerOverviewParams,
   ExplorerOverviewResult,
   ExplorerPreferences,
   ExplorerPreferencesUpdate,
-  ExplorerRowsParams,
   ExplorerRowsResult,
   ExplorerSampleRow,
   ExplorerSort,
@@ -29,7 +25,6 @@ import type {
   ExplorerTagColumn,
   DimensionsConfig,
   ProviderSourceSpec,
-  AggregatedTableParams,
   AggregatedTableRow,
   AggregatedTableResult,
 } from '@costgoblin/core';
@@ -39,55 +34,19 @@ import { buildAccountReverseMap, columnForDimension, resolveRollupSource, toNum,
 import { readExplorerPreferences, writeExplorerPreferences } from './explorer-prefs.js';
 import { resolveScopeMetric } from './explorer-scope.js';
 import { resolveExplorerDateRange } from './query-windows.js';
+import { EXPLORER_SCALAR_COLUMNS, appendRowFilters, buildExplorerWhere, type ParameterizedWhere } from './explorer-sql.js';
+import {
+  parseAggregatedTableParams,
+  parseExplorerFilterValuesParams,
+  parseExplorerOverviewParams,
+  parseExplorerRowsParams,
+} from './explorer-params.js';
 
 const MAX_ROW_LIMIT = 1000;
-
-const SORTABLE_SCALAR_COLUMNS: ReadonlySet<string> = new Set([
-  'usage_date',
-  'usage_hour',
-  'account_id',
-  'account_name',
-  'region',
-  'service',
-  'service_code',
-  'service_category',
-  'charge_category',
-  'pricing_category',
-  'commitment_status',
-  'operation',
-  'sku_meter',
-  'description',
-  'resource_id',
-  'usage_amount',
-  'cost',
-  'list_cost',
-]);
 
 function clampRowLimit(n: number): number {
   if (!Number.isFinite(n) || n <= 0) return 500;
   return Math.min(Math.floor(n), MAX_ROW_LIMIT);
-}
-
-function buildExplorerFilterPredicate(
-  filters: ExplorerFilterMap,
-  dimensions: DimensionsConfig,
-  accountReverseMap: ReadonlyMap<string, readonly string[]>,
-): string | null {
-  const conditions = Object.entries(filters)
-    .filter(([, values]) => values.length > 0)
-    .map(([dimId, values]) => ({
-      dimensionId: asDimensionId(dimId),
-      values,
-    }));
-  if (conditions.length === 0) return null;
-  const synthetic: ExclusionRule = {
-    id: '_explorer_filters',
-    name: '_explorer_filters',
-    enabled: true,
-    builtIn: false,
-    conditions,
-  };
-  return buildRuleMatchExpr(synthetic, dimensions, accountReverseMap);
 }
 
 function buildOrderBy(
@@ -96,7 +55,7 @@ function buildOrderBy(
 ): string {
   if (sort === undefined) return 'ABS(cost) DESC';
   const dir = sort.direction === 'asc' ? 'ASC' : 'DESC';
-  if (SORTABLE_SCALAR_COLUMNS.has(sort.column) || tagColumnIds.has(sort.column)) {
+  if (EXPLORER_SCALAR_COLUMNS.has(sort.column) || tagColumnIds.has(sort.column)) {
     return `${sort.column} ${dir}`;
   }
   return 'ABS(cost) DESC';
@@ -109,7 +68,9 @@ interface QueryContext {
   readonly empty: boolean;
   readonly providers: readonly ProviderSourceSpec[];
   readonly source: string;
-  readonly whereStr: string;
+  /** Shared by every query over `source`; extend it through appendRowFilters
+   *  or a QueryBuilder seeded with its params. */
+  readonly where: ParameterizedWhere;
   readonly startStr: string;
   readonly endStr: string;
   readonly windowDays: number;
@@ -131,12 +92,11 @@ interface BuildFreshSourceOptions {
   readonly periods: readonly string[];
   readonly providers: readonly ProviderSourceSpec[];
   readonly dimensions: DimensionsConfig;
-  readonly filterPredicate: string | null;
   readonly accountReverseMap: ReadonlyMap<string, readonly string[]>;
 }
 
-async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source: string; whereStr: string }> {
-  const { app, params, startStr, endStr, startHour, endHour, tier, periods, providers, dimensions, filterPredicate, accountReverseMap } = opts;
+async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source: string; where: ParameterizedWhere }> {
+  const { app, params, startStr, endStr, startHour, endHour, tier, periods, providers, dimensions, accountReverseMap } = opts;
   const { ctx, getCostScope, getOrgAccountsPath } = app;
   const orgPath = await getOrgAccountsPath();
   const applyCostScope = params.applyCostScope === true;
@@ -166,22 +126,16 @@ async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source
     providers: branches,
     costMetric: metric, marketplaceAttribution: fullScope?.marketplaceAttribution,
   });
-  const exclusions = buildExclusionClauses(scopeForExclusions?.rules, dimensions, accountReverseMap);
-
-  // When the histogram drag-zoom emits hour bounds, swap the day-level
-  // BETWEEN for an hour-level filter so the rest of the Explorer (overview,
-  // table, sample rows) matches what the user dragged. usage_hour only exists
-  // on the hourly tier — caller forces tier='hourly' in that case.
-  const dateClause = startHour !== undefined && endHour !== undefined && tier === 'hourly'
-    ? `usage_hour BETWEEN TIMESTAMP '${startHour}' AND TIMESTAMP '${endHour}'`
-    : `usage_date BETWEEN '${startStr}' AND '${endStr}'`;
-
-  const whereClauses: string[] = [
-    dateClause,
-    ...(filterPredicate === null ? [] : [`(${filterPredicate})`]),
-    ...exclusions,
-  ];
-  return { source, whereStr: `WHERE ${whereClauses.join(' AND ')}` };
+  // When the histogram drag-zoom emits hour bounds, the WHERE swaps the
+  // day-level window for an hour-level one so the rest of the Explorer
+  // (overview, table, sample rows) matches what the user dragged. usage_hour
+  // only exists on the hourly tier — caller forces tier='hourly' in that case.
+  const where = buildExplorerWhere({
+    startStr, endStr, startHour, endHour, tier,
+    filters: params.filters, dimensions, accountReverseMap,
+    exclusionRules: scopeForExclusions?.rules,
+  });
+  return { source, where };
 }
 
 async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams): Promise<QueryContext> {
@@ -213,42 +167,21 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
   const shared = { providers, startStr, endStr, windowDays, tier, tagColumns, tagIdSet, dimensions, accountMap } as const;
 
   if (periods.length === 0) {
-    return { empty: true, source: '', whereStr: '', ...shared };
+    return { empty: true, source: '', where: { sql: '', params: [] }, ...shared };
   }
 
   const accountReverseMap = buildAccountReverseMap(accountMap);
-  const filterPredicate = buildExplorerFilterPredicate(params.filters, dimensions, accountReverseMap);
 
   // Explorer always reads Parquet directly — the materialized base uses a
   // slim schema (no description, usage_amount, list_cost) that Explorer's
   // aggregated table and sample rows need.
-  const { source, whereStr } = await buildFreshSource({
+  const { source, where } = await buildFreshSource({
     app, params, startStr, endStr,
     ...(startHour === undefined ? {} : { startHour }),
     ...(endHour === undefined ? {} : { endHour }),
-    tier, periods, providers, dimensions, filterPredicate, accountReverseMap,
+    tier, periods, providers, dimensions, accountReverseMap,
   });
-  return { empty: false, source, whereStr, ...shared };
-}
-
-function appendRowFilters(
-  baseWhere: string,
-  rowFilters: Record<string, string> | undefined,
-  tagIdSet: ReadonlySet<string>,
-): string {
-  if (rowFilters === undefined) return baseWhere;
-  const extra: string[] = [];
-  for (const [col, val] of Object.entries(rowFilters)) {
-    if (val.length === 0) continue;
-    if (!SORTABLE_SCALAR_COLUMNS.has(col) && !tagIdSet.has(col)) continue;
-    const escaped = val.replaceAll("'", "''");
-    const colExpr = col === 'usage_date' ? `usage_date::VARCHAR` : col;
-    extra.push(`${colExpr} = '${escaped}'`);
-  }
-  if (extra.length === 0) return baseWhere;
-  const joined = extra.join(' AND ');
-  if (baseWhere.length === 0) return `WHERE ${joined}`;
-  return `${baseWhere} AND ${joined}`;
+  return { empty: false, source, where, ...shared };
 }
 
 const AGG_SORT_COLUMNS: Record<string, (dir: string) => string> = {
@@ -305,8 +238,19 @@ function readOverviewDaily(result: PromiseSettledResult<RawRow[]>): readonly Exp
   return result.value.map(r => ({ date: parseDailyDate(r['date']), cost: toNum(r['daily_cost']), rows: toNum(r['daily_rows']) }));
 }
 
+/** Parse a renderer payload, then run the handler under its debug origin.
+ *  Async so a malformed payload rejects the invoke like any other failure. */
+async function runParsed<P extends { readonly origin?: string | undefined }, R>(
+  parse: (payload: unknown) => P,
+  payload: unknown,
+  run: (params: P) => Promise<R>,
+): Promise<R> {
+  const params = parse(payload);
+  return originStore.run(params.origin ?? null, () => run(params));
+}
+
 export function registerExplorerHandlers(app: AppContext): void {
-  const { ctx, runQuery, rollupStore, getAccountReverseMap, getQueryDimensions } = app;
+  const { ctx, runPreparedQuery, rollupStore, getAccountReverseMap, getQueryDimensions } = app;
 
   const explorerPrefsPath = () => prefsPath(ctx.stateDir, 'explorer-preferences');
 
@@ -323,8 +267,7 @@ export function registerExplorerHandlers(app: AppContext): void {
   // Histogram + totals. Depends on filters/range/granularity/scope/metric/
   // perspective — NOT on sort. Kept separate from the rows query so that
   // clicking a column header doesn't wipe the histogram.
-  ipcMain.handle('explorer:query-overview', (_event, payload: unknown): Promise<ExplorerOverviewResult> => originStore.run((payload as ExplorerOverviewParams).origin ?? null, async () => {
-    const params = payload as ExplorerOverviewParams;
+  ipcMain.handle('explorer:query-overview', (_event, payload: unknown): Promise<ExplorerOverviewResult> => runParsed(parseExplorerOverviewParams, payload, async (params) => {
     const qc = await prepareQueryContext(app, params);
 
     const zero: ExplorerOverviewResult = {
@@ -356,12 +299,12 @@ export function registerExplorerHandlers(app: AppContext): void {
       : undefined;
 
     let source: string;
-    let whereStr: string;
+    let where: ParameterizedWhere;
     let rowsExpr: string;
     let bucketExpr: string;
     if (rollupSource === undefined) {
       source = qc.source;
-      whereStr = qc.whereStr;
+      where = qc.where;
       rowsExpr = 'COUNT(*)';
       // Bucket width matches the queried tier — daily rows group per day,
       // hourly rows group per hour. Monthly-frequency line items (fees, Tax)
@@ -375,10 +318,11 @@ export function registerExplorerHandlers(app: AppContext): void {
       // user's dashboard filters apply. line_items is the per-grain COUNT(*),
       // so SUM(line_items) equals the raw line-item count the raw path returns
       // — the overview's totalRows stays consistent with the detailed table.
-      const filterPredicate = buildExplorerFilterPredicate(params.filters, qc.dimensions, await getAccountReverseMap());
-      const filterClause = filterPredicate === null ? '' : ` AND (${filterPredicate})`;
       source = rollupSource;
-      whereStr = `WHERE usage_date BETWEEN '${qc.startStr}' AND '${qc.endStr}'${filterClause}`;
+      where = buildExplorerWhere({
+        startStr: qc.startStr, endStr: qc.endStr, tier: 'daily',
+        filters: params.filters, dimensions: qc.dimensions, accountReverseMap: await getAccountReverseMap(),
+      });
       rowsExpr = 'COALESCE(SUM(line_items), 0)';
       bucketExpr = 'usage_date';
     }
@@ -388,7 +332,7 @@ export function registerExplorerHandlers(app: AppContext): void {
         CAST(COALESCE(SUM(cost), 0) AS DOUBLE) AS total_cost,
         CAST(${rowsExpr} AS DOUBLE) AS total_rows
       FROM ${source}
-      ${whereStr}
+      ${where.sql}
     `.trim();
 
     const dailySql = `
@@ -397,14 +341,14 @@ export function registerExplorerHandlers(app: AppContext): void {
         CAST(COALESCE(SUM(cost), 0) AS DOUBLE) AS daily_cost,
         CAST(${rowsExpr} AS DOUBLE) AS daily_rows
       FROM ${source}
-      ${whereStr}
+      ${where.sql}
       GROUP BY ${bucketExpr}
       ORDER BY ${bucketExpr}
     `.trim();
 
     const [totalsResult, dailyResult] = await Promise.allSettled([
-      runQuery(totalsSql),
-      runQuery(dailySql),
+      runPreparedQuery(totalsSql, where.params),
+      runPreparedQuery(dailySql, where.params),
     ]);
 
     const { totalCost, totalRows } = readOverviewTotals(totalsResult);
@@ -422,8 +366,7 @@ export function registerExplorerHandlers(app: AppContext): void {
   }));
 
   // Sample rows. Depends on everything the overview does PLUS sort + rowLimit.
-  ipcMain.handle('explorer:query-rows', (_event, payload: unknown): Promise<ExplorerRowsResult> => originStore.run((payload as ExplorerRowsParams).origin ?? null, async () => {
-    const params = payload as ExplorerRowsParams;
+  ipcMain.handle('explorer:query-rows', (_event, payload: unknown): Promise<ExplorerRowsResult> => runParsed(parseExplorerRowsParams, payload, async (params) => {
     const qc = await prepareQueryContext(app, params);
     const rowLimit = clampRowLimit(params.rowLimit);
 
@@ -437,6 +380,8 @@ export function registerExplorerHandlers(app: AppContext): void {
     // to VARCHAR so it survives IPC cleanly. Daily has no usage_hour
     // column, so emit a literal empty string.
     const hourSelect = qc.tier === 'hourly' ? `usage_hour::VARCHAR AS usage_hour` : `'' AS usage_hour`;
+    const qb = new QueryBuilder(qc.where.params);
+    const limit = qb.addParam(rowLimit);
     const sampleSql = `
       SELECT
         usage_date::VARCHAR AS usage_date,
@@ -447,14 +392,14 @@ export function registerExplorerHandlers(app: AppContext): void {
         CAST(cost AS DOUBLE) AS cost,
         CAST(list_cost AS DOUBLE) AS list_cost${tagSelectSql === null ? '' : `,\n        ${tagSelectSql}`}
       FROM ${qc.source}
-      ${qc.whereStr}
+      ${qc.where.sql}
       ORDER BY ${orderBy}
-      LIMIT ${String(rowLimit)}
+      LIMIT ${limit}
     `.trim();
 
     let sampleRows: readonly ExplorerSampleRow[] = [];
     try {
-      const rows = await runQuery(sampleSql);
+      const rows = await runPreparedQuery(sampleSql, qb.build().params);
       sampleRows = rows.map(r => {
         const tags: Record<string, string> = {};
         for (const t of qc.tagColumns) {
@@ -487,17 +432,16 @@ export function registerExplorerHandlers(app: AppContext): void {
     return { sampleRows, tagColumns: qc.tagColumns };
   }));
 
-  ipcMain.handle('explorer:query-aggregated-table', (_event, payload: unknown): Promise<AggregatedTableResult> => originStore.run((payload as AggregatedTableParams).origin ?? null, async () => {
-    const params = payload as AggregatedTableParams;
+  ipcMain.handle('explorer:query-aggregated-table', (_event, payload: unknown): Promise<AggregatedTableResult> => runParsed(parseAggregatedTableParams, payload, async (params) => {
     const qc = await prepareQueryContext(app, params);
     const rowLimit = clampRowLimit(params.rowLimit);
 
     if (qc.empty) return { rows: [], totalRows: 0, tagColumns: qc.tagColumns };
 
-    const whereStr = appendRowFilters(qc.whereStr, params.rowFilters, qc.tagIdSet);
+    const where = appendRowFilters(qc.where, params.rowFilters, qc.tagIdSet);
 
     const groupByColumns = params.groupByColumns.filter(
-      col => SORTABLE_SCALAR_COLUMNS.has(col) || qc.tagIdSet.has(col),
+      col => EXPLORER_SCALAR_COLUMNS.has(col) || qc.tagIdSet.has(col),
     );
 
     if (groupByColumns.length === 0) {
@@ -508,9 +452,9 @@ export function registerExplorerHandlers(app: AppContext): void {
           CAST(SUM(usage_amount) AS DOUBLE) AS usage_amount,
           CAST(COUNT(*) AS DOUBLE) AS row_count
         FROM ${qc.source}
-        ${whereStr}
+        ${where.sql}
       `.trim();
-      const rows = await runQuery(sql);
+      const rows = await runPreparedQuery(sql, where.params);
       const r = rows[0];
       if (r === undefined) return { rows: [], totalRows: 0, tagColumns: qc.tagColumns };
       return {
@@ -525,10 +469,12 @@ export function registerExplorerHandlers(app: AppContext): void {
       return col;
     });
     const orderBy = resolveAggregatedSort(params.sort, groupByColumns);
+    const qb = new QueryBuilder(where.params);
+    const limit = qb.addParam(rowLimit);
 
     const countSql = `
       SELECT CAST(COUNT(*) AS DOUBLE) AS n FROM (
-        SELECT 1 FROM ${qc.source} ${whereStr}
+        SELECT 1 FROM ${qc.source} ${where.sql}
         GROUP BY ${groupByColumns.join(', ')}
       ) AS _cnt
     `.trim();
@@ -540,13 +486,16 @@ export function registerExplorerHandlers(app: AppContext): void {
         CAST(SUM(usage_amount) AS DOUBLE) AS usage_amount,
         CAST(COUNT(*) AS DOUBLE) AS row_count
       FROM ${qc.source}
-      ${whereStr}
+      ${where.sql}
       GROUP BY ${groupByColumns.join(', ')}
       ORDER BY ${orderBy}
-      LIMIT ${String(rowLimit)}
+      LIMIT ${limit}
     `.trim();
 
-    const [countResult, dataResult] = await Promise.all([runQuery(countSql), runQuery(dataSql)]);
+    const [countResult, dataResult] = await Promise.all([
+      runPreparedQuery(countSql, where.params),
+      runPreparedQuery(dataSql, qb.build().params),
+    ]);
     const totalRows = countResult[0] === undefined ? 0 : toNum(countResult[0]['n']);
     const resultRows: AggregatedTableRow[] = dataResult.map(r => {
       const values: Record<string, string> = {};
@@ -565,8 +514,7 @@ export function registerExplorerHandlers(app: AppContext): void {
     return { rows: resultRows, totalRows, tagColumns: qc.tagColumns };
   }));
 
-  ipcMain.handle('explorer:filter-values', (_event, payload: unknown): Promise<ExplorerFilterValue[]> => originStore.run((payload as ExplorerFilterValuesParams).origin ?? null, async () => {
-    const params = payload as ExplorerFilterValuesParams;
+  ipcMain.handle('explorer:filter-values', (_event, payload: unknown): Promise<ExplorerFilterValue[]> => runParsed(parseExplorerFilterValuesParams, payload, async (params) => {
     const dimId = params.dimensionId;
 
     // Exclude the current dim from the filter set — opening a dim's dropdown
@@ -588,14 +536,14 @@ export function registerExplorerHandlers(app: AppContext): void {
              CAST(COALESCE(SUM(cost), 0) AS DOUBLE) AS total_cost,
              CAST(COUNT(*) AS DOUBLE) AS row_count
       FROM ${qc.source}
-      ${qc.whereStr}
+      ${qc.where.sql}
       GROUP BY val
       HAVING val IS NOT NULL AND val != ''
       ORDER BY total_cost DESC
       LIMIT 500
     `.trim();
 
-    const rows = await runQuery(sql);
+    const rows = await runPreparedQuery(sql, qc.where.params);
     const isAccountDim = dimId === 'account' || dimId === 'account_id';
     if (isAccountDim) {
       const merged = new Map<string, { cost: number; rows: number }>();
