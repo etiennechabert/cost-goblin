@@ -9,14 +9,15 @@ import type {
 } from '@costgoblin/core/browser';
 import { asDimensionId, asDollars, asEntityRef } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
+import { useDefaultDateRange } from '../hooks/use-default-date-range.js';
 import { useLagDays } from '../hooks/use-lag-days.js';
 import { useQuery } from '../hooks/use-query.js';
 import { getDimensionId } from '../lib/dimensions.js';
 import { rollupGate } from '../lib/rollup-gate.js';
 import { BubbleChart } from '../components/bubble-chart.js';
 import { RollupBuildingOverlay } from '../components/rollup-building-overlay.js';
-import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
-import type { DateRange, Granularity } from '../components/date-range-picker.js';
+import { DateRangePicker } from '../components/date-range-picker.js';
+import type { Granularity } from '../components/date-range-picker.js';
 import { DimensionSelector } from '../components/dimension-selector.js';
 import { formatDollars, formatPercent } from '../components/format.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
@@ -32,7 +33,6 @@ const DIRECTION_OPTIONS: readonly { value: Direction; label: string }[] = [
 interface TrendsState {
   selectedDimensionId: DimensionId | null;
   direction: Direction;
-  dateRange: DateRange;
   granularity: Granularity;
   deltaThreshold: number;
   percentThreshold: number;
@@ -149,13 +149,13 @@ function formatTotalLabel(direction: Direction, totalIncrease: number, totalSavi
 
 export function CostTrends({ onEntityClick: onEntityClickProp, rollupStatus }: CostTrendsProps = {}) {
   const api = useCostApi();
-  const lagDays = useLagDays();
+  const lag = useLagDays();
   const dimensionsQuery = useQuery(() => api.getDimensions(), []);
 
+  const [dateRange, setDateRange] = useDefaultDateRange(lag);
   const [state, setState] = useState<TrendsState>(() => ({
     selectedDimensionId: null,
     direction: 'all',
-    dateRange: getDefaultDateRange(lagDays),
     granularity: 'daily' satisfies Granularity,
     deltaThreshold: 0,
     percentThreshold: 0,
@@ -168,8 +168,8 @@ export function CostTrends({ onEntityClick: onEntityClickProp, rollupStatus }: C
   const gate = useMemo(
     () => rollupStatus === undefined
       ? { blocked: false, selectedMonths: [], pendingMonths: [] }
-      : rollupGate(rollupStatus, state.dateRange),
-    [rollupStatus, state.dateRange],
+      : rollupGate(rollupStatus, dateRange),
+    [rollupStatus, dateRange],
   );
 
   const firstDimId = dimensions.length > 0 && dimensions[0] !== undefined
@@ -184,21 +184,21 @@ export function CostTrends({ onEntityClick: onEntityClickProp, rollupStatus }: C
       return;
     }
     api.cancelPendingQueries().catch(() => undefined);
-  }, [state.dateRange.start, state.dateRange.end, state.granularity, api]);
+  }, [dateRange.start, dateRange.end, state.granularity, api]);
 
   const trendsQuery = useQuery(
     () => {
       if (activeDimensionId === null) return Promise.resolve(null);
       return api.queryTrends({
         groupBy: activeDimensionId,
-        dateRange: state.dateRange,
+        dateRange,
         filters: {},
         deltaThreshold: asDollars(state.deltaThreshold),
         percentThreshold: state.percentThreshold,
         origin: `trends:${String(activeDimensionId)}`,
       });
     },
-    [activeDimensionId, state.dateRange.start, state.dateRange.end, state.deltaThreshold, state.percentThreshold, api],
+    [activeDimensionId, dateRange.start, dateRange.end, state.deltaThreshold, state.percentThreshold, api],
   );
 
   const trendData: TrendResult | null =
@@ -220,11 +220,11 @@ export function CostTrends({ onEntityClick: onEntityClickProp, rollupStatus }: C
       <div className="flex items-start justify-between">
         <p className="text-base font-medium text-text-secondary">Period-over-period comparison</p>
         <DateRangePicker
-          value={state.dateRange}
+          value={dateRange}
           granularity={state.granularity}
-          onChange={(range, g) => { setState(s => ({ ...s, dateRange: range, granularity: g })); }}
+          onChange={(range, g) => { setDateRange(range); setState(s => ({ ...s, granularity: g })); }}
           hideHourly
-          lagDays={lagDays}
+          lagDays={lag.lagDays}
         />
       </div>
 
