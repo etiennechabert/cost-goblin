@@ -14,7 +14,8 @@
     "packages/mcp"
   ],
   "scripts": {
-    "check": "tsc --noEmit -p packages/core/tsconfig.json && tsc --noEmit -p packages/ui/tsconfig.json && tsc --noEmit -p packages/desktop/tsconfig.json && tsc --noEmit -p packages/mcp/tsconfig.json && eslint packages/core/src/ packages/ui/src/ packages/desktop/src/ packages/mcp/src/ && vitest run",
+    "check": "npm run lint && vitest run",
+    "lint": "tsc --noEmit -p packages/core/tsconfig.json && tsc --noEmit -p packages/ui/tsconfig.json && tsc --noEmit -p packages/desktop/tsconfig.json && tsc --noEmit -p packages/mcp/tsconfig.json && eslint packages/core/src/ packages/ui/src/ packages/desktop/src/ packages/mcp/src/",
     "dev": "COSTGOBLIN_DATA_DIR=$PWD/data/processed COSTGOBLIN_CONFIG_DIR=$PWD/data/config npm run dev --workspace=packages/desktop",
     "dev:fixtures": "COSTGOBLIN_DATA_DIR=$PWD/packages/core/src/__fixtures__/synthetic COSTGOBLIN_CONFIG_DIR=$PWD/packages/core/src/__fixtures__/config npm run dev --workspace=packages/desktop",
     "build": "npm run build --workspaces",
@@ -26,7 +27,8 @@
     "e2e:config": "npm run build --workspace=packages/desktop && npx playwright test e2e/views-config.test.ts && npx tsx e2e/collect-coverage.ts",
     "e2e:stress": "npm run build --workspace=packages/desktop && npx playwright test e2e/stress.test.ts",
     "e2e:gcp": "npm run build --workspace=packages/desktop && npx playwright test e2e/gcp-provider.test.ts",
-    "perf": "npm run build --workspace=packages/desktop && npx playwright test e2e/perf.test.ts",
+    "perf": "npm run build --workspace=packages/desktop && npx playwright test --config playwright.diag.config.ts e2e/diag/perf.diag.ts",
+    "perf:queries": "npm run build --workspace=packages/desktop && npx playwright test --config playwright.diag.config.ts e2e/diag/perf-queries.diag.ts",
     "prepare": "husky"
   },
   "dependencies": {

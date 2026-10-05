@@ -29,24 +29,20 @@ reset: ## Wipe app data and config — next launch shows wizard
 test: deps ## Run vitest
 	npx vitest run
 
-e2e: deps ## Build and run all E2E tests
-	$(BUILD)
-	npx playwright test e2e/views-core.test.ts e2e/views-config.test.ts e2e/stress.test.ts
-	npx tsx e2e/collect-coverage.ts
+# The e2e, perf and lint targets run the root package.json scripts, which are
+# what CI and `npm run check` run. Copies of their commands here drifted from
+# them (#465).
+e2e: deps ## Build and run every E2E suite CI runs
+	npm run e2e
 
 e2e-core: deps ## Build and run core views E2E (Overview, Trends, etc.)
-	$(BUILD)
-	npx playwright test e2e/views-core.test.ts
-	npx tsx e2e/collect-coverage.ts
+	npm run e2e:core
 
 e2e-config: deps ## Build and run config views E2E (Sync, Dims, Scope)
-	$(BUILD)
-	npx playwright test e2e/views-config.test.ts
-	npx tsx e2e/collect-coverage.ts
+	npm run e2e:config
 
 e2e-stress: deps ## Build and run widget growth stress tests
-	$(BUILD)
-	npx playwright test e2e/stress.test.ts
+	npm run e2e:stress
 
 dist: deps ## Build distributable installer for current platform
 	npm run build --workspaces
@@ -64,43 +60,53 @@ dist-linux: deps ## Build Linux .AppImage and .deb
 	npm run build --workspaces
 	npx --no-install electron-builder --linux --publish never
 
-release: ## Bump version (patch/minor/major), tag, and push to trigger release
-	@echo "Current version: $$(node -p 'require("./package.json").version')"
-	@echo ""
-	@echo "  1) patch"
-	@echo "  2) minor"
-	@echo "  3) major"
-	@echo ""
-	@read -p "Select bump type [1/2/3]: " choice; \
-	case $$choice in \
-		1) bump=patch;; \
-		2) bump=minor;; \
-		3) bump=major;; \
-		*) echo "Invalid choice"; exit 1;; \
-	esac; \
-	npm version $$bump --no-git-tag-version && \
-	version=$$(node -p 'require("./package.json").version') && \
-	cd packages/desktop && npm version $$version --no-git-tag-version && cd ../.. && \
-	git add package.json package-lock.json packages/desktop/package.json && \
-	git commit -m "Release v$$version" && \
-	git tag "v$$version" && \
-	echo "" && \
-	echo "Tagged v$$version — push with:" && \
-	echo "  git push origin main --tags"
+# main already carries the version to release: the first PR after a release
+# bumps both package.json files one release past the latest tag (CLAUDE.md,
+# "Versioning & releases"). So a release only tags that commit; bumping here
+# too would skip a version. Pushing the tag starts release.yml, which builds
+# the tagged commit and stops unless the tag equals both versions.
+#
+# Untracked files don't block it: no tag contains them. Fetching main into a
+# destination ref also fetches the tags on it (a bare `git fetch origin main`
+# doesn't), so a tag pushed from another clone counts as existing. Offline,
+# the checks use what was fetched last.
+release: ## Tag the current package.json version for release (no bump, no push)
+	@set -e; \
+	if [ -n "$$(git status --porcelain --untracked-files=no)" ]; then \
+		echo "release: uncommitted changes, which the tag would not contain. Commit or stash them first." >&2; exit 1; \
+	fi; \
+	version=$$(node -p 'require("./package.json").version'); \
+	desktop=$$(node -p 'require("./packages/desktop/package.json").version'); \
+	if [ "$$version" != "$$desktop" ]; then \
+		echo "release: package.json ($$version) and packages/desktop/package.json ($$desktop) disagree. Bump both in a PR first." >&2; exit 1; \
+	fi; \
+	if ! printf '%s\n' "$$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$'; then \
+		echo "release: package.json version '$$version' is not X.Y.Z." >&2; exit 1; \
+	fi; \
+	GIT_TERMINAL_PROMPT=0 git fetch --quiet origin '+refs/heads/main:refs/remotes/origin/main' || \
+		echo "release: warning: could not fetch origin; checking HEAD against the last-fetched origin/main." >&2; \
+	upstream=$$(git rev-parse -q --verify 'refs/remotes/origin/main^{commit}') || upstream=; \
+	if [ -z "$$upstream" ]; then \
+		echo "release: warning: no origin/main to check HEAD against." >&2; \
+	elif [ "$$(git rev-parse HEAD)" != "$$upstream" ]; then \
+		echo "release: HEAD is not origin/main ($$(git rev-parse --short "$$upstream")). Release from an up-to-date main: git switch main && git pull --ff-only" >&2; exit 1; \
+	fi; \
+	tag="v$$version"; \
+	if git rev-parse -q --verify "refs/tags/$$tag" >/dev/null; then \
+		echo "release: $$tag already exists. If it was never pushed: git push origin $$tag. Otherwise merge a PR that bumps both package.json files first." >&2; exit 1; \
+	fi; \
+	git tag -a "$$tag" -m "Release $$tag"; \
+	echo "Tagged $$tag at $$(git rev-parse --short HEAD). Push it to start the release (release.yml):"; \
+	echo "  git push origin $$tag"
 
 perf: deps ## Build and run performance benchmarks
-	$(BUILD)
-	npx playwright test e2e/perf.test.ts
+	npm run perf
 
 perf-queries: deps ## Build and run query performance diagnostics
-	$(BUILD)
-	npx playwright test e2e/perf-queries.test.ts
+	npm run perf:queries
 
-lint: deps ## Run tsc + eslint
-	npx tsc --noEmit -p packages/core/tsconfig.json
-	npx tsc --noEmit -p packages/ui/tsconfig.json
-	npx tsc --noEmit -p packages/desktop/tsconfig.json
-	npx eslint packages/*/src/
+lint: deps ## Run tsc + eslint over every package
+	npm run lint
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z0-9_-]+:.*##' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
