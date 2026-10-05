@@ -10,6 +10,7 @@ import {
   buildDateRangeWhere,
   buildExclusionClauses,
   buildRuleMatchExpr,
+  tryResolveField,
 } from '@costgoblin/core';
 import type { DimensionsConfig, ExclusionRule, ExplorerFilterMap, ExplorerSort, ParameterizedQuery } from '@costgoblin/core';
 
@@ -49,8 +50,11 @@ export function buildExplorerFilterPredicate(
   accountReverseMap: ReadonlyMap<string, readonly string[]>,
   qb: QueryBuilder,
 ): string | null {
+  // A filter on a dimension the config no longer has is ignored and the rest
+  // still apply. Drop it here: in a rule, such a condition makes the whole
+  // rule match nothing (buildRuleMatchExpr).
   const conditions = Object.entries(filters)
-    .filter(([, values]) => values.length > 0)
+    .filter(([dimId, values]) => values.length > 0 && tryResolveField(asDimensionId(dimId), dimensions) !== null)
     .map(([dimId, values]) => ({
       dimensionId: asDimensionId(dimId),
       values,

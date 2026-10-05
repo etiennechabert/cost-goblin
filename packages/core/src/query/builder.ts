@@ -191,8 +191,23 @@ function tryExpandAccountIds(
   return `${rawField} IN (${list})`;
 }
 
-/** Build the SQL fragment for a single condition within a rule. Returns null
- *  when the condition should be skipped (empty values, unknown dimension).
+interface ResolvedCondition {
+  readonly values: readonly string[];
+  readonly resolved: ResolvedDimension;
+}
+
+/** A condition that can be evaluated: it has values, and its dimension is
+ *  still in the config. Null otherwise. */
+function resolveCondition(
+  cond: ExclusionRule['conditions'][number],
+  dimensions: DimensionsConfig,
+): ResolvedCondition | null {
+  if (cond.values.length === 0) return null;
+  const resolved = tryResolveField(cond.dimensionId, dimensions);
+  return resolved === null ? null : { values: cond.values, resolved };
+}
+
+/** Build the SQL fragment for a single resolved condition within a rule.
  *
  *  Never NULL: a tag dimension's expression is NULL when the tag is absent, and
  *  `NULL IN (...)` is NULL, which `NOT (...)` leaves NULL and WHERE then
@@ -201,17 +216,13 @@ function tryExpandAccountIds(
  *  keep the row, while positive uses (filters, CASE WHEN previews) behave as
  *  before, since NULL and FALSE both fail there. */
 function buildConditionSql(
-  cond: ExclusionRule['conditions'][number],
-  dimensions: DimensionsConfig,
+  { values, resolved }: ResolvedCondition,
   accountReverseMap: ReadonlyMap<string, readonly string[]> | undefined,
   qb: QueryBuilder | undefined,
-): string | null {
-  if (cond.values.length === 0) return null;
-  const resolved = tryResolveField(cond.dimensionId, dimensions);
-  if (resolved === null) return null;
-  const expanded = tryExpandAccountIds(cond.values, resolved.rawField, accountReverseMap, qb);
+): string {
+  const expanded = tryExpandAccountIds(values, resolved.rawField, accountReverseMap, qb);
   if (expanded !== null) return `COALESCE(${expanded}, FALSE)`;
-  const normalizedValues = cond.values.map(v => normalizeRuleValue(v, resolved.dim));
+  const normalizedValues = values.map(v => normalizeRuleValue(v, resolved.dim));
   const list = buildSqlList(normalizedValues, qb);
   return `COALESCE(${resolved.fieldExpr} IN (${list}), FALSE)`;
 }
@@ -219,21 +230,28 @@ function buildConditionSql(
 /** Build the positive match expression for a single rule (AND of conditions,
  *  OR within each condition's values). Used both for NOT-exclusion in queries
  *  and for the positive preview queries. Never evaluates to NULL (see
- *  `buildConditionSql`). Returns null when the rule has no valid conditions
- *  (all empty values). */
+ *  `buildConditionSql`).
+ *
+ *  Returns null — the rule matches nothing — when any condition can't be
+ *  evaluated: no values, or a dimension since removed from the config.
+ *  Dropping just that AND-leg would leave a broader rule that excludes MORE
+ *  than the user asked for (all of EC2 for "EC2 AND env = sandbox" once the
+ *  env tag is gone). Every condition resolves before anything binds on `qb`,
+ *  since a bound value the SQL doesn't use fails the whole query. */
 export function buildRuleMatchExpr(
   rule: ExclusionRule,
   dimensions: DimensionsConfig,
   accountReverseMap?: ReadonlyMap<string, readonly string[]>,
   qb?: QueryBuilder,
 ): string | null {
-  const conditionSqls: string[] = [];
+  const conditions: ResolvedCondition[] = [];
   for (const cond of rule.conditions) {
-    const sql = buildConditionSql(cond, dimensions, accountReverseMap, qb);
-    if (sql !== null) conditionSqls.push(sql);
+    const resolved = resolveCondition(cond, dimensions);
+    if (resolved === null) return null;
+    conditions.push(resolved);
   }
-  if (conditionSqls.length === 0) return null;
-  return conditionSqls.join(' AND ');
+  if (conditions.length === 0) return null;
+  return conditions.map(c => buildConditionSql(c, accountReverseMap, qb)).join(' AND ');
 }
 
 /** Try to merge a single-condition rule into the merged map. Returns true if
@@ -261,21 +279,42 @@ function tryMergeSingleConditionRule(
   return true;
 }
 
-/** WHERE clauses that drop the rows matched by the enabled exclusion rules.
- *  The one implementation behind every cost path: live queries, the
- *  materialized base, rollup partitions, the grain probe, and the desktop's
- *  filter-value and Explorer handlers.
+/** WHERE clauses that drop the rows matched by the enabled exclusion rules,
+ *  with every rule value bound on `qb`. The one implementation behind every
+ *  cost path: live queries, the materialized base, rollup partitions, the
+ *  grain probe, and the desktop's filter-value and Explorer handlers.
  *
  *  NULL-safe: a row whose dimension value is NULL (an untagged resource on a
- *  tag dimension) matches no rule, so it is kept (#451). Values bind on `qb`
- *  when one is given; without it they are inlined as escaped literals, for
- *  the DDL builders (DuckDB has no prepared DDL) and the grain probe, which
- *  mirrors the rollup build's SQL. Pass `qb` on any other query path. */
+ *  tag dimension) matches no rule, so it is kept (#451). A rule with a
+ *  condition that can't be evaluated excludes nothing (see
+ *  `buildRuleMatchExpr`). */
 export function buildExclusionClauses(
   rules: readonly ExclusionRule[] | undefined,
   dimensions: DimensionsConfig,
   accountReverseMap: ReadonlyMap<string, readonly string[]> | undefined,
-  qb?: QueryBuilder,
+  qb: QueryBuilder,
+): string[] {
+  return exclusionClauses(rules, dimensions, accountReverseMap, qb);
+}
+
+/** `buildExclusionClauses` with the rule values inlined as escaped literals,
+ *  for SQL that can't take parameters: the DDL builders (DuckDB has no
+ *  prepared DDL) and the grain probe, which mirrors the rollup build's SQL.
+ *  Every other query path binds through `buildExclusionClauses`, which
+ *  requires the QueryBuilder. */
+export function buildLiteralExclusionClauses(
+  rules: readonly ExclusionRule[] | undefined,
+  dimensions: DimensionsConfig,
+  accountReverseMap: ReadonlyMap<string, readonly string[]> | undefined,
+): string[] {
+  return exclusionClauses(rules, dimensions, accountReverseMap, undefined);
+}
+
+function exclusionClauses(
+  rules: readonly ExclusionRule[] | undefined,
+  dimensions: DimensionsConfig,
+  accountReverseMap: ReadonlyMap<string, readonly string[]> | undefined,
+  qb: QueryBuilder | undefined,
 ): string[] {
   if (rules === undefined) return [];
   const singleConditionByDim = new Map<string, { resolved: ResolvedDimension; values: string[] }>();
@@ -1257,7 +1296,7 @@ export function buildMaterializeBaseQuery(
   opts: QueryContextOptions,
 ): string {
   const { dataDir, dimensions, orgAccountsPath, providers, accountReverseMap, costScope } = opts;
-  const exclusionClauses = buildExclusionClauses(costScope?.rules, dimensions, accountReverseMap);
+  const exclusionClauses = buildLiteralExclusionClauses(costScope?.rules, dimensions, accountReverseMap);
   const costMetric = costScope?.costMetric ?? DEFAULT_COST_METRIC;
   const branches = resolveProviderBranches(providers, computePeriodsInRange(dateRange));
   const source = buildSource({ dataDir, tier, dimensions, orgAccountsPath, providers: branches, costMetric, marketplaceAttribution: costScope?.marketplaceAttribution, includeRawTags: true, slim: true });
@@ -1321,7 +1360,7 @@ export function buildRollupPartitionQuery(
     includeRawTags: false, slim: true,
   });
 
-  const exclusionClauses = buildExclusionClauses(costScope?.rules, dimensions, accountReverseMap);
+  const exclusionClauses = buildLiteralExclusionClauses(costScope?.rules, dimensions, accountReverseMap);
 
   const start = `${period}-01`;
   const end = periodUpperBound(period);
@@ -1386,7 +1425,7 @@ export function buildGrainProbeQuery(
     includeRawTags: false, slim: true,
   });
 
-  const exclusionClauses = buildExclusionClauses(costScope?.rules, dimensions, accountReverseMap);
+  const exclusionClauses = buildLiteralExclusionClauses(costScope?.rules, dimensions, accountReverseMap);
 
   const start = `${period}-01`;
   const end = periodUpperBound(period);

@@ -14,6 +14,7 @@ export {
   buildGrainProbeQuery,
   buildDateRangeWhere,
   buildExclusionClauses,
+  buildLiteralExclusionClauses,
   buildFilterClauses,
   buildRuleMatchExpr,
   computePeriodsInRange,

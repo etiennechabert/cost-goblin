@@ -22,16 +22,10 @@ import type {
 } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
 import type { AppContext } from './context.js';
-import { toNum } from './query-utils.js';
+import { toNum, toStr } from './query-utils.js';
 import { costScopePreviewWindow } from './query-windows.js';
 
 const SAMPLE_ROW_LIMIT = 500;
-
-function toStr(v: unknown): string {
-  if (typeof v === 'string') return v;
-  if (v instanceof Date) return v.toISOString().slice(0, 10);
-  return '';
-}
 
 function mapSampleRow(
   r: RawRow,

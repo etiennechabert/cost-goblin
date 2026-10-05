@@ -76,6 +76,28 @@ describe('buildExplorerWhere', () => {
     expect(where.params).toEqual(['2026-05-01', '2026-05-31', '111', '112']);
     expect(where.sql).not.toContain('prod');
   });
+
+  it('ignores a filter on a dimension the config no longer has, keeping the others', () => {
+    // A restored filter can name a removed tag. It must neither drop the other
+    // filters nor leave an unused bound value (which fails the query).
+    const where = buildExplorerWhere(input({ filters: { tag_removed: ['x'], service: ['EC2'] } }));
+    expect(where.params).toEqual(['2026-05-01', '2026-05-31', 'EC2']);
+    expect(where.sql).toContain('COALESCE(service IN ($3), FALSE)');
+    expect(where.sql).not.toContain('tag_removed');
+  });
+
+  it('drops an exclusion rule with a condition on a removed dimension without binding its values', () => {
+    const dangling: ExclusionRule = {
+      id: 'dangling', name: 'dangling', enabled: true, builtIn: false,
+      conditions: [
+        { dimensionId: asDimensionId('service'), values: ['EC2'] },
+        { dimensionId: asDimensionId('tag_removed'), values: ['x'] },
+      ],
+    };
+    const where = buildExplorerWhere(input({ exclusionRules: [dangling] }));
+    expect(where.sql).toBe('WHERE usage_date BETWEEN $1 AND $2');
+    expect(where.params).toEqual(['2026-05-01', '2026-05-31']);
+  });
 });
 
 describe('appendRowFilters', () => {
