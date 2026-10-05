@@ -100,6 +100,8 @@ describe('resolveAggregatedSort', () => {
   it('sorts by a metric aggregate or an allow-listed group-by column', () => {
     expect(resolveAggregatedSort(undefined, [])).toBe('SUM(cost) DESC');
     expect(resolveAggregatedSort({ column: 'row_count', direction: 'asc' }, [])).toBe('COUNT(*) ASC');
+    expect(resolveAggregatedSort({ column: 'list_cost', direction: 'desc' }, [])).toBe('SUM(list_cost) DESC');
+    expect(resolveAggregatedSort({ column: 'usage_amount', direction: 'asc' }, [])).toBe('SUM(usage_amount) ASC');
     expect(resolveAggregatedSort({ column: 'service', direction: 'desc' }, ['service'])).toBe('service DESC');
     expect(resolveAggregatedSort({ column: 'service', direction: 'desc' }, [])).toBe('SUM(cost) DESC');
   });
