@@ -217,7 +217,7 @@ What this means in practice:
 
 So the lifecycle is: tag `v0.2.6` released → first PR bumps both to `0.2.7` → subsequent PRs stay at `0.2.7` → maintainer tags `v0.2.7` to release → next PR bumps to `0.2.8`.
 
-`make release` is that tagging step. It refuses unless `HEAD` is an up-to-date `origin/main` with no uncommitted changes, the two versions agree and `v<version>` doesn't exist yet; then it creates the tag (no bump, no commit) and prints the `git push origin v<version>` that starts `release.yml`.
+`make release` is that tagging step. It fetches `origin` and refuses unless `HEAD` is `origin/main` with no uncommitted changes, the two versions agree on a strict `X.Y.Z` and `v<version>` doesn't exist yet; then it creates the tag (no bump, no commit) and prints the `git push origin v<version>` that starts `release.yml`. If the fetch fails it only warns and checks against the last-fetched `origin/main`, so re-run it once online before pushing the tag.
 
 **A deliberate minor/major (`0.5.0`, `1.0.0`)** is just a first-PR bump that jumps the minor/major instead of the patch — allowed even when `main` already sits one patch ahead, because the CI check accepts any of `next_patch` / `next_minor` / `next_major` relative to the latest tag. E.g. latest tag `v0.4.1`, `main` at `0.4.2` → a release PR may set `0.5.0` (replacing the unreleased `0.4.2`).
 

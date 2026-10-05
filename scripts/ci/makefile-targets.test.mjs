@@ -40,6 +40,7 @@ function childEnv(extra) {
 
 describe('npm scripts behind the Makefile', () => {
   const workspaces = pkg.workspaces;
+  const ci = parse(readFileSync(new URL('.github/workflows/ci.yml', repoRoot), 'utf8'));
 
   it('type-checks and lints every workspace in `npm run lint`', () => {
     const steps = (pkg.scripts.lint ?? '').split('&&').map((step) => step.trim());
@@ -54,8 +55,13 @@ describe('npm scripts behind the Makefile', () => {
     expect(pkg.scripts.check).toBe('npm run lint && vitest run');
   });
 
+  it('runs `npm run lint` in the CI lint job instead of its own tsc/eslint copies', () => {
+    const runs = ci.jobs.lint.steps.map((step) => step.run).filter(Boolean);
+    expect(runs).toContain('npm run lint');
+    expect(runs.filter((run) => /\b(tsc|eslint)\b/.test(run))).toEqual([]);
+  });
+
   it('runs exactly the suites of the CI e2e shard matrix in `npm run e2e`', () => {
-    const ci = parse(readFileSync(new URL('.github/workflows/ci.yml', repoRoot), 'utf8'));
     const shards = ci.jobs['test-e2e'].strategy.matrix.shard;
     const suites = [...pkg.scripts.e2e.matchAll(/\be2e\/([\w-]+)\.test\.ts\b/g)].map((match) => match[1]);
     expect(shards.length).toBeGreaterThan(0);
@@ -266,12 +272,25 @@ describe.skipIf(!hasMake || !hasGit)('make release', { timeout: 30_000 }, () => 
     expect(tags()).toEqual(['v0.8.1']);
   });
 
-  it('refuses when the tag already exists, and leaves it where it was', () => {
+  it('refuses a version with a leading zero, which strict semver rejects', () => {
+    commit(repo, 'fix: bump with a leading zero', versions('0.08.2'));
+    git(repo, 'push', '-q', 'origin', 'main');
+    const { status, out } = release();
+    expect(status).not.toBe(0);
+    expect(out).toContain('X.Y.Z');
+    expect(tags()).toEqual(['v0.8.1']);
+  });
+
+  it('refuses when the tag already exists on an older commit, and says to delete it rather than push it', () => {
+    // An earlier `make release` whose tag was never pushed, then more merges:
+    // pushing that tag would release the older commit without them.
     git(repo, 'tag', 'v0.8.2', 'HEAD~1');
     const tagged = git(repo, 'rev-parse', 'v0.8.2');
     const { status, out } = release();
     expect(status).not.toBe(0);
     expect(out).toContain('v0.8.2 already exists');
+    expect(out).toContain('git tag -d v0.8.2');
+    expect(out).not.toContain('git push origin v0.8.2');
     expect(git(repo, 'rev-parse', 'v0.8.2')).toBe(tagged);
   });
 
@@ -282,7 +301,7 @@ describe.skipIf(!hasMake || !hasGit)('make release', { timeout: 30_000 }, () => 
     git(other, 'push', '-q', 'origin', 'v0.8.2');
     const { status, out } = release();
     expect(status).not.toBe(0);
-    expect(out).toContain('v0.8.2 already exists');
+    expect(out).toContain('v0.8.2 already exists, at HEAD');
   });
 
   it('refuses with uncommitted changes, which the tag would not contain', () => {
@@ -328,5 +347,13 @@ describe.skipIf(!hasMake || !hasGit)('make release', { timeout: 30_000 }, () => 
     expect(status, out).toBe(0);
     expect(out).toContain('could not fetch origin');
     expect(tags()).toEqual(['v0.8.1', 'v0.8.2']);
+  });
+
+  it('refuses when there is no origin/main to check HEAD against', () => {
+    git(repo, 'remote', 'remove', 'origin');
+    const { status, out } = release();
+    expect(status).not.toBe(0);
+    expect(out).toContain('no origin/main');
+    expect(tags()).toEqual(['v0.8.1']);
   });
 });

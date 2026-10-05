@@ -69,7 +69,9 @@ dist-linux: deps ## Build Linux .AppImage and .deb
 # Untracked files don't block it: no tag contains them. Fetching main into a
 # destination ref also fetches the tags on it (a bare `git fetch origin main`
 # doesn't), so a tag pushed from another clone counts as existing. Offline,
-# the checks use what was fetched last.
+# the checks use what was fetched last; with no origin/main at all, it refuses.
+# The version must be strict semver X.Y.Z (no leading zeros), which
+# electron-updater compares releases with.
 release: ## Tag the current package.json version for release (no bump, no push)
 	@set -e; \
 	if [ -n "$$(git status --porcelain --untracked-files=no)" ]; then \
@@ -80,20 +82,25 @@ release: ## Tag the current package.json version for release (no bump, no push)
 	if [ "$$version" != "$$desktop" ]; then \
 		echo "release: package.json ($$version) and packages/desktop/package.json ($$desktop) disagree. Bump both in a PR first." >&2; exit 1; \
 	fi; \
-	if ! printf '%s\n' "$$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$'; then \
-		echo "release: package.json version '$$version' is not X.Y.Z." >&2; exit 1; \
+	if ! printf '%s\n' "$$version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$$'; then \
+		echo "release: package.json version '$$version' is not X.Y.Z (digits only, no leading zeros)." >&2; exit 1; \
 	fi; \
 	GIT_TERMINAL_PROMPT=0 git fetch --quiet origin '+refs/heads/main:refs/remotes/origin/main' || \
 		echo "release: warning: could not fetch origin; checking HEAD against the last-fetched origin/main." >&2; \
-	upstream=$$(git rev-parse -q --verify 'refs/remotes/origin/main^{commit}') || upstream=; \
-	if [ -z "$$upstream" ]; then \
-		echo "release: warning: no origin/main to check HEAD against." >&2; \
-	elif [ "$$(git rev-parse HEAD)" != "$$upstream" ]; then \
+	upstream=$$(git rev-parse -q --verify 'refs/remotes/origin/main^{commit}') || { \
+		echo "release: no origin/main to check HEAD against. Add the main repository as origin and fetch it first." >&2; exit 1; }; \
+	head=$$(git rev-parse HEAD); \
+	if [ "$$head" != "$$upstream" ]; then \
 		echo "release: HEAD is not origin/main ($$(git rev-parse --short "$$upstream")). Release from an up-to-date main: git switch main && git pull --ff-only" >&2; exit 1; \
 	fi; \
 	tag="v$$version"; \
-	if git rev-parse -q --verify "refs/tags/$$tag" >/dev/null; then \
-		echo "release: $$tag already exists. If it was never pushed: git push origin $$tag. Otherwise merge a PR that bumps both package.json files first." >&2; exit 1; \
+	if tagged=$$(git rev-parse -q --verify "refs/tags/$$tag^{commit}"); then \
+		if [ "$$tagged" = "$$head" ]; then \
+			echo "release: $$tag already exists, at HEAD. If it was never pushed: git push origin $$tag. Otherwise merge a PR that bumps both package.json files first." >&2; \
+		else \
+			echo "release: $$tag already exists, at $$(git rev-parse --short "$$tagged") instead of HEAD. If it was never pushed, delete it (git tag -d $$tag) and run make release again. Otherwise merge a PR that bumps both package.json files first." >&2; \
+		fi; \
+		exit 1; \
 	fi; \
 	git tag -a "$$tag" -m "Release $$tag"; \
 	echo "Tagged $$tag at $$(git rev-parse --short HEAD). Push it to start the release (release.yml):"; \
