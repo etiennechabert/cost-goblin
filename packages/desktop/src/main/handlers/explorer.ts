@@ -34,7 +34,7 @@ import { buildAccountReverseMap, columnForDimension, resolveRollupSource, toNum,
 import { readExplorerPreferences, writeExplorerPreferences } from './explorer-prefs.js';
 import { resolveScopeMetric } from './explorer-scope.js';
 import { resolveExplorerDateRange } from './query-windows.js';
-import { EXPLORER_SCALAR_COLUMNS, appendRowFilters, buildExplorerWhere, type ParameterizedWhere } from './explorer-sql.js';
+import { EXPLORER_SCALAR_COLUMNS, appendRowFilters, buildExplorerWhere, resolveAggregatedSort, type ParameterizedWhere } from './explorer-sql.js';
 import {
   parseAggregatedTableParams,
   parseExplorerFilterValuesParams,
@@ -184,22 +184,6 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
   return { empty: false, source, where, ...shared };
 }
 
-const AGG_SORT_COLUMNS: Record<string, (dir: string) => string> = {
-  cost: (dir) => `SUM(cost) ${dir}`,
-  list_cost: (dir) => `SUM(list_cost) ${dir}`,
-  usage_amount: (dir) => `SUM(usage_amount) ${dir}`,
-  row_count: (dir) => `COUNT(*) ${dir}`,
-};
-
-function resolveAggregatedSort(sort: ExplorerSort | undefined, groupByColumns: readonly string[]): string {
-  if (sort === undefined) return 'SUM(cost) DESC';
-  const dir = sort.direction === 'asc' ? 'ASC' : 'DESC';
-  const fn = AGG_SORT_COLUMNS[sort.column];
-  if (fn !== undefined) return fn(dir);
-  if (groupByColumns.includes(sort.column)) return `${sort.column} ${dir}`;
-  return 'SUM(cost) DESC';
-}
-
 /** The dashboard Table widget hits the overview with the GLOBAL cost scope and
  *  no metric override — only then does the pre-aggregated daily rollup
  *  reproduce the raw totals, so gate the rollup route on exactly that. */
@@ -346,9 +330,12 @@ export function registerExplorerHandlers(app: AppContext): void {
       ORDER BY ${bucketExpr}
     `.trim();
 
+    // Flag rollup-backed scans as materialized in the query log, as the
+    // dashboard handlers do.
+    const materialized = rollupSource !== undefined;
     const [totalsResult, dailyResult] = await Promise.allSettled([
-      runPreparedQuery(totalsSql, where.params),
-      runPreparedQuery(dailySql, where.params),
+      runPreparedQuery(totalsSql, where.params, materialized),
+      runPreparedQuery(dailySql, where.params, materialized),
     ]);
 
     const { totalCost, totalRows } = readOverviewTotals(totalsResult);

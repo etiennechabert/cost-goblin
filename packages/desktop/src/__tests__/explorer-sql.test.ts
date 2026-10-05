@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api';
 import { asDimensionId, type DimensionsConfig, type ExclusionRule } from '@costgoblin/core';
-import { appendRowFilters, buildExplorerWhere, type ExplorerWhereInput } from '../main/handlers/explorer-sql.js';
+import { appendRowFilters, buildExplorerWhere, resolveAggregatedSort, type ExplorerWhereInput } from '../main/handlers/explorer-sql.js';
 import { fetchRowsPrepared } from './helpers/duckdb-rows.js';
 
 // #479: the Explorer built its WHERE by hand — dates interpolated, row-filter
@@ -94,6 +94,22 @@ describe('appendRowFilters', () => {
     expect(appendRowFilters(base, { 'x; DROP TABLE t': 'v', service: '' }, tagIds)).toEqual(base);
     expect(appendRowFilters(base, undefined, tagIds)).toEqual(base);
   });
+});
+
+describe('resolveAggregatedSort', () => {
+  it('sorts by a metric aggregate or an allow-listed group-by column', () => {
+    expect(resolveAggregatedSort(undefined, [])).toBe('SUM(cost) DESC');
+    expect(resolveAggregatedSort({ column: 'row_count', direction: 'asc' }, [])).toBe('COUNT(*) ASC');
+    expect(resolveAggregatedSort({ column: 'service', direction: 'desc' }, ['service'])).toBe('service DESC');
+    expect(resolveAggregatedSort({ column: 'service', direction: 'desc' }, [])).toBe('SUM(cost) DESC');
+  });
+
+  it.each(['constructor', 'toString', 'valueOf', 'isPrototypeOf', '__proto__'])(
+    'falls back to the default for the Object.prototype key %s',
+    (column) => {
+      expect(resolveAggregatedSort({ column, direction: 'asc' }, [])).toBe('SUM(cost) DESC');
+    },
+  );
 });
 
 describe('Explorer WHERE against DuckDB', () => {

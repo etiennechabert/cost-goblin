@@ -1,16 +1,17 @@
-/** The Explorer's WHERE clauses. Kept apart from the IPC handlers (no electron
- *  import) so they are unit-testable. Every value — dates, filter values,
- *  exclusion-rule values, row-filter values — binds as a $n parameter; only
- *  allow-listed column names and resolved dimension expressions reach the SQL
- *  text (#479). */
+/** The Explorer's WHERE and ORDER BY clauses. Kept apart from the IPC handlers
+ *  (no electron import) so they are unit-testable. Every value — dates, filter
+ *  values, exclusion-rule values, row-filter values — binds as a $n parameter;
+ *  only allow-listed column names and resolved dimension expressions reach the
+ *  SQL text (#479). */
 
 import {
   QueryBuilder,
   asDimensionId,
+  buildDateRangeWhere,
   buildExclusionClauses,
   buildRuleMatchExpr,
 } from '@costgoblin/core';
-import type { DimensionsConfig, ExclusionRule, ExplorerFilterMap } from '@costgoblin/core';
+import type { DimensionsConfig, ExclusionRule, ExplorerFilterMap, ExplorerSort, ParameterizedQuery } from '@costgoblin/core';
 
 /** Columns of the Explorer source a sort, group-by or row filter may name,
  *  besides the configured tag columns. */
@@ -36,10 +37,7 @@ export const EXPLORER_SCALAR_COLUMNS: ReadonlySet<string> = new Set([
 ]);
 
 /** A WHERE clause and the values its $n placeholders bind, in order. */
-export interface ParameterizedWhere {
-  readonly sql: string;
-  readonly params: readonly unknown[];
-}
+export type ParameterizedWhere = ParameterizedQuery;
 
 /** The Explorer's dimension filters as one predicate (OR within a dimension,
  *  AND across them), the same matching the exclusion rules use: account
@@ -87,9 +85,9 @@ export interface ExplorerWhereInput {
 export function buildExplorerWhere(input: ExplorerWhereInput): ParameterizedWhere {
   const { startStr, endStr, startHour, endHour, tier, filters, dimensions, accountReverseMap, exclusionRules } = input;
   const qb = new QueryBuilder();
-  const dateClause = startHour !== undefined && endHour !== undefined && tier === 'hourly'
-    ? `usage_hour BETWEEN ${qb.addParam(startHour)}::TIMESTAMP AND ${qb.addParam(endHour)}::TIMESTAMP`
-    : `usage_date BETWEEN ${qb.addParam(startStr)} AND ${qb.addParam(endStr)}`;
+  const dateClause = buildDateRangeWhere(qb, tier === 'hourly'
+    ? { start: startStr, end: endStr, startHour, endHour }
+    : { start: startStr, end: endStr });
   const filterPredicate = buildExplorerFilterPredicate(filters, dimensions, accountReverseMap, qb);
   const clauses = [
     dateClause,
@@ -122,4 +120,25 @@ export function appendRowFilters(
     sql: base.sql.length === 0 ? `WHERE ${joined}` : `${base.sql} AND ${joined}`,
     params: qb.build().params,
   };
+}
+
+// A Map, not an object literal: `sort.column` comes from the renderer, and an
+// object lookup would resolve keys like `constructor` / `valueOf` to
+// Object.prototype methods instead of falling through to the default.
+const AGG_SORT_COLUMNS: ReadonlyMap<string, (dir: string) => string> = new Map([
+  ['cost', (dir: string) => `SUM(cost) ${dir}`],
+  ['list_cost', (dir: string) => `SUM(list_cost) ${dir}`],
+  ['usage_amount', (dir: string) => `SUM(usage_amount) ${dir}`],
+  ['row_count', (dir: string) => `COUNT(*) ${dir}`],
+]);
+
+/** The aggregated table's ORDER BY: a metric aggregate, or one of the
+ *  (already allow-listed) group-by columns; anything else sorts by cost. */
+export function resolveAggregatedSort(sort: ExplorerSort | undefined, groupByColumns: readonly string[]): string {
+  if (sort === undefined) return 'SUM(cost) DESC';
+  const dir = sort.direction === 'asc' ? 'ASC' : 'DESC';
+  const fn = AGG_SORT_COLUMNS.get(sort.column);
+  if (fn !== undefined) return fn(dir);
+  if (groupByColumns.includes(sort.column)) return `${sort.column} ${dir}`;
+  return 'SUM(cost) DESC';
 }

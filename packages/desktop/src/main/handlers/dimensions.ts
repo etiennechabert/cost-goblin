@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { applyNormalizationRule, buildGrainProbeQuery, buildSource, computeRollupEstimate, dimensionsConfigToYaml, emptyRollupEstimate, generateAliasSuggestions, isStringRecord, rollupGrainColumns, rollupGrainDimensions } from '@costgoblin/core';
+import { applyNormalizationRule, buildGrainProbeQuery, buildSource, computeRollupEstimate, dimensionsConfigToYaml, emptyRollupEstimate, generateAliasSuggestions, isStringRecord, QueryBuilder, rollupGrainColumns, rollupGrainDimensions } from '@costgoblin/core';
 import type { AliasSuggestion, ColumnValuesPreview, DimensionsConfig, NormalizationRule, RollupGrainEstimate } from '@costgoblin/core';
 import { type AppContext, loadOrgAccountsMap } from './context.js';
 import { parseDimensionsPayload, parseDimensionsSavePayload } from './dimensions-payload.js';
@@ -74,8 +74,13 @@ export function registerDimensionsHandlers(app: AppContext): void {
       : `read_parquet(${rawGlobLiteral(ctx.dataDir, String(provider.name), 'daily-*/*.parquet')})`;
     const thirtyDaysAgo = tagDiscoverySince(ctx.now());
 
-    const totalSql = `SELECT COUNT(*) AS total FROM ${rawParquet} WHERE ChargePeriodStart >= $1::TIMESTAMP`;
-    const totalRows = await runPreparedQuery(totalSql, [thirtyDaysAgo]);
+    // Both queries bind the same single value, so they share one builder.
+    const qb = new QueryBuilder();
+    const since = `ChargePeriodStart >= ${qb.addParam(thirtyDaysAgo)}::TIMESTAMP`;
+    const { params } = qb.build();
+
+    const totalSql = `SELECT COUNT(*) AS total FROM ${rawParquet} WHERE ${since}`;
+    const totalRows = await runPreparedQuery(totalSql, params);
     const totalRowCount = totalRows[0] === undefined ? 0 : toNum(totalRows[0]['total']);
 
     const sql = `
@@ -84,7 +89,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
                unnest(map_values(Tags)) AS tag_val
         FROM ${rawParquet}
         WHERE Tags IS NOT NULL
-          AND ChargePeriodStart >= $1::TIMESTAMP
+          AND ${since}
       ),
       grouped AS (
         SELECT tag_key, tag_val, COUNT(*) AS val_cnt
@@ -103,7 +108,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
       FROM with_stats
       ORDER BY key_cnt DESC, tag_key, rn
     `;
-    const rows = await runPreparedQuery(sql, [thirtyDaysAgo]);
+    const rows = await runPreparedQuery(sql, params);
 
     const tagMap = new Map<string, { rowCount: number; distinctCount: number; values: { val: string; cnt: number }[] }>();
     for (const row of rows) {
@@ -318,6 +323,8 @@ export function registerDimensionsHandlers(app: AppContext): void {
     if (latest === undefined) return [];
 
     const source = `read_parquet(${rawGlobLiteral(ctx.dataDir, String(provider), `${latest}/*.parquet`)})`;
+    const qb = new QueryBuilder();
+    const tagKey = qb.addParam(tagName);
     const rows = await runPreparedQuery(`
       WITH tags AS (
         SELECT unnest(map_keys(Tags)) AS tag_key,
@@ -327,10 +334,10 @@ export function registerDimensionsHandlers(app: AppContext): void {
       )
       SELECT DISTINCT tag_val
       FROM tags
-      WHERE tag_key = $1
+      WHERE tag_key = ${tagKey}
         AND tag_val IS NOT NULL AND tag_val != ''
       ORDER BY tag_val
-    `, [tagName]);
+    `, qb.build().params);
     let values = rows.map(r => toStr(r['tag_val'])).filter(v => v.length > 0);
     if (values.length === 0) return [];
 
