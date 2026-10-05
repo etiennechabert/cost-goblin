@@ -26,9 +26,11 @@ export const FIXTURE_DIMENSIONS: DimensionsConfig = {
   tags: [{ tagName: 'team', label: 'Team' }],
 };
 
+const RAW_DAILY_GLOB = `${SYNTHETIC_DIR}/aws-main/raw/daily-*/*.parquet`;
+
 /** The raw fixture rows, for computing expected totals independently of the
  *  code under test. */
-export const RAW_FIXTURE = `read_parquet(${sqlStringLiteral(`${SYNTHETIC_DIR}/aws-main/raw/daily-*/*.parquet`)}, union_by_name=true)`;
+export const RAW_FIXTURE = `read_parquet(${sqlStringLiteral(RAW_DAILY_GLOB)}, union_by_name=true)`;
 
 /** Account id → display name, and its reverse, as the app derives them. */
 export async function fixtureAccountMaps(conn: DuckDBConnection): Promise<{
