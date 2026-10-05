@@ -1,5 +1,5 @@
 import type { DuckDBConnection, DuckDBResult } from '@duckdb/node-api';
-import { bindParams } from '../../main/duckdb-bind.js';
+import { bindParams } from '@costgoblin/core';
 import type { RawRow } from '../../main/duckdb-client.js';
 
 /** Drain a DuckDB result into name-keyed rows (the duckdb-worker's row shape). */

@@ -2,12 +2,11 @@ import { parentPort, workerData } from 'node:worker_threads';
 // Imported from the browser-safe entry so esbuild bundles only these (pure)
 // modules' graph into the worker — never the node-only sync/aws code that
 // the full `@costgoblin/core` barrel would pull in (it isn't externalized here).
-import { QUERY_CANCELLED_MESSAGE, buildDuckDbSandboxStatements, isDuckDbSandboxOptions } from '@costgoblin/core/browser';
+import { QUERY_CANCELLED_MESSAGE, bindParams, buildDuckDbSandboxStatements, isDuckDbSandboxOptions } from '@costgoblin/core/browser';
 import type { DuckDBConnection, DuckDBInstance } from './duckdb-loader.js';
 import { createResourcePool } from './connection-pool.js';
 import type { ResourcePool } from './connection-pool.js';
 import { computeDefaultMemoryGB, computeDefaultThreads, computeQueryPoolSize } from './duckdb-tuning.js';
-import { bindParams } from './duckdb-bind.js';
 
 interface DuckDBModule {
   DuckDBInstance: { create: () => Promise<DuckDBInstance> };

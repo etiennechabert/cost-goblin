@@ -1,11 +1,17 @@
-import type { DuckDBPreparedStatement } from './duckdb-loader.js';
-
-/** The binders `bindParams` uses — narrower than the statement, so a test can
- *  record the calls with a plain object. */
-export type DuckDBParamBinder = Pick<
-  DuckDBPreparedStatement,
-  'bindNull' | 'bindVarchar' | 'bindBoolean' | 'bindInteger' | 'bindBigInt' | 'bindHugeInt' | 'bindDouble'
->;
+/** The binders `bindParams` uses: a structural slice of a `@duckdb/node-api`
+ *  prepared statement, so the desktop DuckDB worker, the desktop and MCP test
+ *  helpers, and a test recording the calls with a plain object all bind
+ *  through this one implementation. Pure leaf module (no imports), so the
+ *  worker can take it from the browser entry. */
+export interface DuckDBParamBinder {
+  bindNull: (index: number) => void;
+  bindVarchar: (index: number, value: string) => void;
+  bindBoolean: (index: number, value: boolean) => void;
+  bindInteger: (index: number, value: number) => void;
+  bindBigInt: (index: number, value: bigint) => void;
+  bindHugeInt: (index: number, value: bigint) => void;
+  bindDouble: (index: number, value: number) => void;
+}
 
 const INT32_MIN = -(2 ** 31);
 const INT32_MAX = 2 ** 31 - 1;

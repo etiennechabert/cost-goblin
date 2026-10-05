@@ -1,7 +1,34 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api';
-import { bindParams, type DuckDBParamBinder } from '../main/duckdb-bind.js';
-import { fetchRowsPrepared } from './helpers/duckdb-rows.js';
+import { bindParams, type DuckDBParamBinder } from '../query/duckdb-bind.js';
+
+/** Prepare, bind through bindParams and drain the rows the way the desktop
+ *  DuckDB worker does (getItem per cell, so BIGINT/HUGEINT read as bigints). */
+async function fetchRowsPrepared(conn: DuckDBConnection, sql: string, params: readonly unknown[]): Promise<Record<string, unknown>[]> {
+  const stmt = await conn.prepare(sql);
+  try {
+    bindParams(stmt, params);
+    const result = await stmt.run();
+    const names: string[] = [];
+    for (let i = 0; i < result.columnCount; i++) names.push(result.columnName(i));
+    const rows: Record<string, unknown>[] = [];
+    let chunk = await result.fetchChunk();
+    while (chunk !== null && chunk.rowCount > 0) {
+      for (let r = 0; r < chunk.rowCount; r++) {
+        const row: Record<string, unknown> = {};
+        for (let c = 0; c < names.length; c++) {
+          const n = names[c];
+          if (n !== undefined) row[n] = chunk.getColumnVector(c).getItem(r);
+        }
+        rows.push(row);
+      }
+      chunk = await result.fetchChunk();
+    }
+    return rows;
+  } finally {
+    stmt.destroySync();
+  }
+}
 
 type BindCall = readonly [binder: string, index: number, value?: unknown];
 

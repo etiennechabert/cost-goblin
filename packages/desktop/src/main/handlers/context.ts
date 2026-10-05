@@ -1,6 +1,7 @@
 import type { DuckDBClient, RawRow } from '../duckdb-client.js';
 import { LRUCache } from '../lru-cache.js';
 import { InflightDedup } from '../inflight-dedup.js';
+import { preparedQueryKey } from '../query-cache-key.js';
 import { QueryLog } from '../query-log.js';
 import { awaitWithTimeout } from '../async-timeout.js';
 import { DEFAULT_ROLLUP_CONCURRENCY } from '../duckdb-tuning.js';
@@ -432,14 +433,17 @@ export function createAppContext(ctx: IpcContext): AppContext {
     const cached = resultCache.get(sql);
     if (cached !== undefined) return Promise.resolve(cached);
     return inflightQueries.run(sql, async () => {
+      // A clear while this ran (sync, rollup rebuild, config change) dropped
+      // what it read: don't put those rows back.
+      const generation = resultCache.generation;
       const result = await traceSpan(QUERY_SPAN, () => wrappedRunQuery(sql));
-      if (result.length > 0) resultCache.set(sql, result);
+      if (result.length > 0 && generation === resultCache.generation) resultCache.set(sql, result);
       return result;
     });
   };
 
   const runPreparedQuery = (sql: string, params: readonly unknown[], materialized?: boolean): Promise<RawRow[]> => {
-    const key = `${sql}\0${JSON.stringify(params)}`;
+    const key = preparedQueryKey(sql, params);
     const cached = resultCache.get(key);
     if (cached !== undefined) {
       const id = queryLog.start(sql, params, materialized === true);
@@ -448,8 +452,9 @@ export function createAppContext(ctx: IpcContext): AppContext {
       return Promise.resolve(cached);
     }
     return inflightQueries.run(key, async () => {
+      const generation = resultCache.generation;
       const result = await traceSpan(PREPARED_QUERY_SPAN, () => wrappedRunPreparedQuery(sql, params, materialized));
-      if (result.length > 0) resultCache.set(key, result);
+      if (result.length > 0 && generation === resultCache.generation) resultCache.set(key, result);
       return result;
     });
   };
@@ -519,10 +524,15 @@ export function createAppContext(ctx: IpcContext): AppContext {
       void traceSpan(
         { name: 'rollup.warmup', op: SPAN_OP.rollupWarmup, forceTransaction: true, attributes: { 'rollup.periods': toBuild.length } },
         () => rollupStore.maintainPeriods(toBuild, buildSql, etags, shape),
-      ).then(() => { resultCache.clear(); }).catch(warnRollupFailure('rollup-warmup'));
+      ).then(() => { resultCache.clear(); }, (err: unknown) => {
+        // Same as the synchronous catch below: never leave the status stuck at
+        // the 'computing' the failed build last reported.
+        rollupStore.markSettled();
+        warnRollupFailure('rollup-warmup')(err);
+      });
     } catch (err: unknown) {
       rollupStore.markSettled();
-      logger.warn(`rollup-warmup: ${err instanceof Error ? err.message : String(err)}`);
+      warnRollupFailure('rollup-warmup')(err);
     }
   }
 
@@ -570,7 +580,9 @@ export function createAppContext(ctx: IpcContext): AppContext {
   const ROLLUP_REROLL_DEBOUNCE_MS = 800;
   let rerollTimer: ReturnType<typeof setTimeout> | null = null;
   function scheduleRollupReroll(): void {
-    void rollupStore.invalidate().then(() => { resultCache.clear(); }).catch(warnRollupFailure('rollup-invalidate'));
+    // invalidate() drops the in-memory rollup synchronously; only its on-disk rm
+    // can reject. Log that, but still clear the results either way.
+    void rollupStore.invalidate().catch(warnRollupFailure('rollup-invalidate')).then(() => { resultCache.clear(); });
     if (rerollTimer !== null) clearTimeout(rerollTimer);
     rerollTimer = setTimeout(() => { rerollTimer = null; triggerWarmup(); }, ROLLUP_REROLL_DEBOUNCE_MS);
   }
@@ -620,7 +632,9 @@ export function createAppContext(ctx: IpcContext): AppContext {
     invalidateViews: () => { state.views = null; },
     invalidateCostScope: () => {
       state.costScope = null;
-      void rollupStore.invalidate().then(() => { resultCache.clear(); triggerWarmup(); }).catch(warnRollupFailure('rollup-invalidate'));
+      // As in scheduleRollupReroll: a failed rm must not skip the re-warm, or
+      // the status stays 'computing' and the rollup is never rebuilt.
+      void rollupStore.invalidate().catch(warnRollupFailure('rollup-invalidate')).then(() => { resultCache.clear(); triggerWarmup(); });
     },
     warmupBase: () => { resultCache.clear(); triggerWarmup(); },
     maintainRollup: (changedPeriods: readonly string[]) => { void maintainRollupForPeriods(changedPeriods); },
