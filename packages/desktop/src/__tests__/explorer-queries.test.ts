@@ -43,7 +43,8 @@ const identityRule = {
   id: 'identity', name: 'identity', enabled: true, builtIn: false,
   conditions: [{ dimensionId: asDimensionId('tag_team'), values: ['identity'] }],
 };
-const RAW_HOURLY = `read_parquet(${sqlStringLiteral(`${SYNTHETIC_DIR}/aws-main/raw/hourly-*/*.parquet`)}, union_by_name=true)`;
+const RAW_HOURLY_GLOB = `${SYNTHETIC_DIR}/aws-main/raw/hourly-*/*.parquet`;
+const RAW_HOURLY = `read_parquet(${sqlStringLiteral(RAW_HOURLY_GLOB)}, union_by_name=true)`;
 
 describe('Explorer queries (DuckDB over the synthetic fixtures)', () => {
   let db: DuckDBInstance;
@@ -179,7 +180,7 @@ describe('Explorer queries (DuckDB over the synthetic fixtures)', () => {
       const hours = { start: asDateString('2026-02-23'), end: asDateString('2026-02-23'), startHour: asHourString('2026-02-23 00:00:00'), endHour: asHourString('2026-02-23 23:00:00') };
       const result = await queryExplorerRows(deps, { filters: {}, dateRange: hours, rowLimit: 1000 });
       const expected = (await fetchRows(conn, `SELECT COUNT(*) AS n FROM ${RAW_HOURLY} WHERE ChargePeriodStart BETWEEN TIMESTAMP '2026-02-23 00:00:00' AND TIMESTAMP '2026-02-23 23:00:00'`))[0];
-      expect(result.sampleRows.length).toBe(Number(expected?.['n']));
+      expect(result.sampleRows).toHaveLength(Number(expected?.['n']));
       expect(result.sampleRows.every(r => r.hour.startsWith('2026-02-23'))).toBe(true);
     });
   });
