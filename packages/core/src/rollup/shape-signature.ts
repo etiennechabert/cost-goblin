@@ -10,6 +10,11 @@ import { canonicalJson, sha256Hex } from './digest.js';
  *  so every CUR-era partition is invalid. */
 export const ROLLUP_SCHEMA_VERSION = 2;
 
+/** Exclusion clause semantics baked into partitions. 2: NULL-safe — a rule no
+ *  longer drops rows whose dimension value is NULL (#451). Partitions built
+ *  under an enabled rule before that undercount untagged spend. */
+const EXCLUSION_SEMANTICS = 2;
+
 function isEnabled(d: { readonly enabled?: boolean | undefined }): boolean {
   return d.enabled !== false;
 }
@@ -118,6 +123,10 @@ export function computeShapeSignature(input: ShapeSignatureInput): string {
     tagDims,
     costMetric,
     exclusionRules,
+    // Only partitions built under an enabled rule depend on the clause
+    // semantics. Without one no clause is emitted, so those (default-config)
+    // partitions keep their signature instead of re-rolling for nothing.
+    ...(exclusionRules.length === 0 ? {} : { exclusionSemantics: EXCLUSION_SEMANTICS }),
     ...(marketplace === null ? {} : { marketplaceAttribution: marketplace }),
     orgAccountsDigest,
   }));
