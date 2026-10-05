@@ -177,8 +177,9 @@ export function ExplorerView(): React.JSX.Element {
 
   // Save date range / granularity whenever they change. Skip saves until
   // after preferences have loaded — the prefsLoadedRef flag is set in the
-  // mount effect once the initial load completes (or fails). This prevents
-  // redundant writes when restoring persisted values on mount. Also skip
+  // mount effect once the initial load completes (or fails). That only skips
+  // the mount render: the restore sets the ref in the same callback as the
+  // state it restores, so opening the view writes back what it read. Also skip
   // while the range is still the default (`rangeTouched` false; a user's
   // granularity change always comes with a range change): re-seeding it once
   // the configured lag arrives must not be persisted as if the user had picked

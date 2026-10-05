@@ -116,6 +116,35 @@ describe('CustomView', () => {
     expect(saved?.lastUsedGranularity).toBe('daily');
     expect(saved?.compareEnabled).toBe(false);
   });
+
+  it('persists a comparison-only change without the untouched default range', async () => {
+    const api = new MockCostApi();
+    const user = userEvent.setup();
+    render(
+      <PaletteProvider>
+        <CostApiProvider value={api}>
+          <CustomView spec={SPEC} headerSubtitle="hello" />
+        </CostApiProvider>
+      </PaletteProvider>,
+    );
+    await waitFor(() => {
+      expect(screen.getByText('Total Cost')).toBeDefined();
+    });
+
+    await user.click(screen.getByRole('button', { name: /Last 30 days/ }));
+    await user.click(screen.getByRole('checkbox', { name: 'Compare to previous period' }));
+
+    await waitFor(() => {
+      expect(api.savedExplorerPreferences.length).toBeGreaterThan(0);
+    }, { timeout: 2000 });
+    // The range is still the default: writing it would make the Explorer
+    // restore it next session as a fixed window the user never picked.
+    for (const prefs of api.savedExplorerPreferences) {
+      expect('lastUsedDateRange' in prefs).toBe(false);
+      expect('lastUsedGranularity' in prefs).toBe(false);
+    }
+    expect(api.savedExplorerPreferences.at(-1)?.compareEnabled).toBe(true);
+  });
 });
 
 /** Records the range of every queryCosts call (the pie and top-N widgets),

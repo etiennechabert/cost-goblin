@@ -181,6 +181,9 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
   // the gate in the same update, so the save that update fires sees it.
   // Gating on an async prefs read instead would drop any change the user made
   // while that read was still in flight — a ref flip doesn't re-run the effect.
+  // A comparison-only change saves just `compareEnabled`: the range is still
+  // the default then, and the Explorer would restore it next session as a
+  // fixed, ageing window, as if the user had picked it.
   const compareTouchedRef = useRef(false);
   const savePendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -189,8 +192,7 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
     savePendingRef.current = setTimeout(() => {
       savePendingRef.current = null;
       api.saveExplorerPreferences({
-        lastUsedDateRange: dateRange,
-        lastUsedGranularity: granularity,
+        ...(rangeTouched ? { lastUsedDateRange: dateRange, lastUsedGranularity: granularity } : {}),
         compareEnabled,
       }).catch(() => undefined);
     }, 500);
