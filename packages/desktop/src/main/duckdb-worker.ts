@@ -7,6 +7,7 @@ import type { DuckDBConnection, DuckDBInstance } from './duckdb-loader.js';
 import { createResourcePool } from './connection-pool.js';
 import type { ResourcePool } from './connection-pool.js';
 import { computeDefaultMemoryGB, computeDefaultThreads, computeQueryPoolSize } from './duckdb-tuning.js';
+import { bindParams } from './duckdb-bind.js';
 
 interface DuckDBModule {
   DuckDBInstance: { create: () => Promise<DuckDBInstance> };
@@ -138,30 +139,6 @@ async function fetchAllRows(
     chunk = await result.fetchChunk();
   }
   return rows;
-}
-
-function bindParams(stmt: import('./duckdb-loader.js').DuckDBPreparedStatement, params: unknown[]): void {
-  for (let i = 0; i < params.length; i++) {
-    const val = params[i];
-    const idx = i + 1; // DuckDB uses 1-based parameter indices
-    if (val === null || val === undefined) {
-      stmt.bindNull(idx);
-    } else if (typeof val === 'string') {
-      stmt.bindVarchar(idx, val);
-    } else if (typeof val === 'number') {
-      if (Number.isInteger(val)) {
-        stmt.bindInteger(idx, val);
-      } else {
-        stmt.bindDouble(idx, val);
-      }
-    } else if (typeof val === 'boolean') {
-      stmt.bindBoolean(idx, val);
-    } else if (typeof val === 'bigint') {
-      stmt.bindInteger(idx, Number(val));
-    } else {
-      stmt.bindVarchar(idx, JSON.stringify(val));
-    }
-  }
 }
 
 async function fetchAllRowsPrepared(

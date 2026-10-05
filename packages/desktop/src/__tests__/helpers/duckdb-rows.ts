@@ -1,4 +1,5 @@
-import type { DuckDBConnection, DuckDBPreparedStatement, DuckDBResult } from '@duckdb/node-api';
+import type { DuckDBConnection, DuckDBResult } from '@duckdb/node-api';
+import { bindParams } from '../../main/duckdb-bind.js';
 import type { RawRow } from '../../main/duckdb-client.js';
 
 /** Drain a DuckDB result into name-keyed rows (the duckdb-worker's row shape). */
@@ -23,28 +24,7 @@ export async function fetchRows(conn: DuckDBConnection, sql: string): Promise<Ra
   return collectRows(await conn.run(sql));
 }
 
-/** Positional $1..$n binding, mirroring the duckdb-worker's bindParams. */
-function bindParams(stmt: DuckDBPreparedStatement, params: readonly unknown[]): void {
-  for (let i = 0; i < params.length; i++) {
-    const idx = i + 1;
-    const val = params[i];
-    if (val === null || val === undefined) {
-      stmt.bindNull(idx);
-    } else if (typeof val === 'string') {
-      stmt.bindVarchar(idx, val);
-    } else if (typeof val === 'number') {
-      if (Number.isInteger(val)) stmt.bindInteger(idx, val);
-      else stmt.bindDouble(idx, val);
-    } else if (typeof val === 'boolean') {
-      stmt.bindBoolean(idx, val);
-    } else if (typeof val === 'bigint') {
-      stmt.bindInteger(idx, Number(val));
-    } else {
-      stmt.bindVarchar(idx, JSON.stringify(val));
-    }
-  }
-}
-
+/** Positional $1..$n binding through the duckdb-worker's own bindParams. */
 export async function fetchRowsPrepared(conn: DuckDBConnection, sql: string, params: readonly unknown[]): Promise<RawRow[]> {
   const stmt = await conn.prepare(sql);
   try {

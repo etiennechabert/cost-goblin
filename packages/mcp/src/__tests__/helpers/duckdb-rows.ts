@@ -1,8 +1,9 @@
 import type { DuckDBConnection, DuckDBPreparedStatement, DuckDBResult } from '@duckdb/node-api';
 import type { RawRow } from '../../context.js';
 
-// Copied from packages/desktop/src/__tests__/helpers/duckdb-rows.ts — the mcp
-// package must not import from desktop. Keep the two in step: these mirror the
+// Copied from packages/desktop/src/__tests__/helpers/duckdb-rows.ts, and
+// bindParams from packages/desktop/src/main/duckdb-bind.ts — the mcp package
+// must not import from desktop. Keep them in step: these mirror the
 // duckdb-worker's row shape and $1..$n binding, so a test that runs a tool's
 // prepared SQL here exercises the same binding the desktop app does.
 
@@ -28,7 +29,16 @@ export async function fetchRows(conn: DuckDBConnection, sql: string): Promise<Ra
   return collectRows(await conn.run(sql));
 }
 
-/** Positional $1..$n binding, mirroring the duckdb-worker's bindParams. */
+const INT32_MIN = -(2 ** 31);
+const INT32_MAX = 2 ** 31 - 1;
+const INT64_MIN = -(2n ** 63n);
+const INT64_MAX = 2n ** 63n - 1n;
+const INT128_MIN = -(2n ** 127n);
+const INT128_MAX = 2n ** 127n - 1n;
+
+/** Positional $1..$n binding, mirroring the duckdb-worker's bindParams: an
+ *  integer binds as the narrowest DuckDB integer type that holds it (a number
+ *  past int64 as DOUBLE; a bigint past int128 throws). */
 function bindParams(stmt: DuckDBPreparedStatement, params: readonly unknown[]): void {
   for (let i = 0; i < params.length; i++) {
     const idx = i + 1;
@@ -38,15 +48,36 @@ function bindParams(stmt: DuckDBPreparedStatement, params: readonly unknown[]): 
     } else if (typeof val === 'string') {
       stmt.bindVarchar(idx, val);
     } else if (typeof val === 'number') {
-      if (Number.isInteger(val)) stmt.bindInteger(idx, val);
-      else stmt.bindDouble(idx, val);
+      bindNumberParam(stmt, idx, val);
     } else if (typeof val === 'boolean') {
       stmt.bindBoolean(idx, val);
     } else if (typeof val === 'bigint') {
-      stmt.bindInteger(idx, Number(val));
+      bindBigintParam(stmt, idx, val);
     } else {
       stmt.bindVarchar(idx, JSON.stringify(val));
     }
+  }
+}
+
+function bindNumberParam(stmt: DuckDBPreparedStatement, idx: number, val: number): void {
+  if (!Number.isInteger(val)) {
+    stmt.bindDouble(idx, val);
+  } else if (val >= INT32_MIN && val <= INT32_MAX) {
+    stmt.bindInteger(idx, val);
+  } else {
+    const big = BigInt(val);
+    if (big >= INT64_MIN && big <= INT64_MAX) stmt.bindBigInt(idx, big);
+    else stmt.bindDouble(idx, val);
+  }
+}
+
+function bindBigintParam(stmt: DuckDBPreparedStatement, idx: number, val: bigint): void {
+  if (val >= INT64_MIN && val <= INT64_MAX) {
+    stmt.bindBigInt(idx, val);
+  } else if (val >= INT128_MIN && val <= INT128_MAX) {
+    stmt.bindHugeInt(idx, val);
+  } else {
+    throw new RangeError(`Parameter $${String(idx)} is outside the HUGEINT range (128-bit signed integer)`);
   }
 }
 

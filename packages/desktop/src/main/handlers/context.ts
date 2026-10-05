@@ -1,5 +1,6 @@
 import type { DuckDBClient, RawRow } from '../duckdb-client.js';
 import { LRUCache } from '../lru-cache.js';
+import { InflightDedup } from '../inflight-dedup.js';
 import { QueryLog } from '../query-log.js';
 import { awaitWithTimeout } from '../async-timeout.js';
 import { DEFAULT_ROLLUP_CONCURRENCY } from '../duckdb-tuning.js';
@@ -207,6 +208,13 @@ async function generateFlatOrgTags(baseDir: string, flatPath: string): Promise<s
   } catch {
     return undefined;
   }
+}
+
+/** Ends a fire-and-forget rollup chain: its failure is logged, not left as a
+ *  rejection nobody observes, which Node raises as a process-level
+ *  unhandledRejection (and Sentry captures when telemetry is on). */
+function warnRollupFailure(label: string): (err: unknown) => void {
+  return (err: unknown) => { logger.warn(`${label}: ${err instanceof Error ? err.message : String(err)}`); };
 }
 
 export function createAppContext(ctx: IpcContext): AppContext {
@@ -418,21 +426,12 @@ export function createAppContext(ctx: IpcContext): AppContext {
   const wrappedRunQuery = queryLog.wrapQuery((sql, onStarted) => ctx.db.runQuery(sql, onStarted));
   const wrappedRunPreparedQuery = queryLog.wrapPreparedQuery((sql, params, onStarted) => ctx.db.runPreparedQuery(sql, params, onStarted));
 
-  const inflightQueries = new Map<string, Promise<RawRow[]>>();
-
-  function dedup(key: string, run: () => Promise<RawRow[]>): Promise<RawRow[]> {
-    const existing = inflightQueries.get(key);
-    if (existing !== undefined) return existing;
-    const promise = run();
-    inflightQueries.set(key, promise);
-    void promise.finally(() => { inflightQueries.delete(key); });
-    return promise;
-  }
+  const inflightQueries = new InflightDedup<RawRow[]>();
 
   const runQuery = (sql: string): Promise<RawRow[]> => {
     const cached = resultCache.get(sql);
     if (cached !== undefined) return Promise.resolve(cached);
-    return dedup(sql, async () => {
+    return inflightQueries.run(sql, async () => {
       const result = await traceSpan(QUERY_SPAN, () => wrappedRunQuery(sql));
       if (result.length > 0) resultCache.set(sql, result);
       return result;
@@ -448,7 +447,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
       queryLog.complete(id, cached.length, true);
       return Promise.resolve(cached);
     }
-    return dedup(key, async () => {
+    return inflightQueries.run(key, async () => {
       const result = await traceSpan(PREPARED_QUERY_SPAN, () => wrappedRunPreparedQuery(sql, params, materialized));
       if (result.length > 0) resultCache.set(key, result);
       return result;
@@ -520,7 +519,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
       void traceSpan(
         { name: 'rollup.warmup', op: SPAN_OP.rollupWarmup, forceTransaction: true, attributes: { 'rollup.periods': toBuild.length } },
         () => rollupStore.maintainPeriods(toBuild, buildSql, etags, shape),
-      ).then(() => { resultCache.clear(); });
+      ).then(() => { resultCache.clear(); }).catch(warnRollupFailure('rollup-warmup'));
     } catch (err: unknown) {
       rollupStore.markSettled();
       logger.warn(`rollup-warmup: ${err instanceof Error ? err.message : String(err)}`);
@@ -571,7 +570,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
   const ROLLUP_REROLL_DEBOUNCE_MS = 800;
   let rerollTimer: ReturnType<typeof setTimeout> | null = null;
   function scheduleRollupReroll(): void {
-    void rollupStore.invalidate().then(() => { resultCache.clear(); });
+    void rollupStore.invalidate().then(() => { resultCache.clear(); }).catch(warnRollupFailure('rollup-invalidate'));
     if (rerollTimer !== null) clearTimeout(rerollTimer);
     rerollTimer = setTimeout(() => { rerollTimer = null; triggerWarmup(); }, ROLLUP_REROLL_DEBOUNCE_MS);
   }
@@ -621,7 +620,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     invalidateViews: () => { state.views = null; },
     invalidateCostScope: () => {
       state.costScope = null;
-      void rollupStore.invalidate().then(() => { resultCache.clear(); triggerWarmup(); });
+      void rollupStore.invalidate().then(() => { resultCache.clear(); triggerWarmup(); }).catch(warnRollupFailure('rollup-invalidate'));
     },
     warmupBase: () => { resultCache.clear(); triggerWarmup(); },
     maintainRollup: (changedPeriods: readonly string[]) => { void maintainRollupForPeriods(changedPeriods); },
