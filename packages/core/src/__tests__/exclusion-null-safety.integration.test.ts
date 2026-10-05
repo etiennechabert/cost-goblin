@@ -6,8 +6,8 @@ import { join } from 'node:path';
 import { FOCUS_TABLE_DDL } from '../__fixtures__/focus-fixture.js';
 import {
   buildDailyCostsQuery,
-  buildExclusionClauses,
   buildGrainProbeQuery,
+  buildLiteralExclusionClauses,
   buildMaterializeBaseQuery,
   buildRollupPartitionQuery,
   buildRuleMatchExpr,
@@ -64,6 +64,12 @@ const sandboxThenEc2 = rule('sandbox-then-ec2', [
 ]);
 const costCenter = rule('cost-center', [{ dimensionId: asDimensionId('tag_cost_center'), values: ['cc-1'] }]);
 const s3Service = rule('s3', [{ dimensionId: asDimensionId('service'), values: ['S3'] }]);
+// A condition on a dimension since removed from the config: the rule can't
+// match, so it must exclude nothing, not all of EC2.
+const ec2Dangling = rule('ec2-dangling', [
+  { dimensionId: asDimensionId('service'), values: ['EC2'] },
+  { dimensionId: asDimensionId('tag_removed'), values: ['x'] },
+]);
 
 function scope(rules: readonly ExclusionRule[]): CostScopeConfig {
   return { costMetric: 'effective', rules: [...rules] };
@@ -95,10 +101,18 @@ describe('exclusion rules keep untagged (NULL) rows (#451)', () => {
       { groupBy: asDimensionId('service'), dateRange: RANGE, filters: {}, granularity: 'daily' },
       opts(rules),
     );
+    return preparedTotal(sql, params);
+  }
+
+  async function preparedTotal(sql: string, params: readonly unknown[]): Promise<number> {
     const prepared = await conn.prepare(sql);
-    params.forEach((p, i) => { prepared.bindVarchar(i + 1, String(p)); });
-    const rows = await (await prepared.run()).getRowObjects();
-    return rows.reduce((sum, r) => sum + Number(r['cost']), 0);
+    try {
+      params.forEach((p, i) => { prepared.bindVarchar(i + 1, String(p)); });
+      const rows = await (await prepared.run()).getRowObjects();
+      return rows.reduce((sum, r) => sum + Number(r['cost']), 0);
+    } finally {
+      prepared.destroySync();
+    }
   }
 
   async function materializedTotal(rules: readonly ExclusionRule[]): Promise<number> {
@@ -168,6 +182,11 @@ describe('exclusion rules keep untagged (NULL) rows (#451)', () => {
       expect(await total([s3Service])).toBe(ALL_ROWS - 8);
       expect(await total([s3Service, sandboxTeam])).toBe(ALL_ROWS - 8 - 1);
     });
+
+    it('a multi-condition rule with a condition on a removed dimension excludes nothing', async () => {
+      expect(await total([ec2Dangling])).toBe(ALL_ROWS);
+      expect(await total([ec2Dangling, sandboxTeam])).toBe(ALL_ROWS - 1);
+    });
   });
 
   it('rollup partitions keep untagged cost', async () => {
@@ -175,6 +194,7 @@ describe('exclusion rules keep untagged (NULL) rows (#451)', () => {
     expect(await rollupTotal([sandboxTeam], 'single')).toBe(ALL_ROWS - 1);
     expect(await rollupTotal([ec2Sandbox], 'multi')).toBe(ALL_ROWS - 1);
     expect(await rollupTotal([costCenter], 'account-only')).toBe(ALL_ROWS);
+    expect(await rollupTotal([ec2Dangling], 'dangling')).toBe(ALL_ROWS);
   });
 
   it('the grain probe counts the untagged line items the rollup will store', async () => {
@@ -195,6 +215,8 @@ describe('exclusion rules keep untagged (NULL) rows (#451)', () => {
     expect(await matched(sandboxTeam)).toBe(1);
     expect(await matched(ec2Sandbox)).toBe(1);
     expect(await matched(costCenter)).toBe(0);
+    // The Cost Scope preview shows a rule that can't match as excluding $0.
+    expect(buildRuleMatchExpr(ec2Dangling, dimensions)).toBeNull();
   });
 
   it('account rules written as display names resolve through the reverse map', async () => {
@@ -209,15 +231,12 @@ describe('exclusion rules keep untagged (NULL) rows (#451)', () => {
       { groupBy: asDimensionId('service'), dateRange: RANGE, filters: {}, granularity: 'daily' },
       { ...opts([byName]), accountReverseMap: reverse },
     );
-    const prepared = await conn.prepare(sql);
-    params.forEach((p, i) => { prepared.bindVarchar(i + 1, String(p)); });
-    const rows = await (await prepared.run()).getRowObjects();
-    expect(rows.reduce((sum, r) => sum + Number(r['cost']), 0)).toBe(8); // only account 222 (S3) left
+    expect(await preparedTotal(sql, params)).toBe(8); // only account 222 (S3) left
   });
 
   it('literal-mode clauses (no QueryBuilder) escape rule values', () => {
     const quoted = rule('quoted', [{ dimensionId: asDimensionId('tag_team'), values: ["o'brien"] }]);
-    const [clause] = buildExclusionClauses([quoted], dimensions, undefined);
+    const [clause] = buildLiteralExclusionClauses([quoted], dimensions, undefined);
     expect(clause).toContain("'o''brien'");
   });
 });

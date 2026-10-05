@@ -13,6 +13,7 @@ export {
   buildRollupPartitionQuery,
   buildGrainProbeQuery,
   buildExclusionClauses,
+  buildLiteralExclusionClauses,
   buildFilterClauses,
   buildRuleMatchExpr,
   computePeriodsInRange,

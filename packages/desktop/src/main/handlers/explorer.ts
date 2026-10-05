@@ -3,13 +3,14 @@ import { originStore } from '../query-log.js';
 import {
   asDimensionId,
   dimensionIdSet,
-  buildExclusionClauses,
+  buildLiteralExclusionClauses,
   buildSource,
   buildRuleMatchExpr,
   computePeriodsInRange,
   logger,
   resolveField,
   tagDimColumn,
+  tryResolveField,
 } from '@costgoblin/core';
 import type {
   ExclusionRule,
@@ -73,8 +74,11 @@ function buildExplorerFilterPredicate(
   dimensions: DimensionsConfig,
   accountReverseMap: ReadonlyMap<string, readonly string[]>,
 ): string | null {
+  // A filter on a dimension the config no longer has is ignored and the rest
+  // still apply. Drop it here: in a rule, such a condition makes the whole
+  // rule match nothing (buildRuleMatchExpr).
   const conditions = Object.entries(filters)
-    .filter(([, values]) => values.length > 0)
+    .filter(([dimId, values]) => values.length > 0 && tryResolveField(asDimensionId(dimId), dimensions) !== null)
     .map(([dimId, values]) => ({
       dimensionId: asDimensionId(dimId),
       values,
@@ -166,7 +170,7 @@ async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source
     providers: branches,
     costMetric: metric, marketplaceAttribution: fullScope?.marketplaceAttribution,
   });
-  const exclusions = buildExclusionClauses(scopeForExclusions?.rules, dimensions, accountReverseMap);
+  const exclusions = buildLiteralExclusionClauses(scopeForExclusions?.rules, dimensions, accountReverseMap);
 
   // When the histogram drag-zoom emits hour bounds, swap the day-level
   // BETWEEN for an hour-level filter so the rest of the Explorer (overview,

@@ -116,6 +116,29 @@ describe('queryFilterValues (DuckDB over the synthetic fixtures, raw path)', () 
     expect(total(rolled)).toBeCloseTo(total(raw), 6);
   });
 
+  it('does not re-apply baked-in exclusions on the rollup, even on a dimension outside its grain', async () => {
+    // A disabled dimension still feeds the rollup build's exclusions but isn't
+    // stored in the rollup, so re-applying the rule there would name a column
+    // the rollup doesn't have.
+    const dims = { ...FIXTURE_DIMENSIONS, tags: [{ tagName: 'team', label: 'Team', enabled: false }] };
+    const rule = { id: 'identity', name: 'identity', enabled: true, builtIn: false, conditions: [{ dimensionId: asDimensionId('tag_team'), values: ['identity'] }] };
+    const ruleScope: CostScopeConfig = { costMetric: 'billed', rules: [rule] };
+    const store = new RollupStore({ dataDir: join(rollupDir, 'disabled-dim'), providerName: () => asProviderName('aws-main'), runQuery: (sql) => fetchRows(conn, sql) });
+    const grain = rollupGrainColumns(dims);
+    expect(grain).not.toContain('tag_team');
+    await store.maintainPeriods(
+      ['2026-01', '2026-02'],
+      (period, outPath) => buildRollupPartitionQuery(period, 'daily', outPath, { dataDir: SYNTHETIC_DIR, dimensions: dims, providers: [{ name: asProviderName('aws-main'), availablePeriods: [period] }], costScope: ruleScope }),
+      { '2026-01': { a: '1' }, '2026-02': { b: '2' } },
+      { signature: 'SIG-DISABLED', grainDimensions: grain },
+    );
+    const withDims = { ...deps, getQueryDimensions: () => Promise.resolve(dims) };
+    const raw = await withScope(ruleScope, () => queryFilterValues(withDims, 'charge_category', {}, WINDOW));
+    const rolled = await withScope(ruleScope, () => queryFilterValues({ ...withDims, rollupStore: store }, 'charge_category', {}, WINDOW));
+    expect(total(rolled)).toBeGreaterThan(0);
+    expect(total(rolled)).toBeCloseTo(total(raw), 6);
+  });
+
   it('returns nothing when no provider has data on disk', async () => {
     const empty = await queryFilterValues({ ...deps, getQueryProviders: () => Promise.resolve([{ name: asProviderName('aws-main'), availablePeriods: [] }]) }, 'service', {}, WINDOW);
     expect(empty).toEqual([]);
