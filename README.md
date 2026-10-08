@@ -268,6 +268,10 @@ CostGoblin is free and open source — kept that way with the help of companies 
 - **[GitHub](https://github.com)** — repository hosting & CI
 - **[Cloudflare](https://www.cloudflare.com)** — website hosting & CDN
 
+## Contributing
+
+Pull requests are welcome. Contributors sign a short [Contributor License Agreement](./CLA.md) once, in their first pull request: you keep the copyright in your work, and the maintainer can keep offering the commercial license described below. See [`CONTRIBUTING.md`](./CONTRIBUTING.md).
+
 ## License
 
 CostGoblin is licensed under the **GNU Affero General Public License v3.0 only** (AGPL-3.0-only). See [`LICENSE`](./LICENSE) for the full text.

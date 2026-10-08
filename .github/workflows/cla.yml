@@ -1,0 +1,54 @@
+name: CLA
+
+# Every commit author on a pull request must have accepted CLA.md (see
+# CONTRIBUTING.md). `pull_request`, not `pull_request_target`: the check only
+# reads, so a fork's read-only token is all it needs.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+# Read-only: the check lists the pull request's commits and reads two files.
+# Pinned by scripts/ci/workflow-policy.test.mjs.
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  cla:
+    runs-on: ubuntu-latest
+    steps:
+      # The check and the trusted signature list come from the base branch, so
+      # a pull request can't edit the check it is judged by.
+      - name: Check out the base branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          persist-credentials: false
+
+      # Read as data only: nothing from this checkout is executed.
+      - name: Check out the pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: pr
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '^24.18.0'
+
+      - name: Check every commit author signed the CLA
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
+        run: |
+          # The pull request that introduces this check has no base copy to run.
+          if [ ! -f base/.github/scripts/check-cla.mjs ]; then
+            echo "::notice::The CLA check isn't on the base branch yet; skipping."
+            exit 0
+          fi
+          node base/.github/scripts/check-cla.mjs base/.github/cla-signatures.md pr/.github/cla-signatures.md

@@ -295,10 +295,12 @@ describe('workflow policy (.github/workflows)', () => {
   const byName = Object.fromEntries(workflows.map(({ name, wf }) => [name, wf]));
   const release = byName['release.yml'];
   const ci = byName['ci.yml'];
+  const cla = byName['cla.yml'];
 
   it('finds the workflows it polices', () => {
     expect(release).toBeDefined();
     expect(ci).toBeDefined();
+    expect(cla).toBeDefined();
   });
 
   it('declares top-level permissions in every workflow', () => {
@@ -321,6 +323,22 @@ describe('workflow policy (.github/workflows)', () => {
 
   it('ci.yml grants read-only contents', () => {
     expect(ci.permissions).toEqual({ contents: 'read' });
+  });
+
+  // The CLA check decides what may merge, so a pull request must not be able
+  // to rewrite it, and it must never hold a token a fork could misuse.
+  it('cla.yml is read-only and triggered by pull_request, never pull_request_target', () => {
+    expect(cla.permissions).toEqual({ contents: 'read', 'pull-requests': 'read' });
+    expect(Object.keys(cla.on)).toEqual(['pull_request']);
+  });
+
+  it('cla.yml runs the check from the base branch, never from the pull request checkout', () => {
+    const steps = jobsOf(cla).flatMap(([, job]) => stepsOf(job));
+    const base = steps.find((s) => usesAction(s, 'actions/checkout') && s.with?.path === 'base');
+    expect(base?.with?.ref).toBe('${{ github.event.pull_request.base.sha }}');
+    const runs = steps.map(runBody).filter(Boolean).join('\n');
+    expect(runs).toMatch(/node base\/\.github\/scripts\/check-cla\.mjs/);
+    expect(runs).not.toMatch(/(node|bash|sh|source|\.)\s+pr\//);
   });
 
   it(`pins every setup-node to ${NODE_VERSION} (npm >= 11.16)`, () => {
