@@ -295,10 +295,12 @@ describe('workflow policy (.github/workflows)', () => {
   const byName = Object.fromEntries(workflows.map(({ name, wf }) => [name, wf]));
   const release = byName['release.yml'];
   const ci = byName['ci.yml'];
+  const cla = byName['cla.yml'];
 
   it('finds the workflows it polices', () => {
     expect(release).toBeDefined();
     expect(ci).toBeDefined();
+    expect(cla).toBeDefined();
   });
 
   it('declares top-level permissions in every workflow', () => {
@@ -321,6 +323,29 @@ describe('workflow policy (.github/workflows)', () => {
 
   it('ci.yml grants read-only contents', () => {
     expect(ci.permissions).toEqual({ contents: 'read' });
+  });
+
+  // The CLA check decides what may merge, so a pull request must not be able
+  // to rewrite it, and it must never hold a token a fork could misuse.
+  it('cla.yml is read-only and triggered by pull_request, never pull_request_target', () => {
+    expect(cla.permissions).toEqual({ contents: 'read', 'pull-requests': 'read' });
+    expect(Object.keys(cla.on)).toEqual(['pull_request']);
+  });
+
+  it("cla.yml runs main's copy of the check, taken from the test merge's first parent", () => {
+    const steps = jobsOf(cla).flatMap(([, job]) => stepsOf(job));
+    // One checkout, of the default ref (the test merge commit), deep enough to
+    // reach its parents. A `ref:` here would read the base at a commit the
+    // merged file wasn't built on.
+    const checkouts = steps.filter((s) => usesAction(s, 'actions/checkout'));
+    expect(checkouts).toHaveLength(1);
+    expect(checkouts[0].with?.ref).toBeUndefined();
+    expect(checkouts[0].with?.['fetch-depth']).toBe(2);
+    const runs = steps.map(runBody).filter(Boolean).join('\n');
+    expect(runs).toMatch(/git show HEAD\^1:\.github\/scripts\/check-cla\.mjs > "\$RUNNER_TEMP\/cla\/check-cla\.mjs"/);
+    expect(runs).toMatch(/node "\$RUNNER_TEMP\/cla\/check-cla\.mjs"/);
+    // Nothing from the pull request's tree is executed.
+    expect(runs).not.toMatch(/\b(node|bash|sh|source)\s+"?(\.\/|\$GITHUB_WORKSPACE|\.github)/);
   });
 
   it(`pins every setup-node to ${NODE_VERSION} (npm >= 11.16)`, () => {
