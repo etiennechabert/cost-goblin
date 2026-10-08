@@ -22,8 +22,9 @@ has signed:
 
 - Each commit must be authored with an email linked to your GitHub account
   (Settings → Emails), so the check can tell who wrote it.
-- Everyone signs for themselves. If someone co-authored your changes, they add
-  their own row.
+- Everyone signs for themselves. If someone co-authored your changes, ask them
+  to add their own row too: the check can't see `Co-authored-by` credits, so
+  that one relies on you.
 - Whoever opens the pull request signs too, since they submit all of it. That
   signature also covers commits an AI coding agent wrote for you (Claude Code,
   for instance, commits as `Claude <noreply@anthropic.com>`).

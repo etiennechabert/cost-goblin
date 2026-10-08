@@ -7,9 +7,12 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
-  ACCEPTED_CLA_VERSIONS,
+  CURRENT_CLA_VERSION,
   LICENSOR,
+  MAX_PR_COMMITS,
   checkCla,
+  escapeCommandData,
+  fetchCommits,
   parseSignatures,
 } from '../../.github/scripts/check-cla.mjs';
 
@@ -163,6 +166,13 @@ describe('checkCla', () => {
     expect(checkCla({ baseText: table(ada), prText: table(fixed), commits: [owner, dependabot], prAuthor: byLicensor })).toEqual([]);
   });
 
+  it("doesn't fail a pull request for a bad row that is already on the base branch", () => {
+    const bad = table('| ada | Ada | 2026-10-08 | 1.0 |');
+    expect(checkCla({ baseText: bad, prText: bad, commits: [commit('alan-t')], prAuthor: by('alan-t') })).toEqual([
+      expect.stringContaining('@alan-t'),
+    ]);
+  });
+
   it('fails on rows it cannot read in the pull request', () => {
     const problems = checkCla({ baseText: HEADER, prText: table('| ada | Ada | 2026-10-08 | 1.0 |'), commits: [owner], prAuthor: byLicensor });
     expect(problems).toHaveLength(1);
@@ -178,11 +188,74 @@ describe('the committed CLA files', () => {
   it('name, in CLA.md, the version the check accepts last', () => {
     const cla = readFileSync(new URL('CLA.md', repoRoot), 'utf8');
     const version = cla.match(/\*\*Version (\d+\.\d+)\*\*/)?.[1];
-    expect(version).toBe(ACCEPTED_CLA_VERSIONS.at(-1));
+    expect(version).toBe(CURRENT_CLA_VERSION);
   });
 
   it('give the CONTRIBUTING.md example row the current version', () => {
     const guide = readFileSync(new URL('CONTRIBUTING.md', repoRoot), 'utf8');
-    expect(guide).toContain(`| YYYY-MM-DD | ${ACCEPTED_CLA_VERSIONS.at(-1)} |`);
+    expect(guide).toContain(`| YYYY-MM-DD | ${CURRENT_CLA_VERSION} |`);
+  });
+});
+
+// The GitHub API response for one commit of GET /repos/{repo}/pulls/{n}/commits.
+const apiCommit = (sha, author, name = 'Some One', email = 'one@example.com') => ({
+  sha,
+  author,
+  commit: { author: { name, email } },
+});
+
+function fakeFetch(pages) {
+  const urls = [];
+  const impl = async (url) => {
+    urls.push(url);
+    const page = Number(new URL(url).searchParams.get('page'));
+    const body = pages[page - 1] ?? [];
+    return { ok: true, status: 200, json: async () => body, text: async () => '' };
+  };
+  return { impl, urls };
+}
+
+describe('fetchCommits', () => {
+  it('maps API commits, flagging bots and authors with no linked account', async () => {
+    const { impl } = fakeFetch([
+      [
+        apiCommit('a1', { login: 'ada', type: 'User' }),
+        apiCommit('b1', { login: 'dependabot[bot]', type: 'Bot' }),
+        apiCommit('c1', { login: 'renovate[bot]', type: 'User' }),
+        apiCommit('d1', null, 'Unlinked', 'unlinked@example.com'),
+      ],
+    ]);
+    const commits = await fetchCommits({ repo: 'o/r', pr: '7', token: 't', fetchImpl: impl });
+    expect(commits).toEqual([
+      { sha: 'a1', login: 'ada', name: 'Some One', email: 'one@example.com', isBot: false },
+      { sha: 'b1', login: 'dependabot[bot]', name: 'Some One', email: 'one@example.com', isBot: true },
+      { sha: 'c1', login: 'renovate[bot]', name: 'Some One', email: 'one@example.com', isBot: true },
+      { sha: 'd1', login: null, name: 'Unlinked', email: 'unlinked@example.com', isBot: false },
+    ]);
+  });
+
+  it('pages until a short page', async () => {
+    const full = Array.from({ length: 100 }, (_, i) => apiCommit(`s${i}`, { login: 'ada', type: 'User' }));
+    const { impl, urls } = fakeFetch([full, [apiCommit('last', { login: 'ada', type: 'User' })]]);
+    const commits = await fetchCommits({ repo: 'o/r', pr: '7', token: 't', fetchImpl: impl });
+    expect(commits).toHaveLength(101);
+    expect(urls).toHaveLength(2);
+  });
+
+  it('refuses a pull request at the API cap, whose later commits it cannot see', async () => {
+    const page = (n) => Array.from({ length: n }, (_, i) => apiCommit(`s${i}`, { login: 'ada', type: 'User' }));
+    const { impl } = fakeFetch([page(100), page(100), page(MAX_PR_COMMITS - 200)]);
+    await expect(fetchCommits({ repo: 'o/r', pr: '7', token: 't', fetchImpl: impl })).rejects.toThrow(/250/);
+  });
+
+  it('throws on an API error instead of checking nothing', async () => {
+    const impl = async () => ({ ok: false, status: 403, json: async () => [], text: async () => 'rate limited' });
+    await expect(fetchCommits({ repo: 'o/r', pr: '7', token: 't', fetchImpl: impl })).rejects.toThrow(/403/);
+  });
+});
+
+describe('escapeCommandData', () => {
+  it('escapes what a workflow command would otherwise read as structure', () => {
+    expect(escapeCommandData('50% done\r\n::warning::x')).toBe('50%25 done%0D%0A::warning::x');
   });
 });

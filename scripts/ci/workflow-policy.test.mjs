@@ -332,13 +332,20 @@ describe('workflow policy (.github/workflows)', () => {
     expect(Object.keys(cla.on)).toEqual(['pull_request']);
   });
 
-  it('cla.yml runs the check from the base branch, never from the pull request checkout', () => {
+  it("cla.yml runs main's copy of the check, taken from the test merge's first parent", () => {
     const steps = jobsOf(cla).flatMap(([, job]) => stepsOf(job));
-    const base = steps.find((s) => usesAction(s, 'actions/checkout') && s.with?.path === 'base');
-    expect(base?.with?.ref).toBe('${{ github.event.pull_request.base.sha }}');
+    // One checkout, of the default ref (the test merge commit), deep enough to
+    // reach its parents. A `ref:` here would read the base at a commit the
+    // merged file wasn't built on.
+    const checkouts = steps.filter((s) => usesAction(s, 'actions/checkout'));
+    expect(checkouts).toHaveLength(1);
+    expect(checkouts[0].with?.ref).toBeUndefined();
+    expect(checkouts[0].with?.['fetch-depth']).toBe(2);
     const runs = steps.map(runBody).filter(Boolean).join('\n');
-    expect(runs).toMatch(/node base\/\.github\/scripts\/check-cla\.mjs/);
-    expect(runs).not.toMatch(/(node|bash|sh|source|\.)\s+pr\//);
+    expect(runs).toMatch(/git show HEAD\^1:\.github\/scripts\/check-cla\.mjs > "\$RUNNER_TEMP\/cla\/check-cla\.mjs"/);
+    expect(runs).toMatch(/node "\$RUNNER_TEMP\/cla\/check-cla\.mjs"/);
+    // Nothing from the pull request's tree is executed.
+    expect(runs).not.toMatch(/\b(node|bash|sh|source)\s+"?(\.\/|\$GITHUB_WORKSPACE|\.github)/);
   });
 
   it(`pins every setup-node to ${NODE_VERSION} (npm >= 11.16)`, () => {

@@ -1,8 +1,9 @@
 name: CLA
 
-# Every commit author on a pull request must have accepted CLA.md (see
-# CONTRIBUTING.md). `pull_request`, not `pull_request_target`: the check only
-# reads, so a fork's read-only token is all it needs.
+# Every commit author on a pull request, and whoever opened it, must have
+# accepted CLA.md (see CONTRIBUTING.md). `pull_request`, not
+# `pull_request_target`: the check only reads, so a fork's read-only token is
+# all it needs.
 on:
   pull_request:
     branches: [main]
@@ -18,20 +19,13 @@ jobs:
   cla:
     runs-on: ubuntu-latest
     steps:
-      # The check and the trusted signature list come from the base branch, so
-      # a pull request can't edit the check it is judged by.
-      - name: Check out the base branch
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # GitHub's test merge of the pull request into main. Its first parent is
+      # the main commit it was merged with, so the base side below always
+      # matches the merged signatures file (the event's base.sha can lag main
+      # by weeks).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: base
-          persist-credentials: false
-
-      # Read as data only: nothing from this checkout is executed.
-      - name: Check out the pull request
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          path: pr
+          fetch-depth: 2
           persist-credentials: false
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -46,9 +40,16 @@ jobs:
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           PR_AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
         run: |
-          # The pull request that introduces this check has no base copy to run.
-          if [ ! -f base/.github/scripts/check-cla.mjs ]; then
-            echo "::notice::The CLA check isn't on the base branch yet; skipping."
+          # The check and the trusted signature list come from main's side of
+          # the merge (HEAD^1), never from the pull request, so it can't edit
+          # the check it is judged by. Its files are only ever read as data.
+          git rev-parse --verify --quiet HEAD^2 > /dev/null || { echo "::error::Expected GitHub's test merge commit"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/cla"
+          if ! git show HEAD^1:.github/scripts/check-cla.mjs > "$RUNNER_TEMP/cla/check-cla.mjs" 2> /dev/null; then
+            # Only the pull request that introduces the check has no base copy.
+            echo "::notice::The CLA check isn't on main yet; skipping."
             exit 0
           fi
-          node base/.github/scripts/check-cla.mjs base/.github/cla-signatures.md pr/.github/cla-signatures.md
+          git show HEAD^1:.github/cla-signatures.md > "$RUNNER_TEMP/cla/base-signatures.md" 2> /dev/null || : > "$RUNNER_TEMP/cla/base-signatures.md"
+          cd "$RUNNER_TEMP/cla"
+          node "$RUNNER_TEMP/cla/check-cla.mjs" "$RUNNER_TEMP/cla/base-signatures.md" "$GITHUB_WORKSPACE/.github/cla-signatures.md"

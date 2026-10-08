@@ -4,8 +4,8 @@
 //
 // A contributor signs by adding their own row to .github/cla-signatures.md in
 // a pull request, so every signature is a commit in the repository's history.
-// cla.yml runs this file from the base branch, never from the pull request, so
-// a pull request can't edit the check it is judged by.
+// cla.yml runs the base branch's copy of this file, never the pull request's,
+// so a pull request can't edit the check it is judged by.
 //
 // Usage (cla.yml): node check-cla.mjs <base signatures file> <pr signatures file>
 // with GH_TOKEN, REPO (owner/name), PR_NUMBER, PR_AUTHOR and PR_AUTHOR_TYPE in
@@ -27,6 +27,10 @@ export const AI_AGENT_LOGINS = ['claude'];
 
 /** CLA.md versions a signature may name; the last is the current one. */
 export const ACCEPTED_CLA_VERSIONS = ['1.0'];
+export const CURRENT_CLA_VERSION = ACCEPTED_CLA_VERSIONS.at(-1);
+
+/** GET /pulls/{n}/commits lists at most this many commits. */
+export const MAX_PR_COMMITS = 250;
 
 const SIGNATURES_PATH = '.github/cla-signatures.md';
 const ROW = /^\|\s*@([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)\s*\|([^|]*)\|\s*(\d{4}-\d{2}-\d{2})\s*\|\s*([^|\s]+)\s*\|\s*$/;
@@ -34,30 +38,35 @@ const HEADER_OR_SEPARATOR = /^\|\s*(GitHub\s*\||[-:|\s]+$)/;
 
 const sameLogin = (a, b) => a.toLowerCase() === b.toLowerCase();
 
+const tableLines = (text) => text.split('\n').map((raw) => raw.trim());
+
 /**
  * Reads the signature table. A table row it can't read is reported rather than
  * skipped, so a typo fails the check with a message instead of silently not
- * counting as a signature.
+ * counting as a signature. Lines in `known` (the base branch already has them)
+ * aren't reported: a pull request isn't failed for a row it didn't write.
  */
-export function parseSignatures(text) {
+export function parseSignatures(text, { known = new Set() } = {}) {
   const rows = [];
   const problems = [];
-  for (const raw of text.split('\n')) {
-    const line = raw.trim();
+  for (const line of tableLines(text)) {
     if (!line.startsWith('|') || HEADER_OR_SEPARATOR.test(line)) continue;
+    const report = (problem) => {
+      if (!known.has(line)) problems.push(problem);
+    };
     const m = line.match(ROW);
     const name = m?.[2].trim();
     if (!m || !name) {
-      problems.push(`Can't read this row of ${SIGNATURES_PATH}: \`${line}\`. Expected \`| @login | Full name | YYYY-MM-DD | ${ACCEPTED_CLA_VERSIONS.at(-1)} |\`.`);
+      report(`Can't read this row of ${SIGNATURES_PATH}: \`${line}\`. Expected \`| @login | Full name | YYYY-MM-DD | ${CURRENT_CLA_VERSION} |\`.`);
       continue;
     }
     const [, login, , date, version] = m;
     if (!ACCEPTED_CLA_VERSIONS.includes(version)) {
-      problems.push(`@${login} signed CLA version ${version}, which doesn't exist. The current version is ${ACCEPTED_CLA_VERSIONS.at(-1)}.`);
+      report(`@${login} signed CLA version ${version}, which doesn't exist. The current version is ${CURRENT_CLA_VERSION}.`);
       continue;
     }
     if (rows.some((r) => sameLogin(r.login, login))) {
-      problems.push(`@${login} appears more than once in ${SIGNATURES_PATH}.`);
+      report(`@${login} appears more than once in ${SIGNATURES_PATH}.`);
       continue;
     }
     rows.push({ login, name, date, version, line });
@@ -80,7 +89,7 @@ function today() {
  */
 export function checkCla({ baseText, prText, commits, prAuthor }) {
   const base = parseSignatures(baseText).rows;
-  const { rows: signed, problems } = parseSignatures(prText);
+  const { rows: signed, problems } = parseSignatures(prText, { known: new Set(tableLines(baseText)) });
 
   const isAgent = (login) => login !== null && AI_AGENT_LOGINS.some((a) => sameLogin(a, login));
   const humans = commits.filter((c) => !c.isBot && !isAgent(c.login));
@@ -102,7 +111,7 @@ export function checkCla({ baseText, prText, commits, prAuthor }) {
   for (const login of contributors) {
     if (!signed.some((r) => sameLogin(r.login, login))) {
       problems.push(
-        `@${login} hasn't signed the CLA (CLA.md). Add this row to the end of the table in ${SIGNATURES_PATH}: \`| @${login} | Your full name | ${today()} | ${ACCEPTED_CLA_VERSIONS.at(-1)} |\``,
+        `@${login} hasn't signed the CLA (CLA.md). Add this row to the end of the table in ${SIGNATURES_PATH}: \`| @${login} | Your full name | ${today()} | ${CURRENT_CLA_VERSION} |\``,
       );
     }
   }
@@ -131,11 +140,14 @@ export function checkCla({ baseText, prText, commits, prAuthor }) {
   return problems;
 }
 
-async function fetchCommits({ repo, pr, token }) {
+/**
+ * The pull request's commits, as checkCla takes them. Throws rather than
+ * returning a partial list: commits the API doesn't list can't be checked.
+ */
+export async function fetchCommits({ repo, pr, token, fetchImpl = fetch }) {
   const commits = [];
-  // The endpoint caps a pull request at 250 commits, 100 per page.
-  for (let page = 1; page <= 3; page += 1) {
-    const res = await fetch(`https://api.github.com/repos/${repo}/pulls/${pr}/commits?per_page=100&page=${page}`, {
+  for (let page = 1; page <= Math.ceil(MAX_PR_COMMITS / 100); page += 1) {
+    const res = await fetchImpl(`https://api.github.com/repos/${repo}/pulls/${pr}/commits?per_page=100&page=${page}`, {
       headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`, 'X-GitHub-Api-Version': '2022-11-28' },
     });
     if (!res.ok) throw new Error(`GitHub API ${res.status} listing the commits of #${pr}: ${await res.text()}`);
@@ -152,7 +164,15 @@ async function fetchCommits({ repo, pr, token }) {
     }
     if (batch.length < 100) break;
   }
+  if (commits.length >= MAX_PR_COMMITS) {
+    throw new Error(`#${pr} has ${MAX_PR_COMMITS} or more commits, more than the GitHub API lists, so the later ones can't be checked. Squash or split it.`);
+  }
   return commits;
+}
+
+/** Escapes text for a workflow command (`::error::…`), per GitHub's spec. */
+export function escapeCommandData(text) {
+  return text.replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A');
 }
 
 async function main() {
@@ -167,7 +187,7 @@ async function main() {
   const prAuthor = { login: author, isBot: authorType === 'Bot' || author.endsWith('[bot]') };
   const problems = checkCla({ baseText: read(basePath), prText: read(prPath), commits, prAuthor });
   if (problems.length > 0) {
-    for (const p of problems) process.stdout.write(`::error::${p}\n`);
+    for (const p of problems) process.stdout.write(`::error::${escapeCommandData(p)}\n`);
     process.stdout.write('\nSee CONTRIBUTING.md for how to sign the CLA.\n');
     process.exit(1);
   }
