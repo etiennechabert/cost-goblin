@@ -123,6 +123,12 @@ describe('checkCla', () => {
     expect(checkCla({ baseText: HEADER, prText: table(ada), commits: [agent], prAuthor: by('ada') })).toEqual([]);
   });
 
+  it('fails a pull request opened by an AI agent account: a person must open and sign it', () => {
+    const problems = checkCla({ baseText: HEADER, prText: HEADER, commits: [agent], prAuthor: by('claude') });
+    expect(problems).toEqual([expect.stringContaining('opened by an AI agent account')]);
+    expect(problems[0]).not.toContain('Add this row');
+  });
+
   it("requires the opener's signature when they didn't author a commit", () => {
     const problems = checkCla({ baseText: table(ada), prText: table(ada), commits: [commit('ada')], prAuthor: by('alan-t') });
     expect(problems).toEqual([expect.stringContaining('@alan-t')]);

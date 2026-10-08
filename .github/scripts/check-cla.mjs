@@ -105,7 +105,16 @@ export function checkCla({ baseText, prText, commits, prAuthor }) {
     if (!signers.some((a) => sameLogin(a, login))) signers.push(login);
   };
   for (const c of humans) if (c.login !== null) addSigner(c.login);
-  if (!prAuthor.isBot) addSigner(prAuthor.login);
+  // An agent can't accept an agreement. Exempting it as the opener would let a
+  // pull request whose every commit is agent-written merge with no signature
+  // at all, so a person has to open it instead.
+  if (!prAuthor.isBot && isAgent(prAuthor.login)) {
+    problems.push(
+      `This pull request was opened by an AI agent account (@${prAuthor.login}), which can't accept the CLA. A person has to open it and sign, so someone answers for the code.`,
+    );
+  } else if (!prAuthor.isBot) {
+    addSigner(prAuthor.login);
+  }
   const contributors = signers.filter((a) => !sameLogin(a, LICENSOR));
 
   for (const login of contributors) {
