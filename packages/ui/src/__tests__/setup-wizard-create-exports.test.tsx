@@ -159,6 +159,25 @@ describe('SetupWizard — create the AWS exports with CloudFormation', () => {
       expect(screen.getByRole('button', { name: 'File it for me…' }).hasAttribute('disabled')).toBe(false);
     });
 
+    it('offers to file again when the exports it covers change, and only then', async () => {
+      const { api, user } = renderWizard();
+      await openCreateStep(user);
+      await user.click(screen.getByRole('button', { name: 'File it for me…' }));
+      await waitFor(() => { expect(screen.getByText(/Case filed: case-171234/)).toBeDefined(); });
+      const file = () => screen.getByRole('button', { name: 'File it for me…' });
+
+      // The bucket name isn't in the case: the filed case still stands.
+      await user.type(bucketInput(), 'x');
+      expect(file().hasAttribute('disabled')).toBe(true);
+
+      // Adding the hourly export changes what to backfill.
+      await user.click(screen.getByLabelText(/Also export hourly data/));
+      expect(file().hasAttribute('disabled')).toBe(false);
+      await user.click(file());
+      await waitFor(() => { expect(api.backfillRequests).toHaveLength(2); });
+      expect(api.backfillRequests[1]).toEqual({ profile: 'default', tiers: ['daily', 'hourly'] });
+    });
+
     it('points to the form when the support plan has no API access', async () => {
       const { api, user } = renderWizard();
       api.backfillResult = { status: 'subscription-required' };

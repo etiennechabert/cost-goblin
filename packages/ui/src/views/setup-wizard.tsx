@@ -2776,8 +2776,13 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   }
 
   function handleCreateExportsChange(answers: Partial<CreateExportsAnswers>) {
-    // A saved template no longer matches changed answers: ask for a new save.
-    setWizard(prev => prev.step === 'aws-create' ? { ...prev, ...answers, save: { status: 'idle' } } : prev);
+    setWizard(prev => {
+      if (prev.step !== 'aws-create') return prev;
+      // A saved template no longer matches changed answers: ask for a new
+      // save. A filed backfill stands unless the exports it names changed.
+      const backfillCovers = answers.hourly === undefined || answers.hourly === prev.hourly;
+      return { ...prev, ...answers, save: { status: 'idle' }, backfill: backfillCovers ? prev.backfill : { status: 'idle' } };
+    });
   }
 
   function handleSaveExportsTemplate() {
