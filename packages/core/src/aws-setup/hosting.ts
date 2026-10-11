@@ -7,11 +7,11 @@ import type { ExportsStackDefaults } from './exports-stack.js';
 // publish-template) to a public bucket the maintainer deploys with
 // scripts/aws-exports/hosting/template-hosting.yaml.
 
-/** Where releases publish the template, e.g.
- *  `https://<bucket>.s3.amazonaws.com/templates`. Null until that bucket
- *  exists: the wizard then saves the template for upload instead. Set it to
- *  the hosting stack's `TemplateBaseUrl` output. */
-export const HOSTED_EXPORTS_TEMPLATE_BASE_URL: string | null = null;
+/** Where releases publish the template: the hosting stack's `TemplateBaseUrl`
+ *  output (a member account of the maintainer's AWS Organization, in
+ *  eu-central-1). Null switches the quick-create link off: the wizard then
+ *  saves the template for upload instead. */
+export const HOSTED_EXPORTS_TEMPLATE_BASE_URL: string | null = 'https://costgoblin-templates.s3.eu-central-1.amazonaws.com/templates';
 
 /** The template a release published (`<base>/v<version>/…`), or the latest
  *  release's, for a development build whose version isn't published yet. */

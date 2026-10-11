@@ -1,8 +1,9 @@
 # AWS One-Click Setup — Design Proposal
 
-> Status: **implemented**, phases 1 to 4. Phase 4's hosted quick-create link stays off until the
-> maintainer deploys the hosting stack (`scripts/aws-exports/hosting/README.md`); the GCP
-> equivalent (§10) is not started; decisions taken since
+> Status: **implemented**, phases 1 to 4. Phase 4's hosting is deployed (`costgoblin-templates`,
+> eu-central-1, in a member account of the maintainer's Organization) and the release job is
+> configured: the first template upload, and so the first working quick-create link, comes with
+> the next release. The GCP equivalent (§10) is not started; decisions taken since
 > drafting are recorded in §9. Lets a new user get a correct AWS billing setup (bucket,
 > lifecycle rules, FOCUS 1.2 exports, Cost Optimization Hub export) from the setup wizard instead
 > of following the manual guide in the README and on costgoblin.com. Phases are ordered and

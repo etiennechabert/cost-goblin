@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { EXPORTS_STACK_NAME, exportsStackQuickCreateUrl, hostedExportsTemplateUrl, hostedTemplateUrlForBuild } from '../aws-setup/index.js';
+import { EXPORTS_STACK_NAME, exportsStackQuickCreateUrl, HOSTED_EXPORTS_TEMPLATE_BASE_URL, hostedExportsTemplateUrl, hostedTemplateUrlForBuild } from '../aws-setup/index.js';
 
 const BASE = 'https://costgoblin-templates.s3.amazonaws.com/templates';
+
+describe('HOSTED_EXPORTS_TEMPLATE_BASE_URL', () => {
+  // The hosting stack's TemplateBaseUrl output; release.yml uploads under it.
+  it('is a regional S3 URL the quick-create page accepts, without a trailing slash', () => {
+    expect(HOSTED_EXPORTS_TEMPLATE_BASE_URL).toMatch(/^https:\/\/[a-z0-9.-]+\.s3\.[a-z0-9-]+\.amazonaws\.com\/templates$/);
+  });
+});
 
 describe('hostedExportsTemplateUrl', () => {
   it('points a release at the template its tag published', () => {
