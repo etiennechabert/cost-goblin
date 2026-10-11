@@ -1705,9 +1705,8 @@ function CreateExportsStep({ state, onChange, onSave, onQuickCreateOpened, onFil
               </a>
             ) : (
               <span className="text-text-muted">Open the prefilled stack in CloudFormation</span>
-            )}
-            , check the answers, acknowledge the IAM resources and create the stack. Without access to that link, save the
-            template and upload it instead:
+            )}, check the answers, acknowledge the IAM resources and create the stack. Without access to that link, save
+            the template and upload it instead:
           </li>
         )}
         <li>
@@ -1718,9 +1717,8 @@ function CreateExportsStep({ state, onChange, onSave, onQuickCreateOpened, onFil
         <li>
           <a href={CLOUDFORMATION_CREATE_URL} target="_blank" rel="noopener noreferrer" className="text-accent underline underline-offset-2 hover:text-accent-hover">
             Open CloudFormation in us-east-1
-          </a>
-          , choose <span className="text-text-primary">Create stack → With new resources → Upload a template file</span>, pick the saved file,
-          acknowledge the IAM resources and create the stack.
+          </a>, choose <span className="text-text-primary">Create stack → With new resources → Upload a template file</span>,
+          pick the saved file, acknowledge the IAM resources and create the stack.
         </li>
         <li>
           Attach the stack&apos;s <span className="font-mono text-xs text-text-primary">ReadAccessPolicyArn</span> output to the role or user
