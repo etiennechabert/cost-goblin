@@ -83,6 +83,9 @@
     },
     "@vitest/coverage-v8": {
       "ast-v8-to-istanbul": "$ast-v8-to-istanbul"
+    },
+    "gaxios": {
+      "uuid": "^11.1.1"
     }
   },
   "allowScripts": {
