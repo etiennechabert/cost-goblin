@@ -133,7 +133,9 @@ the export.
   repository's `release` environment (which must keep its required reviewer and ref limits, today `main` and `v*` tags, or any branch declaring it could replace the public template) and can only write under `templates/`. `release.yml`'s
   `publish-template` job holds only `id-token: write`, runs no npm code, uploads the committed
   template to `templates/<tag>/` and `templates/latest/`, and is skipped until the
-  `TEMPLATE_BUCKET` and `TEMPLATE_ROLE_ARN` variables are set. The app asks the main process for
+  `TEMPLATE_BUCKET`, `TEMPLATE_ROLE_ARN` and `TEMPLATE_REGION` variables are set. The hosting
+  bucket can live in any region (the maintainer's is in eu-central-1): only the users' exports
+  stack has to be in us-east-1. The app asks the main process for
   the template matching its build (a release's own tag, `latest` for a development build) and
   offers the link only when `HOSTED_EXPORTS_TEMPLATE_BASE_URL` is set.
 
@@ -155,7 +157,12 @@ the export.
 - **Fixing an existing export from the app** (for example switching a *Create new* export to
   Overwrite with `UpdateExport`): same permission concerns as §3. The wizard links to the console
   instead (#692).
-- **Open:** who owns the template-hosting bucket and the release OIDC role (phase 4).
+- **Open:** who owns the template-hosting bucket and the release OIDC role (phase 4). Resolved:
+  a member account of the maintainer's Organization, in eu-central-1.
+- **Open:** a users' billing bucket outside us-east-1, e.g. in Europe. The exports stack has to
+  run in us-east-1, and so does the bucket it creates. A two-stack variant would lift that: a
+  bucket stack in any region, and the exports stack in us-east-1 delivering to it through the
+  export's `S3Region`.
 - **Open:** whether CostGoblin reads a real Cost Optimization Hub Data Export. Its cost-optimization
   tier only reads Parquet directly in `date=YYYY-MM-DD/`; AWS documents that this export writes
   every refresh to its own directory, without saying whether that directory is the `date=` folder

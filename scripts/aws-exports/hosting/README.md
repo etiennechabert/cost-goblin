@@ -2,14 +2,14 @@
 
 The setup wizard can open CloudFormation's quick-create page with the user's answers filled in, instead of saving the template for them to upload. CloudFormation only takes a quick-create template [stored in S3](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cfn-using-console-create-stack-template.html), so each release uploads `scripts/aws-exports/costgoblin-exports.yaml` to a public bucket. This is phase 4 of [the design](../../../docs/aws-one-click-setup-design.md).
 
-It stays off until the steps below are done: the wizard offers save-and-upload, and `release.yml`'s `publish-template` job is skipped.
+It stays off until the steps below are done: the wizard offers save-and-upload, and `release.yml`'s `publish-template` job is skipped until its three repository variables are set.
 
 ## Turning it on
 
-1. **Deploy the hosting stack** once, in us-east-1, in the AWS account that should host the templates:
+1. **Deploy the hosting stack** once, in the AWS account that should host the templates. Any region works; users still create the exports stack in us-east-1, where Data Exports lives, and its console reads the template across regions:
 
    ```bash
-   aws cloudformation deploy --region us-east-1 --stack-name costgoblin-template-hosting --template-file scripts/aws-exports/hosting/template-hosting.yaml --capabilities CAPABILITY_IAM --parameter-overrides BucketName=<a globally unique bucket name>
+   aws cloudformation deploy --region eu-central-1 --stack-name costgoblin-template-hosting --template-file scripts/aws-exports/hosting/template-hosting.yaml --capabilities CAPABILITY_IAM --parameter-overrides BucketName=<a globally unique bucket name>
    ```
 
    Add `CreateGitHubOidcProvider=no` if the account already has the `token.actions.githubusercontent.com` OIDC provider. If the account blocks public access at the account level, allow it for this bucket: its `templates/` folder must be publicly readable, as users' consoles fetch the template from there.
@@ -22,6 +22,7 @@ It stays off until the steps below are done: the wizard offers save-and-upload, 
    |---|---|
    | `TEMPLATE_BUCKET` | `TemplateBucket` |
    | `TEMPLATE_ROLE_ARN` | `ReleaseRoleArn` |
+   | `TEMPLATE_REGION` | `TemplateRegion` |
 
 3. **Point the app at it**: set `HOSTED_EXPORTS_TEMPLATE_BASE_URL` in `packages/core/src/aws-setup/hosting.ts` to the `TemplateBaseUrl` output, in a pull request.
 

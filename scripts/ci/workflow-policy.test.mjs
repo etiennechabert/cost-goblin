@@ -331,6 +331,7 @@ describe('workflow policy (.github/workflows)', () => {
     expect(job.environment).toBe('release');
     expect(job.if).toContain('vars.TEMPLATE_BUCKET');
     expect(job.if).toContain('vars.TEMPLATE_ROLE_ARN');
+    expect(job.if).toContain('vars.TEMPLATE_REGION');
     const bodies = stepsOf(job).filter((step) => typeof step.run === 'string').map(runBody).join('\n');
     expect(bodies).not.toMatch(/\bnpm\b|\bnpx\b|\byarn\b/);
     expect(stepsOf(job).filter((step) => step.uses !== undefined && !usesAction(step, 'actions/checkout'))).toEqual([]);
