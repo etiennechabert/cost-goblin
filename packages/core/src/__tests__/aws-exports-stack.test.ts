@@ -123,6 +123,11 @@ describe('the exports stack template', () => {
     expect(at(resources, 'Bucket', 'UpdateReplacePolicy')).toBe('Retain');
   });
 
+  it("keeps the account's Data Exports service role, which other exports may use, when the stack is deleted", () => {
+    expect(at(resources, 'DataExportsServiceRole', 'DeletionPolicy')).toBe('Retain');
+    expect(at(resources, 'DataExportsServiceRole', 'UpdateReplacePolicy')).toBe('Retain');
+  });
+
   it('refuses to run outside us-east-1, where Data Exports lives', () => {
     expect(at(section(template, 'Rules'), 'RunsInUsEast1', 'Assertions')).toEqual([
       expect.objectContaining({ Assert: { 'Fn::Equals': [{ Ref: 'AWS::Region' }, 'us-east-1'] } }),

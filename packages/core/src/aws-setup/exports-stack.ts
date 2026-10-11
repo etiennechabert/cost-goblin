@@ -259,6 +259,10 @@ function resources(): TemplateObject {
     DataExportsServiceRole: {
       Type: 'AWS::IAM::ServiceLinkedRole',
       Condition: 'CreatesServiceRole',
+      // One role per account, shared by every Cost Optimization Hub export in
+      // it: deleting the stack must not take it from exports made elsewhere.
+      DeletionPolicy: 'Retain',
+      UpdateReplacePolicy: 'Retain',
       Properties: { AWSServiceName: 'bcm-data-exports.amazonaws.com' },
     },
     CostOptimizationExport: {
