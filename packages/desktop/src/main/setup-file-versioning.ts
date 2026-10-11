@@ -19,7 +19,8 @@ export interface ListedObject {
 export function newestPartitionFolder(folderPrefixes: readonly string[]): string | undefined {
   let newest: { prefix: string; name: string } | undefined;
   for (const prefix of folderPrefixes) {
-    const name = prefix.split('/').filter(s => s.length > 0).at(-1);
+    // A common prefix ends with its delimiter: 'data/billing_period=2026-10/'.
+    const name = prefix.split('/').at(-2);
     if (name === undefined || !isPartitionFolderName(name)) continue;
     if (newest === undefined || name > newest.name) newest = { prefix, name };
   }
