@@ -8,6 +8,8 @@ import {
   EXPORTS_STACK_LAYOUT,
   EXPORTS_STACK_PARAMETERS,
   exportsStackPath,
+  isValidS3BucketName,
+  parseExportsStackDefaults,
   renderExportsStackYaml,
 } from '../aws-setup/index.js';
 import type { TemplateObject, TemplateValue } from '../aws-setup/index.js';
@@ -169,6 +171,34 @@ describe('the exports stack template', () => {
     expect(exportsStackPath('acme-billing', 'hourly')).toBe('s3://acme-billing/costgoblin/hourly/costgoblin-hourly/');
     expect(exportsStackPath('acme-billing', 'costOptimization'))
       .toBe('s3://acme-billing/costgoblin/cost-optimization/costgoblin-cost-optimization/');
+  });
+});
+
+describe('isValidS3BucketName', () => {
+  it.each(['costgoblin-billing-k3x9q2', 'acme.billing', 'abc', 'a'.repeat(63)])('accepts %s', (name) => {
+    expect(isValidS3BucketName(name)).toBe(true);
+  });
+
+  it.each(['ab', 'a'.repeat(64), 'Acme-billing', 'acme_billing', '-acme', 'acme-', 'acme..billing', '192.168.1.1', ''])('rejects %s', (name) => {
+    expect(isValidS3BucketName(name)).toBe(false);
+  });
+});
+
+describe('parseExportsStackDefaults', () => {
+  it('accepts the answers the wizard sends', () => {
+    expect(parseExportsStackDefaults({ bucketName: 'acme-billing', hourly: true, costOptimization: false, serviceRole: true }))
+      .toEqual({ bucketName: 'acme-billing', hourly: true, costOptimization: false, serviceRole: true });
+    expect(parseExportsStackDefaults({})).toEqual({});
+  });
+
+  it.each([
+    ['a non-object', 'acme'],
+    ['an invalid bucket name', { bucketName: 'Acme Billing' }],
+    ['a bucket name that is not a string', { bucketName: 42 }],
+    ['a flag that is not a boolean', { hourly: 'yes' }],
+    ['an unknown key', { bucketName: 'acme-billing', region: 'eu-west-1' }],
+  ])('refuses %s', (_label, payload) => {
+    expect(parseExportsStackDefaults(payload)).toBeNull();
   });
 });
 

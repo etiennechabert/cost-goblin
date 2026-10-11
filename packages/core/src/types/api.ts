@@ -14,6 +14,7 @@ import type {
 } from './baseline.js';
 import type { RollupGrainEstimate } from '../rollup/estimator.js';
 import type { GcsFolderKind } from '../sync/gcs-export-layout.js';
+import type { ExportsStackDefaults } from '../aws-setup/exports-stack.js';
 import type { AliasSuggestion } from '../normalize/similarity.js';
 import type { ViewsConfig } from './views.js';
 import type { GcpIdentityResult } from './gcp-identity.js';
@@ -327,6 +328,9 @@ export interface CostApi {
   listAwsProfiles(): Promise<string[]>;
   listS3Buckets(profile: string): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }>;
   browseS3(params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[]; fileVersioning: ExportFileVersioning; error?: string | undefined }>;
+  /** Saves the billing-exports CloudFormation template, with the wizard's
+   *  answers as its parameter defaults, where the user picks. */
+  saveExportsTemplate(defaults: ExportsStackDefaults): Promise<ExportConfigBundleResult>;
   /** Projects visible to the gcloud CLI's active account. Backed by
    *  `gcloud projects list`, not an SDK call: the CLI is already a hard
    *  requirement of the GCP download path, so this adds no dependency where

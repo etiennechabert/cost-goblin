@@ -80,6 +80,8 @@ CostGoblin reads the **FOCUS 1.2** table via AWS Data Exports. There are two way
 - the daily FOCUS 1.2 export, and optionally the hourly and Cost Optimization Hub exports;
 - a read-only IAM policy granting exactly what CostGoblin needs on that bucket.
 
+The setup wizard walks you through it: on the bucket step, choose **Create one with CloudFormation**. It saves the template with your answers filled in and configures CostGoblin with the stack's paths. By hand:
+
 1. Download the template ([raw file](https://raw.githubusercontent.com/etiennechabert/cost-goblin/main/scripts/aws-exports/costgoblin-exports.yaml)).
 2. In the account that owns the billing data, usually the management (payer) account, open [CloudFormation in us-east-1](https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create): AWS Data Exports only exists there. Choose **Create stack → With new resources → Upload a template file**.
 3. Fill in the parameters: a bucket name (leave it empty for `costgoblin-billing-<account id>`), and whether to add the hourly and Cost Optimization Hub exports. For Cost Optimization Hub, [activate it](https://console.aws.amazon.com/costmanagement/home#/cost-optimization-hub) first; if the account ever had a Cost Optimization Hub export, set `CreateDataExportsServiceRole` to `no`, since the role it needs already exists.

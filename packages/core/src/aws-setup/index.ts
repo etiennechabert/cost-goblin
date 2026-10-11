@@ -7,6 +7,8 @@ export {
   EXPORTS_STACK_PARAMETERS,
   exportsStackPath,
   FOCUS_1_2_AWS_COLUMNS,
+  isValidS3BucketName,
+  parseExportsStackDefaults,
 } from './exports-stack.js';
 export type { ExportsStackDefaults, ExportsStackTier, TemplateObject, TemplateValue } from './exports-stack.js';
 export { renderExportsStackYaml } from './exports-stack-yaml.js';

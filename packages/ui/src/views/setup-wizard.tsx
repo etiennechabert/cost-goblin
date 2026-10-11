@@ -1,5 +1,5 @@
 import type { ConfigBundleSummary, ExportFileVersioning, GcpProject, GcsDownloadCheckResult, GcsFolderKind, ProviderConfig } from '@costgoblin/core/browser';
-import { DEFAULT_READER_ACCOUNT_ID, DEFAULT_RETENTION_DAYS, GCP_PROJECT_ID_RULES, gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isGcpImpersonationError, isGcpNetworkError, isValidGcpProjectId, isValidWorkspaceName, parseProviderName, resolveReaderInput, SERVICE_ACCOUNT_EMAIL_RULE } from '@costgoblin/core/browser';
+import { DEFAULT_READER_ACCOUNT_ID, DEFAULT_RETENTION_DAYS, exportsStackPath, GCP_PROJECT_ID_RULES, gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isGcpImpersonationError, isGcpNetworkError, isValidGcpProjectId, isValidS3BucketName, isValidWorkspaceName, parseProviderName, resolveReaderInput, SERVICE_ACCOUNT_EMAIL_RULE } from '@costgoblin/core/browser';
 import { Check, Loader2, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
@@ -42,6 +42,13 @@ type GcpReaderCheck =
   | { readonly status: 'checking' }
   | { readonly status: 'denied'; readonly reader: string; readonly project: string; readonly message: string };
 
+/** Saving the one-click setup's CloudFormation template. */
+type TemplateSaveState =
+  | { status: 'idle' }
+  | { status: 'saving' }
+  | { status: 'saved'; path: string }
+  | { status: 'error'; message: string };
+
 type WizardStep =
   | { step: 'welcome' }
   | { step: 'start' }
@@ -52,6 +59,7 @@ type WizardStep =
   | { step: 'profile'; profiles: string[]; loading: boolean; selected: string }
   | { step: 'bucket'; profile: string; source: DataSource; buckets: { name: string; region: string }[]; loading: boolean; selected: string; error: string }
   | { step: 'beacon'; profile: string; source: DataSource; bucket: string; content: string; summary: ConfigBundleSummary; applying: boolean; error: string }
+  | { step: 'aws-create'; profile: string; bucketName: string; hourly: boolean; costOptimization: boolean; serviceRoleExists: boolean; save: TemplateSaveState }
   | { step: 'browse'; profile: string; source: DataSource; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[]; fileVersioning: ExportFileVersioning; path: string[]; error: string }
   | { step: 'confirm'; cloud: 'aws'; profile: string; s3Path: string; hourlyPath: string; costOptPath: string }
   | { step: 'confirm'; cloud: 'gcp'; project: GcpProjectChoice | null; reader: string; clearsReader: boolean; s3Path: string; hourlyPath: string; costOptPath: string };
@@ -1441,10 +1449,12 @@ function AwsCredentialErrorPanel({ error, profile, onRetry }: Readonly<{
   );
 }
 
-function BucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
+function BucketStep({ state, onSelect, onSkip, onBack, onRetry, onCreateExports }: Readonly<{
   state: Extract<WizardStep, { step: 'bucket' }>;
   onSelect: (bucket: string) => void;
   onSkip?: (() => void) | undefined;
+  /** Offered on first setup: create the exports with CloudFormation instead. */
+  onCreateExports?: (() => void) | undefined;
   onBack: () => void;
   /** Re-lists the buckets. The wizard has no other way back out of an expired-
    *  token error: ← Back returns to the profile picker, and re-picking the same
@@ -1501,6 +1511,15 @@ function BucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
         </>
       )}
 
+      {onCreateExports !== undefined && (
+        <p className="text-xs text-text-muted">
+          No export yet?{' '}
+          <button type="button" onClick={onCreateExports} className="text-accent underline underline-offset-2 hover:text-accent-hover">
+            Create one with CloudFormation
+          </button>
+        </p>
+      )}
+
       <div className="flex items-center justify-between pt-2">
         <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
         <div className="flex items-center gap-3">
@@ -1515,6 +1534,112 @@ function BucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
             Next
           </Button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+const CLOUDFORMATION_CREATE_URL = 'https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create';
+
+/** `costgoblin-billing-` and six random letters and digits: bucket names are
+ *  global, so a fixed default would collide with someone else's. */
+function proposedBucketName(): string {
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  const suffix = Array.from(crypto.getRandomValues(new Uint8Array(6)), b => alphabet.charAt(b % alphabet.length)).join('');
+  return `costgoblin-billing-${suffix}`;
+}
+
+type CreateExportsAnswers = Pick<Extract<WizardStep, { step: 'aws-create' }>, 'bucketName' | 'hourly' | 'costOptimization' | 'serviceRoleExists'>;
+
+const CHECKBOX_LABEL = 'grid grid-cols-[auto_1fr] items-start gap-x-2 rounded-lg border border-border bg-bg-tertiary/20 px-3 py-2 cursor-pointer';
+
+/** The one-click AWS setup (docs/aws-one-click-setup-design.md): the wizard
+ *  saves a CloudFormation template with these answers baked in, someone with
+ *  admin rights creates the stack, and the config gets the stack's paths. */
+function CreateExportsStep({ state, onChange, onSave, onDone, onBack }: Readonly<{
+  state: Extract<WizardStep, { step: 'aws-create' }>;
+  onChange: (answers: Partial<CreateExportsAnswers>) => void;
+  onSave: () => void;
+  onDone: () => void;
+  onBack: () => void;
+}>) {
+  const nameValid = isValidS3BucketName(state.bucketName);
+  const { save } = state;
+  return (
+    <div className="flex flex-col gap-5">
+      <div>
+        <h2 className="text-xl font-semibold text-text-primary">Create your AWS exports</h2>
+        <p className="text-sm text-text-secondary mt-1">
+          One CloudFormation stack creates the bucket and its lifecycle rules, the FOCUS 1.2 exports CostGoblin reads,
+          and a read-only policy for CostGoblin.
+        </p>
+        <p className="text-xs text-text-muted mt-0.5">
+          It is created in us-east-1 by someone with admin rights in the account that owns the billing data, usually the management account.
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-1">
+        <label htmlFor="cg-create-bucket" className="text-xs text-text-muted">Bucket name</label>
+        <input
+          id="cg-create-bucket"
+          type="text"
+          value={state.bucketName}
+          onChange={(e) => { onChange({ bucketName: e.target.value }); }}
+          spellCheck={false}
+          className="h-9 rounded-md border border-border bg-bg-primary px-3 font-mono text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+        />
+        {!nameValid && (
+          <p className="text-xs text-negative">Use 3 to 63 lowercase letters, digits, dots or hyphens, starting and ending with a letter or digit.</p>
+        )}
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <label htmlFor="cg-create-hourly" className={CHECKBOX_LABEL}>
+          <input id="cg-create-hourly" type="checkbox" checked={state.hourly} onChange={() => { onChange({ hourly: !state.hourly }); }} className="mt-0.5 accent-accent" />
+          <span className="text-sm text-text-primary">Also export hourly data</span>
+          <span className="col-start-2 block text-xs text-text-muted">For intraday drill-down. It is the large export.</span>
+        </label>
+        <label htmlFor="cg-create-coh" className={CHECKBOX_LABEL}>
+          <input id="cg-create-coh" type="checkbox" checked={state.costOptimization} onChange={() => { onChange({ costOptimization: !state.costOptimization }); }} className="mt-0.5 accent-accent" />
+          <span className="text-sm text-text-primary">Also export Cost Optimization Hub recommendations</span>
+          <span className="col-start-2 block text-xs text-text-muted">Activate Cost Optimization Hub first, or the stack fails.</span>
+        </label>
+        {state.costOptimization && (
+          <label htmlFor="cg-create-role" className={`${CHECKBOX_LABEL} ml-6`}>
+            <input id="cg-create-role" type="checkbox" checked={state.serviceRoleExists} onChange={() => { onChange({ serviceRoleExists: !state.serviceRoleExists }); }} className="mt-0.5 accent-accent" />
+            <span className="text-sm text-text-primary">This account already has the Data Exports service role</span>
+            <span className="col-start-2 block text-xs text-text-muted">It does if a Cost Optimization Hub export was ever created in it.</span>
+          </label>
+        )}
+      </div>
+
+      <ol className="flex flex-col gap-2 text-sm text-text-secondary list-decimal pl-5">
+        <li>
+          <Button onClick={onSave} disabled={!nameValid || save.status === 'saving'} variant="outline" size="sm">Save the template…</Button>
+          {save.status === 'saved' && <span className="ml-2 text-xs text-text-muted break-all">Saved to {save.path}</span>}
+          {save.status === 'error' && <span className="ml-2 text-xs text-negative">Couldn&apos;t save it: {save.message}</span>}
+        </li>
+        <li>
+          <a href={CLOUDFORMATION_CREATE_URL} target="_blank" rel="noopener noreferrer" className="text-accent underline underline-offset-2 hover:text-accent-hover">
+            Open CloudFormation in us-east-1
+          </a>
+          , choose <span className="text-text-primary">Create stack → With new resources → Upload a template file</span>, pick the saved file,
+          acknowledge the IAM resources and create the stack.
+        </li>
+        <li>
+          Attach the stack&apos;s <span className="font-mono text-xs text-text-primary">ReadAccessPolicyArn</span> output to the role or user
+          the <span className="text-text-primary">{state.profile}</span> profile reads with.
+        </li>
+      </ol>
+      <p className="text-xs text-text-muted">
+        AWS delivers the first data within about a day, sometimes up to 72 hours. Until then there is nothing to sync.
+      </p>
+
+      <div className="flex items-center justify-between pt-2">
+        <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
+        <Button onClick={onDone} disabled={!nameValid} className="bg-accent hover:bg-accent-hover text-white px-8">
+          I’ve created the stack
+        </Button>
       </div>
     </div>
   );
@@ -2564,6 +2689,51 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     startBucketStep(profile, 'daily');
   }
 
+  function handleCreateExports() {
+    if (wizard.step !== 'bucket') return;
+    // A bucket listing or beacon probe still in flight must not pull the user back.
+    ++stepRequestRef.current;
+    setWizard({
+      step: 'aws-create', profile: wizard.profile, bucketName: proposedBucketName(),
+      hourly: false, costOptimization: false, serviceRoleExists: false, save: { status: 'idle' },
+    });
+  }
+
+  function handleCreateExportsChange(answers: Partial<CreateExportsAnswers>) {
+    // A saved template no longer matches changed answers: ask for a new save.
+    setWizard(prev => prev.step === 'aws-create' ? { ...prev, ...answers, save: { status: 'idle' } } : prev);
+  }
+
+  function handleSaveExportsTemplate() {
+    if (wizard.step !== 'aws-create') return;
+    const token = ++stepRequestRef.current;
+    const { bucketName, hourly, costOptimization, serviceRoleExists } = wizard;
+    setWizard({ ...wizard, save: { status: 'saving' } });
+    const settle = (save: TemplateSaveState) => {
+      if (stepRequestRef.current !== token) return;
+      setWizard(prev => prev.step === 'aws-create' ? { ...prev, save } : prev);
+    };
+    api.saveExportsTemplate({ bucketName, hourly, costOptimization, serviceRole: !serviceRoleExists }).then(result => {
+      if (result.status === 'saved') settle({ status: 'saved', path: result.path });
+      else if (result.status === 'canceled') settle({ status: 'idle' });
+      else settle({ status: 'error', message: result.message });
+    }).catch((err: unknown) => {
+      settle({ status: 'error', message: err instanceof Error ? err.message : String(err) });
+    });
+  }
+
+  function handleCreateExportsDone() {
+    if (wizard.step !== 'aws-create') return;
+    const { profile, bucketName, hourly, costOptimization } = wizard;
+    const paths = {
+      daily: exportsStackPath(bucketName, 'daily'),
+      hourly: hourly ? exportsStackPath(bucketName, 'hourly') : '',
+      costOpt: costOptimization ? exportsStackPath(bucketName, 'costOptimization') : '',
+    };
+    setCollectedPaths(paths);
+    goToConfirm(profile, paths);
+  }
+
   function startBucketStep(profile: string, source: DataSource) {
     // Token-guarded like the GCP loaders (see `stepRequestRef`): the Retry
     // button makes a slow listing routine — the user leaves for a browser —
@@ -2701,6 +2871,8 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
       setWizard({ step: 'start' });
     } else if (wizard.step === 'beacon') {
       startBucketStep(wizard.profile, wizard.source);
+    } else if (wizard.step === 'aws-create') {
+      startBucketStep(wizard.profile, 'daily');
     } else if (wizard.step === 'bucket') {
       if (wizard.source === 'daily') {
         goToProfileStep();
@@ -2854,6 +3026,16 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
               onSkip={wizard.source === 'daily' ? undefined : handleBrowseSkip}
               onBack={handleBack}
               onRetry={() => { startBucketStep(wizard.profile, wizard.source); }}
+              onCreateExports={wizard.source === 'daily' && !isSourceMode ? handleCreateExports : undefined}
+            />
+          )}
+          {wizard.step === 'aws-create' && (
+            <CreateExportsStep
+              state={wizard}
+              onChange={handleCreateExportsChange}
+              onSave={handleSaveExportsTemplate}
+              onDone={handleCreateExportsDone}
+              onBack={handleBack}
             />
           )}
           {wizard.step === 'browse' && (

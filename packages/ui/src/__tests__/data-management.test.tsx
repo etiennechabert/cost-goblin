@@ -119,6 +119,23 @@ describe('DataManagement', () => {
     });
   });
 
+  it('explains an empty bucket as an export still waiting for its first delivery', async () => {
+    // Right after the one-click AWS setup, the bucket stays empty for up to
+    // three days: that must not read as a broken setup.
+    const api = new MockCostApi();
+    api.getDataInventory = () => Promise.resolve({
+      periods: [],
+      totalRemoteSize: 0,
+      totalLocalPeriods: 0,
+      totalRemotePeriods: 0,
+      lastSync: null,
+      local: { periods: [], diskBytes: 0, oldestPeriod: null, newestPeriod: null },
+    });
+    renderDataManagement(api);
+    expect((await screen.findAllByText('No data in the bucket yet.')).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/first data within about a day/).length).toBeGreaterThan(0);
+  });
+
   it('confirming prune calls pruneNow and refreshes inventory', async () => {
     const api = new MockCostApi();
     api.getDataInventory = () => Promise.resolve({

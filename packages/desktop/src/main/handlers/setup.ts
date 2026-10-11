@@ -1,12 +1,15 @@
-import { ipcMain, shell } from 'electron';
+import { writeFile } from 'node:fs/promises';
+import { dialog, ipcMain, shell } from 'electron';
 import {
   assertValidGcsBucketName,
   classifyGcsFolder,
   createGcsStorage,
   logger,
   isStringRecord,
+  parseExportsStackDefaults,
+  renderExportsStackYaml,
 } from '@costgoblin/core';
-import type { GcpIdentityResult, GcpProject, GcsBrowseResult, GcsDownloadCheckResult } from '@costgoblin/core';
+import type { ExportConfigBundleResult, GcpIdentityResult, GcpProject, GcsBrowseResult, GcsDownloadCheckResult } from '@costgoblin/core';
 import { loadSharedConfigFiles } from '@smithy/shared-ini-file-loader';
 import { awsProfileNames } from '../aws-profiles.js';
 import { upsertWizardProvider } from '../config-upsert.js';
@@ -78,6 +81,27 @@ export function registerSetupHandlers(app: AppContext): void {
   ipcMain.handle('setup:list-buckets', (_event, profile: string) => listS3Buckets(profile));
 
   ipcMain.handle('setup:browse-s3', (_event, params: { profile: string; bucket: string; prefix: string }) => browseS3(params));
+
+  // The one-click AWS setup's template (docs/aws-one-click-setup-design.md),
+  // saved for the user to upload in CloudFormation. The answers are parsed:
+  // they arrive from the renderer and end up in a template run in their account.
+  ipcMain.handle('setup:save-exports-template', async (_event, payload: unknown): Promise<ExportConfigBundleResult> => {
+    const defaults = parseExportsStackDefaults(payload);
+    if (defaults === null) return { status: 'error', message: 'Invalid template settings.' };
+    try {
+      const result = await dialog.showSaveDialog({
+        title: 'Save the CloudFormation template',
+        defaultPath: 'costgoblin-exports.yaml',
+        filters: [{ name: 'CloudFormation template', extensions: ['yaml', 'yml'] }],
+      });
+      if (result.canceled || result.filePath.length === 0) return { status: 'canceled' };
+      await writeFile(result.filePath, renderExportsStackYaml(defaults), 'utf-8');
+      logger.info('Saved the billing exports CloudFormation template', { path: result.filePath });
+      return { status: 'saved', path: result.filePath };
+    } catch (err: unknown) {
+      return { status: 'error', message: err instanceof Error ? err.message : String(err) };
+    }
+  });
 
   // ---- GCP: the browse-and-pick counterpart of the three S3 handlers above.
   //

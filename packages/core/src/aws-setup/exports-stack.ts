@@ -1,4 +1,5 @@
 import { DEFAULT_RETENTION_DAYS } from '../sync/retention.js';
+import { isStringRecord } from '../utils/json.js';
 
 // The CloudFormation stack that sets up a new account's billing data for
 // CostGoblin: a bucket with its lifecycle rules, AWS Data Exports for FOCUS 1.2
@@ -95,6 +96,35 @@ export interface ExportsStackDefaults {
   /** Whether the stack creates the Data Exports service-linked role the Cost
    *  Optimization Hub export needs. False when the account already has it. */
   readonly serviceRole?: boolean;
+}
+
+/** S3's bucket naming rules: 3 to 63 lowercase letters, digits, dots and
+ *  hyphens, starting and ending with a letter or digit, no `..`, and not
+ *  shaped like an IP address. */
+export function isValidS3BucketName(name: string): boolean {
+  return /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(name)
+    && !name.includes('..')
+    && !/^\d+\.\d+\.\d+\.\d+$/.test(name);
+}
+
+const DEFAULTS_KEYS = new Set(['bucketName', 'hourly', 'costOptimization', 'serviceRole']);
+
+/** The wizard's answers, checked: they reach the main process over IPC, and a
+ *  bucket name ends up in a file the user uploads to their AWS account. */
+export function parseExportsStackDefaults(payload: unknown): ExportsStackDefaults | null {
+  if (!isStringRecord(payload)) return null;
+  if (Object.keys(payload).some(k => !DEFAULTS_KEYS.has(k))) return null;
+  const { bucketName, hourly, costOptimization, serviceRole } = payload;
+  if (bucketName !== undefined && (typeof bucketName !== 'string' || !isValidS3BucketName(bucketName))) return null;
+  for (const flag of [hourly, costOptimization, serviceRole]) {
+    if (flag !== undefined && typeof flag !== 'boolean') return null;
+  }
+  return {
+    ...(typeof bucketName === 'string' ? { bucketName } : {}),
+    ...(typeof hourly === 'boolean' ? { hourly } : {}),
+    ...(typeof costOptimization === 'boolean' ? { costOptimization } : {}),
+    ...(typeof serviceRole === 'boolean' ? { serviceRole } : {}),
+  };
 }
 
 const ref = (name: string): TemplateObject => ({ Ref: name });

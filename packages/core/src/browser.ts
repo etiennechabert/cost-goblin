@@ -17,6 +17,8 @@ export { ConfigValidationError } from './config/validator.js';
 // The wizard seeds its per-tier retention pickers from the same defaults the
 // writer and prune paths use. Pure leaf module (type-only import).
 export { DEFAULT_RETENTION_DAYS } from './sync/retention.js';
+export { EXPORTS_STACK_LAYOUT, exportsStackPath, isValidS3BucketName } from './aws-setup/exports-stack.js';
+export type { ExportsStackDefaults } from './aws-setup/exports-stack.js';
 // Data & Sync opens the GCP wizard on a tier inside the provider's own bucket.
 // Leaf module with no imports.
 export { splitGcsLocation } from './sync/gcs-bucket-name.js';
