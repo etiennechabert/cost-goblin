@@ -14,9 +14,9 @@ It stays off until the steps below are done: the wizard offers save-and-upload, 
 
    Add `CreateGitHubOidcProvider=no` if the account already has the `token.actions.githubusercontent.com` OIDC provider. If the account blocks public access at the account level, allow it for this bucket: its `templates/` folder must be publicly readable, as users' consoles fetch the template from there.
 
-2. **Limit the `release` environment to release tags**, under GitHub → Settings → Environments → `release` → Deployment branches and tags: *Selected branches and tags*, with the tag rule `v*`. The upload role trusts any job that runs in that environment, so without this a workflow on any branch that declares `environment: release` could replace the public template users' consoles load.
+2. **Keep the `release` environment protected**, under GitHub → Settings → Environments → `release`: a required reviewer, and deployment branches and tags limited to protected refs. As set up today it already is: you approve every job, and only `main` and `v*` tags may deploy. The upload role trusts any job that runs in that environment, so without these protections a workflow on any branch that declares `environment: release` could replace the public template users' consoles load.
 
-   Then **set the repository variables** from the stack's outputs, under GitHub → Settings → Secrets and variables → Actions → Variables:
+   Then **set the repository variables** from the stack's outputs, under GitHub → Settings → Secrets and variables → Actions → Variables. They are identifiers, not secrets: no AWS key is stored anywhere, as the job exchanges GitHub's per-run OIDC token for 15-minute credentials:
 
    | Variable | Output |
    |---|---|

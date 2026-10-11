@@ -103,9 +103,10 @@ Resources:
               StringEquals:
                 "token.actions.githubusercontent.com:aud": sts.amazonaws.com
                 # Any job that runs in the release environment, which
-                # release.yml's publish-template does. Limit that environment
-                # to v* tags (README.md, step 2), or a workflow on any branch
-                # that declares it could replace the public template.
+                # release.yml's publish-template does. Keep that environment's
+                # required reviewer and ref limits (README.md, step 2), or a
+                # workflow on any branch that declares it could replace the
+                # public template.
                 "token.actions.githubusercontent.com:sub": !Sub "repo:${GitHubRepository}:environment:release"
       Policies:
         - PolicyName: upload-templates
