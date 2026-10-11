@@ -80,6 +80,21 @@ describe('SetupWizard — create the AWS exports with CloudFormation', () => {
     expect(api.savedExportsTemplates[0]).toMatchObject({ costOptimization: true, serviceRole: false });
   });
 
+  it('only continues once the template for the current answers is saved', async () => {
+    const { user } = renderWizard();
+    await openCreateStep(user);
+    const done = () => screen.getByRole('button', { name: 'I’ve created the stack' });
+    expect(done().hasAttribute('disabled')).toBe(true);
+
+    await user.click(screen.getByRole('button', { name: 'Save the template…' }));
+    await waitFor(() => { expect(done().hasAttribute('disabled')).toBe(false); });
+
+    // A changed answer no longer matches the saved template: the config would
+    // point at a bucket the stack never creates.
+    await user.type(bucketInput(), 'x');
+    expect(done().hasAttribute('disabled')).toBe(true);
+  });
+
   it('refuses a bucket name S3 would refuse, before anything is saved', async () => {
     const { api, user } = renderWizard();
     await openCreateStep(user);

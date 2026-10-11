@@ -1637,7 +1637,9 @@ function CreateExportsStep({ state, onChange, onSave, onDone, onBack }: Readonly
 
       <div className="flex items-center justify-between pt-2">
         <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
-        <Button onClick={onDone} disabled={!nameValid} className="bg-accent hover:bg-accent-hover text-white px-8">
+        {/* Only once the template for these answers is saved: the config gets
+            the paths of these answers, so they must be the stack's too. */}
+        <Button onClick={onDone} disabled={!nameValid || save.status !== 'saved'} className="bg-accent hover:bg-accent-hover text-white px-8">
           I’ve created the stack
         </Button>
       </div>
