@@ -67,7 +67,7 @@ type WizardStep =
   | { step: 'profile'; profiles: string[]; loading: boolean; selected: string }
   | { step: 'bucket'; profile: string; source: DataSource; buckets: { name: string; region: string }[]; loading: boolean; selected: string; error: string }
   | { step: 'beacon'; profile: string; source: DataSource; bucket: string; content: string; summary: ConfigBundleSummary; applying: boolean; error: string }
-  | { step: 'aws-create'; profile: string; bucketName: string; hourly: boolean; costOptimization: boolean; serviceRoleExists: boolean; save: TemplateSaveState; backfill: BackfillFilingState; hostedTemplateUrl: string | null }
+  | { step: 'aws-create'; profile: string; bucketName: string; hourly: boolean; costOptimization: boolean; serviceRoleExists: boolean; save: TemplateSaveState; backfill: BackfillFilingState; hostedTemplateUrl: string | null; quickCreateOpened: boolean }
   | { step: 'browse'; profile: string; source: DataSource; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[]; fileVersioning: ExportFileVersioning; path: string[]; error: string }
   | { step: 'confirm'; cloud: 'aws'; profile: string; s3Path: string; hourlyPath: string; costOptPath: string }
   | { step: 'confirm'; cloud: 'gcp'; project: GcpProjectChoice | null; reader: string; clearsReader: boolean; s3Path: string; hourlyPath: string; costOptPath: string };
@@ -1628,10 +1628,11 @@ const CHECKBOX_LABEL = 'grid grid-cols-[auto_1fr] items-start gap-x-2 rounded-lg
 /** The one-click AWS setup (docs/aws-one-click-setup-design.md): the wizard
  *  saves a CloudFormation template with these answers baked in, someone with
  *  admin rights creates the stack, and the config gets the stack's paths. */
-function CreateExportsStep({ state, onChange, onSave, onFileBackfill, onDone, onBack }: Readonly<{
+function CreateExportsStep({ state, onChange, onSave, onQuickCreateOpened, onFileBackfill, onDone, onBack }: Readonly<{
   state: Extract<WizardStep, { step: 'aws-create' }>;
   onChange: (answers: Partial<CreateExportsAnswers>) => void;
   onSave: () => void;
+  onQuickCreateOpened: () => void;
   onFileBackfill: () => void;
   onDone: () => void;
   onBack: () => void;
@@ -1697,6 +1698,7 @@ function CreateExportsStep({ state, onChange, onSave, onFileBackfill, onDone, on
                 })}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={onQuickCreateOpened}
                 className="text-accent underline underline-offset-2 hover:text-accent-hover"
               >
                 Open the prefilled stack in CloudFormation
@@ -1732,9 +1734,10 @@ function CreateExportsStep({ state, onChange, onSave, onFileBackfill, onDone, on
 
       <div className="flex items-center justify-between pt-2">
         <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
-        {/* Only once the template for these answers is saved: the config gets
-            the paths of these answers, so they must be the stack's too. */}
-        <Button onClick={onDone} disabled={!nameValid || save.status !== 'saved'} className="bg-accent hover:bg-accent-hover text-white px-8">
+        {/* Only once these answers reached CloudFormation, saved or through the
+            prefilled link: the config gets their paths, so they must be the
+            stack's too. */}
+        <Button onClick={onDone} disabled={!nameValid || (save.status !== 'saved' && !state.quickCreateOpened)} className="bg-accent hover:bg-accent-hover text-white px-8">
           I’ve created the stack
         </Button>
       </div>
@@ -2793,7 +2796,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     setWizard({
       step: 'aws-create', profile: wizard.profile, bucketName: proposedBucketName(),
       hourly: false, costOptimization: false, serviceRoleExists: false, save: { status: 'idle' }, backfill: { status: 'idle' },
-      hostedTemplateUrl: null,
+      hostedTemplateUrl: null, quickCreateOpened: false,
     });
     // A release whose template is hosted gets a prefilled quick-create link.
     // Asked after the step shows: without an answer it simply isn't offered.
@@ -2811,7 +2814,10 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
       // A saved template no longer matches changed answers: ask for a new
       // save. A filed backfill stands unless the exports it names changed.
       const backfillCovers = answers.hourly === undefined || answers.hourly === prev.hourly;
-      return { ...prev, ...answers, save: { status: 'idle' }, backfill: backfillCovers ? prev.backfill : { status: 'idle' } };
+      return {
+        ...prev, ...answers, save: { status: 'idle' }, quickCreateOpened: false,
+        backfill: backfillCovers ? prev.backfill : { status: 'idle' },
+      };
     });
   }
 
@@ -3164,6 +3170,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
               state={wizard}
               onChange={handleCreateExportsChange}
               onSave={handleSaveExportsTemplate}
+              onQuickCreateOpened={() => { setWizard(prev => prev.step === 'aws-create' ? { ...prev, quickCreateOpened: true } : prev); }}
               onFileBackfill={handleFileBackfill}
               onDone={handleCreateExportsDone}
               onBack={handleBack}

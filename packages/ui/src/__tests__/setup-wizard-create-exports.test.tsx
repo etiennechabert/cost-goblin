@@ -217,6 +217,20 @@ describe('SetupWizard — create the AWS exports with CloudFormation', () => {
       expect(screen.getByRole('button', { name: 'Save the template…' })).toBeDefined();
     });
 
+    it('lets the user continue after opening the prefilled stack, without saving the template', async () => {
+      const { user } = renderWizard(api => { api.hostedExportsTemplateUrl = TEMPLATE; });
+      await openCreateStep(user);
+      const done = () => screen.getByRole('button', { name: 'I’ve created the stack' });
+      expect(done().hasAttribute('disabled')).toBe(true);
+
+      await user.click(await screen.findByRole('link', { name: 'Open the prefilled stack in CloudFormation' }));
+      expect(done().hasAttribute('disabled')).toBe(false);
+
+      // A changed answer is no longer what the opened page was prefilled with.
+      await user.click(screen.getByLabelText(/Also export hourly data/));
+      expect(done().hasAttribute('disabled')).toBe(true);
+    });
+
     it('withholds the link while the bucket name is invalid', async () => {
       const { user } = renderWizard(api => { api.hostedExportsTemplateUrl = TEMPLATE; });
       await openCreateStep(user);
