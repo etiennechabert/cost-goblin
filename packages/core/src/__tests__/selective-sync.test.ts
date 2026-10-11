@@ -150,7 +150,7 @@ describe('syncSelectedFiles', () => {
     expect(result.filesDownloaded).toBe(2);
     expect(mockSpawn).toHaveBeenCalledWith(
       expect.stringContaining('aws'),
-      ['s3', 'sync', 's3://test-bucket/cur/data/billing_period=2026-03/', expectedDest, '--exclude', '*', '--include', '*.parquet', '--profile', 'test-profile'],
+      ['s3', 'sync', 's3://test-bucket/cur/data/billing_period=2026-03/', expectedDest, '--exclude', '*', '--include', '*.parquet', '--exclude', '*/*', '--profile', 'test-profile'],
       { stdio: ['ignore', 'pipe', 'pipe'] }
     );
   });
@@ -798,7 +798,7 @@ describe('syncSelectedFiles', () => {
 
       expect(mockSpawn).toHaveBeenCalledWith(
         expect.stringContaining('aws'),
-        ['s3', 'sync', 's3://test-bucket/cost-opt/date=2026-03-15/', expect.stringContaining('cost-opt-2026-03-15'), '--exclude', '*', '--include', '*.parquet', '--profile', 'prod-profile'],
+        ['s3', 'sync', 's3://test-bucket/cost-opt/date=2026-03-15/', expect.stringContaining('cost-opt-2026-03-15'), '--exclude', '*', '--include', '*.parquet', '--exclude', '*/*', '--profile', 'prod-profile'],
         { stdio: ['ignore', 'pipe', 'pipe'] }
       );
     });
@@ -1014,7 +1014,7 @@ describe('syncSelectedFiles', () => {
       expect(mockWriteFile).not.toHaveBeenCalled();
     });
 
-    it('passes the Parquet-only filters after the positional args, in order', async () => {
+    it('passes the Parquet-only, top-level-only filters after the positional args, in order', async () => {
       mockSpawn.mockImplementation(() => createSuccessfulSpawn());
 
       await syncSelectedFiles({
@@ -1025,10 +1025,11 @@ describe('syncSelectedFiles', () => {
         files: [file('cur/billing_period=2026-03/x.parquet')],
       });
 
-      // Later filters win: exclude everything, then re-include only Parquet.
+      // Later filters win: exclude everything, re-include only Parquet, then
+      // drop anything in a subfolder (a "Create new" export's per-refresh copies).
       expect(mockSpawn.mock.calls[0]?.[1]).toEqual([
         's3', 'sync', 's3://b/cur/billing_period=2026-03/', expect.any(String),
-        '--exclude', '*', '--include', '*.parquet', '--profile', 'p',
+        '--exclude', '*', '--include', '*.parquet', '--exclude', '*/*', '--profile', 'p',
       ]);
     });
   });

@@ -163,6 +163,8 @@ export {
   groupByPeriod,
   hasSyncedTier,
   ifExists,
+  isCreateNewDeliveryKey,
+  isPartitionFolderName,
   listLocalMonths,
   LocalSyncStateError,
   pruneEtagPeriod,

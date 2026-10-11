@@ -1,4 +1,4 @@
-import type { ConfigBundleSummary, GcpProject, GcsDownloadCheckResult, GcsFolderKind, ProviderConfig } from '@costgoblin/core/browser';
+import type { ConfigBundleSummary, ExportFileVersioning, GcpProject, GcsDownloadCheckResult, GcsFolderKind, ProviderConfig } from '@costgoblin/core/browser';
 import { DEFAULT_READER_ACCOUNT_ID, DEFAULT_RETENTION_DAYS, GCP_PROJECT_ID_RULES, gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isGcpImpersonationError, isGcpNetworkError, isValidGcpProjectId, isValidWorkspaceName, parseProviderName, resolveReaderInput, SERVICE_ACCOUNT_EMAIL_RULE } from '@costgoblin/core/browser';
 import { Check, Loader2, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -52,7 +52,7 @@ type WizardStep =
   | { step: 'profile'; profiles: string[]; loading: boolean; selected: string }
   | { step: 'bucket'; profile: string; source: DataSource; buckets: { name: string; region: string }[]; loading: boolean; selected: string; error: string }
   | { step: 'beacon'; profile: string; source: DataSource; bucket: string; content: string; summary: ConfigBundleSummary; applying: boolean; error: string }
-  | { step: 'browse'; profile: string; source: DataSource; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[]; path: string[]; error: string }
+  | { step: 'browse'; profile: string; source: DataSource; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[]; fileVersioning: ExportFileVersioning; path: string[]; error: string }
   | { step: 'confirm'; cloud: 'aws'; profile: string; s3Path: string; hourlyPath: string; costOptPath: string }
   | { step: 'confirm'; cloud: 'gcp'; project: GcpProjectChoice | null; reader: string; clearsReader: boolean; s3Path: string; hourlyPath: string; costOptPath: string };
 
@@ -1520,6 +1520,20 @@ function BucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
   );
 }
 
+/** An export whose File versioning is "Create new": sync reads Parquet only
+ *  directly in a partition folder, and this layout puts none there. */
+function createsNewFiles(state: Extract<WizardStep, { step: 'browse' }>): boolean {
+  return state.isBillingExport && state.fileVersioning === 'create-new';
+}
+
+/** Why the browse step can't use this folder even though it is an export,
+ *  shown as the confirm button's label; undefined when it can. */
+function unusableExportReason(state: Extract<WizardStep, { step: 'browse' }>): string | undefined {
+  if (state.detectedType === 'cur-legacy') return 'CUR 2.0 not supported';
+  if (createsNewFiles(state)) return 'Export must overwrite its files';
+  return undefined;
+}
+
 function BrowseStep({ state, onNavigate, onConfirm, onSkip, onBack, onRetry }: Readonly<{
   state: Extract<WizardStep, { step: 'browse' }>;
   onNavigate: (prefix: string) => void;
@@ -1533,6 +1547,8 @@ function BrowseStep({ state, onNavigate, onConfirm, onSkip, onBack, onRetry }: R
 }>) {
   const sourceLabel = SOURCE_LABELS[state.source];
   const selectableLabel = state.isBillingExport ? 'Use this location' : 'Select an export folder';
+  const unusableReason = unusableExportReason(state);
+  const newFilePerRefresh = createsNewFiles(state);
 
   return (
     <div className="flex flex-col gap-5">
@@ -1600,7 +1616,22 @@ function BrowseStep({ state, onNavigate, onConfirm, onSkip, onBack, onRetry }: R
           </p>
         </div>
       )}
-      {state.isBillingExport && state.detectedType !== 'cur-legacy' && !(state.detectedType === 'cost-optimization' && state.source !== 'costOptimization') && !(state.detectedType !== 'cost-optimization' && state.detectedType !== 'unknown' && state.source === 'costOptimization') && (
+      {newFilePerRefresh && (
+        <div className="rounded-lg border border-negative/50 bg-negative-muted px-4 py-3">
+          <p className="text-sm font-medium text-negative">This export creates a new file on every refresh</p>
+          <p className="text-xs text-text-secondary mt-0.5">
+            Its File versioning is set to <span className="text-text-primary">Create new data export file</span>, so AWS writes each
+            refresh into a folder of its own, which CostGoblin doesn&apos;t read. Nothing would sync.
+          </p>
+          <p className="text-xs text-text-muted mt-1">
+            In <span className="text-text-secondary">Billing and Cost Management → Data Exports</span>, open this export, choose
+            {' '}<span className="text-text-secondary">Edit</span> and set File versioning to
+            {' '}<span className="text-text-secondary">Overwrite existing data export file</span>. Deliveries land in the right place
+            from the export&apos;s next refresh (up to a day); data delivered before the switch stays in its own folders and is skipped.
+          </p>
+        </div>
+      )}
+      {state.isBillingExport && !newFilePerRefresh && state.detectedType !== 'cur-legacy' && !(state.detectedType === 'cost-optimization' && state.source !== 'costOptimization') && !(state.detectedType !== 'cost-optimization' && state.detectedType !== 'unknown' && state.source === 'costOptimization') && (
         <div className="rounded-lg border border-accent/40 bg-accent/5 px-4 py-3">
           <p className="text-sm font-medium text-accent">
             {state.detectedType === 'cost-optimization' ? 'Cost Optimization report detected' : 'FOCUS billing export detected'}
@@ -1663,10 +1694,10 @@ function BrowseStep({ state, onNavigate, onConfirm, onSkip, onBack, onRetry }: R
           )}
           <Button
             onClick={onConfirm}
-            disabled={!state.isBillingExport || state.detectedType === 'cur-legacy'}
+            disabled={!state.isBillingExport || unusableReason !== undefined}
             className="bg-accent hover:bg-accent-hover text-white px-8"
           >
-            {state.detectedType === 'cur-legacy' ? 'CUR 2.0 not supported' : selectableLabel}
+            {unusableReason ?? selectableLabel}
           </Button>
         </div>
       </div>
@@ -2602,16 +2633,16 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     // dying SSO session sits in SDK retries for seconds) must not land after
     // the user navigated away and overwrite the current step.
     const token = ++stepRequestRef.current;
-    setWizard({ step: 'browse', profile, source, bucket, prefix, prefixes: [], loading: true, isBillingExport: false, detectedType: 'unknown', missingColumns: [], path, error: '' });
+    setWizard({ step: 'browse', profile, source, bucket, prefix, prefixes: [], loading: true, isBillingExport: false, detectedType: 'unknown', missingColumns: [], fileVersioning: 'unknown', path, error: '' });
     api.browseS3({ profile, bucket, prefix }).then(result => {
       if (stepRequestRef.current !== token) return;
-      setWizard({ step: 'browse', profile, source, bucket, prefix, prefixes: result.prefixes, loading: false, isBillingExport: result.isBillingExport, detectedType: result.detectedType, missingColumns: result.missingColumns, path, error: result.error ?? '' });
+      setWizard({ step: 'browse', profile, source, bucket, prefix, prefixes: result.prefixes, loading: false, isBillingExport: result.isBillingExport, detectedType: result.detectedType, missingColumns: result.missingColumns, fileVersioning: result.fileVersioning, path, error: result.error ?? '' });
     }).catch((err: unknown) => {
       // Surfaced rather than swallowed. The empty catch (and the handler's
       // swallow-to-empty) rendered an expired token / AccessDenied as "No
       // subfolders found" — the browse-step dead end #539/#542 exist to remove.
       if (stepRequestRef.current !== token) return;
-      setWizard({ step: 'browse', profile, source, bucket, prefix, prefixes: [], loading: false, isBillingExport: false, detectedType: 'unknown', missingColumns: [], path, error: err instanceof Error ? err.message : String(err) });
+      setWizard({ step: 'browse', profile, source, bucket, prefix, prefixes: [], loading: false, isBillingExport: false, detectedType: 'unknown', missingColumns: [], fileVersioning: 'unknown', path, error: err instanceof Error ? err.message : String(err) });
     });
   }
 
