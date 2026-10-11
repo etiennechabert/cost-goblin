@@ -184,7 +184,11 @@ describe('isValidS3BucketName', () => {
     expect(isValidS3BucketName(name)).toBe(true);
   });
 
-  it.each(['ab', 'a'.repeat(64), 'Acme-billing', 'acme_billing', '-acme', 'acme-', 'acme..billing', '192.168.1.1', ''])('rejects %s', (name) => {
+  it.each([
+    'ab', 'a'.repeat(64), 'Acme-billing', 'acme_billing', '-acme', 'acme-', 'acme..billing', '192.168.1.1', '',
+    // names S3 reserves
+    'xn--acme', 'sthree-acme', 'amzn-s3-demo-acme', 'acme-s3alias', 'acme--ol-s3', 'acme.mrap', 'acme--x-s3', 'acme--table-s3',
+  ])('rejects %s', (name) => {
     expect(isValidS3BucketName(name)).toBe(false);
   });
 });

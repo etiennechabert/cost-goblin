@@ -98,13 +98,18 @@ export interface ExportsStackDefaults {
   readonly serviceRole?: boolean;
 }
 
+const RESERVED_BUCKET_PREFIXES = ['xn--', 'sthree-', 'amzn-s3-demo-'];
+const RESERVED_BUCKET_SUFFIXES = ['-s3alias', '--ol-s3', '.mrap', '--x-s3', '--table-s3'];
+
 /** S3's bucket naming rules: 3 to 63 lowercase letters, digits, dots and
- *  hyphens, starting and ending with a letter or digit, no `..`, and not
- *  shaped like an IP address. */
+ *  hyphens, starting and ending with a letter or digit, no `..`, not shaped
+ *  like an IP address, and none of the prefixes and suffixes S3 reserves. */
 export function isValidS3BucketName(name: string): boolean {
   return /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(name)
     && !name.includes('..')
-    && !/^\d+\.\d+\.\d+\.\d+$/.test(name);
+    && !/^\d+\.\d+\.\d+\.\d+$/.test(name)
+    && !RESERVED_BUCKET_PREFIXES.some(p => name.startsWith(p))
+    && !RESERVED_BUCKET_SUFFIXES.some(s => name.endsWith(s));
 }
 
 const DEFAULTS_KEYS = new Set(['bucketName', 'hourly', 'costOptimization', 'serviceRole']);
