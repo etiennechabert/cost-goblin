@@ -175,8 +175,8 @@ export async function getDataInventory(
   // Silently dropping every key is indistinguishable from an empty bucket,
   // and it is the failure mode of an export that writes uppercase
   // `BILLING_PERIOD=` (CUR-era) or flat, unpartitioned keys. Say so once.
-  // A create-new export gets its own message, even when other months sync:
-  // one switched to Overwrite keeps its earlier months in per-refresh folders.
+  // A create-new export's keys get their own message, even when other months
+  // sync: one switched to Overwrite keeps earlier months in per-refresh folders.
   if (createNewKeys.length > 0) {
     const months = [...new Set(createNewKeys.map(extractPeriod))].sort((a, b) => a.localeCompare(b)).join(', ');
     logger.warn(
@@ -185,9 +185,11 @@ export async function getDataInventory(
       + 'Set it to "Overwrite existing data export file" (Data Exports → Edit)',
       { provider: String(provider), tier },
     );
-  } else if (skippedKeys > 0 && periodMap.size === 0) {
+  }
+  const otherSkippedKeys = skippedKeys - createNewKeys.length;
+  if (otherSkippedKeys > 0 && periodMap.size === 0) {
     logger.warn(
-      `Listed ${String(skippedKeys)} Parquet file(s) under ${bucketPath} but none sit directly in a ${partitionFolderLabel(tier)} folder — nothing to sync`,
+      `Listed ${String(otherSkippedKeys)} Parquet file(s) under ${bucketPath} but none sit directly in a ${partitionFolderLabel(tier)} folder — nothing to sync`,
       { provider: String(provider), tier },
     );
   }

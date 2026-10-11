@@ -128,6 +128,60 @@ describe('browseS3', () => {
     expect(ListObjectsV2Command).toHaveBeenNthCalledWith(5, { Bucket: 'b', Prefix: 'focus/daily/data/billing_period=2026-10/', Delimiter: '/', ContinuationToken: undefined });
   });
 
+  describe('a month holding both layouts (File versioning switched this month)', () => {
+    const PARTITION = 'focus/daily/data/billing_period=2026-10/';
+    const mixedLevel = {
+      Contents: [{ Key: `${PARTITION}daily-00001.snappy.parquet`, LastModified: new Date('2026-10-10T03:00:00Z') }],
+      CommonPrefixes: [{ Prefix: `${PARTITION}20261011T030000Z-b2/` }],
+    };
+
+    it('lists the whole month and goes by the delivery written last', async () => {
+      const { ListObjectsV2Command } = await import('@aws-sdk/client-s3');
+      mockSend
+        .mockResolvedValueOnce(exportRoot)
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce(dataListing)
+        .mockResolvedValueOnce(mixedLevel)
+        .mockResolvedValueOnce({ Contents: [
+          ...mixedLevel.Contents,
+          { Key: `${PARTITION}20261011T030000Z-b2/daily-00001.snappy.parquet`, LastModified: new Date('2026-10-11T03:00:00Z') },
+        ] });
+
+      const result = await browseS3({ profile: 'default', bucket: 'b', prefix: 'focus/daily/' });
+
+      // Switched from Overwrite to Create new: the in-place files are stale.
+      expect(result.fileVersioning).toBe('create-new');
+      expect(ListObjectsV2Command).toHaveBeenNthCalledWith(5, { Bucket: 'b', Prefix: PARTITION, ContinuationToken: undefined });
+    });
+
+    it('keeps the Overwrite verdict when the month is too large to list whole', async () => {
+      mockSend
+        .mockResolvedValueOnce(exportRoot)
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce(dataListing)
+        .mockResolvedValueOnce(mixedLevel)
+        .mockResolvedValue({ Contents: [], IsTruncated: true, NextContinuationToken: 'more' });
+
+      const result = await browseS3({ profile: 'default', bucket: 'b', prefix: 'focus/daily/' });
+
+      expect(result.fileVersioning).toBe('overwrite');
+      // 4 calls before the full listing, then its page cap.
+      expect(mockSend).toHaveBeenCalledTimes(4 + 10);
+    });
+  });
+
+  it('does not probe File versioning for a CUR 2.0 export, which is refused anyway', async () => {
+    mockSend
+      .mockResolvedValueOnce(exportRoot)
+      .mockResolvedValueOnce(metadataListing)
+      .mockResolvedValueOnce({ Body: body(JSON.stringify({ columns: [{ name: 'line_item_usage_start_date' }] })) });
+
+    const result = await browseS3({ profile: 'default', bucket: 'b', prefix: 'focus/daily/' });
+
+    expect(result).toMatchObject({ detectedType: 'cur-legacy', fileVersioning: 'unknown' });
+    expect(mockSend).toHaveBeenCalledTimes(3);
+  });
+
   it('leaves File versioning unknown for an export with no delivery yet', async () => {
     mockSend
       .mockResolvedValueOnce(exportRoot)

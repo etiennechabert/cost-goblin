@@ -609,6 +609,21 @@ describe('getDataInventory with mocked S3', () => {
       expect(warn.mock.calls[0]?.[0]).toContain('2026-08');
     });
 
+    it('gives both warnings when other unreadable keys sit beside them and nothing syncs', async () => {
+      const warn = vi.spyOn(logger, 'warn');
+      const mock = createMockObjectStore([
+        createNew('2026-09', '20260915T030000Z-b2'),
+        file('focus/data/BILLING_PERIOD=2026-09/x.parquet'),
+      ]);
+
+      await getDataInventory('s3://test-bucket/focus/', AWS_AUTH, tempDir, provider, 'daily', mock);
+
+      expect(warn).toHaveBeenCalledTimes(2);
+      expect(warn.mock.calls[0]?.[0]).toContain('"Create new data export file"');
+      expect(warn.mock.calls[1]?.[0]).toContain('Listed 1 Parquet file(s)');
+      expect(warn.mock.calls[1]?.[0]).toContain('nothing to sync');
+    });
+
     it('still gives the generic warning when the skipped keys are some other layout', async () => {
       const warn = vi.spyOn(logger, 'warn');
       const mock = createMockObjectStore([file('cur/data/BILLING_PERIOD=2026-01/x.parquet')]);

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { classifyFileVersioning, newestPartitionFolder } from '../main/setup-file-versioning.js';
+import { newestDeliveryVersioning, newestPartitionFolder, partitionDeliveries } from '../main/setup-file-versioning.js';
+
+const PARTITION = 'focus/data/billing_period=2026-10/';
+const inPlace = (day: number): { key: string; lastModified: Date } =>
+  ({ key: `${PARTITION}focus-00001.snappy.parquet`, lastModified: new Date(Date.UTC(2026, 9, day)) });
+const perRefresh = (day: number): { key: string; lastModified: Date } =>
+  ({ key: `${PARTITION}2026100${String(day)}T030000Z-r${String(day)}/focus-00001.snappy.parquet`, lastModified: new Date(Date.UTC(2026, 9, day)) });
 
 describe('newestPartitionFolder', () => {
   it('picks the newest billing_period= folder of a delimited data/ listing', () => {
@@ -25,34 +31,52 @@ describe('newestPartitionFolder', () => {
   });
 });
 
-describe('classifyFileVersioning', () => {
-  it('reads Parquet sitting in the partition folder itself as Overwrite', () => {
-    expect(classifyFileVersioning({
-      fileKeys: ['focus/data/billing_period=2026-10/focus-00001.snappy.parquet'],
-      folderPrefixes: [],
-    })).toBe('overwrite');
+describe('partitionDeliveries', () => {
+  it('sees Parquet in the folder itself as in place', () => {
+    expect(partitionDeliveries({ objects: [inPlace(2)], folderPrefixes: [] })).toBe('in-place');
   });
 
-  it('reads per-refresh folders and no Parquet of its own as Create new', () => {
-    expect(classifyFileVersioning({
-      fileKeys: [],
-      folderPrefixes: ['focus/data/billing_period=2026-10/20261001T030000Z-a1/', 'focus/data/billing_period=2026-10/20261002T030000Z-b2/'],
-    })).toBe('create-new');
+  it('sees subfolders and no Parquet of its own as per refresh', () => {
+    expect(partitionDeliveries({ objects: [], folderPrefixes: [`${PARTITION}20261001T030000Z-a1/`] })).toBe('per-refresh');
   });
 
-  it('reads both as Overwrite: an export switched mid-month delivers in place from then on', () => {
-    expect(classifyFileVersioning({
-      fileKeys: ['focus/data/billing_period=2026-10/focus-00001.snappy.parquet'],
-      folderPrefixes: ['focus/data/billing_period=2026-10/20261001T030000Z-a1/'],
-    })).toBe('overwrite');
+  it('sees both: an export whose setting changed this month', () => {
+    expect(partitionDeliveries({ objects: [inPlace(2)], folderPrefixes: [`${PARTITION}20261001T030000Z-a1/`] })).toBe('both');
   });
 
   it.each([
-    ['an empty folder', [], []],
+    ['an empty folder', []],
     // a zero-byte folder marker or a stray non-Parquet object is no delivery
-    ['only a folder marker', ['focus/data/billing_period=2026-10/'], []],
-    ['only a stray object', ['focus/data/billing_period=2026-10/notes.txt'], []],
-  ])('has no answer for %s', (_label, fileKeys, folderPrefixes) => {
-    expect(classifyFileVersioning({ fileKeys, folderPrefixes })).toBe('unknown');
+    ['only a folder marker', [{ key: PARTITION, lastModified: undefined }]],
+    ['only a stray object', [{ key: `${PARTITION}notes.txt`, lastModified: undefined }]],
+  ])('sees nothing in %s', (_label, objects) => {
+    expect(partitionDeliveries({ objects, folderPrefixes: [] })).toBe('none');
+  });
+});
+
+describe('newestDeliveryVersioning', () => {
+  it('reads an export switched to Overwrite, once it has delivered in place, as Overwrite', () => {
+    expect(newestDeliveryVersioning(PARTITION, [perRefresh(1), perRefresh(2), inPlace(3)])).toBe('overwrite');
+  });
+
+  it('reads an export switched from Overwrite to Create new as Create new, despite its stale in-place files', () => {
+    expect(newestDeliveryVersioning(PARTITION, [inPlace(10), perRefresh(11)])).toBe('create-new');
+  });
+
+  it('favours Overwrite on a tie or a missing date', () => {
+    expect(newestDeliveryVersioning(PARTITION, [inPlace(5), perRefresh(5)])).toBe('overwrite');
+    expect(newestDeliveryVersioning(PARTITION, [
+      { key: `${PARTITION}focus-00001.snappy.parquet`, lastModified: undefined },
+      { key: `${PARTITION}r1/focus-00001.snappy.parquet`, lastModified: undefined },
+    ])).toBe('overwrite');
+  });
+
+  it('ignores objects that are not Parquet or sit outside the partition', () => {
+    expect(newestDeliveryVersioning(PARTITION, [
+      inPlace(1),
+      { key: `${PARTITION}r9/notes.txt`, lastModified: new Date(Date.UTC(2026, 9, 9)) },
+      { key: 'focus/data/billing_period=2026-11/r9/x.parquet', lastModified: new Date(Date.UTC(2026, 10, 9)) },
+    ])).toBe('overwrite');
+    expect(newestDeliveryVersioning(PARTITION, [])).toBe('unknown');
   });
 });
