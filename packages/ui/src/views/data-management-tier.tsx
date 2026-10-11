@@ -265,7 +265,10 @@ export function TierPanel({
         // days to deliver: say so, rather than read as a broken setup.
         <div className="text-xs text-text-muted text-center py-4">
           <p>No data in the bucket yet.</p>
-          <p className="mt-1">A new export delivers its first data within about a day (on AWS, sometimes up to 72 hours).</p>
+          <p className="mt-1">
+            A new export delivers its first data within about a day (on AWS, sometimes up to 72 hours). If it stays empty,
+            check the bucket path and the export&apos;s settings.
+          </p>
         </div>
       )}
 

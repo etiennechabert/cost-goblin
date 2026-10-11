@@ -134,6 +134,8 @@ describe('DataManagement', () => {
     renderDataManagement(api);
     expect((await screen.findAllByText('No data in the bucket yet.')).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/first data within about a day/).length).toBeGreaterThan(0);
+    // ...without inviting an endless wait on a path that will never fill.
+    expect(screen.getAllByText(/If it stays empty, check the bucket path/).length).toBeGreaterThan(0);
   });
 
   it('confirming prune calls pruneNow and refreshes inventory', async () => {
