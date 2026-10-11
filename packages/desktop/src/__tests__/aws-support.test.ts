@@ -1,6 +1,6 @@
-import { backfillCase } from '@costgoblin/core';
+import { backfillCase, backfillCaseText } from '@costgoblin/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fileBackfillCase } from '../main/aws-support.js';
+import { confirmAndFileBackfillCase, fileBackfillCase } from '../main/aws-support.js';
 
 const mockSend = vi.fn();
 
@@ -60,5 +60,23 @@ describe('fileBackfillCase', () => {
     mockSend.mockResolvedValueOnce({});
 
     await expect(fileBackfillCase({ profile: 'p', tiers: ['daily'] })).resolves.toMatchObject({ status: 'error' });
+  });
+});
+
+describe('confirmAndFileBackfillCase', () => {
+  it('files nothing unless the user confirms, outside the renderer', async () => {
+    const confirm = vi.fn(() => Promise.resolve(false));
+
+    await expect(confirmAndFileBackfillCase({ profile: 'billing-admin', tiers: ['daily'] }, confirm)).resolves.toEqual({ status: 'canceled' });
+
+    expect(confirm).toHaveBeenCalledWith({ profile: 'billing-admin', caseText: backfillCaseText(backfillCase(['daily'])) });
+    expect(mockSend).not.toHaveBeenCalled();
+  });
+
+  it('files the case once the user confirms', async () => {
+    mockSend.mockResolvedValueOnce({ caseId: 'case-9' });
+
+    await expect(confirmAndFileBackfillCase({ profile: 'p', tiers: ['daily', 'hourly'] }, () => Promise.resolve(true)))
+      .resolves.toEqual({ status: 'filed', caseId: 'case-9' });
   });
 });

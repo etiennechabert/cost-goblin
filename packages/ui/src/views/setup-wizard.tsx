@@ -8,7 +8,6 @@ import { Card, CardContent } from '../components/ui/card.js';
 import { Button } from '../components/ui/button.js';
 import { BundleSummaryCard, ImportConfigDialog } from '../components/config-sharing.js';
 import { ProfilePicker } from '../components/profile-picker.js';
-import { ConfirmModal } from '../components/confirm-modal.js';
 import { GcpIdentityPanel } from '../components/gcp-identity-panel.js';
 import { GcloudLoginButton, RetryButton, SsoLoginButton } from '../components/sso-login-button.js';
 
@@ -1558,15 +1557,15 @@ function backfillTiers(hourly: boolean): BackfillTier[] {
 
 /** Step 4 of the create step: a new export has no history, and AWS backfills
  *  on request. The case text is always shown, to paste into the Support
- *  Center form on any plan; filing it through the API is a confirmed extra. */
+ *  Center form on any plan. Filing it through the API is an extra the main
+ *  process confirms in a native dialog (confirmAndFileBackfillCase). */
 function BackfillRequestItem({ profile, hourly, backfill, onFile }: Readonly<{
   profile: string;
   hourly: boolean;
   backfill: BackfillFilingState;
   onFile: () => void;
 }>) {
-  const [confirming, setConfirming] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copy, setCopy] = useState<'idle' | 'copied' | 'failed'>('idle');
   const caseText = backfillCaseText(backfillCase(backfillTiers(hourly)));
   return (
     <li>
@@ -1576,18 +1575,21 @@ function BackfillRequestItem({ profile, hourly, backfill, onFile }: Readonly<{
         <Button
           variant="outline"
           size="sm"
-          onClick={() => { void navigator.clipboard.writeText(caseText).then(() => { setCopied(true); }); }}
+          onClick={() => {
+            navigator.clipboard.writeText(caseText).then(() => { setCopy('copied'); }, () => { setCopy('failed'); });
+          }}
         >
           Copy the request
         </Button>
-        {copied && <span className="text-xs text-text-muted">Copied</span>}
+        {copy === 'copied' && <span className="text-xs text-text-muted">Copied</span>}
+        {copy === 'failed' && <span className="text-xs text-warning">Couldn&apos;t copy: select the text above instead.</span>}
         <a href={SUPPORT_CASE_URL} target="_blank" rel="noopener noreferrer" className="text-accent underline underline-offset-2 hover:text-accent-hover">
           Open the Support Center form
         </a>
         <Button
           variant="outline"
           size="sm"
-          onClick={() => { setConfirming(true); }}
+          onClick={onFile}
           disabled={backfill.status === 'filing' || backfill.status === 'filed'}
         >
           File it for me…
@@ -1602,14 +1604,10 @@ function BackfillRequestItem({ profile, hourly, backfill, onFile }: Readonly<{
         </p>
       )}
       {backfill.status === 'error' && <p className="mt-1 text-xs text-negative">Couldn&apos;t file it: {backfill.message}</p>}
-      {confirming && (
-        <ConfirmModal
-          title="File this support case?"
-          message={`CostGoblin files the request above in your AWS account with the ${profile} profile, which needs support:CreateCase in the account that owns the exports. Filing through the API needs a Business, Enterprise On-Ramp or Enterprise support plan.`}
-          confirmLabel="File the case"
-          onConfirm={() => { setConfirming(false); onFile(); }}
-          onCancel={() => { setConfirming(false); }}
-        />
+      {backfill.status === 'idle' && (
+        <p className="mt-1 text-xs text-text-muted">
+          Filing it for you uses the {profile} profile and a Business, Enterprise On-Ramp or Enterprise support plan; you confirm before it&apos;s sent.
+        </p>
       )}
     </li>
   );
@@ -2810,6 +2808,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     api.fileBackfillCase(request).then(result => {
       if (result.status === 'filed') settle({ status: 'filed', caseId: result.caseId });
       else if (result.status === 'subscription-required') settle({ status: 'subscription-required' });
+      else if (result.status === 'canceled') settle({ status: 'idle' });
       else settle({ status: 'error', message: result.message });
     }).catch((err: unknown) => {
       settle({ status: 'error', message: err instanceof Error ? err.message : String(err) });

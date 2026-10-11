@@ -26,6 +26,8 @@ export type BackfillCaseResult =
   | { readonly status: 'filed'; readonly caseId: string }
   /** The account's support plan has no API access: use the console form. */
   | { readonly status: 'subscription-required' }
+  /** The user declined the app's confirmation: nothing was filed. */
+  | { readonly status: 'canceled' }
   | { readonly status: 'error'; readonly message: string };
 
 export interface BackfillRequest {
@@ -58,8 +60,9 @@ export function parseBackfillRequest(payload: unknown): BackfillRequest | null {
   if (!isStringRecord(payload)) return null;
   if (Object.keys(payload).some(k => !REQUEST_KEYS.has(k))) return null;
   const { profile, tiers } = payload;
-  // AWS profile names are a single line of printable characters.
-  if (typeof profile !== 'string' || !/^[\x21-\x7e]+$/.test(profile)) return null;
+  // AWS profile names are one line of printable characters; the shared
+  // config allows inner spaces (`[profile billing admin]`).
+  if (typeof profile !== 'string' || !/^[\x21-\x7e](?:[\x20-\x7e]*[\x21-\x7e])?$/.test(profile)) return null;
   if (!Array.isArray(tiers) || tiers.length === 0) return null;
   const items: readonly unknown[] = tiers;
   const parsed: BackfillTier[] = [];
