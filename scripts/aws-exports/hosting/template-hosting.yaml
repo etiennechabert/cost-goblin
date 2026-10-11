@@ -102,8 +102,10 @@ Resources:
             Condition:
               StringEquals:
                 "token.actions.githubusercontent.com:aud": sts.amazonaws.com
-                # Only jobs in the release environment, which release.yml's
-                # publish-template is, and which can require approval.
+                # Any job that runs in the release environment, which
+                # release.yml's publish-template does. Limit that environment
+                # to v* tags (README.md, step 2), or a workflow on any branch
+                # that declares it could replace the public template.
                 "token.actions.githubusercontent.com:sub": !Sub "repo:${GitHubRepository}:environment:release"
       Policies:
         - PolicyName: upload-templates

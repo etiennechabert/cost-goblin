@@ -177,7 +177,7 @@ describe('SetupWizard — create the AWS exports with CloudFormation', () => {
 
       const link = await screen.findByRole('link', { name: 'Open the prefilled stack in CloudFormation' });
       const href = link.getAttribute('href') ?? '';
-      expect(href).toContain('#/stacks/quickcreate?');
+      expect(href).toContain('#/stacks/create/review?');
       expect(href).toContain(`templateURL=${encodeURIComponent(TEMPLATE)}`);
       expect(href).toContain('param_BucketName=acme-billing');
       expect(screen.getByRole('button', { name: 'Save the template…' })).toBeDefined();

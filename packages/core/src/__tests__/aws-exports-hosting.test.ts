@@ -30,13 +30,15 @@ describe('hostedTemplateUrlForBuild', () => {
 describe('exportsStackQuickCreateUrl', () => {
   const templateUrl = `${BASE}/v0.9.0/costgoblin-exports.yaml`;
 
+  // AWS documents quick-create links as #/stacks/create/review?templateURL=…
+  // (cfn-console-create-stacks-quick-create-links).
   it('opens a prefilled quick-create page in us-east-1', () => {
     const url = new URL(exportsStackQuickCreateUrl(templateUrl, { bucketName: 'acme-billing', hourly: true, costOptimization: false, serviceRole: true }));
     expect(url.origin).toBe('https://us-east-1.console.aws.amazon.com');
     expect(url.searchParams.get('region')).toBe('us-east-1');
     // The console reads the stack's settings from the fragment.
-    expect(url.hash.startsWith('#/stacks/quickcreate?')).toBe(true);
-    const params = new URLSearchParams(url.hash.slice('#/stacks/quickcreate?'.length));
+    expect(url.hash.startsWith('#/stacks/create/review?')).toBe(true);
+    const params = new URLSearchParams(url.hash.slice('#/stacks/create/review?'.length));
     expect(params.get('templateURL')).toBe(templateUrl);
     expect(params.get('stackName')).toBe(EXPORTS_STACK_NAME);
     expect(params.get('param_BucketName')).toBe('acme-billing');
@@ -46,7 +48,7 @@ describe('exportsStackQuickCreateUrl', () => {
   });
 
   it('leaves out what the user did not choose, so the template defaults apply', () => {
-    const params = new URLSearchParams(new URL(exportsStackQuickCreateUrl(templateUrl, {})).hash.slice('#/stacks/quickcreate?'.length));
+    const params = new URLSearchParams(new URL(exportsStackQuickCreateUrl(templateUrl, {})).hash.slice('#/stacks/create/review?'.length));
     expect([...params.keys()]).toEqual(['templateURL', 'stackName']);
   });
 });

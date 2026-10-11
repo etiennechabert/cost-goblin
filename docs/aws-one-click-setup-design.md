@@ -130,7 +130,7 @@ the export.
   *Dependency supply chain*), so this needs an OIDC role scoped to that one bucket. Phases 1–3
   don't need it. As built: `scripts/aws-exports/hosting/template-hosting.yaml` creates the bucket
   (only `templates/` public), GitHub's OIDC provider and `ReleaseUploadRole`, which trusts only the
-  repository's `release` environment and can only write under `templates/`. `release.yml`'s
+  repository's `release` environment (which must be limited to `v*` tags, or any branch declaring it could replace the public template) and can only write under `templates/`. `release.yml`'s
   `publish-template` job holds only `id-token: write`, runs no npm code, uploads the committed
   template to `templates/<tag>/` and `templates/latest/`, and is skipped until the
   `TEMPLATE_BUCKET` and `TEMPLATE_ROLE_ARN` variables are set. The app asks the main process for

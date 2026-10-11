@@ -26,7 +26,8 @@ export function hostedTemplateUrlForBuild(base: string | null, build: { readonly
   return hostedExportsTemplateUrl(base, build.packaged ? build.version : 'latest');
 }
 
-const QUICK_CREATE = 'https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/quickcreate';
+/** The documented quick-create route (cfn-console-create-stacks-quick-create-links). */
+const QUICK_CREATE = 'https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review';
 
 /** The console's quick-create page for the stack, with the wizard's answers
  *  as parameters. Unanswered ones are left out, so the template's defaults
