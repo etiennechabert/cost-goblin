@@ -1,4 +1,4 @@
-import type { S3Client } from '@aws-sdk/client-s3';
+import type { ListObjectsV2CommandOutput, S3Client } from '@aws-sdk/client-s3';
 import { logger, parseS3Path, s3ClientConfig } from '@costgoblin/core';
 import type { CostApi, ExportFileVersioning } from '@costgoblin/core';
 import { newestDeliveryVersioning, newestPartitionFolder, partitionDeliveries } from './setup-file-versioning.js';
@@ -59,14 +59,28 @@ export async function listS3Buckets(profile: string): Promise<{ buckets: { name:
  *  prefix. `complete` is false when the cap cut the listing short. */
 const MAX_LISTING_PAGES = 10;
 
+interface Listing {
+  readonly objects: ListedObject[];
+  readonly folderPrefixes: string[];
+}
+
+/** Adds one page's objects and subfolders to a listing. */
+function collectPage(page: ListObjectsV2CommandOutput, into: Listing): void {
+  for (const object of page.Contents ?? []) {
+    if (object.Key !== undefined) into.objects.push({ key: object.Key, lastModified: object.LastModified });
+  }
+  for (const folder of page.CommonPrefixes ?? []) {
+    if (folder.Prefix !== undefined) into.folderPrefixes.push(folder.Prefix);
+  }
+}
+
 /** Every object under a prefix, or, `delimited`, one folder level: the
  *  objects directly in it and its subfolders. */
 async function listPrefix(
   client: S3Client, bucket: string, prefix: string, delimited: boolean,
-): Promise<{ objects: ListedObject[]; folderPrefixes: string[]; complete: boolean }> {
+): Promise<Listing & { complete: boolean }> {
   const { ListObjectsV2Command } = await import('@aws-sdk/client-s3');
-  const objects: ListedObject[] = [];
-  const folderPrefixes: string[] = [];
+  const listing: Listing = { objects: [], folderPrefixes: [] };
   let continuationToken: string | undefined;
   for (let page = 0; page < MAX_LISTING_PAGES; page++) {
     const response = await client.send(new ListObjectsV2Command({
@@ -75,16 +89,40 @@ async function listPrefix(
       ...(delimited ? { Delimiter: '/' } : {}),
       ContinuationToken: continuationToken,
     }));
-    for (const object of response.Contents ?? []) {
-      if (object.Key !== undefined) objects.push({ key: object.Key, lastModified: object.LastModified });
-    }
-    for (const folder of response.CommonPrefixes ?? []) {
-      if (folder.Prefix !== undefined) folderPrefixes.push(folder.Prefix);
-    }
+    collectPage(response, listing);
     continuationToken = response.IsTruncated === true ? response.NextContinuationToken : undefined;
-    if (continuationToken === undefined) return { objects, folderPrefixes, complete: true };
+    if (continuationToken === undefined) return { ...listing, complete: true };
   }
-  return { objects, folderPrefixes, complete: false };
+  return { ...listing, complete: false };
+}
+
+/** The export's type and missing columns, read off the columns manifest in
+ *  its metadata/ folder. */
+async function detectReportType(
+  client: S3Client, bucket: string, exportPrefix: string,
+): Promise<{ detectedType: DetectedReportType; missingColumns: string[] }> {
+  try {
+    const { ListObjectsV2Command, GetObjectCommand } = await import('@aws-sdk/client-s3');
+    const metaList = await client.send(new ListObjectsV2Command({
+      Bucket: bucket,
+      Prefix: `${exportPrefix}metadata/`,
+      MaxKeys: 10,
+    }));
+    const jsonKeys = (metaList.Contents ?? [])
+      .map(c => c.Key)
+      .filter((k): k is string => k !== undefined && k.endsWith('.json'));
+    const manifestKey = selectManifestKey(jsonKeys);
+    if (manifestKey === undefined) return { detectedType: 'unknown', missingColumns: [] };
+    const manifestResponse = await client.send(new GetObjectCommand({ Bucket: bucket, Key: manifestKey }));
+    const body = await manifestResponse.Body?.transformToString();
+    if (body === undefined) return { detectedType: 'unknown', missingColumns: [] };
+    return classifyManifestColumns(parseManifestColumnNames(body));
+  } catch (err: unknown) {
+    // A manifest read that fails (no s3:GetObject on metadata/, a transient
+    // 5xx) degrades the type detection, never the folder listing.
+    logger.info('setup:browse-s3 manifest detection failed', { error: err instanceof Error ? err.message : String(err) });
+    return { detectedType: 'unknown', missingColumns: [] };
+  }
 }
 
 /** The export's File versioning, read off its newest partition folder: the
@@ -117,7 +155,7 @@ async function detectFileVersioning(client: S3Client, bucket: string, exportPref
 
 export async function browseS3(params: { profile: string; bucket: string; prefix: string }): Promise<S3BrowseResult> {
   try {
-    const { S3Client, ListObjectsV2Command, GetObjectCommand } = await import('@aws-sdk/client-s3');
+    const { S3Client, ListObjectsV2Command } = await import('@aws-sdk/client-s3');
     const client = new S3Client(await s3ClientConfig(params.profile));
 
     const response = await client.send(new ListObjectsV2Command({
@@ -138,40 +176,12 @@ export async function browseS3(params: { profile: string; bucket: string; prefix
 
     const isBillingExport = prefixes.includes('data') && prefixes.includes('metadata');
 
-    let detectedType: DetectedReportType = 'unknown';
-    let missingColumns: string[] = [];
-    let fileVersioning: ExportFileVersioning = 'unknown';
-
-    if (isBillingExport) {
-      try {
-        const metaList = await client.send(new ListObjectsV2Command({
-          Bucket: params.bucket,
-          Prefix: `${params.prefix}metadata/`,
-          MaxKeys: 10,
-        }));
-        const jsonKeys = (metaList.Contents ?? [])
-          .map(c => c.Key)
-          .filter((k): k is string => k !== undefined && k.endsWith('.json'));
-        const manifestKey = selectManifestKey(jsonKeys);
-        if (manifestKey !== undefined) {
-          const manifestResponse = await client.send(new GetObjectCommand({ Bucket: params.bucket, Key: manifestKey }));
-          const body = await manifestResponse.Body?.transformToString();
-          if (body !== undefined) {
-            const columnNames = parseManifestColumnNames(body);
-            const classification = classifyManifestColumns(columnNames);
-            detectedType = classification.detectedType;
-            missingColumns = classification.missingColumns;
-          }
-        }
-      } catch (err: unknown) {
-        // A manifest read that fails (no s3:GetObject on metadata/, a transient
-        // 5xx) degrades the type detection, never the folder listing above.
-        logger.info('setup:browse-s3 manifest detection failed', { error: err instanceof Error ? err.message : String(err) });
-      }
-      // A CUR 2.0 export is refused already, and its uppercase folders never match.
-      if (detectedType !== 'cur-legacy') fileVersioning = await detectFileVersioning(client, params.bucket, params.prefix);
+    if (!isBillingExport) {
+      return { prefixes, isBillingExport, detectedType: 'unknown', missingColumns: [], fileVersioning: 'unknown' };
     }
-
+    const { detectedType, missingColumns } = await detectReportType(client, params.bucket, params.prefix);
+    // A CUR 2.0 export is refused already, and its uppercase folders never match.
+    const fileVersioning = detectedType === 'cur-legacy' ? 'unknown' : await detectFileVersioning(client, params.bucket, params.prefix);
     return { prefixes, isBillingExport, detectedType, missingColumns, fileVersioning };
   } catch (err: unknown) {
     // Surface the failure instead of swallowing it into an empty result. An
