@@ -2493,7 +2493,7 @@
             <li><strong>focus_daily/</strong> &mdash; expire current versions after <strong>400 days</strong> (daily retention defaults to 365; a month's files keep being rewritten until its billing finalises, so give it a month of margin).</li>
             <li><strong>focus_hourly/</strong> &mdash; <strong>60 days</strong> (hourly retention defaults to 30, and hourly is the large export).</li>
             <li><strong>cost_optimization/</strong> &mdash; <strong>100 days</strong> (one snapshot per day, 90-day retention).</li>
-            <li>On each rule, also delete <em>incomplete multipart uploads</em> after 7 days and, if versioning is on, <em>noncurrent versions</em> after 1 day &mdash; every overwrite turns the previous file into a noncurrent version that expiry never touches.</li>
+            <li>On each rule, also delete <em>incomplete multipart uploads</em> after 7 days and, if S3 bucket versioning is on, <em>noncurrent versions</em> after 1 day &mdash; every overwrite turns the previous file into a noncurrent version that expiry never touches.</li>
           </ul>
           <div class="step-note">Keep each expiry at or above that tier's <strong>retentionDays</strong>. Expiry never deletes what CostGoblin has already downloaded, but a fresh install or a teammate can only fetch what the bucket still holds.</div>
         </div>
@@ -2514,14 +2514,15 @@ Time granularity:    <span class="code-file">Daily</span>  <span class="code-com
 
 <span class="code-comment">Data export delivery options</span>
 <span class="code-comment">─────────────────────────────────────</span>
-Compression &amp; format:   <span class="code-file">Parquet</span>  <span class="code-comment">(not gzip/CSV)</span>
-Data export overwriting: <span class="code-file">Overwrite existing data export file</span>
+Compression &amp; format: <span class="code-file">Parquet</span>  <span class="code-comment">(not gzip/CSV)</span>
+File versioning:      <span class="code-file">Overwrite existing data export file</span>  <span class="code-comment">(required)</span>
 
 <span class="code-comment">Data export storage settings</span>
 <span class="code-comment">─────────────────────────────────────</span>
 S3 bucket:       <span class="code-dir">your-company-billing</span>
 S3 path prefix:  <span class="code-dir">focus_daily</span>  <span class="code-comment">(or focus_hourly for the optional hourly export)</span>
           </div>
+          <div class="step-callout" style="margin-bottom: 16px;"><strong>Keep File versioning on Overwrite:</strong> with <em>Create new data export file</em>, AWS writes every refresh into its own timestamped subfolder, which CostGoblin doesn't read, so nothing syncs (the setup wizard refuses such an export). If an existing export is on <em>Create new</em>, open it in Data Exports, choose <strong>Edit</strong> and switch it to Overwrite. Months delivered before the switch stay in their timestamped folders and are skipped.</div>
           <p>Under <strong>Column selection</strong>, keep <strong>all columns</strong> enabled. These are the ones CostGoblin requires:</p>
           <div class="code-block">
 <span class="code-comment"># Identity &amp; time</span>

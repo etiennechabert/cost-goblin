@@ -1,5 +1,7 @@
+import type { S3Client } from '@aws-sdk/client-s3';
 import { logger, parseS3Path, s3ClientConfig } from '@costgoblin/core';
-import type { CostApi } from '@costgoblin/core';
+import type { CostApi, ExportFileVersioning } from '@costgoblin/core';
+import { classifyFileVersioning, newestPartitionFolder } from './setup-file-versioning.js';
 import { classifyManifestColumns, parseManifestColumnNames, selectManifestKey } from './setup-manifest.js';
 import type { DetectedReportType } from './setup-manifest.js';
 
@@ -50,6 +52,53 @@ export async function listS3Buckets(profile: string): Promise<{ buckets: { name:
   }
 }
 
+/** A delimited listing's pages are capped. An export holds one partition per
+ *  month (or per day, for cost optimization), which never comes near it; the
+ *  cap bounds a wizard pointed at some huge, unrelated prefix. */
+const MAX_LISTING_PAGES = 10;
+
+/** One folder level: the objects directly in it, and its subfolders. */
+async function listFolderLevel(client: S3Client, bucket: string, prefix: string): Promise<{ fileKeys: string[]; folderPrefixes: string[] }> {
+  const { ListObjectsV2Command } = await import('@aws-sdk/client-s3');
+  const fileKeys: string[] = [];
+  const folderPrefixes: string[] = [];
+  let continuationToken: string | undefined;
+  for (let page = 0; page < MAX_LISTING_PAGES; page++) {
+    const response = await client.send(new ListObjectsV2Command({
+      Bucket: bucket,
+      Prefix: prefix,
+      Delimiter: '/',
+      ContinuationToken: continuationToken,
+    }));
+    for (const object of response.Contents ?? []) {
+      if (object.Key !== undefined) fileKeys.push(object.Key);
+    }
+    for (const folder of response.CommonPrefixes ?? []) {
+      if (folder.Prefix !== undefined) folderPrefixes.push(folder.Prefix);
+    }
+    continuationToken = response.IsTruncated === true ? response.NextContinuationToken : undefined;
+    if (continuationToken === undefined) break;
+  }
+  return { fileKeys, folderPrefixes };
+}
+
+/** The export's File versioning, read off its newest partition folder: the
+ *  newest month shows the setting AWS delivers with today. A "Create new"
+ *  export syncs nothing, so the wizard must catch it here. */
+async function detectFileVersioning(client: S3Client, bucket: string, exportPrefix: string): Promise<ExportFileVersioning> {
+  try {
+    const dataLevel = await listFolderLevel(client, bucket, `${exportPrefix}data/`);
+    const newest = newestPartitionFolder(dataLevel.folderPrefixes);
+    if (newest === undefined) return 'unknown';
+    return classifyFileVersioning(await listFolderLevel(client, bucket, newest));
+  } catch (err: unknown) {
+    // Like the manifest read: a probe that fails degrades this one verdict,
+    // never the folder listing or the type detection.
+    logger.info('setup:browse-s3 file versioning probe failed', { error: err instanceof Error ? err.message : String(err) });
+    return 'unknown';
+  }
+}
+
 export async function browseS3(params: { profile: string; bucket: string; prefix: string }): Promise<S3BrowseResult> {
   try {
     const { S3Client, ListObjectsV2Command, GetObjectCommand } = await import('@aws-sdk/client-s3');
@@ -75,6 +124,7 @@ export async function browseS3(params: { profile: string; bucket: string; prefix
 
     let detectedType: DetectedReportType = 'unknown';
     let missingColumns: string[] = [];
+    let fileVersioning: ExportFileVersioning = 'unknown';
 
     if (isBillingExport) {
       try {
@@ -102,9 +152,10 @@ export async function browseS3(params: { profile: string; bucket: string; prefix
         // 5xx) degrades the type detection, never the folder listing above.
         logger.info('setup:browse-s3 manifest detection failed', { error: err instanceof Error ? err.message : String(err) });
       }
+      fileVersioning = await detectFileVersioning(client, params.bucket, params.prefix);
     }
 
-    return { prefixes, isBillingExport, detectedType, missingColumns };
+    return { prefixes, isBillingExport, detectedType, missingColumns, fileVersioning };
   } catch (err: unknown) {
     // Surface the failure instead of swallowing it into an empty result. An
     // expired SSO token or an s3:ListBucket AccessDenied while browsing used
@@ -114,6 +165,6 @@ export async function browseS3(params: { profile: string; bucket: string; prefix
     // browse leg (the dead end #539/#542 removed everywhere else).
     const message = err instanceof Error ? err.message : String(err);
     logger.info('setup:browse-s3 failed', { error: message });
-    return { prefixes: [], isBillingExport: false, detectedType: 'unknown', missingColumns: [], error: message };
+    return { prefixes: [], isBillingExport: false, detectedType: 'unknown', missingColumns: [], fileVersioning: 'unknown', error: message };
   }
 }

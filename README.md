@@ -87,7 +87,9 @@ CostGoblin reads the **FOCUS 1.2** table via AWS Data Exports. To create one:
 | Column selection | **All columns** |
 | Format | Parquet |
 | Compression | Snappy |
-| Overwrite | Overwrite existing data export file |
+| File versioning | **Overwrite existing data export file** |
+
+> ⚠️ **File versioning must stay on _Overwrite existing data export file_.** With *Create new data export file*, AWS writes every refresh into its own `billing_period=YYYY-MM/<timestamp>-<execution-id>/` subfolder. CostGoblin only reads Parquet sitting directly in `billing_period=YYYY-MM/`, so it finds nothing to sync, and the setup wizard refuses such an export. If an existing export is on *Create new*, open it in **Data Exports → Edit** and switch it to Overwrite. Months delivered before the switch stay in their timestamped folders, which CostGoblin skips.
 
 #### Keep the bucket from growing forever
 
@@ -99,7 +101,7 @@ The export never deletes anything: every month adds a billing period that stays 
 | `focus_hourly/` | **60 days** | Hourly `retentionDays` defaults to 30, and hourly is the large export, so this is where the rule actually saves money. |
 | `cost_optimization/` | **100 days** | One snapshot folder per day; `retentionDays` defaults to 90. |
 
-On each rule also tick **Delete incomplete multipart uploads** (7 days), and, if the bucket has versioning enabled, **Permanently delete noncurrent versions** (1 day): every overwrite turns the previous file into a noncurrent version that expiry never touches.
+On each rule also tick **Delete incomplete multipart uploads** (7 days), and, if the bucket has S3 versioning enabled (unrelated to the export's *File versioning* setting), **Permanently delete noncurrent versions** (1 day): every overwrite turns the previous file into a noncurrent version that expiry never touches.
 
 **Keep each expiry at or above that tier's `retentionDays`** (raise both together). Expiry never deletes anything CostGoblin has already downloaded — a period that disappears from the bucket stays on disk until it ages out of retention — but a fresh install or a teammate can only download what the bucket still holds.
 

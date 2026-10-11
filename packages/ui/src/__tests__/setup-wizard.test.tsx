@@ -99,7 +99,7 @@ describe('SetupWizard', () => {
     // token must now show the message and one-click re-auth.
     const { api, user } = renderWizard();
     api.s3BrowseResult = {
-      prefixes: [], isBillingExport: false, detectedType: 'unknown', missingColumns: [],
+      prefixes: [], isBillingExport: false, detectedType: 'unknown', missingColumns: [], fileVersioning: 'unknown',
       error: 'Your AWS SSO session has expired. Run `aws sso login` and retry.',
     };
     await user.click(screen.getByLabelText('Set up from AWS'));
@@ -115,7 +115,7 @@ describe('SetupWizard', () => {
   it('offers a plain Retry when an AWS browse failure is not a credential error', async () => {
     const { api, user } = renderWizard();
     api.s3BrowseResult = {
-      prefixes: [], isBillingExport: false, detectedType: 'unknown', missingColumns: [],
+      prefixes: [], isBillingExport: false, detectedType: 'unknown', missingColumns: [], fileVersioning: 'unknown',
       error: 'AccessDenied: not authorized to perform s3:ListBucket',
     };
     await user.click(screen.getByLabelText('Set up from AWS'));

@@ -177,6 +177,12 @@ export interface GcpProject {
   readonly name: string;
 }
 
+/** An AWS Data Export's File versioning setting, as its S3 layout shows it.
+ *  `overwrite` delivers into the partition folder itself; `create-new`
+ *  (CREATE_NEW_REPORT) delivers each refresh into its own folder below it,
+ *  where sync never reads. `unknown`: no partition yet, or it couldn't be listed. */
+export type ExportFileVersioning = 'overwrite' | 'create-new' | 'unknown';
+
 /** One folder level of a GCS bucket, as the setup wizard sees it. */
 export interface GcsBrowseResult {
   /** Immediate child folder names, relative to the browsed prefix. */
@@ -320,7 +326,7 @@ export interface CostApi {
   testConnection(params: { profile: string; bucket: string }): Promise<{ ok: boolean; error?: string | undefined }>;
   listAwsProfiles(): Promise<string[]>;
   listS3Buckets(profile: string): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }>;
-  browseS3(params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[]; error?: string | undefined }>;
+  browseS3(params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[]; fileVersioning: ExportFileVersioning; error?: string | undefined }>;
   /** Projects visible to the gcloud CLI's active account. Backed by
    *  `gcloud projects list`, not an SDK call: the CLI is already a hard
    *  requirement of the GCP download path, so this adds no dependency where

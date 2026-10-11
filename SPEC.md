@@ -230,7 +230,7 @@ Data Exports → Create export), use these settings:
 | Column selection | `All columns` (recommended) |
 | Format | `Parquet` |
 | Compression | `Snappy` (default) |
-| Overwrite | `Overwrite existing data export file` |
+| File versioning | `Overwrite existing data export file` (required) |
 
 **Required columns** (the subset the app actually reads; the setup wizard
 rejects a candidate export missing any of them):
@@ -273,7 +273,11 @@ s3://bucket/prefix/<export-name>/
 
 The export runs with `OVERWRITE_REPORT` semantics — AWS rewrites the same
 filenames on every refresh (several times a day for the current month), so
-sync change-detection keys on per-file ETags, not filenames. Granularity
+sync change-detection keys on per-file ETags, not filenames. `CREATE_NEW_REPORT`
+(console: *File versioning → Create new data export file*) is unsupported: it
+delivers each refresh under `data/billing_period=YYYY-MM/<timestamp>-<execution-id>/`,
+and `parsePartition` only accepts Parquet whose parent folder is the
+`billing_period=` partition, so every file is skipped and nothing syncs. Granularity
 semantics (verified against a live export): the hourly export delivers clean
 1-hour charge periods; the daily export merges identical-dimension rows
 per day with `ChargePeriodStart` = the first usage hour (NOT day-aligned);
@@ -574,7 +578,7 @@ First-run experience that guides the user through initial configuration.
 **Flow:**
 1. **AWS profile selection** — list profiles from `~/.aws/credentials`. User picks one. The welcome step also offers "import a configuration file" for users handed a bundle by a teammate (see Configuration Sharing).
 2. **S3 bucket discovery** — list buckets accessible to the selected profile. User picks the billing-export bucket. If the bucket contains a published team configuration (`costgoblin/org-config.yaml`), the wizard offers one-click setup from it instead of manual browsing.
-3. **Prefix browsing** — browse the bucket's prefixes. The app inspects each prefix and detects whether it looks like a FOCUS 1.2 Data Export (presence of `data/` + `metadata/`, required columns in the export manifest). Detected type is shown: `daily`, `hourly`, `cost-optimization`, or `unknown`.
+3. **Prefix browsing** — browse the bucket's prefixes. The app inspects each prefix and detects whether it looks like a FOCUS 1.2 Data Export (presence of `data/` + `metadata/`, required columns in the export manifest). Detected type is shown: `daily`, `hourly`, `cost-optimization`, or `unknown`. It also lists the newest partition folder: if that holds only per-refresh subfolders (File versioning = Create new), the export is refused with the fix, since sync would read nothing from it.
 4. **Tier selection** — user assigns each detected prefix to a tier (daily required; hourly and cost-optimization optional).
 5. **Tag discovery (optional)** — sample a Parquet file to list available tag keys with their coverage. User picks which to track and assigns labels.
 6. **Initial sync** — full download with progress bar. Periods download in parallel within a configurable limit.

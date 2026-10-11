@@ -7,6 +7,8 @@ import {
   extractPeriod,
   extractPeriodPrefix,
   groupByPeriod,
+  isCreateNewDeliveryKey,
+  isPartitionFolderName,
   listLocalMonths,
   parseAwsCompletedBytes,
   parseEtagsJson,
@@ -216,6 +218,53 @@ describe('parsePartition', () => {
   ])('rejects daily key %s', (key) => {
     expect(parsePartition(key, 'daily')).toBeNull();
     expect(parsePartition(key, 'hourly')).toBeNull();
+  });
+});
+
+// AWS documents a "Create new data export file" delivery as
+// `data/<partition>/<timestamp>-<execution-id>/<file>`. The folder's exact
+// spelling isn't documented, so only its position is relied on.
+describe('isCreateNewDeliveryKey', () => {
+  it.each(['daily', 'hourly'] as const)('recognises a %s refresh delivered into its own folder below billing_period=', (tier) => {
+    const key = 'focus_daily/focus-daily/data/billing_period=2026-09/20260915T040512Z-3f2a9c1e/focus-daily-00001.snappy.parquet';
+    expect(isCreateNewDeliveryKey(key, tier)).toBe(true);
+    // The key sync can never read: the guard exists because of this.
+    expect(parsePartition(key, tier)).toBeNull();
+  });
+
+  it('recognises a cost-optimization refresh delivered into its own folder below date=', () => {
+    expect(isCreateNewDeliveryKey('coh/data/date=2026-09-15/20260915T040512Z-3f2a9c1e/part-0.snappy.parquet', 'cost-optimization')).toBe(true);
+  });
+
+  it.each([
+    // the Overwrite layout sync reads
+    ['daily', 'focus/data/billing_period=2026-09/focus-00001.snappy.parquet'],
+    ['cost-optimization', 'coh/data/date=2026-09-15/part-0.snappy.parquet'],
+    // two levels below the partition: not the documented shape
+    ['daily', 'focus/data/billing_period=2026-09/a/b/x.parquet'],
+    // a folder below another tier's partition
+    ['daily', 'coh/data/date=2026-09-15/run-1/part-0.parquet'],
+    ['cost-optimization', 'focus/data/billing_period=2026-09/run-1/x.parquet'],
+    // CUR-era uppercase stays invisible here too
+    ['daily', 'cur/data/BILLING_PERIOD=2026-09/run-1/x.parquet'],
+    // a nested partition folder is a partition, not a delivery folder
+    ['daily', 'focus/billing_period=2026-09/billing_period=2026-09/x.parquet'],
+    // no file name
+    ['daily', 'focus/data/billing_period=2026-09/run-1/'],
+    ['daily', 'focus/data/billing_period=2026-09//x.parquet'],
+    ['daily', 'run-1/x.parquet'],
+  ] as const)('rejects %s key %s', (tier, key) => {
+    expect(isCreateNewDeliveryKey(key, tier)).toBe(false);
+  });
+});
+
+describe('isPartitionFolderName', () => {
+  it.each(['billing_period=2026-09', 'date=2026-09-15'])('accepts %s', (name) => {
+    expect(isPartitionFolderName(name)).toBe(true);
+  });
+
+  it.each(['BILLING_PERIOD=2026-09', 'billing_period=2026-9', 'date=2026-09', 'date=2026-09-15-v2', 'data', ''])('rejects %s', (name) => {
+    expect(isPartitionFolderName(name)).toBe(false);
   });
 });
 

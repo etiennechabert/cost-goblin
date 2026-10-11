@@ -7,7 +7,7 @@ import { logger } from '../logger/logger.js';
 import type { DataTier } from '../types/api.js';
 import type { ProviderName } from '../types/branded.js';
 import { providerRawDir } from './provider-paths.js';
-import { ifExists, LocalSyncStateError, parsePartition, partitionFolderLabel, readEtags } from './sync-utils.js';
+import { extractPeriod, ifExists, isCreateNewDeliveryKey, LocalSyncStateError, parsePartition, partitionFolderLabel, readEtags } from './sync-utils.js';
 import { getRawDirPrefix } from './tiers.js';
 import { readTierLastSync } from './sync-timestamps.js';
 
@@ -154,12 +154,14 @@ export async function getDataInventory(
 
   const periodMap = new Map<string, ManifestFileEntry[]>();
   let skippedKeys = 0;
+  const createNewKeys: string[] = [];
   for (const file of remoteFiles) {
     // The same parser the sync arms use, so a period listed here is always the
     // one its etags are saved under — otherwise it would read 'stale' forever.
     const partition = parsePartition(file.key, tier);
     if (partition === null) {
       skippedKeys++;
+      if (isCreateNewDeliveryKey(file.key, tier)) createNewKeys.push(file.key);
       continue;
     }
     const { period } = partition;
@@ -173,7 +175,17 @@ export async function getDataInventory(
   // Silently dropping every key is indistinguishable from an empty bucket,
   // and it is the failure mode of an export that writes uppercase
   // `BILLING_PERIOD=` (CUR-era) or flat, unpartitioned keys. Say so once.
-  if (skippedKeys > 0 && periodMap.size === 0) {
+  // A create-new export gets its own message, even when other months sync:
+  // one switched to Overwrite keeps its earlier months in per-refresh folders.
+  if (createNewKeys.length > 0) {
+    const months = [...new Set(createNewKeys.map(extractPeriod))].sort((a, b) => a.localeCompare(b)).join(', ');
+    logger.warn(
+      `Skipping ${String(createNewKeys.length)} Parquet file(s) under ${bucketPath} (${months}) delivered into per-refresh folders `
+      + 'below their partition folder: the export\'s File versioning is "Create new data export file". '
+      + 'Set it to "Overwrite existing data export file" (Data Exports → Edit)',
+      { provider: String(provider), tier },
+    );
+  } else if (skippedKeys > 0 && periodMap.size === 0) {
     logger.warn(
       `Listed ${String(skippedKeys)} Parquet file(s) under ${bucketPath} but none sit directly in a ${partitionFolderLabel(tier)} folder — nothing to sync`,
       { provider: String(provider), tier },

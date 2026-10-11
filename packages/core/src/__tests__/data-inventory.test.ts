@@ -1,7 +1,8 @@
 import { mkdir, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { logger } from '../logger/logger.js';
 import { getDataInventory } from '../sync/data-inventory.js';
 import type { ObjectStoreHandle, ProviderAuth } from '../sync/object-store.js';
 import type { ManifestFileEntry } from '../sync/manifest.js';
@@ -566,6 +567,57 @@ describe('getDataInventory with mocked S3', () => {
 
     expect(inventory.periods).toEqual([]);
     expect(inventory.totalRemoteSize).toBe(2000);
+  });
+
+  describe('an export whose File versioning is "Create new data export file"', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    // AWS's documented create-new layout: one folder per refresh, below the partition.
+    const createNew = (period: string, run: string): ManifestFileEntry =>
+      file(`focus/data/billing_period=${period}/${run}/focus-00001.snappy.parquet`, run, 1000);
+
+    it('lists no period from per-refresh folders, and logs that cause rather than the generic one', async () => {
+      const warn = vi.spyOn(logger, 'warn');
+      const mock = createMockObjectStore([
+        createNew('2026-09', '20260914T030000Z-a1'),
+        createNew('2026-09', '20260915T030000Z-b2'),
+      ]);
+
+      const inventory = await getDataInventory('s3://test-bucket/focus/', AWS_AUTH, tempDir, provider, 'daily', mock);
+
+      expect(inventory.periods).toEqual([]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]?.[0]).toContain('2 Parquet file(s)');
+      expect(warn.mock.calls[0]?.[0]).toContain('"Create new data export file"');
+      expect(warn.mock.calls[0]?.[0]).toContain('"Overwrite existing data export file"');
+    });
+
+    it('keeps the months delivered in place and names the skipped ones (an export switched to Overwrite)', async () => {
+      const warn = vi.spyOn(logger, 'warn');
+      const mock = createMockObjectStore([
+        createNew('2026-08', '20260831T030000Z-a1'),
+        file('focus/data/billing_period=2026-09/focus-00001.snappy.parquet', 'h', 1000),
+      ]);
+
+      const inventory = await getDataInventory('s3://test-bucket/focus/', AWS_AUTH, tempDir, provider, 'daily', mock);
+
+      expect(inventory.periods.map(p => p.period)).toEqual(['2026-09']);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]?.[0]).toContain('1 Parquet file(s)');
+      expect(warn.mock.calls[0]?.[0]).toContain('2026-08');
+    });
+
+    it('still gives the generic warning when the skipped keys are some other layout', async () => {
+      const warn = vi.spyOn(logger, 'warn');
+      const mock = createMockObjectStore([file('cur/data/BILLING_PERIOD=2026-01/x.parquet')]);
+
+      await getDataInventory('s3://test-bucket/cur/', AWS_AUTH, tempDir, provider, 'daily', mock);
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]?.[0]).toContain('nothing to sync');
+    });
   });
 
   it('creates no period for a daily key partitioned by usage_date= or date=', async () => {

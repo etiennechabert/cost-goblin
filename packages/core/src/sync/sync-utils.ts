@@ -154,6 +154,30 @@ export function parsePartition(key: string, tier: ExpectedDataType): Partition |
   return { kind: 'billing-period', prefix, period };
 }
 
+/** A partition folder of either tier family: `billing_period=YYYY-MM` or
+ *  `date=YYYY-MM-DD`, exactly (the folders `parsePartition` accepts). */
+export function isPartitionFolderName(name: string): boolean {
+  return BILLING_PERIOD_SEGMENT.test(name) || DATE_SEGMENT.test(name);
+}
+
+/**
+ * Whether a key was delivered by an AWS Data Export whose File versioning is
+ * "Create new data export file" (`CREATE_NEW_REPORT`). That mode writes every
+ * refresh into its own folder below the partition —
+ * `data/billing_period=YYYY-MM/<timestamp>-<execution-id>/<file>` — so
+ * `parsePartition` rejects the key and sync never reads it. Only the folder's
+ * position is checked: AWS does not document its exact spelling.
+ */
+export function isCreateNewDeliveryKey(key: string, tier: ExpectedDataType): boolean {
+  const segments = key.split('/');
+  const fileName = segments.at(-1);
+  const deliveryFolder = segments.at(-2);
+  const partitionFolder = segments.at(-3);
+  if (fileName === undefined || fileName.length === 0 || deliveryFolder === undefined || deliveryFolder.length === 0 || partitionFolder === undefined) return false;
+  const partition = tier === 'cost-optimization' ? DATE_SEGMENT : BILLING_PERIOD_SEGMENT;
+  return partition.test(partitionFolder) && !partition.test(deliveryFolder);
+}
+
 export function groupByPeriod(files: readonly ManifestFileEntry[]): Map<string, ManifestFileEntry[]> {
   const groups = new Map<string, ManifestFileEntry[]>();
   for (const file of files) {

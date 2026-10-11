@@ -155,6 +155,7 @@ describe('SetupWizard error states', () => {
       isBillingExport: true,
       detectedType: 'daily',
       missingColumns: ['ConsumedQuantity', 'ListCost'],
+      fileVersioning: 'overwrite',
     });
 
     await user.click(screen.getByLabelText('Set up from AWS'));
@@ -176,6 +177,7 @@ describe('SetupWizard error states', () => {
       isBillingExport: true,
       detectedType: 'cur-legacy',
       missingColumns: [],
+      fileVersioning: 'overwrite',
     });
 
     await user.click(screen.getByLabelText('Set up from AWS'));
@@ -191,6 +193,32 @@ describe('SetupWizard error states', () => {
     expect(confirmButton?.disabled).toBe(true);
   });
 
+  it('blocks an export whose File versioning is "Create new", and says how to fix it', async () => {
+    const { api, user } = renderWizard();
+    vi.spyOn(api, 'browseS3').mockResolvedValue({
+      prefixes: ['data', 'metadata'],
+      isBillingExport: true,
+      detectedType: 'daily',
+      missingColumns: [],
+      fileVersioning: 'create-new',
+    });
+
+    await user.click(screen.getByLabelText('Set up from AWS'));
+    await waitFor(() => { expect(screen.getByText('default')).toBeDefined(); });
+    await user.click(screen.getByText('default'));
+    await waitFor(() => { expect(screen.getByText('my-cur-bucket')).toBeDefined(); });
+    await user.click(screen.getByText('my-cur-bucket'));
+
+    await waitFor(() => {
+      expect(screen.getByText('This export creates a new file on every refresh')).toBeDefined();
+    });
+    expect(screen.getByText(/Overwrite existing data export file/)).toBeDefined();
+    // Not also announced as a usable export.
+    expect(screen.queryByText('FOCUS billing export detected')).toBeNull();
+    const confirmButton = screen.getByText('Export must overwrite its files').closest('button');
+    expect(confirmButton?.disabled).toBe(true);
+  });
+
   it('disables confirm button when folder is not a billing export', async () => {
     const { api, user } = renderWizard();
     vi.spyOn(api, 'browseS3').mockResolvedValue({
@@ -198,6 +226,7 @@ describe('SetupWizard error states', () => {
       isBillingExport: false,
       detectedType: 'unknown',
       missingColumns: [],
+      fileVersioning: 'unknown',
     });
 
     await user.click(screen.getByLabelText('Set up from AWS'));
