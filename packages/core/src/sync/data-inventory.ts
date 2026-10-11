@@ -161,7 +161,9 @@ export async function getDataInventory(
     const partition = parsePartition(file.key, tier);
     if (partition === null) {
       skippedKeys++;
-      if (isCreateNewDeliveryKey(file.key, tier)) createNewKeys.push(file.key);
+      // Only FOCUS exports can be switched to Overwrite: AWS doesn't offer it
+      // for Cost Optimization Hub exports, so their keys get the generic warning.
+      if (tier !== 'cost-optimization' && isCreateNewDeliveryKey(file.key, tier)) createNewKeys.push(file.key);
       continue;
     }
     const { period } = partition;

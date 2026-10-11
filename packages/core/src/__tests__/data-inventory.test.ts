@@ -624,6 +624,17 @@ describe('getDataInventory with mocked S3', () => {
       expect(warn.mock.calls[1]?.[0]).toContain('nothing to sync');
     });
 
+    it('never tells a Cost Optimization Hub export to switch to Overwrite, which AWS does not offer for it', async () => {
+      const warn = vi.spyOn(logger, 'warn');
+      const mock = createMockObjectStore([file('coh/data/date=2026-09-15/20260915T030000Z-b2/part-0.snappy.parquet')]);
+
+      await getDataInventory('s3://test-bucket/coh/', AWS_AUTH, tempDir, provider, 'cost-optimization', mock);
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]?.[0]).toContain('nothing to sync');
+      expect(warn.mock.calls[0]?.[0]).not.toContain('Overwrite');
+    });
+
     it('still gives the generic warning when the skipped keys are some other layout', async () => {
       const warn = vi.spyOn(logger, 'warn');
       const mock = createMockObjectStore([file('cur/data/BILLING_PERIOD=2026-01/x.parquet')]);

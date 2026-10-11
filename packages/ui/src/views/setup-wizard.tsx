@@ -1520,10 +1520,13 @@ function BucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
   );
 }
 
-/** An export whose File versioning is "Create new": sync reads Parquet only
- *  directly in a partition folder, and this layout puts none there. */
+/** A FOCUS export whose File versioning is "Create new": sync reads Parquet
+ *  only directly in a partition folder, and this layout puts none there. A
+ *  Cost Optimization Hub export is never blocked on it: AWS doesn't offer
+ *  Overwrite for that export, so the fix would be impossible. */
 function createsNewFiles(state: Extract<WizardStep, { step: 'browse' }>): boolean {
-  return state.isBillingExport && state.fileVersioning === 'create-new';
+  return state.isBillingExport && state.fileVersioning === 'create-new'
+    && state.source !== 'costOptimization' && state.detectedType !== 'cost-optimization';
 }
 
 /** Why the browse step can't use this folder even though it is an export,

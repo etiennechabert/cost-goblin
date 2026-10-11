@@ -219,6 +219,24 @@ describe('SetupWizard error states', () => {
     expect(confirmButton?.disabled).toBe(true);
   });
 
+  it('does not block a Cost Optimization Hub export on File versioning, which AWS never overwrites', async () => {
+    const { api, user } = renderWizard({ source: 'costOptimization', profile: 'default' });
+    vi.spyOn(api, 'browseS3').mockResolvedValue({
+      prefixes: ['data', 'metadata'],
+      isBillingExport: true,
+      detectedType: 'cost-optimization',
+      missingColumns: [],
+      fileVersioning: 'create-new',
+    });
+
+    await waitFor(() => { expect(screen.getByText('my-cur-bucket')).toBeDefined(); });
+    await user.click(screen.getByText('my-cur-bucket'));
+
+    await waitFor(() => { expect(screen.getByText('Cost Optimization report detected')).toBeDefined(); });
+    expect(screen.queryByText('This export creates a new file on every refresh')).toBeNull();
+    expect(screen.getByText('Use this location').closest('button')?.disabled).toBe(false);
+  });
+
   it('disables confirm button when folder is not a billing export', async () => {
     const { api, user } = renderWizard();
     vi.spyOn(api, 'browseS3').mockResolvedValue({

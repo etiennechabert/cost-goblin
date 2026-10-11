@@ -180,8 +180,10 @@ export async function browseS3(params: { profile: string; bucket: string; prefix
       return { prefixes, isBillingExport, detectedType: 'unknown', missingColumns: [], fileVersioning: 'unknown' };
     }
     const { detectedType, missingColumns } = await detectReportType(client, params.bucket, params.prefix);
-    // A CUR 2.0 export is refused already, and its uppercase folders never match.
-    const fileVersioning = detectedType === 'cur-legacy' ? 'unknown' : await detectFileVersioning(client, params.bucket, params.prefix);
+    // Only FOCUS exports have the setting to check: a CUR 2.0 export is refused
+    // already, and AWS doesn't offer Overwrite for Cost Optimization Hub exports.
+    const hasFileVersioning = detectedType !== 'cur-legacy' && detectedType !== 'cost-optimization';
+    const fileVersioning = hasFileVersioning ? await detectFileVersioning(client, params.bucket, params.prefix) : 'unknown';
     return { prefixes, isBillingExport, detectedType, missingColumns, fileVersioning };
   } catch (err: unknown) {
     // Surface the failure instead of swallowing it into an empty result. An

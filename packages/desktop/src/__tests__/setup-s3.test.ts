@@ -182,6 +182,18 @@ describe('browseS3', () => {
     expect(mockSend).toHaveBeenCalledTimes(3);
   });
 
+  it('does not probe File versioning for a Cost Optimization Hub export, which AWS never overwrites', async () => {
+    mockSend
+      .mockResolvedValueOnce(exportRoot)
+      .mockResolvedValueOnce(metadataListing)
+      .mockResolvedValueOnce({ Body: body(JSON.stringify({ columns: [{ name: 'recommendation_id' }] })) });
+
+    const result = await browseS3({ profile: 'default', bucket: 'b', prefix: 'focus/daily/' });
+
+    expect(result).toMatchObject({ detectedType: 'cost-optimization', fileVersioning: 'unknown' });
+    expect(mockSend).toHaveBeenCalledTimes(3);
+  });
+
   it('leaves File versioning unknown for an export with no delivery yet', async () => {
     mockSend
       .mockResolvedValueOnce(exportRoot)
