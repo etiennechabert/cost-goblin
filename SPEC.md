@@ -231,6 +231,11 @@ Data Exports → Create export), use these settings:
 | Format | `Parquet` |
 | Compression | `Snappy` (default) |
 | File versioning | `Overwrite existing data export file` (required) |
+| S3 path prefix | `costgoblin/daily` (`costgoblin/hourly` for the hourly export) |
+
+The same settings come as a CloudFormation stack, `scripts/aws-exports/costgoblin-exports.yaml`,
+generated from `packages/core/src/aws-setup/exports-stack.ts` (see
+`docs/aws-one-click-setup-design.md`): bucket, lifecycle rules, the exports and a read-only policy.
 
 **Required columns** (the subset the app actually reads; the setup wizard
 rejects a candidate export missing any of them):

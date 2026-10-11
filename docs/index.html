@@ -2475,6 +2475,8 @@
           <div class="step-note">Newly activated tags only appear in data generated <strong>after</strong> activation &mdash; they are not backfilled. Activate them as early as possible.</div>
         </div>
 
+        <div class="step-callout" style="margin: 0;"><strong>Quickest:</strong> steps 1 to 3 come as one <a href="https://raw.githubusercontent.com/etiennechabert/cost-goblin/main/scripts/aws-exports/costgoblin-exports.yaml" target="_blank" rel="noopener">CloudFormation template</a>. In the account that owns the billing data, open <a href="https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create" target="_blank" rel="noopener">CloudFormation in us-east-1</a> and choose <strong>Create stack &rarr; Upload a template file</strong>. It creates the bucket and its lifecycle rules, the exports with the settings below, and a read-only policy for CostGoblin; the stack's <strong>Outputs</strong> list the paths to point CostGoblin at. <a href="https://github.com/etiennechabert/cost-goblin#quickest-one-cloudformation-stack" target="_blank" rel="noopener">Step by step</a>.</div>
+
         <div class="step">
           <div class="step-header">
             <span class="step-num">1</span>
@@ -2483,16 +2485,17 @@
           <p>Pick a dedicated bucket (or prefix) for all CostGoblin data. We recommend this structure so each export lands in its own namespace:</p>
           <div class="code-block">
 <span class="code-dir">s3://your-company-billing/</span>
-├── <span class="code-dir">focus_daily/</span>       <span class="code-comment"># Daily FOCUS 1.2 export — required</span>
-├── <span class="code-dir">focus_hourly/</span>      <span class="code-comment"># Hourly FOCUS 1.2 export — optional</span>
-└── <span class="code-dir">cost_optimization/</span> <span class="code-comment"># Cost Optimization Hub export</span>
+└── <span class="code-dir">costgoblin/</span>
+    ├── <span class="code-dir">daily/</span>              <span class="code-comment"># Daily FOCUS 1.2 export — required</span>
+    ├── <span class="code-dir">hourly/</span>             <span class="code-comment"># Hourly FOCUS 1.2 export — optional</span>
+    └── <span class="code-dir">cost-optimization/</span>  <span class="code-comment"># Cost Optimization Hub export</span>
           </div>
           <div class="step-note">Use any bucket name. The three prefixes are what matters.</div>
           <p>The export never deletes anything, so add an S3 <strong>lifecycle rule</strong> per prefix (<strong>Management</strong> &rarr; <strong>Create lifecycle rule</strong>, scoped with a prefix filter) to stop the bucket growing forever:</p>
           <ul class="step-checklist">
-            <li><strong>focus_daily/</strong> &mdash; expire current versions after <strong>400 days</strong> (daily retention defaults to 365; a month's files keep being rewritten until its billing finalises, so give it a month of margin).</li>
-            <li><strong>focus_hourly/</strong> &mdash; <strong>60 days</strong> (hourly retention defaults to 30, and hourly is the large export).</li>
-            <li><strong>cost_optimization/</strong> &mdash; <strong>100 days</strong> (one snapshot per day, 90-day retention).</li>
+            <li><strong>costgoblin/daily/</strong> &mdash; expire current versions after <strong>400 days</strong> (daily retention defaults to 365; a month's files keep being rewritten until its billing finalises, so give it a month of margin).</li>
+            <li><strong>costgoblin/hourly/</strong> &mdash; <strong>60 days</strong> (hourly retention defaults to 30, and hourly is the large export).</li>
+            <li><strong>costgoblin/cost-optimization/</strong> &mdash; <strong>100 days</strong> (one snapshot per day, 90-day retention).</li>
             <li>On each rule, also delete <em>incomplete multipart uploads</em> after 7 days and, if S3 bucket versioning is on, <em>noncurrent versions</em> after 1 day &mdash; every overwrite turns the previous file into a noncurrent version that expiry never touches.</li>
           </ul>
           <div class="step-note">Keep each expiry at or above that tier's <strong>retentionDays</strong>. Expiry never deletes what CostGoblin has already downloaded, but a fresh install or a teammate can only fetch what the bucket still holds.</div>
@@ -2520,7 +2523,7 @@ File versioning:      <span class="code-file">Overwrite existing data export fil
 <span class="code-comment">Data export storage settings</span>
 <span class="code-comment">─────────────────────────────────────</span>
 S3 bucket:       <span class="code-dir">your-company-billing</span>
-S3 path prefix:  <span class="code-dir">focus_daily</span>  <span class="code-comment">(or focus_hourly for the optional hourly export)</span>
+S3 path prefix:  <span class="code-dir">costgoblin/daily</span>  <span class="code-comment">(or costgoblin/hourly for the optional hourly export)</span>
           </div>
           <div class="step-callout" style="margin-bottom: 16px;"><strong>Keep File versioning on Overwrite:</strong> with <em>Create new data export file</em>, AWS writes every refresh into its own timestamped subfolder, which CostGoblin doesn't read, so nothing syncs (the setup wizard refuses such an export). If an existing export is on <em>Create new</em>, open it in Data Exports, choose <strong>Edit</strong> and switch it to Overwrite. Months delivered before the switch stay in their timestamped folders and are skipped.</div>
           <p>Under <strong>Column selection</strong>, keep <strong>all columns</strong> enabled. These are the ones CostGoblin requires:</p>
@@ -2567,7 +2570,7 @@ S3 path prefix:  <span class="code-dir">focus_daily</span>  <span class="code-co
           <p>In the AWS Billing Console &rarr; <strong>Cost Optimization Hub</strong> &rarr; Preferences, enable the S3 data export:</p>
           <div class="code-block">
 <span class="code-comment"># Cost Optimization Hub export</span>
-S3 path:  <span class="code-dir">s3://your-company-billing/cost_optimization/</span>
+S3 path:  <span class="code-dir">s3://your-company-billing/costgoblin/cost-optimization/</span>
 Format:   <span class="code-file">Parquet</span>
           </div>
           <div class="step-note">This feeds the Cost Optimization view with rightsizing, RI, and deletion recommendations.</div>

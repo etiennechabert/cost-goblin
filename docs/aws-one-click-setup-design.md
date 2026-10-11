@@ -1,6 +1,7 @@
 # AWS One-Click Setup — Design Proposal
 
-> Status: **proposal**, not started. Lets a new user get a correct AWS billing setup (bucket,
+> Status: **in progress**: phase 1 (template, tests, docs) is implemented; decisions taken since
+> drafting are recorded in §9. Lets a new user get a correct AWS billing setup (bucket,
 > lifecycle rules, FOCUS 1.2 exports, Cost Optimization Hub export) from the setup wizard instead
 > of following the manual guide in the README and on costgoblin.com. Phases are ordered and
 > independently shippable; each follows the TDD workflow in CLAUDE.md.
@@ -32,10 +33,10 @@ which provisions the same exports.
 | Piece | How | Notes |
 |-------|-----|-------|
 | Bucket + policy | `AWS::S3::Bucket`, `AWS::S3::BucketPolicy` | `s3:PutObject` for `bcm-data-exports.amazonaws.com`, scoped by `aws:SourceArn` (`arn:aws:bcm-data-exports:*:<account>:export/*`) and `aws:SourceAccount` |
-| Lifecycle rules | On the bucket | Per prefix: daily 400 d, hourly 60 d, cost-optimization 100 d (the README's values, derived from each tier's `retentionDays`); noncurrent versions 1 d; incomplete multipart uploads 7 d |
+| Lifecycle rules | On the bucket | Per prefix (`costgoblin/daily/`, `costgoblin/hourly/`, `costgoblin/cost-optimization/`): 400 d, 60 d, 100 d, each above that tier's default `retentionDays`; noncurrent versions 1 d; incomplete multipart uploads 7 d |
 | Daily FOCUS 1.2 export | `AWS::BCMDataExports::Export` | `SELECT <columns> FROM FOCUS_1_2_AWS`, `TIME_GRANULARITY: DAILY`, `Format`/`Compression: PARQUET`, `Overwrite: OVERWRITE_REPORT`, `RefreshCadence: SYNCHRONOUS` |
 | Hourly export (optional) | Same, `TIME_GRANULARITY: HOURLY` | Off by default: it's the large one |
-| Cost Optimization Hub export (optional) | Same resource, `COST_OPTIMIZATION_RECOMMENDATIONS` with `INCLUDE_ALL_RECOMMENDATIONS: 'TRUE'` | The Hub must be activated first; AWS's template leaves that to the user too |
+| Cost Optimization Hub export (optional, off by default) | Same resource, `COST_OPTIMIZATION_RECOMMENDATIONS` with `INCLUDE_ALL_RECOMMENDATIONS: 'TRUE'` | The Hub must be activated first. The export needs the `AWSServiceRoleForBCMDataExports` service-linked role: the stack creates it unless told the account already has it (AWS's template uses a Lambda for that; we use a parameter). AWS [doesn't offer Overwrite](https://docs.aws.amazon.com/cur/latest/userguide/dataexports-create-standard.html) for this export, so the wizard never applies #692's check to it (#695) |
 | Read access for CostGoblin | `AWS::IAM::ManagedPolicy` (output) | `s3:ListBucket` + `s3:GetObject` on the bucket: exactly what SPEC's *Setup Requirements* list. Attached by an admin, or by the user's SSO permission set. Creating it makes the console ask for the IAM acknowledgement |
 | Cost allocation tags | Not in the stack | Stays a guided manual step: which tags matter is the user's call |
 | Backfill | Support case | See §5 |
@@ -56,7 +57,8 @@ itself. Reasons:
    `s3:ListBucket`/`s3:GetObject`, and many of its users can't create exports. A stack can be
    handed to whoever can, and the app never holds admin credentials.
 2. **Review and undo.** The admin sees every resource before creating it. CloudFormation rolls back
-   a half-failed create and deletes everything with the stack. Doing that ourselves across half a
+   a half-failed create, and deleting the stack removes the exports and policies (the bucket and
+   its data are kept: `DeletionPolicy: Retain`). Doing that ourselves across half a
    dozen APIs is a lot of error handling to get right.
 3. **Reuse.** Teams that manage AWS with Terraform or CDK can lift the same template.
 4. **Precedent.** It's how AWS ships the Cloud Intelligence Dashboards setup.
@@ -102,12 +104,17 @@ the export.
 
 ## 6. Template location and hosting
 
-- **Source:** `scripts/aws-exports/costgoblin-exports.yaml`, next to `scripts/gcp-focus-exporter/`.
-- **Pinned by tests** (vitest, parsing with the root `js-yaml` devDependency; no `cfn-lint`, which
-  would add a Python toolchain):
+- **Source:** `packages/core/src/aws-setup/exports-stack.ts` builds the template as data, with
+  long-form intrinsics (`{ Ref: … }`), so tests can inspect it and the wizard can bake in its
+  answers. `scripts/aws-exports/write-template.ts` writes the committed
+  `scripts/aws-exports/costgoblin-exports.yaml`, and a drift test fails if they differ. The YAML
+  is emitted under YAML 1.1 rules, which quote `yes`/`no` and date-like versions that 1.1 would
+  otherwise read as booleans and timestamps.
+- **Pinned by tests** (`packages/core/src/__tests__/aws-exports-stack.test.ts`). `cfn-lint` adds
+  a Python toolchain, so it isn't in CI; it was run once by hand (1.57.1, clean):
   - every export is `PARQUET` + `OVERWRITE_REPORT` from the expected table;
-  - the FOCUS query's columns include every entry of `REQUIRED_FOCUS_COLUMNS`
-    (`packages/desktop/src/main/setup-manifest.ts`), so the template and the wizard's check can't drift;
+  - the FOCUS query's columns include every entry of core's `REQUIRED_FOCUS_COLUMNS`, so the
+    template and the wizard's check can't drift;
   - each lifecycle expiry is at least that tier's default `retentionDays`;
   - the read policy grants only `s3:ListBucket`/`s3:GetObject`, on the stack's bucket only.
 - **Region:** the stack, and so the bucket, live in us-east-1, where the native export resource
@@ -139,6 +146,38 @@ the export.
 - **Fixing an existing export from the app** (for example switching a *Create new* export to
   Overwrite with `UpdateExport`): same permission concerns as §3. The wizard links to the console
   instead (#692).
-- **Open:** who owns the template-hosting bucket and the release OIDC role; default export names
-  and S3 prefixes (the README's `focus_daily/`, `focus_hourly/`, `cost_optimization/`); whether
-  the Cost Optimization Hub export should default on when the Hub is already activated.
+- **Open:** who owns the template-hosting bucket and the release OIDC role (phase 4).
+- **Open:** whether CostGoblin reads a real Cost Optimization Hub Data Export. Its cost-optimization
+  tier only reads Parquet directly in `date=YYYY-MM-DD/`; AWS documents that this export writes
+  every refresh to its own directory, without saying whether that directory is the `date=` folder
+  or one below it. AWS's own template partitions the table by `date`, which fits. A key listing
+  from a real export settles it.
+
+## 9. Decisions since drafting
+
+- **S3 layout:** everything under `costgoblin/` (`costgoblin/daily`, `costgoblin/hourly`,
+  `costgoblin/cost-optimization`), with exports named `costgoblin-daily` and so on. Clearer than the
+  README's old `focus_daily/` layout; the manual guide moved to the same prefixes so both paths
+  match. Existing setups are unaffected: paths are configurable.
+- **Cost Optimization Hub export:** off by default; the user ticks it once the Hub is activated.
+- **Bucket name:** empty by default, in which case the stack names it
+  `costgoblin-billing-<account id>`, so the manual upload needs no typing. The wizard passes a
+  name so it can write the config up front.
+- **Scope:** all four phases, with phase 4's hosting infrastructure provided as a template for the
+  maintainer to deploy.
+
+## 10. GCP equivalent (phase 5)
+
+The exporter's `deploy.sh` already builds, deploys and schedules the job from one *Open in Cloud
+Shell* click. What remains:
+
+- **Turning on the FOCUS BigQuery export stays manual.** Google has
+  [no API, gcloud command or Terraform resource for it](https://discuss.google.dev/t/api-to-programmatically-manage-cloud-billing-export-enable-or-disable/302037).
+  The wizard links to it and says to do it first: it only backfills the current and previous month.
+- **Fold the other manual steps into the script,** as opt-in flags: create the bucket in the
+  dataset's location with its lifecycle rules, and the read-only `costgoblin-reader` account with
+  its bindings.
+- **Same wizard pattern:** project, bucket and reader in, a prefilled one-line command for Cloud
+  Shell out (its links can open the repo but can't carry values), the GCP provider config written
+  up front, *"Waiting for the first export run"*.
+- **No backfill helper:** there is no support-case route on GCP.
