@@ -1,0 +1,312 @@
+# CostGoblin billing exports. Create this stack in us-east-1:
+# CloudFormation > Create stack > With new resources > Upload a template file.
+#
+# Generated from packages/core/src/aws-setup/exports-stack.ts by
+# scripts/aws-exports/write-template.ts. Do not edit by hand.
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "CostGoblin billing exports: an S3 bucket with lifecycle rules, AWS Data Exports for FOCUS 1.2 (daily, optional hourly) and Cost Optimization Hub (optional), and a read-only policy for CostGoblin."
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Bucket
+        Parameters:
+          - BucketName
+      - Label:
+          default: Exports
+        Parameters:
+          - CreateHourlyExport
+          - CreateCostOptimizationExport
+          - CreateDataExportsServiceRole
+      - Label:
+          default: Lifecycle
+        Parameters:
+          - DailyExpirationDays
+          - HourlyExpirationDays
+          - CostOptimizationExpirationDays
+Parameters:
+  BucketName:
+    Type: String
+    Default: ""
+    AllowedPattern: ^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$
+    Description: Name of the new S3 bucket, globally unique. Leave empty for costgoblin-billing-<account id>.
+  CreateHourlyExport:
+    Type: String
+    AllowedValues:
+      - "no"
+      - "yes"
+    Default: "no"
+    Description: Also export hourly FOCUS data, for intraday drill-down. It is the large one.
+  CreateCostOptimizationExport:
+    Type: String
+    AllowedValues:
+      - "no"
+      - "yes"
+    Default: "no"
+    Description: Also export Cost Optimization Hub recommendations. Activate Cost Optimization Hub first, or the stack fails.
+  CreateDataExportsServiceRole:
+    Type: String
+    AllowedValues:
+      - "no"
+      - "yes"
+    Default: "yes"
+    Description: "Only used with the Cost Optimization Hub export: create the AWSServiceRoleForBCMDataExports role it needs. Choose no if the account already has it (it does once such an export was ever created)."
+  DailyExpirationDays:
+    Type: Number
+    Default: 400
+    MinValue: 365
+    Description: Days before the daily export's files expire. Keep it at or above CostGoblin's retentionDays for that tier.
+  HourlyExpirationDays:
+    Type: Number
+    Default: 60
+    MinValue: 30
+    Description: Days before the hourly export's files expire. Keep it at or above CostGoblin's retentionDays for that tier.
+  CostOptimizationExpirationDays:
+    Type: Number
+    Default: 100
+    MinValue: 90
+    Description: Days before the Cost Optimization Hub export's files expire. Keep it at or above CostGoblin's retentionDays for that tier.
+Rules:
+  RunsInUsEast1:
+    Assertions:
+      - Assert:
+          Fn::Equals:
+            - Ref: AWS::Region
+            - us-east-1
+        AssertDescription: AWS Data Exports can only be created in us-east-1. Switch the console to US East (N. Virginia).
+Conditions:
+  BucketNameGiven:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: BucketName
+          - ""
+  WantsHourly:
+    Fn::Equals:
+      - Ref: CreateHourlyExport
+      - "yes"
+  WantsCostOptimization:
+    Fn::Equals:
+      - Ref: CreateCostOptimizationExport
+      - "yes"
+  CreatesServiceRole:
+    Fn::And:
+      - Condition: WantsCostOptimization
+      - Fn::Equals:
+          - Ref: CreateDataExportsServiceRole
+          - "yes"
+Resources:
+  Bucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName:
+        Fn::If:
+          - BucketNameGiven
+          - Ref: BucketName
+          - Fn::Sub: costgoblin-billing-${AWS::AccountId}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      LifecycleConfiguration:
+        Rules:
+          - Id: costgoblin-daily
+            Status: Enabled
+            Prefix: costgoblin/daily/
+            ExpirationInDays:
+              Ref: DailyExpirationDays
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 1
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+          - Id: costgoblin-hourly
+            Status: Enabled
+            Prefix: costgoblin/hourly/
+            ExpirationInDays:
+              Ref: HourlyExpirationDays
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 1
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+          - Id: costgoblin-cost-optimization
+            Status: Enabled
+            Prefix: costgoblin/cost-optimization/
+            ExpirationInDays:
+              Ref: CostOptimizationExpirationDays
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 1
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+  BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: Bucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: EnableAWSDataExportsToWriteToS3
+            Effect: Allow
+            Principal:
+              Service: bcm-data-exports.amazonaws.com
+            Action: s3:PutObject
+            Resource:
+              Fn::Sub: ${Bucket.Arn}/*
+            Condition:
+              ArnLike:
+                aws:SourceArn:
+                  Fn::Sub: arn:${AWS::Partition}:bcm-data-exports:us-east-1:${AWS::AccountId}:export/*
+              StringEquals:
+                aws:SourceAccount:
+                  Ref: AWS::AccountId
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource:
+              - Fn::Sub: ${Bucket.Arn}
+              - Fn::Sub: ${Bucket.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+  DailyFocusExport:
+    Type: AWS::BCMDataExports::Export
+    DependsOn: BucketPolicy
+    Properties:
+      Export:
+        Name: costgoblin-daily
+        Description: Daily FOCUS 1.2 billing data for CostGoblin.
+        DataQuery:
+          QueryStatement: SELECT AvailabilityZone, BilledCost, BillingAccountId, BillingAccountName, BillingAccountType, BillingCurrency, BillingPeriodEnd, BillingPeriodStart, CapacityReservationId, CapacityReservationStatus, ChargeCategory, ChargeClass, ChargeDescription, ChargeFrequency, ChargePeriodEnd, ChargePeriodStart, CommitmentDiscountCategory, CommitmentDiscountId, CommitmentDiscountName, CommitmentDiscountQuantity, CommitmentDiscountType, CommitmentDiscountUnit, CommitmentDiscountStatus, ConsumedQuantity, ConsumedUnit, ContractedCost, ContractedUnitPrice, EffectiveCost, InvoiceId, InvoiceIssuerName, ListCost, ListUnitPrice, PricingCategory, PricingCurrency, PricingCurrencyContractedUnitPrice, PricingCurrencyEffectiveCost, PricingCurrencyListUnitPrice, PricingQuantity, PricingUnit, ProviderName, PublisherName, RegionId, RegionName, ResourceId, ResourceName, ResourceType, ServiceCategory, ServiceName, ServiceSubcategory, SkuId, SkuMeter, SkuPriceId, SkuPriceDetails, SubAccountId, SubAccountName, SubAccountType, Tags, x_Discounts, x_Operation, x_ServiceCode FROM FOCUS_1_2_AWS
+          TableConfigurations:
+            FOCUS_1_2_AWS:
+              TIME_GRANULARITY: DAILY
+        DestinationConfigurations:
+          S3Destination:
+            S3Bucket:
+              Ref: Bucket
+            S3Prefix: costgoblin/daily
+            S3Region:
+              Ref: AWS::Region
+            S3OutputConfigurations:
+              OutputType: CUSTOM
+              Format: PARQUET
+              Compression: PARQUET
+              Overwrite: OVERWRITE_REPORT
+        RefreshCadence:
+          Frequency: SYNCHRONOUS
+  HourlyFocusExport:
+    Type: AWS::BCMDataExports::Export
+    Condition: WantsHourly
+    DependsOn: BucketPolicy
+    Properties:
+      Export:
+        Name: costgoblin-hourly
+        Description: Hourly FOCUS 1.2 billing data for CostGoblin.
+        DataQuery:
+          QueryStatement: SELECT AvailabilityZone, BilledCost, BillingAccountId, BillingAccountName, BillingAccountType, BillingCurrency, BillingPeriodEnd, BillingPeriodStart, CapacityReservationId, CapacityReservationStatus, ChargeCategory, ChargeClass, ChargeDescription, ChargeFrequency, ChargePeriodEnd, ChargePeriodStart, CommitmentDiscountCategory, CommitmentDiscountId, CommitmentDiscountName, CommitmentDiscountQuantity, CommitmentDiscountType, CommitmentDiscountUnit, CommitmentDiscountStatus, ConsumedQuantity, ConsumedUnit, ContractedCost, ContractedUnitPrice, EffectiveCost, InvoiceId, InvoiceIssuerName, ListCost, ListUnitPrice, PricingCategory, PricingCurrency, PricingCurrencyContractedUnitPrice, PricingCurrencyEffectiveCost, PricingCurrencyListUnitPrice, PricingQuantity, PricingUnit, ProviderName, PublisherName, RegionId, RegionName, ResourceId, ResourceName, ResourceType, ServiceCategory, ServiceName, ServiceSubcategory, SkuId, SkuMeter, SkuPriceId, SkuPriceDetails, SubAccountId, SubAccountName, SubAccountType, Tags, x_Discounts, x_Operation, x_ServiceCode FROM FOCUS_1_2_AWS
+          TableConfigurations:
+            FOCUS_1_2_AWS:
+              TIME_GRANULARITY: HOURLY
+        DestinationConfigurations:
+          S3Destination:
+            S3Bucket:
+              Ref: Bucket
+            S3Prefix: costgoblin/hourly
+            S3Region:
+              Ref: AWS::Region
+            S3OutputConfigurations:
+              OutputType: CUSTOM
+              Format: PARQUET
+              Compression: PARQUET
+              Overwrite: OVERWRITE_REPORT
+        RefreshCadence:
+          Frequency: SYNCHRONOUS
+  DataExportsServiceRole:
+    Type: AWS::IAM::ServiceLinkedRole
+    Condition: CreatesServiceRole
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      AWSServiceName: bcm-data-exports.amazonaws.com
+  CostOptimizationExport:
+    Type: AWS::BCMDataExports::Export
+    Condition: WantsCostOptimization
+    DependsOn: BucketPolicy
+    Metadata:
+      ServiceRole:
+        Fn::If:
+          - CreatesServiceRole
+          - Ref: DataExportsServiceRole
+          - Ref: AWS::NoValue
+    Properties:
+      Export:
+        Name: costgoblin-cost-optimization
+        Description: Cost Optimization Hub recommendations for CostGoblin.
+        DataQuery:
+          QueryStatement: SELECT account_id, action_type, currency_code, current_resource_details, current_resource_summary, current_resource_type, estimated_monthly_cost_after_discount, estimated_monthly_cost_before_discount, estimated_monthly_savings_after_discount, estimated_monthly_savings_before_discount, estimated_savings_percentage_after_discount, estimated_savings_percentage_before_discount, implementation_effort, last_refresh_timestamp, recommendation_id, recommendation_lookback_period_in_days, recommendation_source, recommended_resource_details, recommended_resource_summary, recommended_resource_type, region, resource_arn, restart_needed, rollback_possible, tags FROM COST_OPTIMIZATION_RECOMMENDATIONS
+          TableConfigurations:
+            COST_OPTIMIZATION_RECOMMENDATIONS:
+              INCLUDE_ALL_RECOMMENDATIONS: "TRUE"
+              FILTER: "{}"
+        DestinationConfigurations:
+          S3Destination:
+            S3Bucket:
+              Ref: Bucket
+            S3Prefix: costgoblin/cost-optimization
+            S3Region:
+              Ref: AWS::Region
+            S3OutputConfigurations:
+              OutputType: CUSTOM
+              Format: PARQUET
+              Compression: PARQUET
+              Overwrite: OVERWRITE_REPORT
+        RefreshCadence:
+          Frequency: SYNCHRONOUS
+  ReadAccessPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Read-only access CostGoblin needs to the billing exports bucket.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: s3:ListBucket
+            Resource:
+              Fn::Sub: ${Bucket.Arn}
+          - Effect: Allow
+            Action: s3:GetObject
+            Resource:
+              Fn::Sub: ${Bucket.Arn}/*
+Outputs:
+  BucketName:
+    Description: The bucket the exports deliver to.
+    Value:
+      Ref: Bucket
+  DailyExportPath:
+    Description: CostGoblin's daily data path.
+    Value:
+      Fn::Sub: s3://${Bucket}/costgoblin/daily/costgoblin-daily/
+  HourlyExportPath:
+    Condition: WantsHourly
+    Description: CostGoblin's hourly data path.
+    Value:
+      Fn::Sub: s3://${Bucket}/costgoblin/hourly/costgoblin-hourly/
+  CostOptimizationExportPath:
+    Condition: WantsCostOptimization
+    Description: CostGoblin's cost optimization data path.
+    Value:
+      Fn::Sub: s3://${Bucket}/costgoblin/cost-optimization/costgoblin-cost-optimization/
+  ReadAccessPolicyArn:
+    Description: Attach to the role or user CostGoblin reads with.
+    Value:
+      Ref: ReadAccessPolicy

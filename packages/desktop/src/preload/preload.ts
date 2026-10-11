@@ -222,6 +222,15 @@ const api: CostApi = {
   browseS3(params: { profile: string; bucket: string; prefix: string }): ReturnType<CostApi['browseS3']> {
     return invoke<Awaited<ReturnType<CostApi['browseS3']>>>('setup:browse-s3', params);
   },
+  saveExportsTemplate(defaults: Parameters<CostApi['saveExportsTemplate']>[0]): ReturnType<CostApi['saveExportsTemplate']> {
+    return invoke<Awaited<ReturnType<CostApi['saveExportsTemplate']>>>('setup:save-exports-template', defaults);
+  },
+  fileBackfillCase(request: Parameters<CostApi['fileBackfillCase']>[0]): ReturnType<CostApi['fileBackfillCase']> {
+    return invoke<Awaited<ReturnType<CostApi['fileBackfillCase']>>>('setup:file-backfill-case', request);
+  },
+  getHostedExportsTemplateUrl(): ReturnType<CostApi['getHostedExportsTemplateUrl']> {
+    return invoke<string | null>('setup:hosted-exports-template-url');
+  },
   listGcpProjects(): Promise<{ projects: readonly GcpProject[]; error?: string | undefined }> {
     return invoke<{ projects: readonly GcpProject[]; error?: string | undefined }>('setup:list-gcp-projects');
   },

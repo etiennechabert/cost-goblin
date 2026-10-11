@@ -1,12 +1,18 @@
-import { ipcMain, shell } from 'electron';
+import { writeFile } from 'node:fs/promises';
+import { app as electronApp, dialog, ipcMain, shell } from 'electron';
 import {
   assertValidGcsBucketName,
   classifyGcsFolder,
   createGcsStorage,
   logger,
   isStringRecord,
+  HOSTED_EXPORTS_TEMPLATE_BASE_URL,
+  hostedTemplateUrlForBuild,
+  parseBackfillRequest,
+  parseExportsStackDefaults,
+  renderExportsStackYaml,
 } from '@costgoblin/core';
-import type { GcpIdentityResult, GcpProject, GcsBrowseResult, GcsDownloadCheckResult } from '@costgoblin/core';
+import type { BackfillCaseResult, ExportConfigBundleResult, GcpIdentityResult, GcpProject, GcsBrowseResult, GcsDownloadCheckResult } from '@costgoblin/core';
 import { loadSharedConfigFiles } from '@smithy/shared-ini-file-loader';
 import { awsProfileNames } from '../aws-profiles.js';
 import { upsertWizardProvider } from '../config-upsert.js';
@@ -16,6 +22,8 @@ import { createGcpIdentityResolver, defaultIdentityDeps, gcpIdentitiesFor } from
 import type { GcpIdentityResolver } from '../gcp-identity.js';
 import { collectGcsPrefixes, gcloudProjectsOutcome, gcsNextPageToken, listGcsBucketsAs, parseWizardReader, verifyGcsDownloadAs, wizardGcsErrorMessage, wizardWriteReader } from '../setup-gcp.js';
 import { browseS3, listS3Buckets, testS3Connection } from '../setup-s3.js';
+import { confirmAndFileBackfillCase } from '../aws-support.js';
+import type { ConfirmFiling } from '../aws-support.js';
 import type { AppContext } from './context.js';
 
 /** Ceiling on `gcloud projects list`. The CLI can sit on a re-auth prompt it
@@ -78,6 +86,55 @@ export function registerSetupHandlers(app: AppContext): void {
   ipcMain.handle('setup:list-buckets', (_event, profile: string) => listS3Buckets(profile));
 
   ipcMain.handle('setup:browse-s3', (_event, params: { profile: string; bucket: string; prefix: string }) => browseS3(params));
+
+  // The one-click AWS setup's template (docs/aws-one-click-setup-design.md),
+  // saved for the user to upload in CloudFormation. The answers are parsed:
+  // they arrive from the renderer and end up in a template run in their account.
+  ipcMain.handle('setup:save-exports-template', async (_event, payload: unknown): Promise<ExportConfigBundleResult> => {
+    const defaults = parseExportsStackDefaults(payload);
+    if (defaults === null) return { status: 'error', message: 'Invalid template settings.' };
+    try {
+      const result = await dialog.showSaveDialog({
+        title: 'Save the CloudFormation template',
+        defaultPath: 'costgoblin-exports.yaml',
+        filters: [{ name: 'CloudFormation template', extensions: ['yaml', 'yml'] }],
+      });
+      if (result.canceled || result.filePath.length === 0) return { status: 'canceled' };
+      await writeFile(result.filePath, renderExportsStackYaml(defaults), 'utf-8');
+      logger.info('Saved the billing exports CloudFormation template', { path: result.filePath });
+      return { status: 'saved', path: result.filePath };
+    } catch (err: unknown) {
+      return { status: 'error', message: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('setup:hosted-exports-template-url', (): string | null =>
+    hostedTemplateUrlForBuild(HOSTED_EXPORTS_TEMPLATE_BASE_URL, { packaged: electronApp.isPackaged, version: electronApp.getVersion() }));
+
+  // Files a case in the user's AWS account: the renderer only names the
+  // profile and the exports; the case's text is built here (backfillCase),
+  // and a native dialog shows it for the user to confirm before anything goes.
+  const confirmFiling: ConfirmFiling = async ({ profile, caseText }) => {
+    const { response } = await dialog.showMessageBox({
+      type: 'question',
+      buttons: ['File the case', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+      title: 'File an AWS support case',
+      message: 'File this support case in your AWS account?',
+      detail: `CostGoblin files it with the "${profile}" profile, which needs support:CreateCase in the account that owns `
+        + `the exports. Filing through the API needs a Business, Enterprise On-Ramp or Enterprise support plan.\n\n${caseText}`,
+    });
+    return response === 0;
+  };
+  ipcMain.handle('setup:file-backfill-case', async (_event, payload: unknown): Promise<BackfillCaseResult> => {
+    const request = parseBackfillRequest(payload);
+    if (request === null) return { status: 'error', message: 'Invalid backfill request.' };
+    const result = await confirmAndFileBackfillCase(request, confirmFiling);
+    logger.info('Backfill support case', { status: result.status, profile: request.profile });
+    return result;
+  });
 
   // ---- GCP: the browse-and-pick counterpart of the three S3 handlers above.
   //

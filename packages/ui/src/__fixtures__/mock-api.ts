@@ -373,6 +373,20 @@ export class MockCostApi implements CostApi {
    *  SSO token / AccessDenied surfaces as `error`, not an empty folder list). */
   s3BrowseResult: Awaited<ReturnType<CostApi['browseS3']>> = { prefixes: ['data', 'metadata'], isBillingExport: true, detectedType: 'daily', missingColumns: [], fileVersioning: 'overwrite' };
   browseS3(): ReturnType<CostApi['browseS3']> { return Promise.resolve(this.s3BrowseResult); }
+  savedExportsTemplates: Parameters<CostApi['saveExportsTemplate']>[0][] = [];
+  saveExportsTemplateResult: Awaited<ReturnType<CostApi['saveExportsTemplate']>> = { status: 'saved', path: '/Users/me/Downloads/costgoblin-exports.yaml' };
+  saveExportsTemplate(defaults: Parameters<CostApi['saveExportsTemplate']>[0]): ReturnType<CostApi['saveExportsTemplate']> {
+    this.savedExportsTemplates.push(defaults);
+    return Promise.resolve(this.saveExportsTemplateResult);
+  }
+  hostedExportsTemplateUrl: string | null = null;
+  getHostedExportsTemplateUrl(): ReturnType<CostApi['getHostedExportsTemplateUrl']> { return Promise.resolve(this.hostedExportsTemplateUrl); }
+  backfillRequests: Parameters<CostApi['fileBackfillCase']>[0][] = [];
+  backfillResult: Awaited<ReturnType<CostApi['fileBackfillCase']>> = { status: 'filed', caseId: 'case-171234' };
+  fileBackfillCase(request: Parameters<CostApi['fileBackfillCase']>[0]): ReturnType<CostApi['fileBackfillCase']> {
+    this.backfillRequests.push(request);
+    return Promise.resolve(this.backfillResult);
+  }
   listGcpProjects(): Promise<{ projects: readonly GcpProject[]; error?: string | undefined }> {
     return Promise.resolve(this.gcpProjectsResult);
   }

@@ -231,6 +231,11 @@ Data Exports → Create export), use these settings:
 | Format | `Parquet` |
 | Compression | `Snappy` (default) |
 | File versioning | `Overwrite existing data export file` (required) |
+| S3 path prefix | `costgoblin/daily` (`costgoblin/hourly` for the hourly export) |
+
+The same settings come as a CloudFormation stack, `scripts/aws-exports/costgoblin-exports.yaml`,
+generated from `packages/core/src/aws-setup/exports-stack.ts` (see
+`docs/aws-one-click-setup-design.md`): bucket, lifecycle rules, the exports and a read-only policy.
 
 **Required columns** (the subset the app actually reads; the setup wizard
 rejects a candidate export missing any of them):
@@ -579,7 +584,7 @@ First-run experience that guides the user through initial configuration.
 
 **Flow:**
 1. **AWS profile selection** — list profiles from `~/.aws/credentials`. User picks one. The welcome step also offers "import a configuration file" for users handed a bundle by a teammate (see Configuration Sharing).
-2. **S3 bucket discovery** — list buckets accessible to the selected profile. User picks the billing-export bucket. If the bucket contains a published team configuration (`costgoblin/org-config.yaml`), the wizard offers one-click setup from it instead of manual browsing.
+2. **S3 bucket discovery** — list buckets accessible to the selected profile. User picks the billing-export bucket. If the bucket contains a published team configuration (`costgoblin/org-config.yaml`), the wizard offers one-click setup from it instead of manual browsing. With no export yet, *Create one with CloudFormation* saves the billing-exports stack template with the user's answers (bucket name, hourly and Cost Optimization Hub exports) as defaults, links to the CloudFormation console in us-east-1, and skips straight to confirmation with the stack's paths (see `docs/aws-one-click-setup-design.md`).
 3. **Prefix browsing** — browse the bucket's prefixes. The app inspects each prefix and detects whether it looks like a FOCUS 1.2 Data Export (presence of `data/` + `metadata/`, required columns in the export manifest). Detected type is shown: `daily`, `hourly`, `cost-optimization`, or `unknown`. It also lists the newest partition folder: if its latest delivery sits in a per-refresh subfolder (File versioning = Create new), the export is refused with the fix, since sync would not read it. A month holding both layouts (the setting was switched) is judged by whichever was written last.
 4. **Tier selection** — user assigns each detected prefix to a tier (daily required; hourly and cost-optimization optional).
 5. **Tag discovery (optional)** — sample a Parquet file to list available tag keys with their coverage. User picks which to track and assigns labels.
@@ -990,6 +995,7 @@ Before using CostGoblin:
    - `s3:ListBucket`, `s3:GetObject` on the export bucket(s)
    - For AWS Organizations sync (optional but recommended): `organizations:List*`, `organizations:Describe*` on the management or delegated-admin account
    - For Cost Optimization Hub sync (optional): `cost-optimization-hub:List*` (or use the exported Parquet via S3)
+   - For the setup wizard's optional "File it for me" backfill request: `support:CreateCase` in the account that owns the exports, on a Business, Enterprise On-Ramp or Enterprise support plan
 4. **Install CostGoblin** — download the app, run the setup wizard, point it at the bucket.
 
 ---

@@ -70,7 +70,27 @@ A workspace can configure several providers at once; totals sum across them and 
 
 ### Setting Up a FOCUS 1.2 Export
 
-CostGoblin reads the **FOCUS 1.2** table via AWS Data Exports. To create one:
+CostGoblin reads the **FOCUS 1.2** table via AWS Data Exports. There are two ways to set it up.
+
+#### Quickest: one CloudFormation stack
+
+[`scripts/aws-exports/costgoblin-exports.yaml`](scripts/aws-exports/costgoblin-exports.yaml) creates everything with the settings CostGoblin needs:
+
+- an S3 bucket (no public access, encrypted) with the lifecycle rules [below](#keep-the-bucket-from-growing-forever);
+- the daily FOCUS 1.2 export, and optionally the hourly and Cost Optimization Hub exports;
+- a read-only IAM policy granting exactly what CostGoblin needs on that bucket.
+
+The setup wizard walks you through it: on the bucket step, choose **Create one with CloudFormation**. It saves the template with your answers filled in and configures CostGoblin with the stack's paths. By hand:
+
+1. Download the template ([raw file](https://raw.githubusercontent.com/etiennechabert/cost-goblin/main/scripts/aws-exports/costgoblin-exports.yaml)).
+2. In the account that owns the billing data, usually the management (payer) account, open [CloudFormation in us-east-1](https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create): AWS Data Exports only exists there. Choose **Create stack → With new resources → Upload a template file**.
+3. Fill in the parameters: a bucket name (leave it empty for `costgoblin-billing-<account id>`), and whether to add the hourly and Cost Optimization Hub exports. For Cost Optimization Hub, [activate it](https://console.aws.amazon.com/costmanagement/home#/cost-optimization-hub) first; if the account ever had a Cost Optimization Hub export, set `CreateDataExportsServiceRole` to `no`, since the role it needs already exists.
+4. Acknowledge that the stack creates IAM resources, and create it.
+5. Attach the `ReadAccessPolicyArn` output to the role or user CostGoblin reads with, and point CostGoblin at the paths in the stack's **Outputs** (`DailyExportPath` and the others).
+
+AWS delivers the first data within about a day, sometimes up to 72 hours. A new export has no history: see [Historical data](#historical-data) for a backfill. Deleting the stack removes the exports and policies but keeps the bucket and the data already delivered.
+
+#### By hand
 
 1. In the AWS console, open **Billing and Cost Management**.
 2. In the left navigation, choose **Data Exports** ([direct console link](https://us-east-1.console.aws.amazon.com/costmanagement/home#/bcm-data-exports)).
@@ -88,18 +108,19 @@ CostGoblin reads the **FOCUS 1.2** table via AWS Data Exports. To create one:
 | Format | Parquet |
 | Compression | Snappy |
 | File versioning | **Overwrite existing data export file** |
+| S3 path prefix | `costgoblin/daily` (`costgoblin/hourly` for the hourly export) |
 
 > ⚠️ **File versioning must stay on _Overwrite existing data export file_.** With *Create new data export file*, AWS writes every refresh into its own `billing_period=YYYY-MM/<timestamp>-<execution-id>/` subfolder. CostGoblin only reads Parquet sitting directly in `billing_period=YYYY-MM/`, so it finds nothing to sync, and the setup wizard refuses such an export. If an existing export is on *Create new*, open it in **Data Exports → Edit** and switch it to Overwrite. Months delivered before the switch stay in their timestamped folders, which CostGoblin skips.
 
 #### Keep the bucket from growing forever
 
-The export never deletes anything: every month adds a billing period that stays in S3 indefinitely. Add an S3 **lifecycle rule** per export prefix (**S3 → your bucket → Management → Create lifecycle rule**, scope *Limit the scope of this rule using one or more filters*, prefix filter). The prefixes below assume exports delivered to `focus_daily/`, `focus_hourly/` and `cost_optimization/` at the bucket root; use your exports' own S3 path prefixes, or the rules match nothing:
+The export never deletes anything: every month adds a billing period that stays in S3 indefinitely. The CloudFormation stack sets up the rules below itself. By hand, add an S3 **lifecycle rule** per export prefix (**S3 → your bucket → Management → Create lifecycle rule**, scope *Limit the scope of this rule using one or more filters*, prefix filter). The prefixes below are the stack's: `costgoblin/daily/`, `costgoblin/hourly/` and `costgoblin/cost-optimization/`. If your exports use other S3 path prefixes, use those, or the rules match nothing:
 
 | Prefix | Expire current versions after | Why |
 |--------|-------------------------------|-----|
-| `focus_daily/` | **400 days** | Daily `retentionDays` defaults to 365. A month's files are rewritten until its billing finalises, early the next month, so expiring at exactly 365 would drop the oldest month before it is a year old. |
-| `focus_hourly/` | **60 days** | Hourly `retentionDays` defaults to 30, and hourly is the large export, so this is where the rule actually saves money. |
-| `cost_optimization/` | **100 days** | One snapshot folder per day; `retentionDays` defaults to 90. |
+| `costgoblin/daily/` | **400 days** | Daily `retentionDays` defaults to 365. A month's files are rewritten until its billing finalises, early the next month, so expiring at exactly 365 would drop the oldest month before it is a year old. |
+| `costgoblin/hourly/` | **60 days** | Hourly `retentionDays` defaults to 30, and hourly is the large export, so this is where the rule actually saves money. |
+| `costgoblin/cost-optimization/` | **100 days** | One snapshot folder per day; `retentionDays` defaults to 90. |
 
 On each rule also tick **Delete incomplete multipart uploads** (7 days), and, if the bucket has S3 versioning enabled (unrelated to the export's *File versioning* setting), **Permanently delete noncurrent versions** (1 day): every overwrite turns the previous file into a noncurrent version that expiry never touches.
 
@@ -113,13 +134,13 @@ On each rule also tick **Delete incomplete multipart uploads** (7 days), and, if
 ```bash
 cat > lifecycle.json <<'JSON'
 {"Rules": [
-  {"ID": "focus-daily", "Filter": {"Prefix": "focus_daily/"}, "Status": "Enabled",
+  {"ID": "costgoblin-daily", "Filter": {"Prefix": "costgoblin/daily/"}, "Status": "Enabled",
    "Expiration": {"Days": 400}, "NoncurrentVersionExpiration": {"NoncurrentDays": 1},
    "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 7}},
-  {"ID": "focus-hourly", "Filter": {"Prefix": "focus_hourly/"}, "Status": "Enabled",
+  {"ID": "costgoblin-hourly", "Filter": {"Prefix": "costgoblin/hourly/"}, "Status": "Enabled",
    "Expiration": {"Days": 60}, "NoncurrentVersionExpiration": {"NoncurrentDays": 1},
    "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 7}},
-  {"ID": "cost-optimization", "Filter": {"Prefix": "cost_optimization/"}, "Status": "Enabled",
+  {"ID": "costgoblin-cost-optimization", "Filter": {"Prefix": "costgoblin/cost-optimization/"}, "Status": "Enabled",
    "Expiration": {"Days": 100}, "NoncurrentVersionExpiration": {"NoncurrentDays": 1},
    "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 7}}
 ]}
@@ -169,7 +190,9 @@ s3://bucket/prefix/<export-name>/
       <export-name>-Manifest-FOCUS.json
 ```
 
-> **Historical data:** a new export only includes data from creation day onward. Open an AWS Support case to request a backfill for the export — AWS can typically reload up to 12 months.
+<a id="historical-data"></a>
+
+> **Historical data:** a new export only includes data from creation day onward. Open an AWS Support case to request a backfill for the export — AWS can typically reload up to 12 months. The setup wizard's **Create one with CloudFormation** step shows the request ready to paste into the Support Center form, and on a Business support plan or above can file it for you.
 
 ### AWS Credentials
 
