@@ -22,7 +22,8 @@ import { createGcpIdentityResolver, defaultIdentityDeps, gcpIdentitiesFor } from
 import type { GcpIdentityResolver } from '../gcp-identity.js';
 import { collectGcsPrefixes, gcloudProjectsOutcome, gcsNextPageToken, listGcsBucketsAs, parseWizardReader, verifyGcsDownloadAs, wizardGcsErrorMessage, wizardWriteReader } from '../setup-gcp.js';
 import { browseS3, listS3Buckets, testS3Connection } from '../setup-s3.js';
-import { fileBackfillCase } from '../aws-support.js';
+import { confirmAndFileBackfillCase } from '../aws-support.js';
+import type { ConfirmFiling } from '../aws-support.js';
 import type { AppContext } from './context.js';
 
 /** Ceiling on `gcloud projects list`. The CLI can sit on a re-auth prompt it
@@ -111,11 +112,26 @@ export function registerSetupHandlers(app: AppContext): void {
     hostedTemplateUrlForBuild(HOSTED_EXPORTS_TEMPLATE_BASE_URL, { packaged: electronApp.isPackaged, version: electronApp.getVersion() }));
 
   // Files a case in the user's AWS account: the renderer only names the
-  // profile and the exports; the case's text is built here (backfillCase).
+  // profile and the exports; the case's text is built here (backfillCase),
+  // and a native dialog shows it for the user to confirm before anything goes.
+  const confirmFiling: ConfirmFiling = async ({ profile, caseText }) => {
+    const { response } = await dialog.showMessageBox({
+      type: 'question',
+      buttons: ['File the case', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+      title: 'File an AWS support case',
+      message: 'File this support case in your AWS account?',
+      detail: `CostGoblin files it with the "${profile}" profile, which needs support:CreateCase in the account that owns `
+        + `the exports. Filing through the API needs a Business, Enterprise On-Ramp or Enterprise support plan.\n\n${caseText}`,
+    });
+    return response === 0;
+  };
   ipcMain.handle('setup:file-backfill-case', async (_event, payload: unknown): Promise<BackfillCaseResult> => {
     const request = parseBackfillRequest(payload);
     if (request === null) return { status: 'error', message: 'Invalid backfill request.' };
-    const result = await fileBackfillCase(request);
+    const result = await confirmAndFileBackfillCase(request, confirmFiling);
     logger.info('Backfill support case', { status: result.status, profile: request.profile });
     return result;
   });

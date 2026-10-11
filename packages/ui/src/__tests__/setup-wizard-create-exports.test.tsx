@@ -121,27 +121,28 @@ describe('SetupWizard — create the AWS exports with CloudFormation', () => {
       expect(screen.getByText('Copied')).toBeDefined();
     });
 
-    it('files it through the Support API only after an explicit confirmation', async () => {
+    // The confirmation itself is a native dialog in the main process
+    // (confirmAndFileBackfillCase), so a renderer can never skip it.
+    it('asks the app to file it, naming the profile and the chosen exports', async () => {
       const { api, user } = renderWizard();
       await openCreateStep(user);
 
       await user.click(screen.getByRole('button', { name: 'File it for me…' }));
-      expect(screen.getByText(/with the default profile/)).toBeDefined();
-      expect(api.backfillRequests).toEqual([]);
-      await user.click(screen.getByRole('button', { name: 'File the case' }));
 
       await waitFor(() => { expect(screen.getByText(/Case filed: case-171234/)).toBeDefined(); });
       expect(api.backfillRequests).toEqual([{ profile: 'default', tiers: ['daily'] }]);
     });
 
-    it('files nothing when the confirmation is cancelled', async () => {
+    it('says nothing, and lets the user try again, when the confirmation is declined', async () => {
       const { api, user } = renderWizard();
+      api.backfillResult = { status: 'canceled' };
       await openCreateStep(user);
 
       await user.click(screen.getByRole('button', { name: 'File it for me…' }));
-      await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
-      expect(api.backfillRequests).toEqual([]);
+      await waitFor(() => { expect(api.backfillRequests).toHaveLength(1); });
+      expect(screen.queryByText(/Case filed/)).toBeNull();
+      expect(screen.getByRole('button', { name: 'File it for me…' }).hasAttribute('disabled')).toBe(false);
     });
 
     it('points to the form when the support plan has no API access', async () => {
@@ -150,9 +151,18 @@ describe('SetupWizard — create the AWS exports with CloudFormation', () => {
       await openCreateStep(user);
 
       await user.click(screen.getByRole('button', { name: 'File it for me…' }));
-      await user.click(screen.getByRole('button', { name: 'File the case' }));
 
       await waitFor(() => { expect(screen.getByText(/support plan doesn.t include API access/)).toBeDefined(); });
+    });
+
+    it('says so when the request cannot be copied', async () => {
+      const { user } = renderWizard();
+      await openCreateStep(user);
+      vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValueOnce(new Error('denied'));
+
+      await user.click(screen.getByRole('button', { name: 'Copy the request' }));
+
+      await waitFor(() => { expect(screen.getByText(/Couldn.t copy/)).toBeDefined(); });
     });
   });
 

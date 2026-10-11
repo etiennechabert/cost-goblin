@@ -30,11 +30,16 @@ describe('parseBackfillRequest', () => {
       .toEqual({ profile: 'billing-admin', tiers: ['daily', 'hourly'] });
   });
 
+  it('accepts a profile name with a space, which the shared config allows', () => {
+    expect(parseBackfillRequest({ profile: 'billing admin', tiers: ['daily'] })).toEqual({ profile: 'billing admin', tiers: ['daily'] });
+  });
+
   it.each([
     ['a non-object', 'billing'],
     ['no profile', { tiers: ['daily'] }],
     ['an empty profile', { profile: '', tiers: ['daily'] }],
     ['a profile with a newline', { profile: 'a\nb', tiers: ['daily'] }],
+    ['a profile with a leading space', { profile: ' admin', tiers: ['daily'] }],
     ['no tiers', { profile: 'p', tiers: [] }],
     ['the Cost Optimization export, which has no history to backfill', { profile: 'p', tiers: ['costOptimization'] }],
     ['a repeated tier', { profile: 'p', tiers: ['daily', 'daily'] }],

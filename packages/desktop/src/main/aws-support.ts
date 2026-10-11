@@ -1,4 +1,4 @@
-import { backfillCase } from '@costgoblin/core';
+import { backfillCase, backfillCaseText } from '@costgoblin/core';
 import type { BackfillCaseResult, BackfillRequest } from '@costgoblin/core';
 
 // Files the one-click setup's backfill request through the AWS Support API
@@ -31,4 +31,16 @@ export async function fileBackfillCase(request: BackfillRequest): Promise<Backfi
     if (err instanceof Error && err.name === 'SubscriptionRequiredException') return { status: 'subscription-required' };
     return { status: 'error', message: err instanceof Error ? err.message : String(err) };
   }
+}
+
+/** Asks the user, from the main process, whether to file the case. */
+export type ConfirmFiling = (prompt: { readonly profile: string; readonly caseText: string }) => Promise<boolean>;
+
+/** Files the case only once the user confirms it outside the renderer: the
+ *  case lands in their AWS account, so no renderer bug or compromise can file
+ *  one without them seeing the exact text first. */
+export async function confirmAndFileBackfillCase(request: BackfillRequest, confirm: ConfirmFiling): Promise<BackfillCaseResult> {
+  const caseText = backfillCaseText(backfillCase(request.tiers));
+  if (!(await confirm({ profile: request.profile, caseText }))) return { status: 'canceled' };
+  return fileBackfillCase(request);
 }

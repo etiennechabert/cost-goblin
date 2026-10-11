@@ -125,6 +125,11 @@ describe('the exports stack template', () => {
     expect(at(resources, 'Bucket', 'UpdateReplacePolicy')).toBe('Retain');
   });
 
+  it("keeps the account's Data Exports service role, which other exports may use, when the stack is deleted", () => {
+    expect(at(resources, 'DataExportsServiceRole', 'DeletionPolicy')).toBe('Retain');
+    expect(at(resources, 'DataExportsServiceRole', 'UpdateReplacePolicy')).toBe('Retain');
+  });
+
   it('refuses to run outside us-east-1, where Data Exports lives', () => {
     expect(at(section(template, 'Rules'), 'RunsInUsEast1', 'Assertions')).toEqual([
       expect.objectContaining({ Assert: { 'Fn::Equals': [{ Ref: 'AWS::Region' }, 'us-east-1'] } }),
@@ -179,7 +184,11 @@ describe('isValidS3BucketName', () => {
     expect(isValidS3BucketName(name)).toBe(true);
   });
 
-  it.each(['ab', 'a'.repeat(64), 'Acme-billing', 'acme_billing', '-acme', 'acme-', 'acme..billing', '192.168.1.1', ''])('rejects %s', (name) => {
+  it.each([
+    'ab', 'a'.repeat(64), 'Acme-billing', 'acme_billing', '-acme', 'acme-', 'acme..billing', '192.168.1.1', '',
+    // names S3 reserves
+    'xn--acme', 'sthree-acme', 'amzn-s3-demo-acme', 'acme-s3alias', 'acme--ol-s3', 'acme.mrap', 'acme--x-s3', 'acme--table-s3',
+  ])('rejects %s', (name) => {
     expect(isValidS3BucketName(name)).toBe(false);
   });
 });

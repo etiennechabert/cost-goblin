@@ -234,6 +234,8 @@ Resources:
   DataExportsServiceRole:
     Type: AWS::IAM::ServiceLinkedRole
     Condition: CreatesServiceRole
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       AWSServiceName: bcm-data-exports.amazonaws.com
   CostOptimizationExport:
