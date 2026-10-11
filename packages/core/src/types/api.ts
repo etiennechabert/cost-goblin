@@ -335,6 +335,9 @@ export interface CostApi {
   /** Files the support case asking AWS to backfill the exports, through the
    *  Support API. Needs a Business support plan or above. */
   fileBackfillCase(request: BackfillRequest): Promise<BackfillCaseResult>;
+  /** The release's hosted copy of that template, for a prefilled quick-create
+   *  link; null while no bucket hosts it (save and upload instead). */
+  getHostedExportsTemplateUrl(): Promise<string | null>;
   /** Projects visible to the gcloud CLI's active account. Backed by
    *  `gcloud projects list`, not an SDK call: the CLI is already a hard
    *  requirement of the GCP download path, so this adds no dependency where

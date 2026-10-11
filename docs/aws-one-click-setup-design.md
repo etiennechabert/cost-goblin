@@ -1,7 +1,8 @@
 # AWS One-Click Setup — Design Proposal
 
-> Status: **in progress**: phases 1 (template, tests, docs), 2 (wizard step) and 3 (backfill
-> helper) are implemented; decisions taken since
+> Status: **implemented**, phases 1 to 4. Phase 4's hosted quick-create link stays off until the
+> maintainer deploys the hosting stack (`scripts/aws-exports/hosting/README.md`); the GCP
+> equivalent (§10) is not started; decisions taken since
 > drafting are recorded in §9. Lets a new user get a correct AWS billing setup (bucket,
 > lifecycle rules, FOCUS 1.2 exports, Cost Optimization Hub export) from the setup wizard instead
 > of following the manual guide in the README and on costgoblin.com. Phases are ordered and
@@ -127,7 +128,14 @@ the export.
   That needs a public-read bucket owned by the project, with `release.yml` uploading the template
   per tag. Today `release.yml` has no AWS credentials and runs only lockfile-pinned code (CLAUDE.md,
   *Dependency supply chain*), so this needs an OIDC role scoped to that one bucket. Phases 1–3
-  don't need it.
+  don't need it. As built: `scripts/aws-exports/hosting/template-hosting.yaml` creates the bucket
+  (only `templates/` public), GitHub's OIDC provider and `ReleaseUploadRole`, which trusts only the
+  repository's `release` environment and can only write under `templates/`. `release.yml`'s
+  `publish-template` job holds only `id-token: write`, runs no npm code, uploads the committed
+  template to `templates/<tag>/` and `templates/latest/`, and is skipped until the
+  `TEMPLATE_BUCKET` and `TEMPLATE_ROLE_ARN` variables are set. The app asks the main process for
+  the template matching its build (a release's own tag, `latest` for a development build) and
+  offers the link only when `HOSTED_EXPORTS_TEMPLATE_BASE_URL` is set.
 
 ## 7. Phases
 

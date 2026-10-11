@@ -1,11 +1,13 @@
 import { writeFile } from 'node:fs/promises';
-import { dialog, ipcMain, shell } from 'electron';
+import { app as electronApp, dialog, ipcMain, shell } from 'electron';
 import {
   assertValidGcsBucketName,
   classifyGcsFolder,
   createGcsStorage,
   logger,
   isStringRecord,
+  HOSTED_EXPORTS_TEMPLATE_BASE_URL,
+  hostedTemplateUrlForBuild,
   parseBackfillRequest,
   parseExportsStackDefaults,
   renderExportsStackYaml,
@@ -104,6 +106,9 @@ export function registerSetupHandlers(app: AppContext): void {
       return { status: 'error', message: err instanceof Error ? err.message : String(err) };
     }
   });
+
+  ipcMain.handle('setup:hosted-exports-template-url', (): string | null =>
+    hostedTemplateUrlForBuild(HOSTED_EXPORTS_TEMPLATE_BASE_URL, { packaged: electronApp.isPackaged, version: electronApp.getVersion() }));
 
   // Files a case in the user's AWS account: the renderer only names the
   // profile and the exports; the case's text is built here (backfillCase).

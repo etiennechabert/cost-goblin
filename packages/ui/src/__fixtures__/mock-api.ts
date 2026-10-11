@@ -379,6 +379,8 @@ export class MockCostApi implements CostApi {
     this.savedExportsTemplates.push(defaults);
     return Promise.resolve(this.saveExportsTemplateResult);
   }
+  hostedExportsTemplateUrl: string | null = null;
+  getHostedExportsTemplateUrl(): ReturnType<CostApi['getHostedExportsTemplateUrl']> { return Promise.resolve(this.hostedExportsTemplateUrl); }
   backfillRequests: Parameters<CostApi['fileBackfillCase']>[0][] = [];
   backfillResult: Awaited<ReturnType<CostApi['fileBackfillCase']>> = { status: 'filed', caseId: 'case-171234' };
   fileBackfillCase(request: Parameters<CostApi['fileBackfillCase']>[0]): ReturnType<CostApi['fileBackfillCase']> {

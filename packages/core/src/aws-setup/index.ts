@@ -12,5 +12,6 @@ export {
 } from './exports-stack.js';
 export type { ExportsStackDefaults, ExportsStackTier, TemplateObject, TemplateValue } from './exports-stack.js';
 export { renderExportsStackYaml } from './exports-stack-yaml.js';
+export { exportsStackQuickCreateUrl, HOSTED_EXPORTS_TEMPLATE_BASE_URL, hostedExportsTemplateUrl, hostedTemplateUrlForBuild } from './hosting.js';
 export { BACKFILL_MONTHS, backfillCase, backfillCaseText, parseBackfillRequest } from './backfill.js';
 export type { BackfillCase, BackfillCaseResult, BackfillRequest, BackfillTier } from './backfill.js';

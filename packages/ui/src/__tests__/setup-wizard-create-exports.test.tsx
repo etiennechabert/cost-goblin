@@ -9,8 +9,9 @@ import { SetupWizard } from '../views/setup-wizard.js';
 // the bucket step, the wizard prepares the CloudFormation template, hands off
 // to the console, and writes the config with the stack's paths.
 
-function renderWizard() {
+function renderWizard(prepare?: (api: MockCostApi) => void) {
   const api = new MockCostApi();
+  prepare?.(api);
   const user = userEvent.setup();
   render(
     <CostApiProvider value={api}>
@@ -153,6 +154,41 @@ describe('SetupWizard — create the AWS exports with CloudFormation', () => {
 
       await waitFor(() => { expect(screen.getByText(/support plan doesn.t include API access/)).toBeDefined(); });
     });
+  });
+
+  describe('when the release hosts the template', () => {
+    const TEMPLATE = 'https://costgoblin-templates.s3.amazonaws.com/templates/v0.9.0/costgoblin-exports.yaml';
+
+    it('offers the prefilled quick-create link, following the answers, and keeps save-and-upload as a fallback', async () => {
+      const { user } = renderWizard(api => { api.hostedExportsTemplateUrl = TEMPLATE; });
+      await openCreateStep(user);
+      await user.clear(bucketInput());
+      await user.type(bucketInput(), 'acme-billing');
+
+      const link = await screen.findByRole('link', { name: 'Open the prefilled stack in CloudFormation' });
+      const href = link.getAttribute('href') ?? '';
+      expect(href).toContain('#/stacks/quickcreate?');
+      expect(href).toContain(`templateURL=${encodeURIComponent(TEMPLATE)}`);
+      expect(href).toContain('param_BucketName=acme-billing');
+      expect(screen.getByRole('button', { name: 'Save the template…' })).toBeDefined();
+    });
+
+    it('withholds the link while the bucket name is invalid', async () => {
+      const { user } = renderWizard(api => { api.hostedExportsTemplateUrl = TEMPLATE; });
+      await openCreateStep(user);
+      await screen.findByText('Open the prefilled stack in CloudFormation');
+      await user.clear(bucketInput());
+      await user.type(bucketInput(), 'Bad Name');
+
+      expect(screen.queryByRole('link', { name: 'Open the prefilled stack in CloudFormation' })).toBeNull();
+    });
+  });
+
+  it('has no quick-create link while no release hosts the template', async () => {
+    const { user } = renderWizard();
+    await openCreateStep(user);
+
+    expect(screen.queryByText('Open the prefilled stack in CloudFormation')).toBeNull();
   });
 
   it('goes back to the bucket list', async () => {

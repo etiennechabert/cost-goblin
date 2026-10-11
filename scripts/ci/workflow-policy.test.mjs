@@ -18,8 +18,10 @@ const repoRoot = new URL('../../', import.meta.url);
 const workflowsDir = new URL('.github/workflows/', repoRoot);
 
 const NODE_VERSION = '^24.18.0';
-/** The only jobs that may hold a write scope: they create and publish the release. */
-const WRITE_JOBS = { 'release.yml': ['publish', 'notes'] };
+/** The only jobs that may hold a write scope: `publish` and `notes` create and
+ *  publish the release; `publish-template` holds only `id-token: write`, to
+ *  exchange GitHub's OIDC token for AWS credentials (pinned below). */
+const WRITE_JOBS = { 'release.yml': ['publish', 'notes', 'publish-template'] };
 
 /** Run-body patterns that resolve or execute code outside package-lock.json. */
 const FORBIDDEN_RUN_PATTERNS = [
@@ -313,8 +315,26 @@ describe('workflow policy (.github/workflows)', () => {
     expect(results.flatMap((r) => r.violations)).toEqual([]);
   });
 
-  it('grants write scopes only to release.yml publish and notes', () => {
+  it('grants write scopes only to release.yml publish, notes and publish-template', () => {
     expect(workflows.flatMap(({ name, wf }) => checkWriteScopes(name, wf))).toEqual([]);
+  });
+
+  // The one-click AWS setup's template upload (docs/aws-one-click-setup-design.md
+  // §6). It can reach an AWS account, so it gets the least it needs: an OIDC
+  // token and nothing else, only in the release environment the AWS role
+  // trusts, off until both variables are set, and no npm code at all: it
+  // uploads the committed, drift-tested template with the runner's AWS CLI.
+  it('release.yml publish-template holds only an OIDC token, in the release environment, and runs no npm code', () => {
+    const job = release.jobs['publish-template'];
+    expect(job).toBeDefined();
+    expect(job.permissions).toEqual({ 'id-token': 'write' });
+    expect(job.environment).toBe('release');
+    expect(job.if).toContain('vars.TEMPLATE_BUCKET');
+    expect(job.if).toContain('vars.TEMPLATE_ROLE_ARN');
+    const bodies = stepsOf(job).filter((step) => typeof step.run === 'string').map(runBody).join('\n');
+    expect(bodies).not.toMatch(/\bnpm\b|\bnpx\b|\byarn\b/);
+    expect(stepsOf(job).filter((step) => step.uses !== undefined && !usesAction(step, 'actions/checkout'))).toEqual([]);
+    expect(bodies).toContain('scripts/aws-exports/costgoblin-exports.yaml');
   });
 
   it('release.yml defaults every job to no permissions', () => {

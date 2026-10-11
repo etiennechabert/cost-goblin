@@ -1,5 +1,5 @@
 import type { BackfillTier, ConfigBundleSummary, ExportFileVersioning, GcpProject, GcsDownloadCheckResult, GcsFolderKind, ProviderConfig } from '@costgoblin/core/browser';
-import { backfillCase, backfillCaseText, DEFAULT_READER_ACCOUNT_ID, DEFAULT_RETENTION_DAYS, exportsStackPath, GCP_PROJECT_ID_RULES, gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isGcpImpersonationError, isGcpNetworkError, isValidGcpProjectId, isValidS3BucketName, isValidWorkspaceName, parseProviderName, resolveReaderInput, SERVICE_ACCOUNT_EMAIL_RULE } from '@costgoblin/core/browser';
+import { backfillCase, backfillCaseText, DEFAULT_READER_ACCOUNT_ID, DEFAULT_RETENTION_DAYS, exportsStackPath, exportsStackQuickCreateUrl, GCP_PROJECT_ID_RULES, gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isGcpImpersonationError, isGcpNetworkError, isValidGcpProjectId, isValidS3BucketName, isValidWorkspaceName, parseProviderName, resolveReaderInput, SERVICE_ACCOUNT_EMAIL_RULE } from '@costgoblin/core/browser';
 import { Check, Loader2, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
@@ -68,7 +68,7 @@ type WizardStep =
   | { step: 'profile'; profiles: string[]; loading: boolean; selected: string }
   | { step: 'bucket'; profile: string; source: DataSource; buckets: { name: string; region: string }[]; loading: boolean; selected: string; error: string }
   | { step: 'beacon'; profile: string; source: DataSource; bucket: string; content: string; summary: ConfigBundleSummary; applying: boolean; error: string }
-  | { step: 'aws-create'; profile: string; bucketName: string; hourly: boolean; costOptimization: boolean; serviceRoleExists: boolean; save: TemplateSaveState; backfill: BackfillFilingState }
+  | { step: 'aws-create'; profile: string; bucketName: string; hourly: boolean; costOptimization: boolean; serviceRoleExists: boolean; save: TemplateSaveState; backfill: BackfillFilingState; hostedTemplateUrl: string | null }
   | { step: 'browse'; profile: string; source: DataSource; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[]; fileVersioning: ExportFileVersioning; path: string[]; error: string }
   | { step: 'confirm'; cloud: 'aws'; profile: string; s3Path: string; hourlyPath: string; costOptPath: string }
   | { step: 'confirm'; cloud: 'gcp'; project: GcpProjectChoice | null; reader: string; clearsReader: boolean; s3Path: string; hourlyPath: string; costOptPath: string };
@@ -1689,6 +1689,27 @@ function CreateExportsStep({ state, onChange, onSave, onFileBackfill, onDone, on
       </div>
 
       <ol className="flex flex-col gap-2 text-sm text-text-secondary list-decimal pl-5">
+        {state.hostedTemplateUrl !== null && (
+          <li>
+            {nameValid ? (
+              <a
+                href={exportsStackQuickCreateUrl(state.hostedTemplateUrl, {
+                  bucketName: state.bucketName, hourly: state.hourly,
+                  costOptimization: state.costOptimization, serviceRole: !state.serviceRoleExists,
+                })}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-accent underline underline-offset-2 hover:text-accent-hover"
+              >
+                Open the prefilled stack in CloudFormation
+              </a>
+            ) : (
+              <span className="text-text-muted">Open the prefilled stack in CloudFormation</span>
+            )}
+            , check the answers, acknowledge the IAM resources and create the stack. Without access to that link, save the
+            template and upload it instead:
+          </li>
+        )}
         <li>
           <Button onClick={onSave} disabled={!nameValid || save.status === 'saving'} variant="outline" size="sm">Save the template…</Button>
           {save.status === 'saved' && <span className="ml-2 text-xs text-text-muted break-all">Saved to {save.path}</span>}
@@ -2772,7 +2793,16 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     setWizard({
       step: 'aws-create', profile: wizard.profile, bucketName: proposedBucketName(),
       hourly: false, costOptimization: false, serviceRoleExists: false, save: { status: 'idle' }, backfill: { status: 'idle' },
+      hostedTemplateUrl: null,
     });
+    // A release whose template is hosted gets a prefilled quick-create link.
+    // Asked after the step shows: without an answer it simply isn't offered.
+    // Not token-guarded: the answer is fixed for the build, so it is right for
+    // this step whenever it lands, even after a Save bumped the token.
+    api.getHostedExportsTemplateUrl().then(hostedTemplateUrl => {
+      if (hostedTemplateUrl === null) return;
+      setWizard(prev => prev.step === 'aws-create' ? { ...prev, hostedTemplateUrl } : prev);
+    }).catch(() => { /* no link then: save and upload still works */ });
   }
 
   function handleCreateExportsChange(answers: Partial<CreateExportsAnswers>) {

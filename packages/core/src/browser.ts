@@ -20,6 +20,7 @@ export { DEFAULT_RETENTION_DAYS } from './sync/retention.js';
 export { EXPORTS_STACK_LAYOUT, exportsStackPath, isValidS3BucketName } from './aws-setup/exports-stack.js';
 export type { ExportsStackDefaults } from './aws-setup/exports-stack.js';
 export { backfillCase, backfillCaseText } from './aws-setup/backfill.js';
+export { exportsStackQuickCreateUrl } from './aws-setup/hosting.js';
 export type { BackfillCaseResult, BackfillTier } from './aws-setup/backfill.js';
 // Data & Sync opens the GCP wizard on a tier inside the provider's own bucket.
 // Leaf module with no imports.
