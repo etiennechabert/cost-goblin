@@ -21,6 +21,10 @@ vi.mock('@aws-sdk/client-s3', () => {
 const body = (text: string): { transformToString: () => Promise<string> } => ({ transformToString: () => Promise.resolve(text) });
 
 const exportRoot = { CommonPrefixes: [{ Prefix: 'focus/daily/data/' }, { Prefix: 'focus/daily/metadata/' }] };
+// The File versioning probe: a delimited data/ listing, then one of its newest partition.
+const dataListing = { CommonPrefixes: [{ Prefix: 'focus/daily/data/billing_period=2026-09/' }, { Prefix: 'focus/daily/data/billing_period=2026-10/' }] };
+const overwritePartition = { Contents: [{ Key: 'focus/daily/data/billing_period=2026-10/daily-00001.snappy.parquet' }] };
+const createNewPartition = { CommonPrefixes: [{ Prefix: 'focus/daily/data/billing_period=2026-10/20261002T030000Z-b2/' }] };
 const metadataListing = {
   Contents: [
     { Key: 'focus/daily/metadata/daily-Manifest-FOCUS.json' },
@@ -80,15 +84,127 @@ describe('browseS3', () => {
     mockSend
       .mockResolvedValueOnce(exportRoot)
       .mockResolvedValueOnce(metadataListing)
-      .mockResolvedValueOnce({ Body: body(JSON.stringify({ columns: partial.map(name => ({ name, type: 'STRING' })) })) });
+      .mockResolvedValueOnce({ Body: body(JSON.stringify({ columns: partial.map(name => ({ name, type: 'STRING' })) })) })
+      .mockResolvedValueOnce(dataListing)
+      .mockResolvedValueOnce(overwritePartition);
 
     const result = await browseS3({ profile: 'default', bucket: 'b', prefix: 'focus/daily/' });
 
-    expect(result).toEqual({ prefixes: ['data', 'metadata'], isBillingExport: true, detectedType: 'daily', missingColumns: ['Tags'] });
+    expect(result).toEqual({ prefixes: ['data', 'metadata'], isBillingExport: true, detectedType: 'daily', missingColumns: ['Tags'], fileVersioning: 'overwrite' });
     expect(ListObjectsV2Command).toHaveBeenNthCalledWith(1, { Bucket: 'b', Prefix: 'focus/daily/', Delimiter: '/', MaxKeys: 200 });
     expect(ListObjectsV2Command).toHaveBeenNthCalledWith(2, { Bucket: 'b', Prefix: 'focus/daily/metadata/', MaxKeys: 10 });
     // The FOCUS sidecar sorts first but has no `columns`; the real manifest is read.
     expect(GetObjectCommand).toHaveBeenCalledWith({ Bucket: 'b', Key: 'focus/daily/metadata/daily-Manifest.json' });
+    // File versioning is read off the newest month only.
+    expect(ListObjectsV2Command).toHaveBeenNthCalledWith(3, { Bucket: 'b', Prefix: 'focus/daily/data/', Delimiter: '/', ContinuationToken: undefined });
+    expect(ListObjectsV2Command).toHaveBeenNthCalledWith(4, { Bucket: 'b', Prefix: 'focus/daily/data/billing_period=2026-10/', Delimiter: '/', ContinuationToken: undefined });
+  });
+
+  it('reports an export whose newest month only holds per-refresh folders as Create new', async () => {
+    mockSend
+      .mockResolvedValueOnce(exportRoot)
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce(dataListing)
+      .mockResolvedValueOnce(createNewPartition);
+
+    const result = await browseS3({ profile: 'default', bucket: 'b', prefix: 'focus/daily/' });
+
+    expect(result).toMatchObject({ isBillingExport: true, fileVersioning: 'create-new' });
+  });
+
+  it('pages through data/ to find the newest month', async () => {
+    const { ListObjectsV2Command } = await import('@aws-sdk/client-s3');
+    mockSend
+      .mockResolvedValueOnce(exportRoot)
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ CommonPrefixes: [{ Prefix: 'focus/daily/data/billing_period=2026-09/' }], IsTruncated: true, NextContinuationToken: 'page-2' })
+      .mockResolvedValueOnce({ CommonPrefixes: [{ Prefix: 'focus/daily/data/billing_period=2026-10/' }] })
+      .mockResolvedValueOnce(createNewPartition);
+
+    const result = await browseS3({ profile: 'default', bucket: 'b', prefix: 'focus/daily/' });
+
+    expect(result.fileVersioning).toBe('create-new');
+    expect(ListObjectsV2Command).toHaveBeenNthCalledWith(4, { Bucket: 'b', Prefix: 'focus/daily/data/', Delimiter: '/', ContinuationToken: 'page-2' });
+    expect(ListObjectsV2Command).toHaveBeenNthCalledWith(5, { Bucket: 'b', Prefix: 'focus/daily/data/billing_period=2026-10/', Delimiter: '/', ContinuationToken: undefined });
+  });
+
+  describe('a month holding both layouts (File versioning switched this month)', () => {
+    const PARTITION = 'focus/daily/data/billing_period=2026-10/';
+    const mixedLevel = {
+      Contents: [{ Key: `${PARTITION}daily-00001.snappy.parquet`, LastModified: new Date('2026-10-10T03:00:00Z') }],
+      CommonPrefixes: [{ Prefix: `${PARTITION}20261011T030000Z-b2/` }],
+    };
+
+    it('lists the whole month and goes by the delivery written last', async () => {
+      const { ListObjectsV2Command } = await import('@aws-sdk/client-s3');
+      mockSend
+        .mockResolvedValueOnce(exportRoot)
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce(dataListing)
+        .mockResolvedValueOnce(mixedLevel)
+        .mockResolvedValueOnce({ Contents: [
+          ...mixedLevel.Contents,
+          { Key: `${PARTITION}20261011T030000Z-b2/daily-00001.snappy.parquet`, LastModified: new Date('2026-10-11T03:00:00Z') },
+        ] });
+
+      const result = await browseS3({ profile: 'default', bucket: 'b', prefix: 'focus/daily/' });
+
+      // Switched from Overwrite to Create new: the in-place files are stale.
+      expect(result.fileVersioning).toBe('create-new');
+      expect(ListObjectsV2Command).toHaveBeenNthCalledWith(5, { Bucket: 'b', Prefix: PARTITION, ContinuationToken: undefined });
+    });
+
+    it('keeps the Overwrite verdict when the month is too large to list whole', async () => {
+      mockSend
+        .mockResolvedValueOnce(exportRoot)
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce(dataListing)
+        .mockResolvedValueOnce(mixedLevel)
+        .mockResolvedValue({ Contents: [], IsTruncated: true, NextContinuationToken: 'more' });
+
+      const result = await browseS3({ profile: 'default', bucket: 'b', prefix: 'focus/daily/' });
+
+      expect(result.fileVersioning).toBe('overwrite');
+      // 4 calls before the full listing, then its page cap.
+      expect(mockSend).toHaveBeenCalledTimes(4 + 10);
+    });
+  });
+
+  it('does not probe File versioning for a CUR 2.0 export, which is refused anyway', async () => {
+    mockSend
+      .mockResolvedValueOnce(exportRoot)
+      .mockResolvedValueOnce(metadataListing)
+      .mockResolvedValueOnce({ Body: body(JSON.stringify({ columns: [{ name: 'line_item_usage_start_date' }] })) });
+
+    const result = await browseS3({ profile: 'default', bucket: 'b', prefix: 'focus/daily/' });
+
+    expect(result).toMatchObject({ detectedType: 'cur-legacy', fileVersioning: 'unknown' });
+    expect(mockSend).toHaveBeenCalledTimes(3);
+  });
+
+  it('leaves File versioning unknown for an export with no delivery yet', async () => {
+    mockSend
+      .mockResolvedValueOnce(exportRoot)
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+
+    const result = await browseS3({ profile: 'default', bucket: 'b', prefix: 'focus/daily/' });
+
+    expect(result.fileVersioning).toBe('unknown');
+    expect(mockSend).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps the type detection when the File versioning probe cannot list data/', async () => {
+    mockSend
+      .mockResolvedValueOnce(exportRoot)
+      .mockResolvedValueOnce(metadataListing)
+      .mockResolvedValueOnce({ Body: body(JSON.stringify({ columns: [{ name: 'ChargePeriodStart' }] })) })
+      .mockRejectedValueOnce(new Error('AccessDenied'));
+
+    const result = await browseS3({ profile: 'default', bucket: 'b', prefix: 'focus/daily/' });
+
+    expect(result).toMatchObject({ isBillingExport: true, detectedType: 'daily', fileVersioning: 'unknown' });
+    expect(result.error).toBeUndefined();
   });
 
   it('skips manifest detection for a folder that is not an export root', async () => {
@@ -96,7 +212,7 @@ describe('browseS3', () => {
 
     const result = await browseS3({ profile: 'default', bucket: 'b', prefix: '' });
 
-    expect(result).toEqual({ prefixes: ['focus', 'cur'], isBillingExport: false, detectedType: 'unknown', missingColumns: [] });
+    expect(result).toEqual({ prefixes: ['focus', 'cur'], isBillingExport: false, detectedType: 'unknown', missingColumns: [], fileVersioning: 'unknown' });
     expect(mockSend).toHaveBeenCalledTimes(1);
   });
 
@@ -104,7 +220,7 @@ describe('browseS3', () => {
     mockSend.mockResolvedValueOnce({});
 
     await expect(browseS3({ profile: 'default', bucket: 'b', prefix: '' }))
-      .resolves.toEqual({ prefixes: [], isBillingExport: false, detectedType: 'unknown', missingColumns: [] });
+      .resolves.toEqual({ prefixes: [], isBillingExport: false, detectedType: 'unknown', missingColumns: [], fileVersioning: 'unknown' });
   });
 
   it.each([
@@ -113,20 +229,23 @@ describe('browseS3', () => {
   ])('leaves the type unknown for an export root with %s', async (_label, responses) => {
     mockSend.mockResolvedValueOnce(exportRoot);
     for (const response of responses) mockSend.mockResolvedValueOnce(response);
+    mockSend.mockResolvedValueOnce(dataListing).mockResolvedValueOnce(overwritePartition);
 
     const result = await browseS3({ profile: 'default', bucket: 'b', prefix: 'focus/daily/' });
 
-    expect(result).toEqual({ prefixes: ['data', 'metadata'], isBillingExport: true, detectedType: 'unknown', missingColumns: [] });
+    expect(result).toEqual({ prefixes: ['data', 'metadata'], isBillingExport: true, detectedType: 'unknown', missingColumns: [], fileVersioning: 'overwrite' });
   });
 
-  it('keeps the folders when the manifest cannot be read', async () => {
+  it('keeps the folders, and still probes File versioning, when the manifest cannot be read', async () => {
     mockSend
       .mockResolvedValueOnce(exportRoot)
-      .mockRejectedValueOnce(new Error('AccessDenied'));
+      .mockRejectedValueOnce(new Error('AccessDenied'))
+      .mockResolvedValueOnce(dataListing)
+      .mockResolvedValueOnce(createNewPartition);
 
     const result = await browseS3({ profile: 'default', bucket: 'b', prefix: 'focus/daily/' });
 
-    expect(result).toEqual({ prefixes: ['data', 'metadata'], isBillingExport: true, detectedType: 'unknown', missingColumns: [] });
+    expect(result).toEqual({ prefixes: ['data', 'metadata'], isBillingExport: true, detectedType: 'unknown', missingColumns: [], fileVersioning: 'create-new' });
   });
 
   it('surfaces a non-Error rejection as text', async () => {
@@ -141,7 +260,7 @@ describe('browseS3', () => {
     const result = await browseS3({ profile: 'default', bucket: 'b', prefix: '' });
 
     expect(result).toEqual({
-      prefixes: [], isBillingExport: false, detectedType: 'unknown', missingColumns: [],
+      prefixes: [], isBillingExport: false, detectedType: 'unknown', missingColumns: [], fileVersioning: 'unknown',
       error: 'The bucket you are attempting to access must be addressed using the specified endpoint.',
     });
   });

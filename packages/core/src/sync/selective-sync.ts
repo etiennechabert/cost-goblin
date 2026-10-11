@@ -109,9 +109,13 @@ function runAwsS3Sync(options: {
     // excludes everything and then re-includes `*.parquet`: a stray object in
     // the partition folder (a manifest, a CSV, someone else's dump) is never
     // copied onto the laptop. No shell is involved, so `*` needs no quoting.
+    // The last filter keeps it to the folder's own files: `aws s3 sync` is
+    // recursive and `*` spans `/`, so without it a month an export delivered
+    // with File versioning = Create new (one subfolder per refresh) would
+    // download every refresh's copy, which queries never read.
     const args = [
       's3', 'sync', options.source, options.dest,
-      '--exclude', '*', '--include', '*.parquet',
+      '--exclude', '*', '--include', '*.parquet', '--exclude', '*/*',
       '--profile', options.profile,
     ];
     const proc = spawn(awsBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
