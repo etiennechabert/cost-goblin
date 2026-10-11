@@ -81,6 +81,21 @@ describe('SetupWizard — create the AWS exports with CloudFormation', () => {
     expect(api.savedExportsTemplates[0]).toMatchObject({ costOptimization: true, serviceRole: false });
   });
 
+  it('only continues once the template for the current answers is saved', async () => {
+    const { user } = renderWizard();
+    await openCreateStep(user);
+    const done = () => screen.getByRole('button', { name: 'I’ve created the stack' });
+    expect(done().hasAttribute('disabled')).toBe(true);
+
+    await user.click(screen.getByRole('button', { name: 'Save the template…' }));
+    await waitFor(() => { expect(done().hasAttribute('disabled')).toBe(false); });
+
+    // A changed answer no longer matches the saved template: the config would
+    // point at a bucket the stack never creates.
+    await user.type(bucketInput(), 'x');
+    expect(done().hasAttribute('disabled')).toBe(true);
+  });
+
   it('refuses a bucket name S3 would refuse, before anything is saved', async () => {
     const { api, user } = renderWizard();
     await openCreateStep(user);
@@ -143,6 +158,25 @@ describe('SetupWizard — create the AWS exports with CloudFormation', () => {
       await waitFor(() => { expect(api.backfillRequests).toHaveLength(1); });
       expect(screen.queryByText(/Case filed/)).toBeNull();
       expect(screen.getByRole('button', { name: 'File it for me…' }).hasAttribute('disabled')).toBe(false);
+    });
+
+    it('offers to file again when the exports it covers change, and only then', async () => {
+      const { api, user } = renderWizard();
+      await openCreateStep(user);
+      await user.click(screen.getByRole('button', { name: 'File it for me…' }));
+      await waitFor(() => { expect(screen.getByText(/Case filed: case-171234/)).toBeDefined(); });
+      const file = () => screen.getByRole('button', { name: 'File it for me…' });
+
+      // The bucket name isn't in the case: the filed case still stands.
+      await user.type(bucketInput(), 'x');
+      expect(file().hasAttribute('disabled')).toBe(true);
+
+      // Adding the hourly export changes what to backfill.
+      await user.click(screen.getByLabelText(/Also export hourly data/));
+      expect(file().hasAttribute('disabled')).toBe(false);
+      await user.click(file());
+      await waitFor(() => { expect(api.backfillRequests).toHaveLength(2); });
+      expect(api.backfillRequests[1]).toEqual({ profile: 'default', tiers: ['daily', 'hourly'] });
     });
 
     it('points to the form when the support plan has no API access', async () => {

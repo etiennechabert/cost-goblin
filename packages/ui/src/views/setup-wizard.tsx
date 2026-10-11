@@ -1732,7 +1732,9 @@ function CreateExportsStep({ state, onChange, onSave, onFileBackfill, onDone, on
 
       <div className="flex items-center justify-between pt-2">
         <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
-        <Button onClick={onDone} disabled={!nameValid} className="bg-accent hover:bg-accent-hover text-white px-8">
+        {/* Only once the template for these answers is saved: the config gets
+            the paths of these answers, so they must be the stack's too. */}
+        <Button onClick={onDone} disabled={!nameValid || save.status !== 'saved'} className="bg-accent hover:bg-accent-hover text-white px-8">
           I’ve created the stack
         </Button>
       </div>
@@ -2804,8 +2806,13 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   }
 
   function handleCreateExportsChange(answers: Partial<CreateExportsAnswers>) {
-    // A saved template no longer matches changed answers: ask for a new save.
-    setWizard(prev => prev.step === 'aws-create' ? { ...prev, ...answers, save: { status: 'idle' } } : prev);
+    setWizard(prev => {
+      if (prev.step !== 'aws-create') return prev;
+      // A saved template no longer matches changed answers: ask for a new
+      // save. A filed backfill stands unless the exports it names changed.
+      const backfillCovers = answers.hourly === undefined || answers.hourly === prev.hourly;
+      return { ...prev, ...answers, save: { status: 'idle' }, backfill: backfillCovers ? prev.backfill : { status: 'idle' } };
+    });
   }
 
   function handleSaveExportsTemplate() {
