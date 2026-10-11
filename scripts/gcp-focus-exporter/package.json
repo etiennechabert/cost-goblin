@@ -16,5 +16,11 @@
   "dependencies": {
     "@google-cloud/bigquery": "8.3.1",
     "@google-cloud/storage": "^8.2.0"
+  },
+  "_overridesNote": "gaxios 6 asks for uuid ^9, which has no fix for GHSA-w5hq-g745-h8pq; uuid 11.1.1 keeps the CommonJS `v4` gaxios calls. Drop the override once @google-cloud/* depend on gaxios 7 or later.",
+  "overrides": {
+    "gaxios": {
+      "uuid": "^11.1.1"
+    }
   }
 }
