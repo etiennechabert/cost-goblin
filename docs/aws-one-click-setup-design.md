@@ -1,6 +1,7 @@
 # AWS One-Click Setup — Design Proposal
 
-> Status: **in progress**: phases 1 (template, tests, docs) and 2 (wizard step) are implemented; decisions taken since
+> Status: **in progress**: phases 1 (template, tests, docs), 2 (wizard step) and 3 (backfill
+> helper) are implemented; decisions taken since
 > drafting are recorded in §9. Lets a new user get a correct AWS billing setup (bucket,
 > lifecycle rules, FOCUS 1.2 exports, Cost Optimization Hub export) from the setup wizard instead
 > of following the manual guide in the README and on costgoblin.com. Phases are ordered and

@@ -104,6 +104,57 @@ describe('SetupWizard — create the AWS exports with CloudFormation', () => {
     expect(screen.getByText('Create your AWS exports')).toBeDefined();
   });
 
+  describe('the backfill request', () => {
+    it('shows the request to paste into the Support Center form, naming the chosen exports', async () => {
+      const { user } = renderWizard();
+      await openCreateStep(user);
+
+      expect(screen.getByText(/Please backfill the AWS Data Export named costgoblin-daily in this account/)).toBeDefined();
+      await user.click(screen.getByLabelText(/Also export hourly data/));
+      expect(screen.getByText(/Exports named costgoblin-daily and costgoblin-hourly/)).toBeDefined();
+      const form = screen.getByRole('link', { name: 'Open the Support Center form' });
+      expect(form.getAttribute('href')).toBe('https://support.console.aws.amazon.com/support/home#/case/create');
+
+      await user.click(screen.getByRole('button', { name: 'Copy the request' }));
+      expect(await navigator.clipboard.readText()).toContain('Subject: Backfill Data');
+      expect(screen.getByText('Copied')).toBeDefined();
+    });
+
+    it('files it through the Support API only after an explicit confirmation', async () => {
+      const { api, user } = renderWizard();
+      await openCreateStep(user);
+
+      await user.click(screen.getByRole('button', { name: 'File it for me…' }));
+      expect(screen.getByText(/with the default profile/)).toBeDefined();
+      expect(api.backfillRequests).toEqual([]);
+      await user.click(screen.getByRole('button', { name: 'File the case' }));
+
+      await waitFor(() => { expect(screen.getByText(/Case filed: case-171234/)).toBeDefined(); });
+      expect(api.backfillRequests).toEqual([{ profile: 'default', tiers: ['daily'] }]);
+    });
+
+    it('files nothing when the confirmation is cancelled', async () => {
+      const { api, user } = renderWizard();
+      await openCreateStep(user);
+
+      await user.click(screen.getByRole('button', { name: 'File it for me…' }));
+      await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+      expect(api.backfillRequests).toEqual([]);
+    });
+
+    it('points to the form when the support plan has no API access', async () => {
+      const { api, user } = renderWizard();
+      api.backfillResult = { status: 'subscription-required' };
+      await openCreateStep(user);
+
+      await user.click(screen.getByRole('button', { name: 'File it for me…' }));
+      await user.click(screen.getByRole('button', { name: 'File the case' }));
+
+      await waitFor(() => { expect(screen.getByText(/support plan doesn.t include API access/)).toBeDefined(); });
+    });
+  });
+
   it('goes back to the bucket list', async () => {
     const { user } = renderWizard();
     await openCreateStep(user);

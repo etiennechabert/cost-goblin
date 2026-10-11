@@ -1,5 +1,5 @@
-import type { ConfigBundleSummary, ExportFileVersioning, GcpProject, GcsDownloadCheckResult, GcsFolderKind, ProviderConfig } from '@costgoblin/core/browser';
-import { DEFAULT_READER_ACCOUNT_ID, DEFAULT_RETENTION_DAYS, exportsStackPath, GCP_PROJECT_ID_RULES, gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isGcpImpersonationError, isGcpNetworkError, isValidGcpProjectId, isValidS3BucketName, isValidWorkspaceName, parseProviderName, resolveReaderInput, SERVICE_ACCOUNT_EMAIL_RULE } from '@costgoblin/core/browser';
+import type { BackfillTier, ConfigBundleSummary, ExportFileVersioning, GcpProject, GcsDownloadCheckResult, GcsFolderKind, ProviderConfig } from '@costgoblin/core/browser';
+import { backfillCase, backfillCaseText, DEFAULT_READER_ACCOUNT_ID, DEFAULT_RETENTION_DAYS, exportsStackPath, GCP_PROJECT_ID_RULES, gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isGcpImpersonationError, isGcpNetworkError, isValidGcpProjectId, isValidS3BucketName, isValidWorkspaceName, parseProviderName, resolveReaderInput, SERVICE_ACCOUNT_EMAIL_RULE } from '@costgoblin/core/browser';
 import { Check, Loader2, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
@@ -8,6 +8,7 @@ import { Card, CardContent } from '../components/ui/card.js';
 import { Button } from '../components/ui/button.js';
 import { BundleSummaryCard, ImportConfigDialog } from '../components/config-sharing.js';
 import { ProfilePicker } from '../components/profile-picker.js';
+import { ConfirmModal } from '../components/confirm-modal.js';
 import { GcpIdentityPanel } from '../components/gcp-identity-panel.js';
 import { GcloudLoginButton, RetryButton, SsoLoginButton } from '../components/sso-login-button.js';
 
@@ -42,6 +43,14 @@ type GcpReaderCheck =
   | { readonly status: 'checking' }
   | { readonly status: 'denied'; readonly reader: string; readonly project: string; readonly message: string };
 
+/** Filing the backfill support case through the Support API. */
+type BackfillFilingState =
+  | { status: 'idle' }
+  | { status: 'filing' }
+  | { status: 'filed'; caseId: string }
+  | { status: 'subscription-required' }
+  | { status: 'error'; message: string };
+
 /** Saving the one-click setup's CloudFormation template. */
 type TemplateSaveState =
   | { status: 'idle' }
@@ -59,7 +68,7 @@ type WizardStep =
   | { step: 'profile'; profiles: string[]; loading: boolean; selected: string }
   | { step: 'bucket'; profile: string; source: DataSource; buckets: { name: string; region: string }[]; loading: boolean; selected: string; error: string }
   | { step: 'beacon'; profile: string; source: DataSource; bucket: string; content: string; summary: ConfigBundleSummary; applying: boolean; error: string }
-  | { step: 'aws-create'; profile: string; bucketName: string; hourly: boolean; costOptimization: boolean; serviceRoleExists: boolean; save: TemplateSaveState }
+  | { step: 'aws-create'; profile: string; bucketName: string; hourly: boolean; costOptimization: boolean; serviceRoleExists: boolean; save: TemplateSaveState; backfill: BackfillFilingState }
   | { step: 'browse'; profile: string; source: DataSource; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[]; fileVersioning: ExportFileVersioning; path: string[]; error: string }
   | { step: 'confirm'; cloud: 'aws'; profile: string; s3Path: string; hourlyPath: string; costOptPath: string }
   | { step: 'confirm'; cloud: 'gcp'; project: GcpProjectChoice | null; reader: string; clearsReader: boolean; s3Path: string; hourlyPath: string; costOptPath: string };
@@ -1540,6 +1549,71 @@ function BucketStep({ state, onSelect, onSkip, onBack, onRetry, onCreateExports 
 }
 
 const CLOUDFORMATION_CREATE_URL = 'https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create';
+const SUPPORT_CASE_URL = 'https://support.console.aws.amazon.com/support/home#/case/create';
+
+/** The FOCUS exports a backfill covers, as chosen on the step. */
+function backfillTiers(hourly: boolean): BackfillTier[] {
+  return hourly ? ['daily', 'hourly'] : ['daily'];
+}
+
+/** Step 4 of the create step: a new export has no history, and AWS backfills
+ *  on request. The case text is always shown, to paste into the Support
+ *  Center form on any plan; filing it through the API is a confirmed extra. */
+function BackfillRequestItem({ profile, hourly, backfill, onFile }: Readonly<{
+  profile: string;
+  hourly: boolean;
+  backfill: BackfillFilingState;
+  onFile: () => void;
+}>) {
+  const [confirming, setConfirming] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const caseText = backfillCaseText(backfillCase(backfillTiers(hourly)));
+  return (
+    <li>
+      Once the stack exists, ask AWS for past months: a new export starts with no history, and AWS backfills about a year on request.
+      <pre className="mt-2 whitespace-pre-wrap rounded-md border border-border bg-bg-tertiary/20 px-3 py-2 font-mono text-xs text-text-secondary">{caseText}</pre>
+      <div className="mt-2 flex flex-wrap items-center gap-3">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => { void navigator.clipboard.writeText(caseText).then(() => { setCopied(true); }); }}
+        >
+          Copy the request
+        </Button>
+        {copied && <span className="text-xs text-text-muted">Copied</span>}
+        <a href={SUPPORT_CASE_URL} target="_blank" rel="noopener noreferrer" className="text-accent underline underline-offset-2 hover:text-accent-hover">
+          Open the Support Center form
+        </a>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => { setConfirming(true); }}
+          disabled={backfill.status === 'filing' || backfill.status === 'filed'}
+        >
+          File it for me…
+        </Button>
+      </div>
+      {backfill.status === 'filed' && (
+        <p className="mt-1 text-xs text-text-muted">Case filed: {backfill.caseId}. AWS answers in the Support Center.</p>
+      )}
+      {backfill.status === 'subscription-required' && (
+        <p className="mt-1 text-xs text-warning">
+          This account&apos;s support plan doesn&apos;t include API access. Paste the request into the Support Center form instead.
+        </p>
+      )}
+      {backfill.status === 'error' && <p className="mt-1 text-xs text-negative">Couldn&apos;t file it: {backfill.message}</p>}
+      {confirming && (
+        <ConfirmModal
+          title="File this support case?"
+          message={`CostGoblin files the request above in your AWS account with the ${profile} profile, which needs support:CreateCase in the account that owns the exports. Filing through the API needs a Business, Enterprise On-Ramp or Enterprise support plan.`}
+          confirmLabel="File the case"
+          onConfirm={() => { setConfirming(false); onFile(); }}
+          onCancel={() => { setConfirming(false); }}
+        />
+      )}
+    </li>
+  );
+}
 
 /** `costgoblin-billing-` and six random letters and digits: bucket names are
  *  global, so a fixed default would collide with someone else's. */
@@ -1556,10 +1630,11 @@ const CHECKBOX_LABEL = 'grid grid-cols-[auto_1fr] items-start gap-x-2 rounded-lg
 /** The one-click AWS setup (docs/aws-one-click-setup-design.md): the wizard
  *  saves a CloudFormation template with these answers baked in, someone with
  *  admin rights creates the stack, and the config gets the stack's paths. */
-function CreateExportsStep({ state, onChange, onSave, onDone, onBack }: Readonly<{
+function CreateExportsStep({ state, onChange, onSave, onFileBackfill, onDone, onBack }: Readonly<{
   state: Extract<WizardStep, { step: 'aws-create' }>;
   onChange: (answers: Partial<CreateExportsAnswers>) => void;
   onSave: () => void;
+  onFileBackfill: () => void;
   onDone: () => void;
   onBack: () => void;
 }>) {
@@ -1630,6 +1705,7 @@ function CreateExportsStep({ state, onChange, onSave, onDone, onBack }: Readonly
           Attach the stack&apos;s <span className="font-mono text-xs text-text-primary">ReadAccessPolicyArn</span> output to the role or user
           the <span className="text-text-primary">{state.profile}</span> profile reads with.
         </li>
+        <BackfillRequestItem profile={state.profile} hourly={state.hourly} backfill={state.backfill} onFile={onFileBackfill} />
       </ol>
       <p className="text-xs text-text-muted">
         AWS delivers the first data within about a day, sometimes up to 72 hours. Until then there is nothing to sync.
@@ -2695,7 +2771,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     ++stepRequestRef.current;
     setWizard({
       step: 'aws-create', profile: wizard.profile, bucketName: proposedBucketName(),
-      hourly: false, costOptimization: false, serviceRoleExists: false, save: { status: 'idle' },
+      hourly: false, costOptimization: false, serviceRoleExists: false, save: { status: 'idle' }, backfill: { status: 'idle' },
     });
   }
 
@@ -2716,6 +2792,24 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     api.saveExportsTemplate({ bucketName, hourly, costOptimization, serviceRole: !serviceRoleExists }).then(result => {
       if (result.status === 'saved') settle({ status: 'saved', path: result.path });
       else if (result.status === 'canceled') settle({ status: 'idle' });
+      else settle({ status: 'error', message: result.message });
+    }).catch((err: unknown) => {
+      settle({ status: 'error', message: err instanceof Error ? err.message : String(err) });
+    });
+  }
+
+  function handleFileBackfill() {
+    if (wizard.step !== 'aws-create') return;
+    const token = ++stepRequestRef.current;
+    const request = { profile: wizard.profile, tiers: backfillTiers(wizard.hourly) };
+    setWizard({ ...wizard, backfill: { status: 'filing' } });
+    const settle = (backfill: BackfillFilingState) => {
+      if (stepRequestRef.current !== token) return;
+      setWizard(prev => prev.step === 'aws-create' ? { ...prev, backfill } : prev);
+    };
+    api.fileBackfillCase(request).then(result => {
+      if (result.status === 'filed') settle({ status: 'filed', caseId: result.caseId });
+      else if (result.status === 'subscription-required') settle({ status: 'subscription-required' });
       else settle({ status: 'error', message: result.message });
     }).catch((err: unknown) => {
       settle({ status: 'error', message: err instanceof Error ? err.message : String(err) });
@@ -3034,6 +3128,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
               state={wizard}
               onChange={handleCreateExportsChange}
               onSave={handleSaveExportsTemplate}
+              onFileBackfill={handleFileBackfill}
               onDone={handleCreateExportsDone}
               onBack={handleBack}
             />

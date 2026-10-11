@@ -995,6 +995,7 @@ Before using CostGoblin:
    - `s3:ListBucket`, `s3:GetObject` on the export bucket(s)
    - For AWS Organizations sync (optional but recommended): `organizations:List*`, `organizations:Describe*` on the management or delegated-admin account
    - For Cost Optimization Hub sync (optional): `cost-optimization-hub:List*` (or use the exported Parquet via S3)
+   - For the setup wizard's optional "File it for me" backfill request: `support:CreateCase` in the account that owns the exports, on a Business, Enterprise On-Ramp or Enterprise support plan
 4. **Install CostGoblin** — download the app, run the setup wizard, point it at the bucket.
 
 ---

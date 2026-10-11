@@ -225,6 +225,9 @@ const api: CostApi = {
   saveExportsTemplate(defaults: Parameters<CostApi['saveExportsTemplate']>[0]): ReturnType<CostApi['saveExportsTemplate']> {
     return invoke<Awaited<ReturnType<CostApi['saveExportsTemplate']>>>('setup:save-exports-template', defaults);
   },
+  fileBackfillCase(request: Parameters<CostApi['fileBackfillCase']>[0]): ReturnType<CostApi['fileBackfillCase']> {
+    return invoke<Awaited<ReturnType<CostApi['fileBackfillCase']>>>('setup:file-backfill-case', request);
+  },
   listGcpProjects(): Promise<{ projects: readonly GcpProject[]; error?: string | undefined }> {
     return invoke<{ projects: readonly GcpProject[]; error?: string | undefined }>('setup:list-gcp-projects');
   },

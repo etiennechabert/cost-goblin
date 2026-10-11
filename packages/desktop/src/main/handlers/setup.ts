@@ -6,10 +6,11 @@ import {
   createGcsStorage,
   logger,
   isStringRecord,
+  parseBackfillRequest,
   parseExportsStackDefaults,
   renderExportsStackYaml,
 } from '@costgoblin/core';
-import type { ExportConfigBundleResult, GcpIdentityResult, GcpProject, GcsBrowseResult, GcsDownloadCheckResult } from '@costgoblin/core';
+import type { BackfillCaseResult, ExportConfigBundleResult, GcpIdentityResult, GcpProject, GcsBrowseResult, GcsDownloadCheckResult } from '@costgoblin/core';
 import { loadSharedConfigFiles } from '@smithy/shared-ini-file-loader';
 import { awsProfileNames } from '../aws-profiles.js';
 import { upsertWizardProvider } from '../config-upsert.js';
@@ -19,6 +20,7 @@ import { createGcpIdentityResolver, defaultIdentityDeps, gcpIdentitiesFor } from
 import type { GcpIdentityResolver } from '../gcp-identity.js';
 import { collectGcsPrefixes, gcloudProjectsOutcome, gcsNextPageToken, listGcsBucketsAs, parseWizardReader, verifyGcsDownloadAs, wizardGcsErrorMessage, wizardWriteReader } from '../setup-gcp.js';
 import { browseS3, listS3Buckets, testS3Connection } from '../setup-s3.js';
+import { fileBackfillCase } from '../aws-support.js';
 import type { AppContext } from './context.js';
 
 /** Ceiling on `gcloud projects list`. The CLI can sit on a re-auth prompt it
@@ -101,6 +103,16 @@ export function registerSetupHandlers(app: AppContext): void {
     } catch (err: unknown) {
       return { status: 'error', message: err instanceof Error ? err.message : String(err) };
     }
+  });
+
+  // Files a case in the user's AWS account: the renderer only names the
+  // profile and the exports; the case's text is built here (backfillCase).
+  ipcMain.handle('setup:file-backfill-case', async (_event, payload: unknown): Promise<BackfillCaseResult> => {
+    const request = parseBackfillRequest(payload);
+    if (request === null) return { status: 'error', message: 'Invalid backfill request.' };
+    const result = await fileBackfillCase(request);
+    logger.info('Backfill support case', { status: result.status, profile: request.profile });
+    return result;
   });
 
   // ---- GCP: the browse-and-pick counterpart of the three S3 handlers above.

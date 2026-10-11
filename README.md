@@ -192,7 +192,7 @@ s3://bucket/prefix/<export-name>/
 
 <a id="historical-data"></a>
 
-> **Historical data:** a new export only includes data from creation day onward. Open an AWS Support case to request a backfill for the export — AWS can typically reload up to 12 months.
+> **Historical data:** a new export only includes data from creation day onward. Open an AWS Support case to request a backfill for the export — AWS can typically reload up to 12 months. The setup wizard's **Create one with CloudFormation** step shows the request ready to paste into the Support Center form, and on a Business support plan or above can file it for you.
 
 ### AWS Credentials
 

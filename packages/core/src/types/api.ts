@@ -15,6 +15,7 @@ import type {
 import type { RollupGrainEstimate } from '../rollup/estimator.js';
 import type { GcsFolderKind } from '../sync/gcs-export-layout.js';
 import type { ExportsStackDefaults } from '../aws-setup/exports-stack.js';
+import type { BackfillCaseResult, BackfillRequest } from '../aws-setup/backfill.js';
 import type { AliasSuggestion } from '../normalize/similarity.js';
 import type { ViewsConfig } from './views.js';
 import type { GcpIdentityResult } from './gcp-identity.js';
@@ -331,6 +332,9 @@ export interface CostApi {
   /** Saves the billing-exports CloudFormation template, with the wizard's
    *  answers as its parameter defaults, where the user picks. */
   saveExportsTemplate(defaults: ExportsStackDefaults): Promise<ExportConfigBundleResult>;
+  /** Files the support case asking AWS to backfill the exports, through the
+   *  Support API. Needs a Business support plan or above. */
+  fileBackfillCase(request: BackfillRequest): Promise<BackfillCaseResult>;
   /** Projects visible to the gcloud CLI's active account. Backed by
    *  `gcloud projects list`, not an SDK call: the CLI is already a hard
    *  requirement of the GCP download path, so this adds no dependency where
