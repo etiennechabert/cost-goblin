@@ -376,8 +376,13 @@ jobs:
   # and no npm code. It uploads the committed template (drift-tested against its
   # generator) with the runner's own AWS CLI, using credentials that last 15
   # minutes and can only write under templates/ in that one bucket.
+  #
+  # It starts with the builds instead of after `publish`, so the one approval of
+  # the release environment covers it too: GitHub asks when a job is queued, and
+  # a job queued later asks again. The cost: a release whose build then fails has
+  # still published its template, under a tag no app ships with. The version
+  # check below keeps a mistagged release from publishing at all.
   publish-template:
-    needs: publish
     if: ${{ vars.TEMPLATE_BUCKET != '' && vars.TEMPLATE_ROLE_ARN != '' && vars.TEMPLATE_REGION != '' }}
     environment: release
     runs-on: ubuntu-latest
@@ -387,6 +392,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # The build's check, without npm: never publish under a tag the release
+      # itself refuses.
+      - name: Verify package.json version matches tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/v}"
+          pkg_v=$(jq -r .version package.json)
+          desktop_v=$(jq -r .version packages/desktop/package.json)
+          if [ "$pkg_v" != "$tag" ] || [ "$desktop_v" != "$tag" ]; then
+            echo "::error::Tag v$tag does not match package.json ($pkg_v) / packages/desktop/package.json ($desktop_v)."
+            exit 1
+          fi
 
       - name: Upload the exports template
         shell: bash

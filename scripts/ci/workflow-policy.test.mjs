@@ -336,6 +336,10 @@ describe('workflow policy (.github/workflows)', () => {
     expect(bodies).not.toMatch(/\bnpm\b|\bnpx\b|\byarn\b/);
     expect(stepsOf(job).filter((step) => step.uses !== undefined && !usesAction(step, 'actions/checkout'))).toEqual([]);
     expect(bodies).toContain('scripts/aws-exports/costgoblin-exports.yaml');
+    // Queued with the builds, so the release environment's one approval covers
+    // it; a `needs` would queue it later and ask the maintainer a second time.
+    expect(job.needs).toBeUndefined();
+    expect(bodies).toContain('packages/desktop/package.json');
   });
 
   it('release.yml defaults every job to no permissions', () => {
