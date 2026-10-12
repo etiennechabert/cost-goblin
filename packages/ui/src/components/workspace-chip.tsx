@@ -37,7 +37,7 @@ export function WorkspaceChip({ info, onSwitch, onManage }: Readonly<WorkspaceCh
           <ChevronDown size={12} className="shrink-0 text-text-muted" aria-hidden="true" />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" sideOffset={6} className="w-60 p-1 [-webkit-app-region:no-drag]">
+      <PopoverContent align="start" sideOffset={6} className="w-60 p-1">
         <div className="flex flex-col" role="group" aria-label="Workspaces">
           {info.workspaces.map(ws => (
             <button

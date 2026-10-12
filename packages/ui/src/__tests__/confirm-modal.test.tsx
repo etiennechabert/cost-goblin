@@ -3,6 +3,7 @@ import { userEvent } from '@testing-library/user-event';
 import { useState } from 'react';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { ConfirmModal } from '../components/confirm-modal.js';
+import { appRegionOf } from './app-region.js';
 
 afterEach(cleanup);
 
@@ -83,6 +84,17 @@ describe('ConfirmModal', () => {
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByRole('dialog', { name: 'Delete it?' })).toBeNull();
     expect(document.activeElement).toBe(trigger);
+  });
+
+  it('opts the modal out of window drag regions', () => {
+    render(
+      <ConfirmModal title="Test" message="msg" onConfirm={vi.fn()} onCancel={vi.fn()} />,
+    );
+    // The backdrop covers the frameless window's drag region (app header), so
+    // it must carve itself out — otherwise backdrop clicks in the top band
+    // drag the window instead of dismissing the modal, and the buttons of a
+    // dialog that reaches up into the band drag it too.
+    expect(appRegionOf(screen.getByRole('dialog', { name: 'Test' }))).toBe('no-drag');
   });
 
   it('renders custom button labels', () => {

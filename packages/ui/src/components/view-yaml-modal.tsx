@@ -3,6 +3,7 @@ import { parse, stringify } from 'yaml';
 import { validateViews, viewToYaml, ConfigValidationError } from '@costgoblin/core/browser';
 import type { ViewSpec } from '@costgoblin/core/browser';
 import { useModalDialog } from '../hooks/use-modal-dialog.js';
+import { NO_DRAG, cn } from '../lib/utils.js';
 
 interface ExportProps {
   readonly mode: 'export';
@@ -84,7 +85,9 @@ export function ViewYamlModal(props: ViewYamlModalProps): React.JSX.Element {
   const isExport = props.mode === 'export';
 
   return (
-    <dialog ref={dialogRef} open tabIndex={-1} className="fixed inset-0 z-[100] flex items-center justify-center bg-transparent m-0 p-0 max-w-none max-h-none w-full h-full border-none outline-none" aria-modal="true" aria-labelledby={titleId} aria-describedby={hintId}>
+    // no-drag: the backdrop covers the app header, a window drag region —
+    // without the opt-out, clicks there would drag the window. (#317)
+    <dialog ref={dialogRef} open tabIndex={-1} className={cn('fixed inset-0 z-[100] flex items-center justify-center bg-transparent m-0 p-0 max-w-none max-h-none w-full h-full border-none outline-none', NO_DRAG)} aria-modal="true" aria-labelledby={titleId} aria-describedby={hintId}>
       <div
         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
         onClick={onClose}
