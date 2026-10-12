@@ -380,8 +380,10 @@ jobs:
   # It starts with the builds instead of after `publish`, so the one approval of
   # the release environment covers it too: GitHub asks when a job is queued, and
   # a job queued later asks again. The cost: a release whose build then fails has
-  # still published its template, under a tag no app ships with. The version
-  # check below keeps a mistagged release from publishing at all.
+  # still published its template, under its own tag (no app ships with it) and
+  # as templates/latest/, which the docs' Launch-stack link and development
+  # builds load. The version check below keeps a mistagged release from
+  # publishing at all.
   publish-template:
     if: ${{ vars.TEMPLATE_BUCKET != '' && vars.TEMPLATE_ROLE_ARN != '' && vars.TEMPLATE_REGION != '' }}
     environment: release

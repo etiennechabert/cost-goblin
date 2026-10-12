@@ -339,7 +339,13 @@ describe('workflow policy (.github/workflows)', () => {
     // Queued with the builds, so the release environment's one approval covers
     // it; a `needs` would queue it later and ask the maintainer a second time.
     expect(job.needs).toBeUndefined();
-    expect(bodies).toContain('packages/desktop/package.json');
+    // ...and since nothing waits for the build's own tag check, the job runs
+    // that check itself, before it uploads anything.
+    const runs = stepsOf(job).map((step) => (typeof step.run === 'string' ? runBody(step) : ''));
+    const check = runs.findIndex((body) => body.includes('packages/desktop/package.json'));
+    const upload = runs.findIndex((body) => body.includes('aws s3 cp'));
+    expect(check).toBeGreaterThanOrEqual(0);
+    expect(upload).toBeGreaterThan(check);
   });
 
   it('release.yml defaults every job to no permissions', () => {
