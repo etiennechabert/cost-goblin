@@ -1679,13 +1679,13 @@ function CreateExportsStep({ state, onChange, onSave, onQuickCreateOpened, onFil
         <label htmlFor="cg-create-coh" className={CHECKBOX_LABEL}>
           <input id="cg-create-coh" type="checkbox" checked={state.costOptimization} onChange={() => { onChange({ costOptimization: !state.costOptimization }); }} className="mt-0.5 accent-accent" />
           <span className="text-sm text-text-primary">Also export Cost Optimization Hub recommendations</span>
-          <span className="col-start-2 block text-xs text-text-muted">Activate Cost Optimization Hub first, or the stack fails.</span>
+          <span className="col-start-2 block text-xs text-text-muted">Enable Cost Optimization Hub first (Billing and Cost Management → Cost Optimization Hub), or the stack fails.</span>
         </label>
         {state.costOptimization && (
           <label htmlFor="cg-create-role" className={`${CHECKBOX_LABEL} ml-6`}>
             <input id="cg-create-role" type="checkbox" checked={state.serviceRoleExists} onChange={() => { onChange({ serviceRoleExists: !state.serviceRoleExists }); }} className="mt-0.5 accent-accent" />
             <span className="text-sm text-text-primary">This account already has the Data Exports service role</span>
-            <span className="col-start-2 block text-xs text-text-muted">It does if a Cost Optimization Hub export was ever created in it.</span>
+            <span className="col-start-2 block text-xs text-text-muted">Check IAM → Roles for AWSServiceRoleForBCMDataExports: an earlier Cost Optimization Hub export, or a failed attempt of this stack, leaves it behind.</span>
           </label>
         )}
       </div>

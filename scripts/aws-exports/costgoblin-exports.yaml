@@ -4,7 +4,7 @@
 # Generated from packages/core/src/aws-setup/exports-stack.ts by
 # scripts/aws-exports/write-template.ts. Do not edit by hand.
 AWSTemplateFormatVersion: "2010-09-09"
-Description: "CostGoblin billing exports: an S3 bucket with lifecycle rules, AWS Data Exports for FOCUS 1.2 (daily, optional hourly) and Cost Optimization Hub (optional), and a read-only policy for CostGoblin."
+Description: "CostGoblin billing exports: an S3 bucket with lifecycle rules, AWS Data Exports for FOCUS 1.2 (daily and hourly) and Cost Optimization Hub, each optional, and a read-only policy for CostGoblin."
 Metadata:
   AWS::CloudFormation::Interface:
     ParameterGroups:
@@ -15,6 +15,7 @@ Metadata:
       - Label:
           default: Exports
         Parameters:
+          - CreateDailyExport
           - CreateHourlyExport
           - CreateCostOptimizationExport
           - CreateDataExportsServiceRole
@@ -30,27 +31,34 @@ Parameters:
     Default: ""
     AllowedPattern: ^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$
     Description: Name of the new S3 bucket, globally unique. Leave empty for costgoblin-billing-<account id>.
+  CreateDailyExport:
+    Type: String
+    AllowedValues:
+      - "no"
+      - "yes"
+    Default: "yes"
+    Description: Export daily FOCUS data, the data CostGoblin reads. Choose no if the account already has its FOCUS 1.2 exports (AWS allows two) and you only want the ones it lacks.
   CreateHourlyExport:
     Type: String
     AllowedValues:
       - "no"
       - "yes"
     Default: "no"
-    Description: Also export hourly FOCUS data, for intraday drill-down. It is the large one.
+    Description: Export hourly FOCUS data, for intraday drill-down. It is the large one.
   CreateCostOptimizationExport:
     Type: String
     AllowedValues:
       - "no"
       - "yes"
     Default: "no"
-    Description: Also export Cost Optimization Hub recommendations. Activate Cost Optimization Hub first, or the stack fails.
+    Description: Export Cost Optimization Hub recommendations. Enable Cost Optimization Hub first (Billing and Cost Management > Cost Optimization Hub), or the stack fails.
   CreateDataExportsServiceRole:
     Type: String
     AllowedValues:
       - "no"
       - "yes"
     Default: "yes"
-    Description: "Only used with the Cost Optimization Hub export: create the AWSServiceRoleForBCMDataExports role it needs. Choose no if the account already has it (it does once such an export was ever created)."
+    Description: "Only used with the Cost Optimization Hub export: create the AWSServiceRoleForBCMDataExports role it needs. Choose no if IAM > Roles already lists it: an earlier Cost Optimization Hub export, or a failed attempt of this stack, leaves it behind."
   DailyExpirationDays:
     Type: Number
     Default: 400
@@ -74,12 +82,30 @@ Rules:
             - Ref: AWS::Region
             - us-east-1
         AssertDescription: AWS Data Exports can only be created in us-east-1. Switch the console to US East (N. Virginia).
+  CreatesAnExport:
+    Assertions:
+      - Assert:
+          Fn::Or:
+            - Fn::Equals:
+                - Ref: CreateDailyExport
+                - "yes"
+            - Fn::Equals:
+                - Ref: CreateHourlyExport
+                - "yes"
+            - Fn::Equals:
+                - Ref: CreateCostOptimizationExport
+                - "yes"
+        AssertDescription: Choose at least one export to create.
 Conditions:
   BucketNameGiven:
     Fn::Not:
       - Fn::Equals:
           - Ref: BucketName
           - ""
+  WantsDaily:
+    Fn::Equals:
+      - Ref: CreateDailyExport
+      - "yes"
   WantsHourly:
     Fn::Equals:
       - Ref: CreateHourlyExport
@@ -180,6 +206,7 @@ Resources:
                 aws:SecureTransport: "false"
   DailyFocusExport:
     Type: AWS::BCMDataExports::Export
+    Condition: WantsDaily
     DependsOn: BucketPolicy
     Properties:
       Export:
@@ -293,6 +320,7 @@ Outputs:
     Value:
       Ref: Bucket
   DailyExportPath:
+    Condition: WantsDaily
     Description: CostGoblin's daily data path.
     Value:
       Fn::Sub: s3://${Bucket}/costgoblin/daily/costgoblin-daily/

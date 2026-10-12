@@ -31,6 +31,7 @@ export const EXPORTS_STACK_NAME = 'costgoblin-exports';
  *  `param_<Name>`) uses. */
 export const EXPORTS_STACK_PARAMETERS = {
   bucketName: 'BucketName',
+  daily: 'CreateDailyExport',
   hourly: 'CreateHourlyExport',
   costOptimization: 'CreateCostOptimizationExport',
   serviceRole: 'CreateDataExportsServiceRole',
@@ -153,23 +154,31 @@ function parameters(defaults: ExportsStackDefaults): TemplateObject {
       AllowedPattern: '^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$',
       Description: 'Name of the new S3 bucket, globally unique. Leave empty for costgoblin-billing-<account id>.',
     },
+    // The wizard always wants it; an account that already has its FOCUS 1.2
+    // exports (AWS allows two) turns it off by hand.
+    [P.daily]: {
+      Type: 'String',
+      AllowedValues: ['no', 'yes'],
+      Default: 'yes',
+      Description: 'Export daily FOCUS data, the data CostGoblin reads. Choose no if the account already has its FOCUS 1.2 exports (AWS allows two) and you only want the ones it lacks.',
+    },
     [P.hourly]: {
       Type: 'String',
       AllowedValues: ['no', 'yes'],
       Default: yesNo(defaults.hourly ?? false),
-      Description: 'Also export hourly FOCUS data, for intraday drill-down. It is the large one.',
+      Description: 'Export hourly FOCUS data, for intraday drill-down. It is the large one.',
     },
     [P.costOptimization]: {
       Type: 'String',
       AllowedValues: ['no', 'yes'],
       Default: yesNo(defaults.costOptimization ?? false),
-      Description: 'Also export Cost Optimization Hub recommendations. Activate Cost Optimization Hub first, or the stack fails.',
+      Description: 'Export Cost Optimization Hub recommendations. Enable Cost Optimization Hub first (Billing and Cost Management > Cost Optimization Hub), or the stack fails.',
     },
     [P.serviceRole]: {
       Type: 'String',
       AllowedValues: ['no', 'yes'],
       Default: yesNo(defaults.serviceRole ?? true),
-      Description: 'Only used with the Cost Optimization Hub export: create the AWSServiceRoleForBCMDataExports role it needs. Choose no if the account already has it (it does once such an export was ever created).',
+      Description: 'Only used with the Cost Optimization Hub export: create the AWSServiceRoleForBCMDataExports role it needs. Choose no if IAM > Roles already lists it: an earlier Cost Optimization Hub export, or a failed attempt of this stack, leaves it behind.',
     },
     [P.dailyExpirationDays]: expiration('daily', 'daily'),
     [P.hourlyExpirationDays]: expiration('hourly', 'hourly'),
@@ -282,6 +291,7 @@ function resources(): TemplateObject {
     },
     DailyFocusExport: {
       Type: 'AWS::BCMDataExports::Export',
+      Condition: 'WantsDaily',
       DependsOn: 'BucketPolicy',
       Properties: { Export: dataExport('daily', 'Daily FOCUS 1.2 billing data for CostGoblin.', focusQuery('DAILY')) },
     },
@@ -333,7 +343,7 @@ function outputs(): TemplateObject {
     sub(`s3://\${Bucket}/${EXPORTS_STACK_LAYOUT[tier].prefix}/${EXPORTS_STACK_LAYOUT[tier].exportName}/`);
   return {
     BucketName: { Description: 'The bucket the exports deliver to.', Value: ref('Bucket') },
-    DailyExportPath: { Description: "CostGoblin's daily data path.", Value: path('daily') },
+    DailyExportPath: { Condition: 'WantsDaily', Description: "CostGoblin's daily data path.", Value: path('daily') },
     HourlyExportPath: { Condition: 'WantsHourly', Description: "CostGoblin's hourly data path.", Value: path('hourly') },
     CostOptimizationExportPath: {
       Condition: 'WantsCostOptimization', Description: "CostGoblin's cost optimization data path.", Value: path('costOptimization'),
@@ -349,12 +359,12 @@ export function buildExportsStackTemplate(defaults: ExportsStackDefaults = {}): 
   return {
     AWSTemplateFormatVersion: '2010-09-09',
     Description: 'CostGoblin billing exports: an S3 bucket with lifecycle rules, AWS Data Exports for FOCUS 1.2 '
-      + '(daily, optional hourly) and Cost Optimization Hub (optional), and a read-only policy for CostGoblin.',
+      + '(daily and hourly) and Cost Optimization Hub, each optional, and a read-only policy for CostGoblin.',
     Metadata: {
       'AWS::CloudFormation::Interface': {
         ParameterGroups: [
           { Label: { default: 'Bucket' }, Parameters: [P.bucketName] },
-          { Label: { default: 'Exports' }, Parameters: [P.hourly, P.costOptimization, P.serviceRole] },
+          { Label: { default: 'Exports' }, Parameters: [P.daily, P.hourly, P.costOptimization, P.serviceRole] },
           { Label: { default: 'Lifecycle' }, Parameters: [P.dailyExpirationDays, P.hourlyExpirationDays, P.costOptimizationExpirationDays] },
         ],
       },
@@ -367,9 +377,16 @@ export function buildExportsStackTemplate(defaults: ExportsStackDefaults = {}): 
           AssertDescription: 'AWS Data Exports can only be created in us-east-1. Switch the console to US East (N. Virginia).',
         }],
       },
+      CreatesAnExport: {
+        Assertions: [{
+          Assert: { 'Fn::Or': [equals(ref(P.daily), 'yes'), equals(ref(P.hourly), 'yes'), equals(ref(P.costOptimization), 'yes')] },
+          AssertDescription: 'Choose at least one export to create.',
+        }],
+      },
     },
     Conditions: {
       BucketNameGiven: { 'Fn::Not': [equals(ref(P.bucketName), '')] },
+      WantsDaily: equals(ref(P.daily), 'yes'),
       WantsHourly: equals(ref(P.hourly), 'yes'),
       WantsCostOptimization: equals(ref(P.costOptimization), 'yes'),
       CreatesServiceRole: { 'Fn::And': [{ Condition: 'WantsCostOptimization' }, equals(ref(P.serviceRole), 'yes')] },
