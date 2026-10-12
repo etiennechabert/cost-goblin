@@ -77,14 +77,14 @@ CostGoblin reads AWS billing data from **AWS Data Exports** delivered to S3 as P
 Whichever way you create the exports afterwards:
 
 1. **Activate your cost allocation tags** under **Billing and Cost Management → Cost allocation tags**. Only active tags reach the export, and activating one later doesn't backfill it.
-2. **Enable Cost Optimization Hub**, if you want its recommendations: open **Billing and Cost Management → [Cost Optimization Hub](https://console.aws.amazon.com/costmanagement/home#/cost-optimization-hub)**, choose *Enable Cost Optimization Hub for this account and all member accounts*, then **Enable**. Until you do, AWS refuses to create a Cost Optimization Hub export, so the CloudFormation stack below fails too. Recommendations take up to 24 hours to appear, and the rightsizing ones need [Compute Optimizer](https://console.aws.amazon.com/compute-optimizer/home) enabled as well.
+2. **Enable Cost Optimization Hub**, if you want its recommendations: open **Billing and Cost Management → [Cost Optimization Hub](https://console.aws.amazon.com/costmanagement/home#/cost-optimization-hub)**, in the management account choose *Enable Cost Optimization Hub for this account and all member accounts*, then **Enable**. Until you do, AWS refuses to create a Cost Optimization Hub export, so a stack that includes one fails too. Recommendations take up to 24 hours to appear, and the rightsizing ones need [Compute Optimizer](https://console.aws.amazon.com/compute-optimizer/home) enabled as well.
 3. **Make room for the exports.** AWS allows [two FOCUS 1.2 exports per account](https://docs.aws.amazon.com/cur/latest/userguide/dataexports-quotas.html). If [Data Exports](https://us-east-1.console.aws.amazon.com/costmanagement/home#/bcm-data-exports) already lists FOCUS 1.2 exports, connect CostGoblin to those instead, or delete them first: AWS refuses a third.
 
 Then create the exports in **one** of the two ways below. Both produce the same exports with the same settings; use the stack unless you can't.
 
 #### Recommended: one CloudFormation stack
 
-The stack creates everything with the settings CostGoblin needs:
+The stack ([`costgoblin-exports.yaml`](scripts/aws-exports/costgoblin-exports.yaml)) creates everything with the settings CostGoblin needs:
 
 - an S3 bucket (no public access, encrypted) with the lifecycle rules [below](#keep-the-bucket-from-growing-forever);
 - the daily FOCUS 1.2 export, and optionally the hourly and Cost Optimization Hub exports;
@@ -92,14 +92,14 @@ The stack creates everything with the settings CostGoblin needs:
 
 The setup wizard walks you through it: on the bucket step, choose **Create one with CloudFormation**. It opens the stack with your answers filled in and configures CostGoblin with the stack's paths. Without the app:
 
-1. [**Launch the stack**](https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?templateURL=https%3A%2F%2Fcostgoblin-templates.s3.eu-central-1.amazonaws.com%2Ftemplates%2Flatest%2Fcostgoblin-exports.yaml&stackName=costgoblin-exports). It opens CloudFormation in us-east-1, the only region with AWS Data Exports, with the latest release's [template](scripts/aws-exports/costgoblin-exports.yaml) loaded.
+1. [**Launch the stack**](https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?templateURL=https%3A%2F%2Fcostgoblin-templates.s3.eu-central-1.amazonaws.com%2Ftemplates%2Flatest%2Fcostgoblin-exports.yaml&stackName=costgoblin-exports). It opens CloudFormation in us-east-1, the only region with AWS Data Exports, with the latest release's template loaded.
 2. Fill in the parameters: a bucket name (leave it empty for `costgoblin-billing-<account id>`), and whether to add the hourly and Cost Optimization Hub exports. If the account already has the `AWSServiceRoleForBCMDataExports` role (**IAM → Roles**; creating a Cost Optimization Hub export adds it), set `CreateDataExportsServiceRole` to `no`.
 3. Acknowledge that the stack creates IAM resources, and create it.
 4. Attach the `ReadAccessPolicyArn` output to the role or user CostGoblin reads with, and point CostGoblin at the paths in the stack's **Outputs** (`DailyExportPath` and the others).
 
 To read the template before running it, download [the raw file](https://raw.githubusercontent.com/etiennechabert/cost-goblin/main/scripts/aws-exports/costgoblin-exports.yaml), open [CloudFormation in us-east-1](https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create) and choose **Create stack → With new resources → Upload a template file**. Don't paste a GitHub link into the **Amazon S3 URL** field: it only accepts templates stored in S3.
 
-AWS delivers the first data within about a day, sometimes up to 72 hours. A new export has no history: see [Historical data](#historical-data) for a backfill. Deleting the stack removes the exports and policies but keeps the bucket and the data already delivered. A stack that fails to create keeps its bucket as well, and the `AWSServiceRoleForBCMDataExports` role if it got that far: before retrying, delete the failed stack and the empty bucket, and set `CreateDataExportsServiceRole` to `no` if the role now exists.
+AWS delivers the first data within about a day, sometimes up to 72 hours. A new export has no history: see [Historical data](#historical-data) for a backfill. Deleting the stack removes the exports and policies but keeps the bucket and the data already delivered. A stack that fails to create keeps its bucket as well, and the `AWSServiceRoleForBCMDataExports` role if it got that far: before retrying, delete the failed stack and that bucket (empty it first if AWS already wrote to it), and set `CreateDataExportsServiceRole` to `no` if the role now exists.
 
 #### Or by hand
 

@@ -2513,7 +2513,7 @@
           <p>Do these first, in the account that owns the billing data (usually the management account), whichever way you then create the exports:</p>
           <ul class="step-checklist">
             <li><strong>Activate your cost allocation tags</strong> in the AWS Billing Console &rarr; <strong>Cost Allocation Tags</strong>: every user-defined tag you plan to use as a dimension in CostGoblin (e.g. <em>team</em>, <em>environment</em>, <em>service</em>). Tags that aren't active never appear in the exports.</li>
-            <li><strong>Enable Cost Optimization Hub</strong>, if you want its recommendations: Billing Console &rarr; <a href="https://console.aws.amazon.com/costmanagement/home#/cost-optimization-hub" target="_blank" rel="noopener">Cost Optimization Hub</a>, choose <em>Enable Cost Optimization Hub for this account and all member accounts</em>, then <strong>Enable</strong>. Until you do, AWS refuses the Cost Optimization Hub export, and the CloudFormation stack fails with it. Recommendations take up to 24 hours to appear; rightsizing ones also need Compute Optimizer enabled.</li>
+            <li><strong>Enable Cost Optimization Hub</strong>, if you want its recommendations: Billing Console &rarr; <a href="https://console.aws.amazon.com/costmanagement/home#/cost-optimization-hub" target="_blank" rel="noopener">Cost Optimization Hub</a>, in the management account choose <em>Enable Cost Optimization Hub for this account and all member accounts</em>, then <strong>Enable</strong>. Until you do, AWS refuses the Cost Optimization Hub export, and a CloudFormation stack that includes it fails. Recommendations take up to 24 hours to appear; rightsizing ones also need Compute Optimizer enabled.</li>
             <li><strong>Make room for the exports.</strong> AWS allows <a href="https://docs.aws.amazon.com/cur/latest/userguide/dataexports-quotas.html" target="_blank" rel="noopener">two FOCUS 1.2 exports per account</a>. If <a href="https://us-east-1.console.aws.amazon.com/costmanagement/home#/bcm-data-exports" target="_blank" rel="noopener">Data Exports</a> already lists some, connect CostGoblin to those instead, or delete them first: AWS refuses a third.</li>
           </ul>
           <div class="step-note">Newly activated tags only appear in data generated <strong>after</strong> activation &mdash; they are not backfilled. Activate them as early as possible.</div>
@@ -2534,7 +2534,7 @@
           <div class="step-note">To read the template first, download <a href="https://raw.githubusercontent.com/etiennechabert/cost-goblin/main/scripts/aws-exports/costgoblin-exports.yaml" target="_blank" rel="noopener">the raw file</a> and choose <strong>Create stack &rarr; Upload a template file</strong>: the <strong>Amazon S3 URL</strong> field only accepts templates stored in S3, not GitHub links. <a href="https://github.com/etiennechabert/cost-goblin#recommended-one-cloudformation-stack" target="_blank" rel="noopener">Step by step</a>.</div>
         </div>
 
-        <div class="path-or">or, by hand</div>
+        <div class="path-or">or, instead of step 2, by hand</div>
 
         <div class="step">
           <div class="step-header">
@@ -2641,7 +2641,7 @@ S3 path prefix:               <span class="code-dir">costgoblin/cost-optimizatio
             <span class="step-num">3</span>
             <h4>Connect and configure dimensions</h4>
           </div>
-          <p>Open CostGoblin: the setup wizard points each data source at its S3 prefix. Once the first sync completes, head to <strong>Dimensions</strong> to map your tags to cost allocation dimensions. This is where CostGoblin shines &mdash; for each dimension you can:</p>
+          <p>Either way, open CostGoblin: the setup wizard points each data source at its S3 prefix. Once the first sync completes, head to <strong>Dimensions</strong> to map your tags to cost allocation dimensions. This is where CostGoblin shines &mdash; for each dimension you can:</p>
           <ul style="margin: 12px 0 0 46px; list-style: none; display: flex; flex-direction: column; gap: 8px; font-size: 14px; color: var(--text-dim);">
             <li><strong style="color: var(--emerald);">Normalize</strong> &mdash; merge inconsistent casing and spelling (<em>prod</em>, <em>Prod</em>, <em>production</em> &rarr; one value)</li>
             <li><strong style="color: var(--emerald);">Define aliases</strong> &mdash; group multiple tag values under a single label across all views</li>
