@@ -6,8 +6,9 @@ import { afterEach, describe, it, expect, vi } from 'vitest';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { MOCK_GCP_PROVIDER, MOCK_MIXED_PROVIDER_CONFIG, MockCostApi } from '../__fixtures__/mock-api.js';
 import { SetupWizard } from '../views/setup-wizard.js';
+import { appRegionOf } from './app-region.js';
 
-function renderWizard(props?: { source?: 'daily' | 'hourly' | 'costOptimization'; profile?: string; mode?: 'add'; config?: CostGoblinConfig; providerName?: string; gcpSource?: { bucket: string; prefix: string; impersonateServiceAccount?: string }; prepare?: (api: MockCostApi) => void }) {
+function renderWizard(props?: { source?: 'daily' | 'hourly' | 'costOptimization'; profile?: string; mode?: 'add'; hosted?: boolean; config?: CostGoblinConfig; providerName?: string; gcpSource?: { bucket: string; prefix: string; impersonateServiceAccount?: string }; prepare?: (api: MockCostApi) => void }) {
   const api = new MockCostApi();
   // Before render: the wizard reads the configured providers on mount.
   if (props?.config !== undefined) vi.spyOn(api, 'getConfig').mockResolvedValue(props.config);
@@ -21,7 +22,7 @@ function renderWizard(props?: { source?: 'daily' | 'hourly' | 'costOptimization'
     user,
     ...render(
       <CostApiProvider value={api}>
-        <SetupWizard onComplete={onComplete} source={props?.source} profile={props?.profile} mode={props?.mode} providerName={props?.providerName} gcpSource={props?.gcpSource} />
+        <SetupWizard onComplete={onComplete} source={props?.source} profile={props?.profile} mode={props?.mode} hosted={props?.hosted} providerName={props?.providerName} gcpSource={props?.gcpSource} />
       </CostApiProvider>,
     ),
   };
@@ -235,6 +236,23 @@ describe('SetupWizard window drag region', () => {
     const { container } = renderWizard({ source: 'daily', profile: 'default' });
     await waitFor(() => { expect(screen.getByText('my-cur-bucket')).toBeDefined(); });
     expect(container.firstElementChild?.className).not.toContain('[-webkit-app-region:drag]');
+  });
+
+  // Hosted in a modal (Add provider), the app header is still there, and a
+  // drag region inside the modal would turn clicks on its controls — the
+  // modal's ✕ included — into window drags.
+  it('hosted wizard (add mode) has no drag region anywhere and no full-window backdrop', async () => {
+    const { container, user } = renderWizard({ mode: 'add', hosted: true });
+    // Past the get-started hub too, where the "Back to start" ✕ shows.
+    await user.click(screen.getByLabelText('Set up from AWS'));
+    await waitFor(() => { expect(screen.getByLabelText('Back to start')).toBeDefined(); });
+    for (const el of container.querySelectorAll('*')) expect(appRegionOf(el)).not.toBe('drag');
+    expect(container.firstElementChild?.className).not.toContain('min-h-screen');
+  });
+
+  it('add mode without hosted keeps the standalone drag region (hosting opts out)', () => {
+    const { container } = renderWizard({ mode: 'add' });
+    expect(container.firstElementChild?.className).toContain('[-webkit-app-region:drag]');
   });
 });
 

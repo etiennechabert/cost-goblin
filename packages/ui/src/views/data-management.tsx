@@ -9,6 +9,7 @@ import { ModalShell } from '../components/ui/modal-shell.js';
 import { NO_DRAG, cn } from '../lib/utils.js';
 import { ProfilePicker } from '../components/profile-picker.js';
 import { SetupWizard } from './setup-wizard.js';
+import type { SetupWizardProps } from './setup-wizard.js';
 import { OrgAccountsSection } from './data-management-org.js';
 import { SsmParameterSection } from './data-management-ssm.js';
 import { TierPanel, type SyncState } from './data-management-tier.js';
@@ -428,12 +429,14 @@ export function DataManagement() {
       )}
 
       {addProviderOpen && (
-        <WizardModal label="Add provider" onClose={() => { setAddProviderOpen(false); }}>
-          <SetupWizard
-            mode="add"
-            onComplete={() => { setAddProviderOpen(false); onConfigChanged(); }}
-          />
-        </WizardModal>
+        <WizardModal
+          label="Add provider"
+          onClose={() => { setAddProviderOpen(false); }}
+          wizard={{
+            mode: 'add',
+            onComplete: () => { setAddProviderOpen(false); onConfigChanged(); },
+          }}
+        />
       )}
     </div>
   );
@@ -878,15 +881,17 @@ function ProviderSection({ provider, soleProvider, refreshSignal, gcpIdentityRef
       )}
 
       {configureSource !== null && (
-        <WizardModal label={`Configure ${CONFIGURE_TIER_LABEL[configureSource]} data source for ${name}`} onClose={() => { setConfigureSource(null); }}>
-          <SetupWizard
-            source={configureSource}
-            profile={awsProfile ?? 'default'}
-            providerName={name}
-            gcpSource={provider.type === 'gcp' ? gcpConfigureLocation(dailyBucket, provider.impersonateServiceAccount) : undefined}
-            onComplete={() => { setConfigureSource(null); onConfigChanged(); }}
-          />
-        </WizardModal>
+        <WizardModal
+          label={`Configure ${CONFIGURE_TIER_LABEL[configureSource]} data source for ${name}`}
+          onClose={() => { setConfigureSource(null); }}
+          wizard={{
+            source: configureSource,
+            profile: awsProfile ?? 'default',
+            providerName: name,
+            gcpSource: provider.type === 'gcp' ? gcpConfigureLocation(dailyBucket, provider.impersonateServiceAccount) : undefined,
+            onComplete: () => { setConfigureSource(null); onConfigChanged(); },
+          }}
+        />
       )}
 
       {showProfileSwap && awsProfile !== null && (
@@ -924,24 +929,26 @@ const CONFIGURE_TIER_LABEL: Record<ConfigureSource, string> = {
 };
 
 /** Modal chrome for a SetupWizard opened over the page (Add Provider, a
- *  tier's Configure): the wizard brings its own card, and the ✕ is pinned to
- *  the top-right corner of what the wizard renders.
+ *  tier's Configure): the wizard renders hosted — just its card, without the
+ *  standalone onboarding backdrop and window drag region — and the ✕ is
+ *  pinned to the top-right corner of what it renders. A card taller than the
+ *  window scrolls in the shell's overlay, ✕ included.
  *
  *  A ModalShell like every other modal, so the dialogs the wizard opens from
  *  inside (Import, which also locks itself shut during a pull) are layers of
  *  their own over it: Escape closes only the topmost, and each paints over the
  *  one it opened from. Focus moves in on open, stays inside while open, and
  *  returns to the opener on close. */
-function WizardModal({ label, onClose, children }: Readonly<{
+function WizardModal({ label, onClose, wizard }: Readonly<{
   label: string;
   onClose: () => void;
-  children: React.ReactNode;
+  wizard: Omit<SetupWizardProps, 'hosted'>;
 }>): React.JSX.Element {
   return (
     <ModalShell onClose={onClose} ariaLabel={label} size="auto">
-      {children}
+      <SetupWizard {...wizard} hosted />
       {/* After the wizard in the DOM: the window's drag regions resolve in
-          document order, so a ✕ placed before a wizard that marks itself a
+          document order, so a ✕ placed before anything the wizard marks a
           drag region would lose to it and drag the window. */}
       <button type="button" onClick={onClose} className={cn('absolute -top-2 -right-2 z-10 rounded-full bg-bg-tertiary border border-border w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-bg-secondary transition-colors', NO_DRAG)} aria-label="Close">
         &#10005;

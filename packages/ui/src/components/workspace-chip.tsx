@@ -30,7 +30,7 @@ export function WorkspaceChip({ info, onSwitch, onManage }: Readonly<WorkspaceCh
           type="button"
           data-testid="workspace-chip"
           aria-label={`Workspace: ${activeName}`}
-          className="[-webkit-app-region:no-drag] inline-flex items-center gap-1.5 rounded-full border border-border bg-bg-tertiary/40 px-2.5 py-1 text-xs text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors"
+          className="[-webkit-app-region:no-drag] inline-flex min-w-0 items-center gap-1.5 rounded-full border border-border bg-bg-tertiary/40 px-2.5 py-1 text-xs text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors"
         >
           <Boxes size={12} className="shrink-0 text-text-muted" aria-hidden="true" />
           <span className="max-w-40 truncate font-mono">{activeName}</span>

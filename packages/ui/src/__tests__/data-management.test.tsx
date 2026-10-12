@@ -8,6 +8,7 @@ import { MOCK_GCP_PROVIDER, MOCK_MIXED_PROVIDER_CONFIG, MOCK_MULTI_PROVIDER_CONF
 import { DataManagement } from '../views/data-management.js';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover.js';
 import { backdropOf, expectTopLayer } from './modal-dom.js';
+import { appRegionOf } from './app-region.js';
 
 function renderDataManagement(api?: MockCostApi) {
   const mockApi = api ?? new MockCostApi();
@@ -371,6 +372,30 @@ describe('DataManagement — modal dialogs', () => {
 
     await user.keyboard('{Escape}');
     await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Add provider' })).toBeNull(); });
+  });
+
+  // The modal covers the app header, a window drag region. Its own surface
+  // opts out, and nothing the wizard renders inside may opt back in: a drag
+  // region there turns clicks on the wizard's controls — and the ✕ — into
+  // window drags.
+  it('the Add Provider modal has no window drag region anywhere inside it', async () => {
+    const { user, dialog } = await openAddProvider();
+    const backdrop = backdropOf(dialog);
+    expect(appRegionOf(backdrop)).toBe('no-drag');
+    await user.click(within(dialog).getByLabelText('Set up from AWS'));
+    await within(dialog).findByLabelText('Back to start');
+    for (const el of backdrop.querySelectorAll('*')) expect(appRegionOf(el)).not.toBe('drag');
+    expect(appRegionOf(within(dialog).getByRole('button', { name: 'Close' }))).toBe('no-drag');
+  });
+
+  it('the Configure modal has no window drag region anywhere inside it', async () => {
+    const { user } = renderDataManagement();
+    const section = await screen.findByRole('region', { name: 'Provider aws-main' });
+    await user.click(await within(section).findByTitle('Configure daily'));
+    const dialog = await screen.findByRole('dialog', { name: 'Configure daily data source for aws-main' });
+    const backdrop = backdropOf(dialog);
+    expect(appRegionOf(backdrop)).toBe('no-drag');
+    for (const el of backdrop.querySelectorAll('*')) expect(appRegionOf(el)).not.toBe('drag');
   });
 
   it('the tier gear opens a Configure dialog named for the tier and provider', async () => {
