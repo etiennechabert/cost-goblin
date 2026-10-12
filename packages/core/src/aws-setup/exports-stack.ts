@@ -160,7 +160,7 @@ function parameters(defaults: ExportsStackDefaults): TemplateObject {
       Type: 'String',
       AllowedValues: ['no', 'yes'],
       Default: 'yes',
-      Description: 'Export daily FOCUS data, the data CostGoblin reads. Choose no if the account already has its FOCUS 1.2 exports (AWS allows two) and you only want the ones it lacks.',
+      Description: 'Export daily FOCUS data, the data CostGoblin reads. Choose no only if the account has FOCUS 1.2 exports made outside this stack: AWS allows two, hourly included. On an existing stack, no deletes its daily export.',
     },
     [P.hourly]: {
       Type: 'String',

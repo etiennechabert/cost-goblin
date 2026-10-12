@@ -87,13 +87,13 @@ Then create the exports in **one** of the two ways below. Both produce the same 
 The stack ([`costgoblin-exports.yaml`](scripts/aws-exports/costgoblin-exports.yaml)) creates everything with the settings CostGoblin needs:
 
 - an S3 bucket (no public access, encrypted) with the lifecycle rules [below](#keep-the-bucket-from-growing-forever);
-- the daily FOCUS 1.2 export, and optionally the hourly and Cost Optimization Hub exports;
+- the daily FOCUS 1.2 export (on by default), and optionally the hourly and Cost Optimization Hub exports;
 - a read-only IAM policy granting exactly what CostGoblin needs on that bucket.
 
 The setup wizard walks you through it: on the bucket step, choose **Create one with CloudFormation**. It opens the stack with your answers filled in and configures CostGoblin with the stack's paths. Without the app:
 
 1. [**Launch the stack**](https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?templateURL=https%3A%2F%2Fcostgoblin-templates.s3.eu-central-1.amazonaws.com%2Ftemplates%2Flatest%2Fcostgoblin-exports.yaml&stackName=costgoblin-exports). It opens CloudFormation in us-east-1, the only region with AWS Data Exports, with the latest release's template loaded.
-2. Fill in the parameters: a bucket name (leave it empty for `costgoblin-billing-<account id>`), and which exports to create. The daily FOCUS 1.2 export is on by default; if the account already has its FOCUS 1.2 exports, set `CreateDailyExport` to `no` and add only what it lacks, such as the Cost Optimization Hub export. If **IAM → Roles** already lists `AWSServiceRoleForBCMDataExports` (an earlier Cost Optimization Hub export, or a failed attempt of this stack, leaves it behind), set `CreateDataExportsServiceRole` to `no`.
+2. Fill in the parameters: a bucket name (leave it empty for `costgoblin-billing-<account id>`), and which exports to create. The daily FOCUS 1.2 export is on by default; if the account already has FOCUS 1.2 exports of its own, set `CreateDailyExport` (and `CreateHourlyExport`) to `no` and add only what it lacks, such as the Cost Optimization Hub export. If **IAM → Roles** already lists `AWSServiceRoleForBCMDataExports` (an earlier Cost Optimization Hub export, or a failed attempt of this stack, leaves it behind), set `CreateDataExportsServiceRole` to `no`.
 3. Acknowledge that the stack creates IAM resources, and create it.
 4. Attach the `ReadAccessPolicyArn` output to the role or user CostGoblin reads with, and point CostGoblin at the paths in the stack's **Outputs** (`DailyExportPath` and the others).
 
