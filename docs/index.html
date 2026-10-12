@@ -1277,6 +1277,45 @@
       color: var(--gold);
     }
 
+    .step-badge {
+      margin-left: 8px;
+      padding: 2px 8px;
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      border-radius: 999px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--emerald);
+      vertical-align: middle;
+    }
+
+    .step-checklist.step-numbered {
+      list-style: decimal;
+      padding-left: 64px;
+    }
+
+    /* Separates the recommended path from the manual one. */
+    .path-or {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+
+    .path-or::before,
+    .path-or::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
     /* --- ROADMAP --- */
     .roadmap {
       padding: 100px 24px;
@@ -1945,6 +1984,7 @@
       .t-tool { min-width: auto; }
       .terminal-line + .terminal-line { margin-top: 8px; }
       .step p, .step .code-block, .step-note, .step-checklist { margin-left: 0; padding-left: 0; }
+      .step-checklist.step-numbered { padding-left: 20px; }
       .step .code-block { font-size: 11px; padding: 16px; }
     }
 
@@ -2467,19 +2507,38 @@
 
         <div class="step">
           <div class="step-header">
-            <span class="step-num">0</span>
-            <h4>Activate your cost allocation tags</h4>
+            <span class="step-num">1</span>
+            <h4>Before you start</h4>
           </div>
-          <p>Before setting up any exports, make sure the tags you want to slice costs by are activated in the AWS Billing Console &rarr; <strong>Cost Allocation Tags</strong>.</p>
-          <p>Activate any user-defined tag you plan to use as a dimension in CostGoblin (e.g. <em>team</em>, <em>environment</em>, <em>service</em>). Tags that aren't activated here won't appear in the FOCUS exports, no matter how they're configured.</p>
+          <p>Do these first, in the account that owns the billing data (usually the management account), whichever way you then create the exports:</p>
+          <ul class="step-checklist">
+            <li><strong>Activate your cost allocation tags</strong> in the AWS Billing Console &rarr; <strong>Cost Allocation Tags</strong>: every user-defined tag you plan to use as a dimension in CostGoblin (e.g. <em>team</em>, <em>environment</em>, <em>service</em>). Tags that aren't active never appear in the exports.</li>
+            <li><strong>Enable Cost Optimization Hub</strong>, if you want its recommendations: Billing Console &rarr; <a href="https://console.aws.amazon.com/costmanagement/home#/cost-optimization-hub" target="_blank" rel="noopener">Cost Optimization Hub</a>, in the management account choose <em>Enable Cost Optimization Hub for this account and all member accounts</em>, then <strong>Enable</strong>. Until you do, AWS refuses the Cost Optimization Hub export, and a CloudFormation stack that includes it fails. Recommendations take up to 24 hours to appear; rightsizing ones also need Compute Optimizer enabled.</li>
+            <li><strong>Make room for the exports.</strong> AWS allows <a href="https://docs.aws.amazon.com/cur/latest/userguide/dataexports-quotas.html" target="_blank" rel="noopener">two FOCUS 1.2 exports per account</a>. If <a href="https://us-east-1.console.aws.amazon.com/costmanagement/home#/bcm-data-exports" target="_blank" rel="noopener">Data Exports</a> already lists some, connect CostGoblin to those instead, or delete them first: AWS refuses a third.</li>
+          </ul>
           <div class="step-note">Newly activated tags only appear in data generated <strong>after</strong> activation &mdash; they are not backfilled. Activate them as early as possible.</div>
         </div>
 
-        <div class="step-callout" style="margin: 0;"><strong>Quickest:</strong> steps 1 to 3 come as one <a href="https://raw.githubusercontent.com/etiennechabert/cost-goblin/main/scripts/aws-exports/costgoblin-exports.yaml" target="_blank" rel="noopener">CloudFormation template</a>. In the account that owns the billing data, open <a href="https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create" target="_blank" rel="noopener">CloudFormation in us-east-1</a> and choose <strong>Create stack &rarr; Upload a template file</strong>. It creates the bucket and its lifecycle rules, the exports with the settings below, and a read-only policy for CostGoblin; the stack's <strong>Outputs</strong> list the paths to point CostGoblin at. <a href="https://github.com/etiennechabert/cost-goblin#quickest-one-cloudformation-stack" target="_blank" rel="noopener">Step by step</a>.</div>
+        <div class="step">
+          <div class="step-header">
+            <span class="step-num">2</span>
+            <h4>Create the exports with CloudFormation <span class="step-badge">Recommended</span></h4>
+          </div>
+          <p>One stack creates everything with the settings CostGoblin needs: the S3 bucket and its lifecycle rules, the daily FOCUS 1.2 export (plus, optionally, the hourly and Cost Optimization Hub exports), and a read-only policy for CostGoblin. The setup wizard opens it for you with your answers filled in: on the bucket step, choose <strong>Create one with CloudFormation</strong>. Without the app:</p>
+          <ol class="step-checklist step-numbered">
+            <li><a href="https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?templateURL=https%3A%2F%2Fcostgoblin-templates.s3.eu-central-1.amazonaws.com%2Ftemplates%2Flatest%2Fcostgoblin-exports.yaml&amp;stackName=costgoblin-exports" target="_blank" rel="noopener"><strong>Launch the stack</strong></a>. It opens CloudFormation in us-east-1, the only region with AWS Data Exports, with the template loaded.</li>
+            <li>Pick a bucket name (leave it empty for <em>costgoblin-billing-&lt;account id&gt;</em>) and the optional exports. If the account already has the <em>AWSServiceRoleForBCMDataExports</em> role, set <strong>CreateDataExportsServiceRole</strong> to <em>no</em>.</li>
+            <li>Acknowledge that the stack creates IAM resources, and create it.</li>
+            <li>Attach the <strong>ReadAccessPolicyArn</strong> output to the role or user CostGoblin reads with. The other <strong>Outputs</strong> are the paths to point CostGoblin at.</li>
+          </ol>
+          <div class="step-note">To read the template first, download <a href="https://raw.githubusercontent.com/etiennechabert/cost-goblin/main/scripts/aws-exports/costgoblin-exports.yaml" target="_blank" rel="noopener">the raw file</a> and choose <strong>Create stack &rarr; Upload a template file</strong>: the <strong>Amazon S3 URL</strong> field only accepts templates stored in S3, not GitHub links. <a href="https://github.com/etiennechabert/cost-goblin#recommended-one-cloudformation-stack" target="_blank" rel="noopener">Step by step</a>.</div>
+        </div>
+
+        <div class="path-or">or, instead of step 2, by hand</div>
 
         <div class="step">
           <div class="step-header">
-            <span class="step-num">1</span>
+            <span class="step-num">A</span>
             <h4>Create your S3 bucket</h4>
           </div>
           <p>Pick a dedicated bucket (or prefix) for all CostGoblin data. We recommend this structure so each export lands in its own namespace:</p>
@@ -2503,7 +2562,7 @@
 
         <div class="step">
           <div class="step-header">
-            <span class="step-num">2</span>
+            <span class="step-num">B</span>
             <h4>Create the FOCUS exports</h4>
           </div>
           <p>From <strong>Billing and Cost Management</strong>, open <a href="https://us-east-1.console.aws.amazon.com/costmanagement/home#/bcm-data-exports" target="_blank" rel="noopener"><strong>Data Exports</strong></a> in the left navigation, then click <strong>Create export</strong>. Choose <strong>Standard data export</strong> and select <strong>FOCUS 1.2</strong> as the data table (<em>FOCUS_1_2_AWS</em>). Only the <strong>daily</strong> export is required. You can optionally create a second, <strong>hourly</strong> export &mdash; helpful to understand how costs distribute within a day (intraday drill-down and incident analysis). Configure each as follows:</p>
@@ -2559,29 +2618,30 @@ S3 path prefix:  <span class="code-dir">costgoblin/daily</span>  <span class="co
  &bull; <span class="code-file">Tags</span>                        <span class="code-comment">your cost allocation tags</span>
           </div>
           <div class="step-note">CostGoblin validates an export against the columns above and rejects it if any are missing &mdash; keeping every column enabled is the simplest way to stay valid, and the extra columns cost little in Parquet.</div>
-          <div class="step-callout"><strong>Pro tip:</strong> New data exports only include data from the day they're created. To get historical data, open an AWS Support case requesting a backfill for your export &mdash; AWS can typically reload up to 12 months of past billing data into your S3 bucket.</div>
         </div>
 
         <div class="step">
           <div class="step-header">
-            <span class="step-num">3</span>
-            <h4>Enable Cost Optimization Hub export</h4>
+            <span class="step-num">C</span>
+            <h4>Create the Cost Optimization Hub export</h4>
           </div>
-          <p>In the AWS Billing Console &rarr; <strong>Cost Optimization Hub</strong> &rarr; Preferences, enable the S3 data export:</p>
+          <p>Optional, once Cost Optimization Hub is enabled (step 1). In <a href="https://us-east-1.console.aws.amazon.com/costmanagement/home#/bcm-data-exports" target="_blank" rel="noopener">Data Exports</a>, click <strong>Create export</strong> once more and pick the <strong>Cost optimization recommendations</strong> table:</p>
           <div class="code-block">
-<span class="code-comment"># Cost Optimization Hub export</span>
-S3 path:  <span class="code-dir">s3://your-company-billing/costgoblin/cost-optimization/</span>
-Format:   <span class="code-file">Parquet</span>
+Data table:                   <span class="code-file">Cost optimization recommendations</span>
+Include all recommendations:  <span class="code-file">On</span>
+Compression &amp; format:         <span class="code-file">Parquet</span>
+File versioning:              <span class="code-file">Overwrite existing data export file</span>
+S3 path prefix:               <span class="code-dir">costgoblin/cost-optimization</span>
           </div>
           <div class="step-note">This feeds the Cost Optimization view with rightsizing, RI, and deletion recommendations.</div>
         </div>
 
         <div class="step">
           <div class="step-header">
-            <span class="step-num">4</span>
+            <span class="step-num">3</span>
             <h4>Connect and configure dimensions</h4>
           </div>
-          <p>Open CostGoblin, go to <strong>Sync</strong> and point each data source to its S3 prefix. Once the first sync completes, head to <strong>Dimensions</strong> to map your tags to cost allocation dimensions. This is where CostGoblin shines &mdash; for each dimension you can:</p>
+          <p>Either way, open CostGoblin: the setup wizard points each data source at its S3 prefix. Once the first sync completes, head to <strong>Dimensions</strong> to map your tags to cost allocation dimensions. This is where CostGoblin shines &mdash; for each dimension you can:</p>
           <ul style="margin: 12px 0 0 46px; list-style: none; display: flex; flex-direction: column; gap: 8px; font-size: 14px; color: var(--text-dim);">
             <li><strong style="color: var(--emerald);">Normalize</strong> &mdash; merge inconsistent casing and spelling (<em>prod</em>, <em>Prod</em>, <em>production</em> &rarr; one value)</li>
             <li><strong style="color: var(--emerald);">Define aliases</strong> &mdash; group multiple tag values under a single label across all views</li>
@@ -2589,8 +2649,8 @@ Format:   <span class="code-file">Parquet</span>
             <li style="color: var(--text-muted); font-style: italic;">No data reprocessing &mdash; changes take effect instantly across all views.</li>
           </ul>
           <div class="step-note">First sync takes a few minutes depending on billing history size. Subsequent syncs only re-download the current month (AWS regenerates the full month's data with each export refresh).</div>
+          <div class="step-callout"><strong>Pro tip:</strong> New data exports only include data from the day they're created. To get historical data, open an AWS Support case requesting a backfill for your export &mdash; AWS can typically reload up to 12 months of past billing data into your S3 bucket.</div>
         </div>
-
       </div>
     </div>
   </div>
