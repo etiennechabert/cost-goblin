@@ -1650,6 +1650,9 @@ function CreateExportsStep({ state, onChange, onSave, onQuickCreateOpened, onFil
         <p className="text-xs text-text-muted mt-0.5">
           It is created in us-east-1 by someone with admin rights in the account that owns the billing data, usually the management account.
         </p>
+        <p className="text-xs text-text-muted mt-0.5">
+          AWS allows two FOCUS 1.2 exports per account: if this one already has two, go back and pick their bucket instead.
+        </p>
       </div>
 
       <div className="flex flex-col gap-1">
