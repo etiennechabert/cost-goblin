@@ -93,11 +93,13 @@ export function CommandPalette({ items, onNavigate }: CommandPaletteProps) {
       onOpenChange={(next) => { if (!next) setState(CLOSED); }}
       label="Command palette"
       loop
+      // z-50 like every portaled overlay, so whichever layer opened last paints
+      // on top — the one Radix gives pointer, focus and Escape to.
       // no-drag: the overlay covers the app header, a window drag region —
       // without the opt-out, clicks there would drag the window instead of
       // dismissing the palette.
-      overlayClassName={cn('fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm', NO_DRAG)}
-      contentClassName={cn('fixed left-1/2 top-[20%] z-[100] w-full max-w-lg -translate-x-1/2 rounded-xl border border-border bg-bg-secondary shadow-2xl', NO_DRAG)}
+      overlayClassName={cn('fixed inset-0 z-50 bg-black/60 backdrop-blur-sm', NO_DRAG)}
+      contentClassName={cn('fixed left-1/2 top-[20%] z-50 w-full max-w-lg -translate-x-1/2 rounded-xl border border-border bg-bg-secondary shadow-2xl', NO_DRAG)}
     >
       <div className="flex items-center gap-2 border-b border-border px-3">
         <Search className="h-4 w-4 shrink-0 text-text-secondary" />

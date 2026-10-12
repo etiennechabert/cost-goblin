@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { WorkspacesView } from '../views/workspaces.js';
+import { backdropOf } from './modal-dom.js';
 
 const TWO_WORKSPACES: WorkspacesInfo = {
   mode: 'workspace',
@@ -103,7 +104,7 @@ describe('WorkspacesView', () => {
     expect(within(dialog).getByText(/default, client-acme/)).toBeDefined();
   });
 
-  it('closes the New workspace modal from the named ✕, Escape and the aria-hidden backdrop', async () => {
+  it('closes the New workspace modal from the named ✕, Escape and the backdrop', async () => {
     const user = userEvent.setup();
     renderView(apiWith(TWO_WORKSPACES));
     const trigger = await screen.findByRole('button', { name: 'New workspace' });
@@ -118,9 +119,7 @@ describe('WorkspacesView', () => {
     expect(screen.queryByRole('dialog', { name: 'New workspace' })).toBeNull();
 
     await user.click(trigger);
-    const backdrop = screen.getByRole('dialog', { name: 'New workspace' }).querySelector(':scope > [aria-hidden="true"]');
-    if (!(backdrop instanceof HTMLElement)) throw new Error('backdrop not found');
-    await user.click(backdrop);
+    await user.click(backdropOf(screen.getByRole('dialog', { name: 'New workspace' })));
     expect(screen.queryByRole('dialog', { name: 'New workspace' })).toBeNull();
   });
 

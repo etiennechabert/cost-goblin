@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ModalShell, ModalShellDescription, ModalShellTitle } from '../components/ui/modal-shell.js';
 import { getModalLayerCount, getOpenModalLayerKinds } from '../hooks/modal-layers.js';
 import { appRegionOf } from './app-region.js';
+import { expectTopLayer } from './modal-dom.js';
 
 /** A page with an opener for a ModalShell holding a text input, and an
  *  unrelated button behind it. Nothing here is a Radix `Trigger`: the app's
@@ -172,7 +173,7 @@ describe('ModalShell', () => {
     render(<Stack />);
     const openInner = screen.getByRole('button', { name: 'Open inner' });
     await user.click(openInner);
-    expect(screen.getByRole('dialog', { name: 'Inner' })).toBeDefined();
+    await expectTopLayer(screen.getByRole('dialog', { name: 'Inner' }), [screen.getByRole('dialog', { name: 'Outer', hidden: true })]);
 
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('dialog', { name: 'Inner' })).toBeNull();

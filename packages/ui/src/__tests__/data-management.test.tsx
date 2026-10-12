@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within, cleanup } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within, cleanup } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
@@ -6,6 +6,8 @@ import { GCLOUD_ADC_LOGIN_COMMAND, asProviderName } from '@costgoblin/core/brows
 import type { ProviderConfig } from '@costgoblin/core/browser';
 import { MOCK_GCP_PROVIDER, MOCK_MIXED_PROVIDER_CONFIG, MOCK_MULTI_PROVIDER_CONFIG, MockCostApi } from '../__fixtures__/mock-api.js';
 import { DataManagement } from '../views/data-management.js';
+import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover.js';
+import { backdropOf, expectTopLayer } from './modal-dom.js';
 
 function renderDataManagement(api?: MockCostApi) {
   const mockApi = api ?? new MockCostApi();
@@ -312,21 +314,40 @@ describe('DataManagement — modal dialogs', () => {
   it('pulls focus that lands on the page behind back into the dialog', async () => {
     // aria-modal declares the page inert — Tab must not walk onto it.
     const { dialog } = await openAddProvider();
-    act(() => { screen.getByRole('button', { name: 'Refresh' }).focus(); });
+    // The page behind is hidden from assistive tech while the modal is up.
+    act(() => { screen.getByRole('button', { name: 'Refresh', hidden: true }).focus(); });
     expect(dialog.contains(document.activeElement)).toBe(true);
   });
 
-  it('ignores an Escape a nested layer already consumed, or one that cancels an IME composition', async () => {
-    const { user } = await openAddProvider();
-    // A layer above it (e.g. a Radix popover) handles Escape in the capture
-    // phase and marks it consumed.
-    const consume = (e: KeyboardEvent) => { e.preventDefault(); };
-    document.addEventListener('keydown', consume, { capture: true });
+  it('leaves Escape to a layer opened over it, and ignores one that cancels an IME composition', async () => {
+    const api = new MockCostApi();
+    const user = userEvent.setup();
+    const page = (menu: boolean) => (
+      <CostApiProvider value={api}>
+        <DataManagement />
+        {menu && (
+          <Popover defaultOpen>
+            <PopoverTrigger>Workspaces</PopoverTrigger>
+            <PopoverContent><div role="group" aria-label="Workspace menu" /></PopoverContent>
+          </Popover>
+        )}
+      </CostApiProvider>
+    );
+    const { rerender } = render(page(false));
+    await user.click(await screen.findByRole('button', { name: 'Add Provider' }));
+    await screen.findByRole('dialog', { name: 'Add provider' });
+
+    // A layer above it (e.g. a Radix popover) takes the Escape.
+    rerender(page(true));
+    const menu = screen.getByRole('group', { name: 'Workspace menu' }).parentElement;
+    if (menu === null) throw new Error('popover not found');
+    await expectTopLayer(menu);
     await user.keyboard('{Escape}');
-    document.removeEventListener('keydown', consume, { capture: true });
+    expect(screen.queryByRole('group', { name: 'Workspace menu' })).toBeNull();
     expect(screen.getByRole('dialog', { name: 'Add provider' })).toBeDefined();
 
-    act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', isComposing: true, bubbles: true })); });
+    // A real keydown is cancelable.
+    fireEvent.keyDown(document.activeElement ?? document, { key: 'Escape', isComposing: true });
     expect(screen.getByRole('dialog', { name: 'Add provider' })).toBeDefined();
   });
 
@@ -334,15 +355,15 @@ describe('DataManagement — modal dialogs', () => {
     const { user, dialog } = await openAddProvider();
     await user.click(within(dialog).getByText('Which cloud are you billing on?'));
     expect(screen.getByRole('dialog', { name: 'Add provider' })).toBeDefined();
-    await user.click(within(dialog).getByTestId('modal-backdrop'));
+    await user.click(backdropOf(dialog));
     await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Add provider' })).toBeNull(); });
   });
 
   it('Escape closes only the topmost dialog when the wizard opened the Import dialog', async () => {
     const { user, dialog } = await openAddProvider();
     await user.click(within(dialog).getByRole('button', { name: 'Import from a teammate' }));
-    // The Import dialog renders inside the wizard (it is not portalled).
-    await within(dialog).findByRole('dialog', { name: 'Import configuration' });
+    // The Import dialog is a layer of its own, over the wizard.
+    await expectTopLayer(await screen.findByRole('dialog', { name: 'Import configuration' }), [dialog]);
 
     await user.keyboard('{Escape}');
     await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Import configuration' })).toBeNull(); });

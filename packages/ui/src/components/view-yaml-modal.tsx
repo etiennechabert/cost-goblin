@@ -1,9 +1,8 @@
-import { useId, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { parse, stringify } from 'yaml';
 import { validateViews, viewToYaml, ConfigValidationError } from '@costgoblin/core/browser';
 import type { ViewSpec } from '@costgoblin/core/browser';
-import { useModalDialog } from '../hooks/use-modal-dialog.js';
-import { NO_DRAG, cn } from '../lib/utils.js';
+import { ModalShell, ModalShellDescription, ModalShellTitle } from './ui/modal-shell.js';
 
 interface ExportProps {
   readonly mode: 'export';
@@ -32,10 +31,7 @@ function asCustomView(v: ViewSpec): ViewSpec {
 }
 
 export function ViewYamlModal(props: ViewYamlModalProps): React.JSX.Element {
-  const dialogRef = useRef<HTMLDialogElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
-  const titleId = useId();
-  const hintId = useId();
   const [text, setText] = useState(() =>
     props.mode === 'export' ? stringify(viewToYaml(asCustomView(props.view))) : '',
   );
@@ -43,10 +39,6 @@ export function ViewYamlModal(props: ViewYamlModalProps): React.JSX.Element {
   const [importError, setImportError] = useState<string | null>(null);
 
   const { onClose } = props;
-  // Focus starts on Close — once, on mount: `props` is a fresh object on every
-  // parent render (the app re-renders on each sync poll), and re-focusing then
-  // would yank focus out of the import textarea mid-paste.
-  useModalDialog(dialogRef, { onClose, initialFocusRef: closeRef });
 
   async function handleCopy(): Promise<void> {
     await navigator.clipboard.writeText(text);
@@ -85,69 +77,66 @@ export function ViewYamlModal(props: ViewYamlModalProps): React.JSX.Element {
   const isExport = props.mode === 'export';
 
   return (
-    // no-drag: the backdrop covers the app header, a window drag region —
-    // without the opt-out, clicks there would drag the window. (#317)
-    <dialog ref={dialogRef} open tabIndex={-1} className={cn('fixed inset-0 z-[100] flex items-center justify-center bg-transparent m-0 p-0 max-w-none max-h-none w-full h-full border-none outline-none', NO_DRAG)} aria-modal="true" aria-labelledby={titleId} aria-describedby={hintId}>
-      <div
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-        onClick={onClose}
-        aria-hidden="true"
-      />
-
-      <div className="relative rounded-xl border border-border bg-bg-secondary p-5 shadow-2xl max-w-2xl w-full mx-4 flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <h3 id={titleId} className="text-sm font-semibold text-text-primary">
+    // Focus starts on Close — once, on open: `props` is a fresh object on every
+    // parent render (the app re-renders on each sync poll), and re-focusing
+    // then would yank focus out of the import textarea mid-paste.
+    <ModalShell onClose={onClose} initialFocusRef={closeRef} size="2xl" className="flex flex-col gap-3 p-5">
+      <div className="flex items-center justify-between">
+        <ModalShellTitle>
+          <h3 className="text-sm font-semibold text-text-primary">
             {isExport ? 'Export view' : 'Import view'}
           </h3>
-          <span id={hintId} className="text-[11px] text-text-muted">
+        </ModalShellTitle>
+        <ModalShellDescription>
+          <span className="text-[11px] text-text-muted">
             {isExport ? 'Copy this YAML to share or back up the view.' : 'Paste a view YAML (from Export) to add it.'}
           </span>
-        </div>
-
-        <textarea
-          value={text}
-          readOnly={isExport}
-          onChange={(e) => { setText(e.target.value); setImportError(null); }}
-          spellCheck={false}
-          className="font-mono text-[11px] leading-relaxed bg-bg-primary border border-border rounded-md px-3 py-2 text-text-primary h-72 resize-none"
-        />
-
-        {importError !== null && (
-          <div role="alert" className="rounded-md border border-negative/50 bg-negative-muted px-3 py-2 text-xs text-negative">
-            {importError}
-          </div>
-        )}
-
-        <div className="flex items-center justify-end gap-2">
-          <button
-            ref={closeRef}
-            type="button"
-            onClick={onClose}
-            className="rounded-md px-3 py-1.5 text-sm font-medium text-text-secondary hover:bg-bg-tertiary transition-colors"
-          >
-            Close
-          </button>
-          {isExport ? (
-            <button
-              type="button"
-              onClick={() => { void handleCopy(); }}
-              className="rounded-md px-3 py-1.5 text-sm font-medium text-white bg-accent hover:bg-accent-hover transition-colors"
-            >
-              {copied ? 'Copied!' : 'Copy'}
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={handleImport}
-              disabled={text.trim() === ''}
-              className="rounded-md px-3 py-1.5 text-sm font-medium text-white bg-accent hover:bg-accent-hover transition-colors disabled:opacity-40"
-            >
-              Import
-            </button>
-          )}
-        </div>
+        </ModalShellDescription>
       </div>
-    </dialog>
+
+      <textarea
+        value={text}
+        readOnly={isExport}
+        onChange={(e) => { setText(e.target.value); setImportError(null); }}
+        spellCheck={false}
+        className="font-mono text-[11px] leading-relaxed bg-bg-primary border border-border rounded-md px-3 py-2 text-text-primary h-72 resize-none"
+      />
+
+      {importError !== null && (
+        <div role="alert" className="rounded-md border border-negative/50 bg-negative-muted px-3 py-2 text-xs text-negative">
+          {importError}
+        </div>
+      )}
+
+      <div className="flex items-center justify-end gap-2">
+        <button
+          ref={closeRef}
+          type="button"
+          onClick={onClose}
+          className="rounded-md px-3 py-1.5 text-sm font-medium text-text-secondary hover:bg-bg-tertiary transition-colors"
+        >
+          Close
+        </button>
+        {isExport ? (
+          <button
+            type="button"
+            onClick={() => { void handleCopy(); }}
+            className="rounded-md px-3 py-1.5 text-sm font-medium text-white bg-accent hover:bg-accent-hover transition-colors"
+          >
+            {copied ? 'Copied!' : 'Copy'}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={handleImport}
+            disabled={text.trim() === ''}
+            className="rounded-md px-3 py-1.5 text-sm font-medium text-white bg-accent hover:bg-accent-hover transition-colors disabled:opacity-40"
+          >
+            Import
+          </button>
+        )}
+      </div>
+    </ModalShell>
   );
 }
 

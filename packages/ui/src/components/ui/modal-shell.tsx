@@ -30,7 +30,8 @@ export interface ModalShellProps {
   /** Accessible name for a shell without a ModalShellTitle. */
   readonly ariaLabel?: string;
   readonly size?: ModalShellSize;
-  /** Test id for the backdrop (the overlay the dialog sits in). */
+  /** Test id for the backdrop (the overlay the dialog sits in). Defaults to
+   *  `modal-backdrop`. */
   readonly backdropTestId?: string;
   /** Extra classes for the dialog card. */
   readonly className?: string;
@@ -62,7 +63,7 @@ export function ModalShell({
   initialFocusRef,
   ariaLabel,
   size = 'md',
-  backdropTestId,
+  backdropTestId = 'modal-backdrop',
   className,
   children,
 }: Readonly<ModalShellProps>): React.JSX.Element {

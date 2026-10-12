@@ -2,10 +2,11 @@ import { useCallback, useState, useEffect, useRef } from 'react';
 import type { DataInventoryResult, DataTier, CostGoblinConfig, ProviderConfig, SyncStatus } from '@costgoblin/core/browser';
 import { GCLOUD_ADC_LOGIN_COMMAND, GCLOUD_CLI_LOGIN_COMMAND, splitGcsLocation } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
-import { useModalDialog } from '../hooks/use-modal-dialog.js';
 import { useQuery } from '../hooks/use-query.js';
 import { ConfirmModal } from '../components/confirm-modal.js';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '../components/ui/dialog.js';
+import { ModalShell } from '../components/ui/modal-shell.js';
+import { NO_DRAG, cn } from '../lib/utils.js';
 import { ProfilePicker } from '../components/profile-picker.js';
 import { SetupWizard } from './setup-wizard.js';
 import { OrgAccountsSection } from './data-management-org.js';
@@ -923,46 +924,29 @@ const CONFIGURE_TIER_LABEL: Record<ConfigureSource, string> = {
 };
 
 /** Modal chrome for a SetupWizard opened over the page (Add Provider, a
- *  tier's Configure).
+ *  tier's Configure): the wizard brings its own card, and the ✕ is pinned to
+ *  the top-right corner of what the wizard renders.
  *
- *  A native `<dialog open aria-modal>`, like ConfirmModal, not the Radix
- *  Dialog: Radix centres its content with a transform, and a transformed
- *  element becomes the containing block of every `position: fixed`
- *  descendant — the wizard's own Import dialog would be clipped to the card
- *  instead of covering the window.
- *
- *  Escape closes only the topmost dialog. While the wizard has one of its own
- *  open (Import, which also locks itself shut during a pull), the key is that
- *  dialog's to handle, and a key a nested layer already consumed
- *  (`defaultPrevented`) is left alone. Focus moves in on open, stays inside
- *  while open, and returns to the opener on close (see useModalDialog). */
+ *  A ModalShell like every other modal, so the dialogs the wizard opens from
+ *  inside (Import, which also locks itself shut during a pull) are layers of
+ *  their own over it: Escape closes only the topmost, and each paints over the
+ *  one it opened from. Focus moves in on open, stays inside while open, and
+ *  returns to the opener on close. */
 function WizardModal({ label, onClose, children }: Readonly<{
   label: string;
   onClose: () => void;
   children: React.ReactNode;
 }>): React.JSX.Element {
-  const dialogRef = useRef<HTMLDialogElement>(null);
-  useModalDialog(dialogRef, { onClose });
-
   return (
-    // no-drag: the modal opens over the app header, a window drag region —
-    // without the opt-out, clicks there would drag the window. (#317)
-    <dialog
-      ref={dialogRef}
-      open
-      aria-modal="true"
-      aria-label={label}
-      tabIndex={-1}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-transparent m-0 p-4 max-w-none max-h-none w-full h-full border-none outline-none [-webkit-app-region:no-drag]"
-    >
-      <div data-testid="modal-backdrop" className="absolute inset-0 bg-black/50" onClick={onClose} aria-hidden="true" />
-      <div className="relative">
-        <button type="button" onClick={onClose} className="absolute -top-2 -right-2 z-10 rounded-full bg-bg-tertiary border border-border w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-bg-secondary transition-colors" aria-label="Close">
-          &#10005;
-        </button>
-        {children}
-      </div>
-    </dialog>
+    <ModalShell onClose={onClose} ariaLabel={label} size="auto">
+      {children}
+      {/* After the wizard in the DOM: the window's drag regions resolve in
+          document order, so a ✕ placed before a wizard that marks itself a
+          drag region would lose to it and drag the window. */}
+      <button type="button" onClick={onClose} className={cn('absolute -top-2 -right-2 z-10 rounded-full bg-bg-tertiary border border-border w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-bg-secondary transition-colors', NO_DRAG)} aria-label="Close">
+        &#10005;
+      </button>
+    </ModalShell>
   );
 }
 
