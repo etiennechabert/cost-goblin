@@ -6,6 +6,11 @@ import {
   applyPulledSnapshot,
   applyPushedStatus,
   decideUpdateAutoOpen,
+  hasUpdateIndicator,
+  isAnotherModalOpen,
+  keepUpdateModalOpen,
+  settingsGearTab,
+  updateModalHasContent,
 } from '../renderer/update-view.js';
 import type { AutoOpenMemory, UpdateView } from '../renderer/update-view.js';
 
@@ -27,12 +32,24 @@ function pushAll(statuses: readonly UpdateStatus[], from: UpdateView = INITIAL_U
   return statuses.reduce(applyPushedStatus, from);
 }
 
+const NO_OTHER_MODAL = { otherModalOpen: false } as const;
+const OTHER_MODAL = { otherModalOpen: true } as const;
+
 /** Replays the App effect: one decision per view, memory carried forward;
  *  returns whether each view opened the modal. */
 function opens(views: readonly UpdateView[], memory: AutoOpenMemory = INITIAL_AUTO_OPEN_MEMORY): boolean[] {
+  return replay(views.map((view) => ({ view, otherModalOpen: false })), memory);
+}
+
+/** Like `opens`, with whether another modal was open at each decision — the
+ *  App effect re-decides on the same view when that changes. */
+function replay(
+  steps: readonly { readonly view: UpdateView; readonly otherModalOpen: boolean }[],
+  memory: AutoOpenMemory = INITIAL_AUTO_OPEN_MEMORY,
+): boolean[] {
   let current = memory;
-  return views.map((view) => {
-    const decision = decideUpdateAutoOpen(view, current);
+  return steps.map(({ view, otherModalOpen }) => {
+    const decision = decideUpdateAutoOpen(view, current, { otherModalOpen });
     current = decision.memory;
     return decision.open;
   });
@@ -178,7 +195,161 @@ describe('decideUpdateAutoOpen', () => {
   });
 
   it('leaves the memory untouched when nothing opens', () => {
-    const decision = decideUpdateAutoOpen(applyPushedStatus(INITIAL_UPDATE_VIEW, CHECKING), INITIAL_AUTO_OPEN_MEMORY);
+    const decision = decideUpdateAutoOpen(applyPushedStatus(INITIAL_UPDATE_VIEW, CHECKING), INITIAL_AUTO_OPEN_MEMORY, NO_OTHER_MODAL);
     expect(decision).toStrictEqual({ open: false, memory: INITIAL_AUTO_OPEN_MEMORY });
+  });
+});
+
+// The update modal is a layer of its own: opened while another modal is up,
+// it would sit over (or, before the layers were unified, under) a dialog the
+// user is working in and take its clicks. It waits for the last one to close.
+describe('decideUpdateAutoOpen while another modal is open', () => {
+  it('does not open an available update, and does not use up the one-time prompt', () => {
+    const available = applyPushedStatus(INITIAL_UPDATE_VIEW, AVAILABLE);
+    expect(decideUpdateAutoOpen(available, INITIAL_AUTO_OPEN_MEMORY, OTHER_MODAL))
+      .toStrictEqual({ open: false, memory: INITIAL_AUTO_OPEN_MEMORY });
+  });
+
+  it('does not open a new error episode, and does not mark it shown', () => {
+    const error = pushAll([CHECKING, CHECK_ERROR]);
+    expect(decideUpdateAutoOpen(error, INITIAL_AUTO_OPEN_MEMORY, OTHER_MODAL))
+      .toStrictEqual({ open: false, memory: INITIAL_AUTO_OPEN_MEMORY });
+  });
+
+  it('opens the deferred update once the last other modal closes', () => {
+    const available = applyPushedStatus(INITIAL_UPDATE_VIEW, AVAILABLE);
+    expect(replay([
+      { view: available, otherModalOpen: true },
+      { view: available, otherModalOpen: true },
+      { view: available, otherModalOpen: false },
+      { view: available, otherModalOpen: false },
+    ])).toStrictEqual([false, false, true, false]);
+  });
+
+  it('opens the deferred error episode once the last other modal closes', () => {
+    const error = pushAll([AVAILABLE, DOWNLOADING, DOWNLOAD_ERROR]);
+    const repeat = applyPushedStatus(error, RETRY_ERROR);
+    expect(replay([
+      { view: error, otherModalOpen: true },
+      { view: repeat, otherModalOpen: true },
+      { view: repeat, otherModalOpen: false },
+      { view: repeat, otherModalOpen: false },
+    ], { updatePrompted: true, errorEpisodeShown: 0 })).toStrictEqual([false, false, true, false]);
+  });
+
+  it('opens a downloaded update deferred from its available push', () => {
+    const available = applyPushedStatus(INITIAL_UPDATE_VIEW, AVAILABLE);
+    const downloaded = pushAll([DOWNLOADING, DOWNLOADED], available);
+    expect(replay([
+      { view: available, otherModalOpen: true },
+      { view: downloaded, otherModalOpen: false },
+    ])).toStrictEqual([false, true]);
+  });
+
+  it('never opens what would not open anyway', () => {
+    const pulledCheckError = applyPulledSnapshot(INITIAL_UPDATE_VIEW, snapshot(CHECK_ERROR, true));
+    for (const view of [INITIAL_UPDATE_VIEW, applyPushedStatus(INITIAL_UPDATE_VIEW, CHECKING), pulledCheckError]) {
+      expect(replay([{ view, otherModalOpen: true }, { view, otherModalOpen: false }])).toStrictEqual([false, false]);
+    }
+  });
+});
+
+describe('isAnotherModalOpen', () => {
+  it('is false with no modal open', () => {
+    expect(isAnotherModalOpen(0, false)).toBe(false);
+  });
+
+  it('is true for any open modal while the update modal is not showing', () => {
+    expect(isAnotherModalOpen(1, false)).toBe(true);
+    expect(isAnotherModalOpen(2, false)).toBe(true);
+  });
+
+  it('does not count the update modal itself, which is one of the open layers while it shows', () => {
+    expect(isAnotherModalOpen(1, true)).toBe(false);
+    expect(isAnotherModalOpen(2, true)).toBe(true);
+  });
+
+  it('is false while the update modal is opening but has not registered its layer yet', () => {
+    expect(isAnotherModalOpen(0, true)).toBe(false);
+  });
+});
+
+describe('updateModalHasContent', () => {
+  it('is true for the statuses the update modal shows', () => {
+    for (const status of [AVAILABLE, DOWNLOADING, DOWNLOADED, CHECK_ERROR, DOWNLOAD_ERROR]) {
+      expect(updateModalHasContent(status)).toBe(true);
+    }
+  });
+
+  it('is false while idle or checking, when the modal renders nothing', () => {
+    expect(updateModalHasContent(IDLE)).toBe(false);
+    expect(updateModalHasContent(CHECKING)).toBe(false);
+  });
+});
+
+// A flag left set while the modal rendered nothing (Retry in "Update failed"
+// moves to 'checking') would re-mount the modal open as soon as a later status
+// gave it content — an 'available' or a new error, shown without ever going
+// through decideUpdateAutoOpen, so over whatever modal is open by then.
+describe('keepUpdateModalOpen', () => {
+  it('closes the modal when the status leaves what it shows', () => {
+    expect(keepUpdateModalOpen(true, CHECKING)).toBe(false);
+    expect(keepUpdateModalOpen(true, IDLE)).toBe(false);
+  });
+
+  it('keeps it open across statuses it shows (Download → downloading → downloaded)', () => {
+    for (const status of [AVAILABLE, DOWNLOADING, DOWNLOADED, DOWNLOAD_ERROR]) {
+      expect(keepUpdateModalOpen(true, status)).toBe(true);
+    }
+  });
+
+  it('never opens a closed modal', () => {
+    for (const status of [IDLE, CHECKING, AVAILABLE, DOWNLOADING, DOWNLOADED, CHECK_ERROR]) {
+      expect(keepUpdateModalOpen(false, status)).toBe(false);
+    }
+  });
+
+  it('after a Retry, a later error re-opens only through the decision', () => {
+    // error (shown) → Retry → checking → error: the flag is cleared at
+    // 'checking', so the new episode opens via decideUpdateAutoOpen — and
+    // waits while another modal is open.
+    const first = pushAll([CHECKING, CHECK_ERROR]);
+    const retrying = applyPushedStatus(first, CHECKING);
+    const second = applyPushedStatus(retrying, CHECK_ERROR);
+    const afterRetry = keepUpdateModalOpen(true, retrying.status);
+    expect(afterRetry).toBe(false);
+    const memory = decideUpdateAutoOpen(first, INITIAL_AUTO_OPEN_MEMORY, NO_OTHER_MODAL).memory;
+    expect(decideUpdateAutoOpen(second, memory, OTHER_MODAL).open).toBe(false);
+    expect(decideUpdateAutoOpen(second, memory, NO_OTHER_MODAL).open).toBe(true);
+  });
+});
+
+describe('hasUpdateIndicator', () => {
+  it('flags an update the user can act on', () => {
+    for (const status of [AVAILABLE, DOWNLOADING, DOWNLOADED]) {
+      expect(hasUpdateIndicator(status)).toBe(true);
+    }
+  });
+
+  it('is off otherwise', () => {
+    for (const status of [IDLE, CHECKING, CHECK_ERROR]) {
+      expect(hasUpdateIndicator(status)).toBe(false);
+    }
+  });
+});
+
+// The gear's dot (and title) say "Update available"; the update controls live
+// in General, so that is where a click on it has to land.
+describe('settingsGearTab', () => {
+  it('lands on General while the gear shows the update dot', () => {
+    for (const status of [AVAILABLE, DOWNLOADING, DOWNLOADED]) {
+      expect(settingsGearTab(status)).toBe('general');
+    }
+  });
+
+  it('lands on Data & Sync otherwise', () => {
+    for (const status of [IDLE, CHECKING, CHECK_ERROR]) {
+      expect(settingsGearTab(status)).toBe('data-sync');
+    }
   });
 });
