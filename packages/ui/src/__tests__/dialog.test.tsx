@@ -138,7 +138,8 @@ describe('Dialog', () => {
     expect(focusOpener).not.toHaveBeenCalled();
     expect(next.contains(document.activeElement)).toBe(true);
 
-    // Closing the last one still hands focus back once nothing covers it.
+    // The last one still closes. Its opener was the previous dialog's Next,
+    // gone by now, so focus is not handed back to "Triage new".
     await user.keyboard('{Escape}');
     await waitFor(() => { expect(screen.queryByRole('dialog')).toBeNull(); });
   });

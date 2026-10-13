@@ -175,20 +175,48 @@ describe('ModalShell', () => {
   // The overlay is the dialog's scroll container: a press on its scrollbar is
   // a pointerdown on the overlay, outside the dialog — scrolling, though, not
   // a backdrop click.
+  /** jsdom has no layout: give the overlay a 1000x600 box whose content is
+   *  `scrollHeight` tall, with a classic scrollbar `barWidth` wide (0 for the
+   *  overlay scrollbars macOS uses by default, which take no layout space). */
+  function layOutOverlay(overlay: HTMLElement, { scrollHeight, barWidth }: { scrollHeight: number; barWidth: number }): void {
+    const box = { offsetWidth: 1000, clientWidth: 1000 - barWidth, scrollWidth: 1000 - barWidth, offsetHeight: 600, clientHeight: 600, scrollHeight };
+    for (const [key, value] of Object.entries(box)) Object.defineProperty(overlay, key, { configurable: true, value });
+    vi.spyOn(overlay, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 1000, 600));
+  }
+
   it('stays open when the overlay\'s own scrollbar is pressed', async () => {
     const onClose = vi.fn();
     const { user } = await openPage({ onClose });
     const overlay = backdrop();
-    // jsdom has no layout: a 1000x600 overlay with a 15px vertical scrollbar.
-    Object.defineProperty(overlay, 'offsetWidth', { configurable: true, value: 1000 });
-    Object.defineProperty(overlay, 'clientWidth', { configurable: true, value: 985 });
-    Object.defineProperty(overlay, 'offsetHeight', { configurable: true, value: 600 });
-    Object.defineProperty(overlay, 'clientHeight', { configurable: true, value: 600 });
-    vi.spyOn(overlay, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 1000, 600));
+    layOutOverlay(overlay, { scrollHeight: 900, barWidth: 15 });
 
     await user.pointer({ keys: '[MouseLeft]', target: overlay, coords: { clientX: 992, clientY: 300 } });
     expect(onClose).not.toHaveBeenCalled();
     await user.pointer({ keys: '[MouseLeft]', target: overlay, coords: { clientX: 400, clientY: 300 } });
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  // macOS's default (with a trackpad): the scrollbar is drawn over the right
+  // edge of the content instead of beside it, so the box gives it no width.
+  it('stays open when an overlay scrollbar, which takes no space, is pressed', async () => {
+    const onClose = vi.fn();
+    const { user } = await openPage({ onClose });
+    const overlay = backdrop();
+    layOutOverlay(overlay, { scrollHeight: 900, barWidth: 0 });
+
+    await user.pointer({ keys: '[MouseLeft]', target: overlay, coords: { clientX: 996, clientY: 300 } });
+    expect(onClose).not.toHaveBeenCalled();
+    await user.pointer({ keys: '[MouseLeft]', target: overlay, coords: { clientX: 400, clientY: 300 } });
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('closes on a press at the right edge when the overlay does not scroll', async () => {
+    const onClose = vi.fn();
+    const { user } = await openPage({ onClose });
+    const overlay = backdrop();
+    layOutOverlay(overlay, { scrollHeight: 600, barWidth: 0 });
+
+    await user.pointer({ keys: '[MouseLeft]', target: overlay, coords: { clientX: 996, clientY: 300 } });
     expect(onClose).toHaveBeenCalledOnce();
   });
 

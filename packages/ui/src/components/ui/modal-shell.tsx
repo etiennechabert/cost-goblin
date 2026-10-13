@@ -19,16 +19,25 @@ const SIZE_CLASSES: Record<ModalShellSize, string> = {
   auto: '',
 };
 
+/** How wide an overlay scrollbar gets under the pointer. macOS draws its
+ *  default scrollbars over the content instead of beside it, so the box gives
+ *  them no width to measure. */
+const OVERLAY_SCROLLBAR_PX = 16;
+
 /** A press on an element's own scrollbar rather than inside its client area.
  *  The overlay is the dialog's scroll container, and a press on its scrollbar
  *  is a pointerdown on the overlay, outside the dialog — Radix would take it
- *  for a backdrop click and dismiss. The overlay has no border, so whatever
- *  its offset size has beyond its client size is scrollbar. */
+ *  for a backdrop click and dismiss. While the overlay scrolls, its scrollbar
+ *  is the strip along its far edge: as wide as a classic scrollbar measures
+ *  (offset minus client size; the overlay has no border), and at least as wide
+ *  as an overlay one. A backdrop click in that strip doesn't dismiss. */
 function isOnOwnScrollbar(target: EventTarget | null, x: number, y: number): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const box = target.getBoundingClientRect();
-  return (target.offsetWidth > target.clientWidth && x >= box.left + target.clientWidth)
-    || (target.offsetHeight > target.clientHeight && y >= box.top + target.clientHeight);
+  const barWidth = Math.max(target.offsetWidth - target.clientWidth, OVERLAY_SCROLLBAR_PX);
+  const barHeight = Math.max(target.offsetHeight - target.clientHeight, OVERLAY_SCROLLBAR_PX);
+  return (target.scrollHeight > target.clientHeight && x >= box.right - barWidth)
+    || (target.scrollWidth > target.clientWidth && y >= box.bottom - barHeight);
 }
 
 export interface ModalShellProps {
