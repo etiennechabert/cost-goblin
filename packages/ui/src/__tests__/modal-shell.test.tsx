@@ -172,6 +172,26 @@ describe('ModalShell', () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  // The overlay is the dialog's scroll container: a press on its scrollbar is
+  // a pointerdown on the overlay, outside the dialog — scrolling, though, not
+  // a backdrop click.
+  it('stays open when the overlay\'s own scrollbar is pressed', async () => {
+    const onClose = vi.fn();
+    const { user } = await openPage({ onClose });
+    const overlay = backdrop();
+    // jsdom has no layout: a 1000x600 overlay with a 15px vertical scrollbar.
+    Object.defineProperty(overlay, 'offsetWidth', { configurable: true, value: 1000 });
+    Object.defineProperty(overlay, 'clientWidth', { configurable: true, value: 985 });
+    Object.defineProperty(overlay, 'offsetHeight', { configurable: true, value: 600 });
+    Object.defineProperty(overlay, 'clientHeight', { configurable: true, value: 600 });
+    vi.spyOn(overlay, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 1000, 600));
+
+    await user.pointer({ keys: '[MouseLeft]', target: overlay, coords: { clientX: 992, clientY: 300 } });
+    expect(onClose).not.toHaveBeenCalled();
+    await user.pointer({ keys: '[MouseLeft]', target: overlay, coords: { clientX: 400, clientY: 300 } });
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
   it('stays open on Escape and backdrop clicks when not dismissable', async () => {
     const onClose = vi.fn();
     const { user } = await openPage({ onClose, dismissable: false });

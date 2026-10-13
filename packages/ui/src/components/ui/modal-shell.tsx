@@ -19,6 +19,18 @@ const SIZE_CLASSES: Record<ModalShellSize, string> = {
   auto: '',
 };
 
+/** A press on an element's own scrollbar rather than inside its client area.
+ *  The overlay is the dialog's scroll container, and a press on its scrollbar
+ *  is a pointerdown on the overlay, outside the dialog — Radix would take it
+ *  for a backdrop click and dismiss. The overlay has no border, so whatever
+ *  its offset size has beyond its client size is scrollbar. */
+function isOnOwnScrollbar(target: EventTarget | null, x: number, y: number): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const box = target.getBoundingClientRect();
+  return (target.offsetWidth > target.clientWidth && x >= box.left + target.clientWidth)
+    || (target.offsetHeight > target.clientHeight && y >= box.top + target.clientHeight);
+}
+
 export interface ModalShellProps {
   /** Called on Escape and on a backdrop click. The shell is open while
    *  mounted: callers close it by unmounting it. */
@@ -105,7 +117,12 @@ export function ModalShell({
             onEscapeKeyDown={(event) => {
               if (!dismissable || event.isComposing) event.preventDefault();
             }}
-            onPointerDownOutside={(event) => { if (!dismissable) event.preventDefault(); }}
+            onPointerDownOutside={(event) => {
+              const { originalEvent } = event.detail;
+              if (!dismissable || isOnOwnScrollbar(originalEvent.target, originalEvent.clientX, originalEvent.clientY)) {
+                event.preventDefault();
+              }
+            }}
             onInteractOutside={(event) => { if (!dismissable) event.preventDefault(); }}
           >
             <ModalLayer kind="modal-shell" />
