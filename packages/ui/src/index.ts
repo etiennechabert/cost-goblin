@@ -3,13 +3,12 @@ export type {
   Dimension,
 } from './api/CostApi.js';
 
-export { cn, NO_DRAG } from './lib/utils.js';
+export { cn } from './lib/utils.js';
 
 export { useCostApi, CostApiProvider } from './hooks/use-cost-api.js';
 export { useQuery } from './hooks/use-query.js';
 export { useReducedMotion } from './hooks/use-reduced-motion.js';
-export { useModalLayerCount, useRegisterModalLayer, isAnotherModalLayerOpen } from './hooks/modal-layers.js';
-export type { ModalLayerHandle, ModalLayerKind } from './hooks/modal-layers.js';
+export { useModalLayerCount } from './hooks/modal-layers.js';
 export { UnsavedChangesProvider, useUnsavedChanges, useConfirmLeave } from './hooks/use-unsaved-changes.js';
 
 export { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from './components/ui/card.js';
@@ -25,8 +24,6 @@ export { Calendar } from './components/ui/calendar.js';
 export type { CalendarProps } from './components/ui/calendar.js';
 export { Popover, PopoverTrigger, PopoverContent, PopoverAnchor } from './components/ui/popover.js';
 export { Dialog, DialogTrigger, DialogPortal, DialogClose, DialogOverlay, DialogContent, DialogTitle, DialogDescription } from './components/ui/dialog.js';
-export { ModalShell, ModalShellTitle, ModalShellDescription } from './components/ui/modal-shell.js';
-export type { ModalShellProps, ModalShellSize } from './components/ui/modal-shell.js';
 
 export { ErrorBoundary } from './components/error-boundary.js';
 export { BubbleChart } from './components/bubble-chart.js';

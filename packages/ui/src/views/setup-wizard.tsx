@@ -3074,7 +3074,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   // just its card: no full-window backdrop, no drag region. Source mode only
   // ever runs in that modal, so it never carries the drag region either. (#317)
   return (
-    <div className={cn('flex items-center justify-center p-4', !hosted && 'min-h-screen bg-bg-primary', !hosted && !isSourceMode && '[-webkit-app-region:drag]')}>
+    <div className={cn('flex items-center justify-center', !hosted && 'min-h-screen bg-bg-primary p-4', !hosted && !isSourceMode && '[-webkit-app-region:drag]')}>
       <Card className="relative w-full max-w-lg border-border bg-bg-secondary [-webkit-app-region:no-drag]">
         {!isSourceMode && wizard.step !== 'welcome' && wizard.step !== 'start' && (
           <button

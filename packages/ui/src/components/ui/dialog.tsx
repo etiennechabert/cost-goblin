@@ -1,6 +1,7 @@
 import * as React from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { ModalLayer } from '../../hooks/modal-layers.js';
+import { returnFocusToOpener } from '../../lib/return-focus.js';
 import { NO_DRAG, cn } from '../../lib/utils.js';
 
 export const Dialog = DialogPrimitive.Root;
@@ -70,13 +71,10 @@ export const DialogContent = React.forwardRef<
         )}
         // Radix gives focus back only to a Trigger, and the app's dialogs are
         // controlled without one: focus would drop to <body>. Return it to
-        // whatever had it when the dialog opened, if that is still on the page.
+        // whatever had it when the dialog opened (see returnFocusToOpener).
         onCloseAutoFocus={(event) => {
           onCloseAutoFocus?.(event);
-          const opener = openerRef.current;
-          if (event.defaultPrevented || !(opener instanceof HTMLElement) || opener === document.body || !opener.isConnected) return;
-          event.preventDefault();
-          opener.focus();
+          if (!event.defaultPrevented && returnFocusToOpener(openerRef.current)) event.preventDefault();
         }}
         {...props}
       >

@@ -3,6 +3,7 @@ import { useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { ModalLayer } from '../../hooks/modal-layers.js';
+import { returnFocusToOpener } from '../../lib/return-focus.js';
 import { NO_DRAG, cn } from '../../lib/utils.js';
 
 export type ModalShellSize = 'sm' | 'md' | '2xl' | 'auto';
@@ -99,10 +100,7 @@ export function ModalShell({
               contentRef.current?.focus({ preventScroll: true });
             }}
             onCloseAutoFocus={(event) => {
-              if (opener instanceof HTMLElement && opener.isConnected) {
-                event.preventDefault();
-                opener.focus();
-              }
+              if (returnFocusToOpener(opener)) event.preventDefault();
             }}
             onEscapeKeyDown={(event) => {
               if (!dismissable || event.isComposing) event.preventDefault();

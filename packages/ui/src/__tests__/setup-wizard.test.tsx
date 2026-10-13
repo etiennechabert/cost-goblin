@@ -248,6 +248,10 @@ describe('SetupWizard window drag region', () => {
     await waitFor(() => { expect(screen.getByLabelText('Back to start')).toBeDefined(); });
     for (const el of container.querySelectorAll('*')) expect(appRegionOf(el)).not.toBe('drag');
     expect(container.firstElementChild?.className).not.toContain('min-h-screen');
+    // No margin of its own: hosted, the wizard's root IS the modal's content,
+    // so padding there would be a band around the card where a backdrop click
+    // doesn't dismiss, and would push the modal's ✕ off the card's corner.
+    expect(container.firstElementChild?.className).not.toMatch(/\bp-\d/);
   });
 
   it('add mode without hosted keeps the standalone drag region (hosting opts out)', () => {

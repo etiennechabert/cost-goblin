@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { useState } from 'react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Button } from '../components/ui/button.js';
 import { Dialog, DialogClose, DialogContent, DialogTitle } from '../components/ui/dialog.js';
 import { getModalLayerCount, getOpenModalLayerKinds } from '../hooks/modal-layers.js';
@@ -99,6 +99,48 @@ describe('Dialog', () => {
     await user.click(opener);
     await user.click(screen.getByRole('button', { name: 'Dismiss' }));
     await waitFor(() => { expect(document.activeElement).toBe(opener); });
+  });
+
+  it('does not pull focus behind a dialog that replaced it', async () => {
+    // Baseline triage re-keys its dialog per item: the old one unmounts in the
+    // same commit the next one mounts. Its opener, on the page now hidden
+    // behind the new dialog, must not be focused (scrolling the page and
+    // announcing it) before the new dialog's trap pulls focus back.
+    function Page(): React.JSX.Element {
+      const [item, setItem] = useState<number | null>(null);
+      return (
+        <>
+          <button type="button" onClick={() => { setItem(0); }}>Triage new</button>
+          {item !== null && (
+            <Dialog key={item} open onOpenChange={(o) => { if (!o) setItem(null); }}>
+              <DialogContent aria-describedby={undefined}>
+                <DialogTitle>{`Baseline ${String(item)}`}</DialogTitle>
+                <button type="button" onClick={() => { setItem(item + 1); }}>Next</button>
+              </DialogContent>
+            </Dialog>
+          )}
+        </>
+      );
+    }
+    const user = userEvent.setup();
+    render(<Page />);
+    const opener = screen.getByRole('button', { name: 'Triage new' });
+    await user.click(opener);
+    // A spy, not a focus listener: in jsdom the new dialog's trap bounces focus
+    // back before the opener's focus event lands, while a browser has already
+    // scrolled the page to it by then.
+    const focusOpener = vi.spyOn(opener, 'focus');
+
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    const next = screen.getByRole('dialog', { name: 'Baseline 1' });
+    // Past Radix's close-time focus handling, which runs a tick after unmount.
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+    expect(focusOpener).not.toHaveBeenCalled();
+    expect(next.contains(document.activeElement)).toBe(true);
+
+    // Closing the last one still hands focus back once nothing covers it.
+    await user.keyboard('{Escape}');
+    await waitFor(() => { expect(screen.queryByRole('dialog')).toBeNull(); });
   });
 
   it('leaves focus alone on close when its opener is gone', async () => {
