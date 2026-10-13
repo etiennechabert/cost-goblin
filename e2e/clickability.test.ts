@@ -501,6 +501,28 @@ test.describe('Clickability (workspace mode)', () => {
     await p.keyboard.press('Escape');
   });
 
+  // It used to double as Home: from anywhere but the default dashboard (another
+  // dashboard, or a page like Trends) the first click went back to the default
+  // one instead of opening the list. The goblin is Home. The fixtures hold a
+  // single dashboard, so this starts from Trends — the same branch.
+  test('the Dashboards button opens its list from any page', async () => {
+    const { page: p } = launched();
+    await ensureViewMode(p);
+    const nav = p.getByRole('navigation', { name: 'Dashboards and analysis' });
+    await nav.getByRole('button', { name: 'Trends' }).click();
+    const trends = nav.getByRole('button', { name: 'Trends' });
+    await expect(trends).toHaveAttribute('aria-current', 'page');
+
+    const trigger = nav.getByRole('button', { name: 'Dashboards' });
+    await trigger.click();
+    await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    await expect(trends).toHaveAttribute('aria-current', 'page');
+
+    await p.getByRole('menu').getByRole('menuitem', { name: 'Cost Overview' }).click();
+    await expect(p.getByRole('menu')).toHaveCount(0);
+    await expect(p.getByRole('heading', { name: 'Cost Overview' })).toBeVisible();
+  });
+
   test('an update arriving under the switch confirm waits for it to close', async () => {
     const { app: electron, page: p } = launched();
     await ensureViewMode(p);
