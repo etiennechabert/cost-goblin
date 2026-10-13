@@ -63,6 +63,14 @@
   --color-warning-muted: var(--color-warning-muted);
   --color-negative-muted: var(--color-negative-muted);
   --color-positive-muted: var(--color-positive-muted);
+
+  /* ModalShell's fade-in. Opacity only: a transform would make the overlay the
+     containing block of the dialog's fixed descendants. */
+  --animate-modal-in: modal-in 120ms ease-out;
+
+  @keyframes modal-in {
+    from { opacity: 0; }
+  }
 }
 
 body {

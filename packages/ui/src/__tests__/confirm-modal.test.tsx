@@ -3,6 +3,8 @@ import { userEvent } from '@testing-library/user-event';
 import { useState } from 'react';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { ConfirmModal } from '../components/confirm-modal.js';
+import { appRegionOf } from './app-region.js';
+import { backdropOf, expectTopLayer } from './modal-dom.js';
 
 afterEach(cleanup);
 
@@ -15,18 +17,29 @@ describe('ConfirmModal', () => {
     expect(dialog.getAttribute('aria-modal')).toBe('true');
   });
 
-  it('keeps two open modals apart: each is named and described by its own text', () => {
-    render(
-      <>
-        <ConfirmModal title="First" message="one" onConfirm={vi.fn()} onCancel={vi.fn()} />
-        <ConfirmModal title="Second" message="two" onConfirm={vi.fn()} onCancel={vi.fn()} />
-      </>,
-    );
+  it('keeps two open modals apart: each is named and described by its own text', async () => {
+    function Stack({ second }: Readonly<{ second: boolean }>): React.JSX.Element {
+      const [secondClosed, setSecondClosed] = useState(false);
+      return (
+        <>
+          <ConfirmModal title="First" message="one" onConfirm={vi.fn()} onCancel={vi.fn()} />
+          {second && !secondClosed && <ConfirmModal title="Second" message="two" onConfirm={vi.fn()} onCancel={() => { setSecondClosed(true); }} />}
+        </>
+      );
+    }
+    const user = userEvent.setup();
+    const { rerender } = render(<Stack second={false} />);
+    const first = screen.getByRole('dialog', { name: 'First', description: 'one' });
+    rerender(<Stack second />);
+    await expectTopLayer(screen.getByRole('dialog', { name: 'Second', description: 'two' }), [first]);
+    // Only the topmost modal is exposed: the one under it is inert until the
+    // top one closes.
+    expect(screen.queryByRole('dialog', { name: 'First' })).toBeNull();
+    await user.keyboard('{Escape}');
     expect(screen.getByRole('dialog', { name: 'First', description: 'one' })).toBeDefined();
-    expect(screen.getByRole('dialog', { name: 'Second', description: 'two' })).toBeDefined();
   });
 
-  it('calls onCancel on a backdrop click; only the backdrop is aria-hidden', async () => {
+  it('calls onCancel on a backdrop click; nothing hides the dialog itself', async () => {
     const onCancel = vi.fn();
     const user = userEvent.setup();
     render(
@@ -34,9 +47,7 @@ describe('ConfirmModal', () => {
     );
     // Found by role at all ⇒ no aria-hidden ancestor hides the dialog.
     const dialog = screen.getByRole('dialog', { name: 'Test' });
-    const backdrop = dialog.querySelector(':scope > [aria-hidden="true"]');
-    if (!(backdrop instanceof HTMLElement)) throw new Error('backdrop not found');
-    await user.click(backdrop);
+    await user.click(backdropOf(dialog));
     expect(onCancel).toHaveBeenCalledOnce();
   });
 
@@ -77,12 +88,24 @@ describe('ConfirmModal', () => {
     const trigger = screen.getByRole('button', { name: 'Delete' });
     await user.click(trigger);
     const dialog = screen.getByRole('dialog', { name: 'Delete it?' });
-    act(() => { screen.getByRole('button', { name: 'Behind' }).focus(); });
+    // The page behind is hidden from assistive tech while the modal is up.
+    act(() => { screen.getByRole('button', { name: 'Behind', hidden: true }).focus(); });
     expect(dialog.contains(document.activeElement)).toBe(true);
 
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByRole('dialog', { name: 'Delete it?' })).toBeNull();
     expect(document.activeElement).toBe(trigger);
+  });
+
+  it('opts the modal out of window drag regions', () => {
+    render(
+      <ConfirmModal title="Test" message="msg" onConfirm={vi.fn()} onCancel={vi.fn()} />,
+    );
+    // The backdrop covers the frameless window's drag region (app header), so
+    // it must carve itself out — otherwise backdrop clicks in the top band
+    // drag the window instead of dismissing the modal, and the buttons of a
+    // dialog that reaches up into the band drag it too.
+    expect(appRegionOf(screen.getByRole('dialog', { name: 'Test' }))).toBe('no-drag');
   });
 
   it('renders custom button labels', () => {

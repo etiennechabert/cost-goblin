@@ -1,9 +1,11 @@
 import { asDimensionId } from '@costgoblin/core/browser';
 import type { ViewSpec } from '@costgoblin/core/browser';
-import { act, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { ViewYamlModal } from '../components/view-yaml-modal.js';
+import { appRegionOf } from './app-region.js';
+import { backdropOf } from './modal-dom.js';
 
 const VIEW: ViewSpec = {
   id: 'team-costs',
@@ -28,6 +30,14 @@ describe('ViewYamlModal', () => {
       description: 'Paste a view YAML (from Export) to add it.',
     });
     expect(dialog.getAttribute('aria-modal')).toBe('true');
+  });
+
+  it('opts the modal out of window drag regions', () => {
+    render(<ViewYamlModal mode="import" existingIds={new Set()} onImport={vi.fn()} onClose={vi.fn()} />);
+    // The backdrop covers the frameless window's drag region (app header), so
+    // it must carve itself out — otherwise backdrop clicks in the top band
+    // drag the window instead of dismissing the modal.
+    expect(appRegionOf(screen.getByRole('dialog', { name: 'Import view' }))).toBe('no-drag');
   });
 
   // The app re-renders on every sync poll, handing the modal a fresh props
@@ -55,7 +65,8 @@ describe('ViewYamlModal', () => {
     render(<ViewYamlModal mode="import" existingIds={new Set()} onImport={vi.fn()} onClose={onClose} />);
     await user.click(screen.getByRole('textbox'));
     await user.paste('id: x');
-    act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', isComposing: true, bubbles: true })); });
+    // A real keydown, cancelable, on the field being composed in.
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Escape', isComposing: true });
     expect(onClose).not.toHaveBeenCalled();
   });
 
@@ -70,7 +81,7 @@ describe('ViewYamlModal', () => {
     expect(onImport).not.toHaveBeenCalled();
   });
 
-  it('closes from the Close button, Escape and the aria-hidden backdrop', async () => {
+  it('closes from the Close button, Escape and the backdrop', async () => {
     const onClose = vi.fn();
     const user = userEvent.setup();
     render(<ViewYamlModal mode="export" view={VIEW} onClose={onClose} />);
@@ -78,9 +89,7 @@ describe('ViewYamlModal', () => {
 
     await user.click(screen.getByRole('button', { name: 'Close' }));
     await user.keyboard('{Escape}');
-    const backdrop = dialog.querySelector(':scope > [aria-hidden="true"]');
-    if (!(backdrop instanceof HTMLElement)) throw new Error('backdrop not found');
-    await user.click(backdrop);
+    await user.click(backdropOf(dialog));
     expect(onClose).toHaveBeenCalledTimes(3);
   });
 });

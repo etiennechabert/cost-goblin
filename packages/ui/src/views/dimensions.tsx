@@ -42,6 +42,7 @@ function migrateLocked(cfg: DimensionsConfig): { config: DimensionsConfig; chang
   return { config: { ...cfg, builtIn }, changed: true };
 }
 import { useCostApi } from '../hooks/use-cost-api.js';
+import { getModalLayerCount } from '../hooks/modal-layers.js';
 import { useUnsavedChanges } from '../hooks/use-unsaved-changes.js';
 import { useQuery } from '../hooks/use-query.js';
 import { useDebouncedValue } from '../hooks/use-debounced-value.js';
@@ -62,7 +63,11 @@ function useClickOutsideDismiss(
       if (containerRef.current === null) return;
       if (!(e.target instanceof Node)) return;
       if (containerRef.current.contains(e.target)) return;
-      if (discardConfirm) return;
+      // A press inside a modal over the page (the palette's "Reload data?",
+      // the release notes) belongs to that modal, not "outside the editor":
+      // dismissing here would close the editor, or mount the discard prompt
+      // behind the modal the user is working in.
+      if (discardConfirm || getModalLayerCount() > 0) return;
       if (isDirty) { setDiscardConfirm(true); }
       else { onCancel(); }
     }

@@ -1,8 +1,10 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Command } from 'cmdk';
 import { Search } from 'lucide-react';
+import { isAnotherModalLayerOpen, useRegisterModalLayer } from '../hooks/modal-layers.js';
 import { useKeyboardShortcuts, formatShortcutLabel } from '../hooks/use-keyboard-shortcuts.js';
 import type { Shortcut } from '../hooks/use-keyboard-shortcuts.js';
+import { NO_DRAG, cn } from '../lib/utils.js';
 
 export interface NavItem {
   readonly id: string;
@@ -18,19 +20,58 @@ interface CommandPaletteProps {
   readonly onNavigate: (id: string) => void;
 }
 
+type PaletteState =
+  | { readonly open: false }
+  /** `opener` had focus when the palette opened; it gets it back on close. */
+  | { readonly open: true; readonly opener: Element | null };
+
+const CLOSED: PaletteState = { open: false };
+
 export function CommandPalette({ items, onNavigate }: CommandPaletteProps) {
-  const [open, setOpen] = useState(false);
+  const [state, setState] = useState<PaletteState>(CLOSED);
+  const layer = useRegisterModalLayer(state.open, 'palette');
 
   const handleSelect = useCallback((id: string) => {
-    setOpen(false);
+    setState(CLOSED);
     onNavigate(id);
   }, [onNavigate]);
 
   const shortcuts = useMemo((): readonly Shortcut[] => [
-    { key: 'k', metaKey: true, label: 'Open command palette', action: () => { setOpen(prev => !prev); } },
-  ], []);
+    {
+      key: 'k',
+      metaKey: true,
+      label: 'Open command palette',
+      action: () => {
+        // Read before the palette's focus scope moves focus into its input.
+        const opener = document.activeElement;
+        // Cmd+K always closes the palette, but never opens it over another
+        // modal: its navigations (switching workspace, leaving a dirty view)
+        // would open a dialog under that modal's pointer lock and focus trap.
+        setState((prev) => {
+          if (prev.open) return CLOSED;
+          return isAnotherModalLayerOpen(layer) ? prev : { open: true, opener };
+        });
+      },
+    },
+  ], [layer]);
 
   useKeyboardShortcuts(shortcuts);
+
+  // Radix restores focus on close only to a dialog Trigger, which the palette
+  // does not have, so focus would drop to <body>. Give it back to the opener
+  // once the palette has closed — after Radix's own close-time focus handling,
+  // which runs a tick after unmount — unless what the palette navigated to
+  // took focus itself (a confirm dialog focuses its Cancel).
+  const opener = state.open ? state.opener : null;
+  useEffect(() => {
+    if (!(opener instanceof HTMLElement)) return undefined;
+    return () => {
+      window.setTimeout(() => {
+        const active = document.activeElement;
+        if ((active === null || active === document.body) && opener.isConnected) opener.focus();
+      }, 0);
+    };
+  }, [opener]);
 
   const grouped = useMemo(() => {
     const groups = new Map<string, NavItem[]>();
@@ -48,12 +89,17 @@ export function CommandPalette({ items, onNavigate }: CommandPaletteProps) {
 
   return (
     <Command.Dialog
-      open={open}
-      onOpenChange={setOpen}
+      open={state.open}
+      onOpenChange={(next) => { if (!next) setState(CLOSED); }}
       label="Command palette"
       loop
-      overlayClassName="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm"
-      contentClassName="fixed left-1/2 top-[20%] z-[100] w-full max-w-lg -translate-x-1/2 rounded-xl border border-border bg-bg-secondary shadow-2xl"
+      // z-50 like every portaled overlay, so whichever layer opened last paints
+      // on top — the one Radix gives pointer, focus and Escape to.
+      // no-drag: the overlay covers the app header, a window drag region —
+      // without the opt-out, clicks there would drag the window instead of
+      // dismissing the palette.
+      overlayClassName={cn('fixed inset-0 z-50 bg-black/60 backdrop-blur-sm', NO_DRAG)}
+      contentClassName={cn('fixed left-1/2 top-[20%] z-50 w-full max-w-lg -translate-x-1/2 rounded-xl border border-border bg-bg-secondary shadow-2xl', NO_DRAG)}
     >
       <div className="flex items-center gap-2 border-b border-border px-3">
         <Search className="h-4 w-4 shrink-0 text-text-secondary" />

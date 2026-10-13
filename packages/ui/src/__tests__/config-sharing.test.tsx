@@ -8,6 +8,8 @@ import { SharingActiveBanner } from '../components/sharing-active-banner.js';
 import { autoStopLabel, autoStopMinutes } from '../components/sharing-auto-stop.js';
 import { MOCK_BUNDLE_SUMMARY, MOCK_SHARED_SOURCE, MOCK_SHARED_SOURCE_PREVIEW, MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
+import { appRegionOf } from './app-region.js';
+import { backdropOf } from './modal-dom.js';
 
 /** Config whose sync profile differs from the alphabetical-first AWS
  *  profile, to pin down "configured profile wins as the default". */
@@ -58,7 +60,7 @@ describe('ShareConfigDialog', () => {
     expect(dialog.contains(document.activeElement)).toBe(true);
   });
 
-  it('closes from the named ✕, Escape and the aria-hidden backdrop', async () => {
+  it('closes from the named ✕, Escape and the backdrop', async () => {
     const onClose = vi.fn();
     const user = userEvent.setup();
     renderWithApi(new MockCostApi(), <ShareConfigDialog onClose={onClose} />);
@@ -66,9 +68,7 @@ describe('ShareConfigDialog', () => {
 
     await user.click(within(dialog).getByRole('button', { name: 'Close' }));
     await user.keyboard('{Escape}');
-    const backdrop = dialog.querySelector(':scope > [aria-hidden="true"]');
-    if (!(backdrop instanceof HTMLElement)) throw new Error('backdrop not found');
-    await user.click(backdrop);
+    await user.click(backdropOf(dialog));
     expect(onClose).toHaveBeenCalledTimes(3);
   });
 
@@ -231,7 +231,7 @@ describe('ImportConfigDialog', () => {
     const api = new MockCostApi();
     renderWithApi(api, <ImportConfigDialog onClose={() => undefined} onApplied={() => undefined} />);
     const dialog = screen.getByRole('dialog', { name: 'Import configuration' });
-    expect(dialog.className).toContain('[-webkit-app-region:no-drag]');
+    expect(appRegionOf(dialog)).toBe('no-drag');
     expect(dialog.getAttribute('aria-modal')).toBe('true');
   });
 
@@ -563,9 +563,7 @@ describe('ImportConfigDialog — pull from a teammate', () => {
     // Still the named dialog, and neither Escape nor the backdrop closes it.
     const dialog = screen.getByRole('dialog', { name: 'Import configuration' });
     await user.keyboard('{Escape}');
-    const backdrop = dialog.querySelector(':scope > [aria-hidden="true"]');
-    if (!(backdrop instanceof HTMLElement)) throw new Error('backdrop not found');
-    await user.click(backdrop);
+    await user.click(backdropOf(dialog));
     expect(onClose).not.toHaveBeenCalled();
   });
 });
