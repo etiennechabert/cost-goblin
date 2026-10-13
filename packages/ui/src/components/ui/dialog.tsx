@@ -42,30 +42,53 @@ export const DialogOverlay = React.forwardRef<
 
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 
+/** Records what had focus when the dialog opened. Rendered inside Content, so
+ *  it mounts with each opening, and reads focus during that first render:
+ *  by the time an effect runs, an autofocused child has already taken it. */
+function RememberOpener({ into }: Readonly<{ into: React.RefObject<Element | null> }>): null {
+  const [opener] = React.useState(() => document.activeElement);
+  React.useEffect(() => { into.current = opener; }, [into, opener]);
+  return null;
+}
+
 export const DialogContent = React.forwardRef<
   React.ComponentRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => (
-  <DialogPortal>
-    <DialogOverlay />
-    <DialogPrimitive.Content
-      ref={ref}
-      className={cn(
-        'fixed left-[50%] top-[50%] z-50 flex max-h-[90vh] w-full max-w-md translate-x-[-50%] translate-y-[-50%] flex-col overflow-y-auto rounded-xl border border-border bg-bg-secondary p-6 shadow-2xl duration-200',
-        // A tall dialog reaches up into the header's drag band.
-        NO_DRAG,
-        'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%]',
-        className,
-      )}
-      {...props}
-    >
-      {/* Inside Content so it follows the dialog's presence: this wrapper
-          renders even while the dialog is closed. */}
-      <ModalLayer kind="dialog" />
-      {children}
-    </DialogPrimitive.Content>
-  </DialogPortal>
-));
+>(({ className, children, onCloseAutoFocus, ...props }, ref) => {
+  const openerRef = React.useRef<Element | null>(null);
+  return (
+    <DialogPortal>
+      <DialogOverlay />
+      <DialogPrimitive.Content
+        ref={ref}
+        className={cn(
+          'fixed left-[50%] top-[50%] z-50 flex max-h-[90vh] w-full max-w-md translate-x-[-50%] translate-y-[-50%] flex-col overflow-y-auto rounded-xl border border-border bg-bg-secondary p-6 shadow-2xl duration-200',
+          // A tall dialog reaches up into the header's drag band.
+          NO_DRAG,
+          'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%]',
+          className,
+        )}
+        // Radix gives focus back only to a Trigger, and the app's dialogs are
+        // controlled without one: focus would drop to <body>. Return it to
+        // whatever had it when the dialog opened, if that is still on the page.
+        onCloseAutoFocus={(event) => {
+          onCloseAutoFocus?.(event);
+          const opener = openerRef.current;
+          if (event.defaultPrevented || !(opener instanceof HTMLElement) || opener === document.body || !opener.isConnected) return;
+          event.preventDefault();
+          opener.focus();
+        }}
+        {...props}
+      >
+        {/* Inside Content so they follow the dialog's presence: this wrapper
+            renders even while the dialog is closed. */}
+        <ModalLayer kind="dialog" />
+        <RememberOpener into={openerRef} />
+        {children}
+      </DialogPrimitive.Content>
+    </DialogPortal>
+  );
+});
 
 DialogContent.displayName = DialogPrimitive.Content.displayName;
 

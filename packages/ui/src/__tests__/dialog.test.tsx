@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { useState } from 'react';
 import { describe, expect, it } from 'vitest';
@@ -66,5 +66,62 @@ describe('Dialog', () => {
 
     await user.click(screen.getByRole('button', { name: 'Dismiss' }));
     expect(screen.queryByRole('dialog', { name: 'Closable' })).toBeNull();
+  });
+
+  // The app's dialogs are controlled (`open` state, no Trigger): the release
+  // notes, "Reload data?", the baseline dialogs. Radix only gives focus back
+  // to a Trigger, so without this it dropped to <body> on close.
+  it('returns focus to what had it before a controlled dialog opened', async () => {
+    function Page(): React.JSX.Element {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => { setOpen(true); }}>What&apos;s new</button>
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogContent aria-describedby={undefined}>
+              <DialogTitle>Release notes</DialogTitle>
+              <DialogClose><button type="button">Dismiss</button></DialogClose>
+            </DialogContent>
+          </Dialog>
+        </>
+      );
+    }
+    const user = userEvent.setup();
+    render(<Page />);
+    const opener = screen.getByRole('button', { name: "What's new" });
+
+    await user.click(opener);
+    const dialog = screen.getByRole('dialog', { name: 'Release notes' });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    await user.keyboard('{Escape}');
+    await waitFor(() => { expect(document.activeElement).toBe(opener); });
+
+    await user.click(opener);
+    await user.click(screen.getByRole('button', { name: 'Dismiss' }));
+    await waitFor(() => { expect(document.activeElement).toBe(opener); });
+  });
+
+  it('leaves focus alone on close when its opener is gone', async () => {
+    function Page(): React.JSX.Element {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          {!open && <button type="button" onClick={() => { setOpen(true); }}>Open</button>}
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogContent aria-describedby={undefined}>
+              <DialogTitle>Gone</DialogTitle>
+            </DialogContent>
+          </Dialog>
+        </>
+      );
+    }
+    const user = userEvent.setup();
+    render(<Page />);
+    await user.click(screen.getByRole('button', { name: 'Open' }));
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: 'Gone' })).toBeNull();
+    // The new Open button is a different element: nothing to give focus back to.
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+    expect(document.activeElement).toBe(document.body);
   });
 });
