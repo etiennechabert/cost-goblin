@@ -45,8 +45,9 @@ export interface ModalShellProps {
  *  - Named by a ModalShellTitle (or `ariaLabel`) and described by a
  *    ModalShellDescription; `aria-modal` is set explicitly — Radix leaves it
  *    off.
- *  - Focus moves in on open — to `initialFocusRef`, else the dialog itself, so
- *    it is announced by name — unless a child already took it (an autoFocus
+ *  - Focus moves in on open — to `initialFocusRef`, else the dialog itself
+ *    (without scrolling: a tall dialog opens at its top), so it is announced
+ *    by name — unless a child already took it (an autoFocus
  *    input). It stays inside while open and returns to the opener on close:
  *    Radix only restores focus to a `Trigger`, which these modals do not use.
  *  - Escape closes only the topmost layer, and not while an IME composition
@@ -86,7 +87,16 @@ export function ModalShell({
             className={cn('relative m-auto outline-none', SIZE_CLASSES[size], className)}
             onOpenAutoFocus={(event) => {
               event.preventDefault();
-              (initialFocusRef?.current ?? contentRef.current)?.focus();
+              const initial = initialFocusRef?.current;
+              if (initial !== null && initial !== undefined) {
+                initial.focus();
+                return;
+              }
+              // Without preventScroll, focusing a dialog taller than the
+              // window scrolls the overlay to the dialog's top edge, past the
+              // overlay's padding: whatever pokes out above the card (the
+              // setup wizard's ✕) opens cut off.
+              contentRef.current?.focus({ preventScroll: true });
             }}
             onCloseAutoFocus={(event) => {
               if (opener instanceof HTMLElement && opener.isConnected) {

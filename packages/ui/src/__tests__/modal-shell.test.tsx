@@ -78,9 +78,53 @@ describe('ModalShell', () => {
     expect(screen.queryByRole('button', { name: 'Behind' })).toBeNull();
   });
 
+  // The app's live regions (sync progress and errors) sit in the page behind
+  // every modal. Radix hides that page from assistive tech, but not its
+  // aria-live regions: a sync that fails while a modal is open is still
+  // announced.
+  it('keeps the page\'s live regions exposed while open', async () => {
+    const user = userEvent.setup();
+    function LivePage(): React.JSX.Element {
+      const [open, setOpen] = useState(false);
+      return (
+        <div>
+          <div aria-live="assertive" data-testid="sync-error">Sync error: access denied</div>
+          <button type="button" onClick={() => { setOpen(true); }}>Open</button>
+          {open && (
+            <ModalShell onClose={() => { setOpen(false); }}>
+              <ModalShellTitle><h3>Rename</h3></ModalShellTitle>
+            </ModalShell>
+          )}
+        </div>
+      );
+    }
+    render(<LivePage />);
+    await user.click(screen.getByRole('button', { name: 'Open' }));
+    expect(screen.queryByRole('button', { name: 'Open' })).toBeNull();
+    for (let node: Element | null = screen.getByTestId('sync-error'); node !== null; node = node.parentElement) {
+      expect(node.getAttribute('aria-hidden')).not.toBe('true');
+    }
+  });
+
   it('focuses the dialog itself on open, so it is announced by name', async () => {
     const { dialog } = await openPage();
     expect(document.activeElement).toBe(dialog);
+  });
+
+  // A dialog taller than the window scrolls in the overlay. Focus scrolls its
+  // target into view, which for the dialog itself means aligning its top edge
+  // with the window's: the overlay opened scrolled past its padding, with
+  // anything poking out above the card (the setup wizard's ✕) cut off.
+  it('opens a tall dialog at the top: focusing the dialog itself does not scroll', async () => {
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus');
+    try {
+      const { dialog } = await openPage();
+      const onDialog = focus.mock.calls.filter((_, i) => focus.mock.contexts[i] === dialog);
+      expect(onDialog.length).toBeGreaterThan(0);
+      for (const args of onDialog) expect(args).toEqual([{ preventScroll: true }]);
+    } finally {
+      focus.mockRestore();
+    }
   });
 
   it('focuses initialFocusRef on open when given', async () => {
