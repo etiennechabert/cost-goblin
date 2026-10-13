@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { WorkspaceChip } from '../components/workspace-chip.js';
+import { appRegionOf } from './app-region.js';
 
 const ONE_WORKSPACE: WorkspacesInfo = {
   mode: 'workspace',
@@ -55,6 +56,9 @@ describe('WorkspaceChip', () => {
     await user.click(screen.getByTestId('workspace-chip'));
 
     const menu = screen.getByRole('group', { name: 'Workspaces' });
+    // The menu opens under the chip, over the draggable title bar: its rows
+    // must not drag the window.
+    expect(appRegionOf(menu)).toBe('no-drag');
     const defaultItem = screen.getByRole('button', { name: 'default' });
     expect(menu.contains(defaultItem)).toBe(true);
     // The active entry is disabled.

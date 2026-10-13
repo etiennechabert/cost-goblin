@@ -4,6 +4,7 @@ import { Check, Loader2, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { sharedBucketRoot } from '../lib/bucket-paths.js';
+import { cn } from '../lib/utils.js';
 import { Card, CardContent } from '../components/ui/card.js';
 import { Button } from '../components/ui/button.js';
 import { BundleSummaryCard, ImportConfigDialog } from '../components/config-sharing.js';
@@ -104,7 +105,7 @@ function isGcpStep(wizard: WizardStep): boolean {
   return wizard.step === 'gcp' || wizard.step === 'gcp-project' || wizard.step === 'gcp-bucket' || wizard.step === 'gcp-browse';
 }
 
-interface SetupWizardProps {
+export interface SetupWizardProps {
   /** Called when setup finishes. Carries the workspace name the user chose on
    *  the Welcome step when it differs from the initial one (first run only). */
   onComplete: (result?: { workspaceName?: string }) => void;
@@ -128,6 +129,13 @@ interface SetupWizardProps {
    *  provider (the upsert would silently overwrite it). Default: first-run
    *  behavior (name prefilled with 'aws-main', editable). */
   mode?: 'add' | undefined;
+  /** Rendered inside a modal over the app (Data Management's Add provider and
+   *  per-tier Configure) rather than as the standalone onboarding screen: no
+   *  full-window backdrop and no window drag region — the modal dims the page
+   *  and scrolls a tall card, and a drag region inside it would swallow the
+   *  clicks meant for its controls. Opt-out, so a new standalone host keeps
+   *  the onboarding drag region (#317) by default. */
+  hosted?: boolean | undefined;
   /** Present only on the true first run of a fresh install: shows the naming
    *  step first (prefilled with the current name) before the get-started hub. */
   workspaceNaming?: { initialName: string } | undefined;
@@ -2443,7 +2451,7 @@ function optionalTiersFor(
   return missing.map(tier => ({ tier, onAdd: () => { add.awsTier(profile, tier); } }));
 }
 
-export function SetupWizard({ onComplete, source: initialSource, profile: initialProfile, providerName: initialProviderName, gcpSource, mode, workspaceNaming, workspaceLabel, otherWorkspaces }: Readonly<SetupWizardProps>): React.JSX.Element {
+export function SetupWizard({ onComplete, source: initialSource, profile: initialProfile, providerName: initialProviderName, gcpSource, mode, hosted = false, workspaceNaming, workspaceLabel, otherWorkspaces }: Readonly<SetupWizardProps>): React.JSX.Element {
   const api = useCostApi();
   // Resolved once: the props that set it do not change for the wizard's
   // lifetime, and a stable object keeps the start effect from re-running
@@ -3062,10 +3070,11 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   // Standalone onboarding renders without the app header — the window's only
   // macOS drag region (titleBarStyle: hiddenInset means no native title bar) —
   // so the backdrop doubles as one and the card opts back out to stay
-  // clickable. Skipped in source mode, where the wizard sits in a modal over
-  // the normal app chrome. (#317)
+  // clickable. Hosted in a modal over the normal app chrome, the wizard is
+  // just its card: no full-window backdrop, no drag region. Source mode only
+  // ever runs in that modal, so it never carries the drag region either. (#317)
   return (
-    <div className={`min-h-screen bg-bg-primary flex items-center justify-center p-4${isSourceMode ? '' : ' [-webkit-app-region:drag]'}`}>
+    <div className={cn('flex items-center justify-center', !hosted && 'min-h-screen bg-bg-primary p-4', !hosted && !isSourceMode && '[-webkit-app-region:drag]')}>
       <Card className="relative w-full max-w-lg border-border bg-bg-secondary [-webkit-app-region:no-drag]">
         {!isSourceMode && wizard.step !== 'welcome' && wizard.step !== 'start' && (
           <button

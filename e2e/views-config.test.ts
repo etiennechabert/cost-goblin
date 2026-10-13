@@ -169,7 +169,7 @@ test.describe('Data Management', () => {
     // same date: on the wall clock it would delete the Feb-2026 hourly and
     // cost-optimization months.
     await page.getByRole('button', { name: 'Prune', exact: true }).click();
-    await page.getByRole('dialog').getByRole('button', { name: 'Prune', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Prune old data' }).getByRole('button', { name: 'Prune', exact: true }).click();
     await expect(page.getByText('Nothing to prune — all local data is within retention.')).toBeVisible({ timeout: LOAD_TIMEOUT });
   });
 

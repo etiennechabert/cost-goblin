@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, Profiler } from 'react';
-import { CostTrends, MissingTags, Savings, Baselines, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, SharingActiveBanner, SettingsShell, SETTINGS_TABS, isSettingsTabId, WorkspacesView, WorkspaceChip, ConfirmModal, ReleaseNotes } from '@costgoblin/ui';
+import { CostTrends, MissingTags, Savings, Baselines, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, SharingActiveBanner, SettingsShell, SETTINGS_TABS, isSettingsTabId, WorkspacesView, WorkspaceChip, ConfirmModal, ReleaseNotes, useModalLayerCount } from '@costgoblin/ui';
 import type { NavItem, SettingsTabId } from '@costgoblin/ui';
 import type { CostApi, DataSharingStatus, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus, RollupStatus, BaselineRecomputeStatus, WorkspacesInfo } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagDimColumn } from '@costgoblin/core/browser';
@@ -9,7 +9,7 @@ import { DashboardsDropdown } from './top-menu/dashboards-dropdown.js';
 import { SyncStatusButton, type SyncActivity, type SyncTier } from './top-menu/sync-status-button.js';
 import { RollupStatusButton } from './top-menu/rollup-status-button.js';
 import { GeneralTab } from './settings/general-tab.js';
-import { INITIAL_AUTO_OPEN_MEMORY, INITIAL_UPDATE_VIEW, applyPulledSnapshot, applyPushedStatus, decideUpdateAutoOpen } from './update-view.js';
+import { INITIAL_AUTO_OPEN_MEMORY, INITIAL_UPDATE_VIEW, applyPulledSnapshot, applyPushedStatus, decideUpdateAutoOpen, hasUpdateIndicator, isAnotherModalOpen, keepUpdateModalOpen, settingsGearTab, updateModalHasContent } from './update-view.js';
 import type { AutoOpenMemory, UpdateView } from './update-view.js';
 import { PerformanceTab } from './settings/performance-tab.js';
 import { TelemetryTab } from './settings/telemetry-tab.js';
@@ -91,10 +91,6 @@ const ANALYTICAL_NAV: readonly AnalyticalNavItem[] = [
   { id: 'explorer', label: 'Explorer', Icon: Search },
 ];
 
-function hasUpdateIndicator(status: UpdateStatus): boolean {
-  return status.state === 'available' || status.state === 'downloading' || status.state === 'downloaded';
-}
-
 type SetupCheck =
   | { status: 'checking' }
   | { status: 'needs-setup' }
@@ -158,6 +154,9 @@ function ReleaseNotesModal({
   onOpenChange: (open: boolean) => void;
   status: UpdateStatus;
 }>): React.JSX.Element | null {
+  // The App clears `open` whenever this would render nothing
+  // (keepUpdateModalOpen), so a later status can't re-mount it open.
+  if (!updateModalHasContent(status)) return null;
   if (status.state === 'error') {
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
@@ -203,7 +202,6 @@ function ReleaseNotesModal({
     );
   }
 
-  if (status.state !== 'available' && status.state !== 'downloading' && status.state !== 'downloaded') return null;
   const { info } = status;
 
   let title = 'Update Available';
@@ -599,16 +597,29 @@ function AppShell(): React.JSX.Element {
     return globalThis.costgoblinBaselines.onStatusChanged(apply);
   }, []);
 
+  // Clear the open flag whenever the update modal has nothing to show, so it
+  // can only re-open through the decision below (see keepUpdateModalOpen).
+  useEffect(() => {
+    const next = keepUpdateModalOpen(releaseNotesOpen, updateStatus);
+    if (next !== releaseNotesOpen) setReleaseNotesOpen(next);
+  }, [releaseNotesOpen, updateStatus]);
+
+  // Every open modal layer (dialogs, the palette, ModalShell modals) — the
+  // update modal waits for the last one other than itself to close.
+  const modalLayerCount = useModalLayerCount();
+  const otherModalOpen = isAnotherModalOpen(modalLayerCount, releaseNotesOpen && updateModalHasContent(updateStatus));
+
   useEffect(() => {
     if (setupCheck.status !== 'ready') return;
     // Each error episode opens the modal once (a repeated error push won't
     // re-open it after the user closed it; a pulled check error never opens
-    // it); an available/downloaded update opens it once per session. See
-    // decideUpdateAutoOpen.
-    const decision = decideUpdateAutoOpen(updateView, autoOpenRef.current);
+    // it); an available/downloaded update opens it once per session; neither
+    // opens over another modal, and is decided again when that one closes.
+    // See decideUpdateAutoOpen.
+    const decision = decideUpdateAutoOpen(updateView, autoOpenRef.current, { otherModalOpen });
     autoOpenRef.current = decision.memory;
     if (decision.open) setReleaseNotesOpen(true);
-  }, [setupCheck.status, updateView, autoOpenRef]);
+  }, [setupCheck.status, updateView, autoOpenRef, otherModalOpen]);
 
   useEffect(() => {
     async function initialize(): Promise<void> {
@@ -811,9 +822,10 @@ function AppShell(): React.JSX.Element {
   }
 
   function toggleSettings() {
-    // The gear carries the app-wide sync/update badge, so opening it always
-    // lands on Data & Sync — the activity that badge is inviting a click for.
-    if (settingsTab === null) enterSettings('data-sync');
+    // The gear carries only the update dot (sync has its own icon): while the
+    // dot shows, opening lands on General, where the update controls are;
+    // otherwise on Data & Sync.
+    if (settingsTab === null) enterSettings(settingsGearTab(updateStatus));
     else exitSettings();
   }
 
@@ -1021,7 +1033,7 @@ function AppShell(): React.JSX.Element {
           href={branchPr.url}
           target="_blank"
           rel="noreferrer"
-          className="flex items-center gap-1 max-w-[320px] font-medium text-accent hover:underline [-webkit-app-region:no-drag]"
+          className="flex min-w-0 max-w-[320px] items-center gap-1 font-medium text-accent hover:underline [-webkit-app-region:no-drag]"
           title={`#${String(branchPr.number)} ${branchPr.title} — open on GitHub`}
         >
           <GitPullRequest size={10} className="shrink-0" />
@@ -1031,12 +1043,13 @@ function AppShell(): React.JSX.Element {
     }
     if (devBranch !== null) {
       return (
-        <span className="flex items-center gap-1 font-medium text-accent" title="Running from this git branch">
-          <GitBranch size={10} />{devBranch}
+        <span className="flex min-w-0 items-center gap-1 font-medium text-accent" title={`Running from git branch ${devBranch}`}>
+          <GitBranch size={10} className="shrink-0" />
+          <span className="truncate">{devBranch}</span>
         </span>
       );
     }
-    return appVersion !== '' && <span>v{appVersion}</span>;
+    return appVersion !== '' && <span className="shrink-0">v{appVersion}</span>;
   }
 
   return (
@@ -1054,7 +1067,13 @@ function AppShell(): React.JSX.Element {
         {sharingStatus?.enabled === true && (
           <SharingActiveBanner status={sharingStatus} onStop={handleStopSharing} stopping={stoppingSharing} />
         )}
-        <nav className="grid grid-cols-[1fr_auto_1fr] items-center px-4 pt-7 pb-2">
+        {/* The side columns never shrink below their content, the centre takes
+            what is left and truncates. With a plain `1fr auto 1fr` a wide
+            centre (a dev build's PR title, a long workspace name) squeezed the
+            left column, whose nav then spilled under the centre cell — later
+            in the DOM, so it won hit-testing, and a window drag region: nav
+            clicks opened the PR link or dragged the window. */}
+        <nav className="grid grid-cols-[minmax(max-content,1fr)_minmax(0,auto)_minmax(max-content,1fr)] items-center px-4 pt-7 pb-2">
           {settingsTab === null ? (
           <div className="flex items-center gap-3 min-w-0">
           <nav className="flex items-center gap-1" aria-label="Dashboards and analysis">
@@ -1121,9 +1140,12 @@ function AppShell(): React.JSX.Element {
               <span className="text-sm font-medium text-text-primary">Settings</span>
             </div>
           )}
-          <div className="flex flex-col items-center justify-center px-4">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-bold text-accent tracking-wider leading-tight">CostGoblin</span>
+          {/* min-w-0 at every level lets the centre shrink to its track, and
+              the clip keeps anything that still overflows from covering the
+              side columns. */}
+          <div className="flex min-w-0 flex-col items-center justify-center overflow-x-clip px-4">
+            <div className="flex min-w-0 max-w-full items-center gap-2">
+              <span className="shrink-0 text-sm font-bold text-accent tracking-wider leading-tight">CostGoblin</span>
               {workspacesInfo !== null && (
                 <WorkspaceChip
                   info={workspacesInfo}
@@ -1132,9 +1154,9 @@ function AppShell(): React.JSX.Element {
                 />
               )}
             </div>
-            <div className="flex items-center gap-1.5 text-[10px] text-text-muted">
+            <div className="flex min-w-0 max-w-full items-center gap-1.5 text-[10px] text-text-muted">
               {renderBuildIndicator()}
-              {isDev && memoryMB > 0 && <span>{formatMemory(memoryMB)}</span>}
+              {isDev && memoryMB > 0 && <span className="shrink-0 whitespace-nowrap">{formatMemory(memoryMB)}</span>}
             </div>
           </div>
           <nav className="flex items-center justify-end gap-1 [-webkit-app-region:no-drag]" aria-label="Sync and settings">

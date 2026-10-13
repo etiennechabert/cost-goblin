@@ -578,13 +578,8 @@ export async function ensureViewMode(page: Page): Promise<void> {
 
 export async function openDashboardsDropdown(page: Page): Promise<void> {
   const trigger = topNav(page, 'left').getByRole('button', { name: 'Dashboards', exact: false }).first();
-  // The Dashboards trigger now doubles as a Home button: if the user isn't
-  // on the default dashboard, the first click navigates there instead of
-  // opening the popover. Click once, see whether the popover actually
-  // opened, and click again if not.
   await openIfClosed(trigger);
-  const expanded = await trigger.getAttribute('aria-expanded').catch(() => null);
-  if (expanded !== 'true') await trigger.click();
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true');
 }
 
 export async function clickNavButton(page: Page, name: string): Promise<void> {
