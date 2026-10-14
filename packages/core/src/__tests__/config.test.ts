@@ -410,6 +410,26 @@ describe('validateDimensions', () => {
     expect(dims.tags[0]?.tagName).toBe('team');
   });
 
+  it('accepts tag keys that differ only by case (they get distinct SQL columns)', () => {
+    const dims = validateDimensions({
+      builtIn: [],
+      tags: [{ tagName: 'STAGE', label: 'Stage' }, { tagName: 'stage', label: 'stage' }],
+    });
+    expect(dims.tags.map(t => t.tagName)).toEqual(['STAGE', 'stage']);
+  });
+
+  it('rejects two tag keys whose SQL columns collide anyway', () => {
+    // Same lowercase slug and same 32-bit hash (found by brute force), so
+    // DuckDB would read both tags from one column.
+    expect(() => validateDimensions({
+      builtIn: [],
+      tags: [
+        { tagName: 'CoStCEntEReNVIRonment', label: 'A' },
+        { tagName: 'CostCEntEREnviROnment', label: 'B' },
+      ],
+    })).toThrow(/"CostCEntEREnviROnment" collides with tags\[0\] "CoStCEntEReNVIRonment"/);
+  });
+
   it('accepts a legitimately-named built-in column', () => {
     expect(() => validateDimensions({
       builtIn: [{ name: 'svc', label: 'Service', field: 'product_service_name', displayField: 'account_name' }],

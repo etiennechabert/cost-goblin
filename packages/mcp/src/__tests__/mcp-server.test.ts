@@ -11,6 +11,7 @@ import {
   loadConfig,
   loadDimensions,
   loadCostScope,
+  tagSqlColumn,
 } from '@costgoblin/core';
 import type { McpContext, RawRow } from '../context.js';
 import { createMcpHttpServer, MCP_MIN_TOKEN_LENGTH } from '../http-server.js';
@@ -414,6 +415,14 @@ describe('MCP server E2E', () => {
     expect(text).toContain('region');
     expect(text).toContain('team');
     expect(text).toContain('environment');
+  });
+
+  it('list_dimensions gives the run_sql column for each dimension', async () => {
+    const { text } = await client.callTool('list_dimensions');
+    expect(text).toContain('SQL Column');
+    // A tag's id and its column differ: the column is what the costs table has.
+    expect(text).toContain(tagSqlColumn({ tagName: 'team' }));
+    expect(text).toContain('account_id');
   });
 
   // ---------- get_filter_values ----------

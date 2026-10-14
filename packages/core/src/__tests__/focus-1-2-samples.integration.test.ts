@@ -15,7 +15,10 @@ import { join } from 'node:path';
 
 import { buildSource, NO_ACCOUNT_SENTINEL } from '../query/builder.js';
 import type { DimensionsConfig } from '../types/config.js';
-import { asDimensionId, asProviderName } from '../types/branded.js';
+import { asDimensionId, asProviderName, tagSqlColumn } from '../types/branded.js';
+
+const TEAM_COLUMN = tagSqlColumn({ tagName: 'team' });
+const ENVIRONMENT_COLUMN = tagSqlColumn({ tagName: 'environment' });
 import {
   buildSampleCsv, SAMPLE_BILLED_TOTAL, SAMPLE_MONTH, SAMPLE_ROW_COUNT, SAMPLE_TAGGED_ROW_COUNT,
 } from '../__fixtures__/focus-1-2/samples.js';
@@ -155,7 +158,7 @@ describe('AWS FOCUS 1.2 Data Export', () => {
     // here would make the claim untestable — a future AWS revision could
     // break native ingest with the assertion still green.
     const source = sourceFor('aws', WITH_TAGS, 'native');
-    const [row] = await rowsOf(`SELECT COUNT(*) AS n, ROUND(SUM(cost), 2) AS total, COUNT(tag_team) AS tagged FROM ${source}`);
+    const [row] = await rowsOf(`SELECT COUNT(*) AS n, ROUND(SUM(cost), 2) AS total, COUNT(${TEAM_COLUMN}) AS tagged FROM ${source}`);
     expect(Number(row?.['n'])).toBe(SAMPLE_ROW_COUNT);
     expect(num(row?.['total'])).toBeCloseTo(SAMPLE_BILLED_TOTAL, 2);
     expect(Number(row?.['tagged'])).toBe(SAMPLE_TAGGED_ROW_COUNT);
@@ -279,14 +282,14 @@ describe('Azure Cost Management FOCUS 1.2 export (provider not supported yet)', 
     // reconciled. Worth pinning: it is the kind of gap that shows up as a
     // silently empty dimension rather than an error.
     const source = sourceFor('azure', WITH_TAGS);
-    const [row] = await rowsOf(`SELECT COUNT(tag_team) AS tagged FROM ${source}`);
+    const [row] = await rowsOf(`SELECT COUNT(${TEAM_COLUMN}) AS tagged FROM ${source}`);
     expect(Number(row?.['tagged'])).toBe(0);
 
     const casedSource = sourceFor('azure', {
       builtIn: NO_TAGS.builtIn,
       tags: [{ tagName: 'Team', label: 'Team' }],
     });
-    const [cased] = await rowsOf(`SELECT COUNT(tag_Team) AS tagged FROM ${casedSource}`);
+    const [cased] = await rowsOf(`SELECT COUNT(${tagSqlColumn({ tagName: 'Team' })}) AS tagged FROM ${casedSource}`);
     expect(Number(cased?.['tagged'])).toBeGreaterThan(0);
   });
 });
@@ -348,16 +351,16 @@ describe('GCP FOCUS 1.2 BigQuery export (canonicalized locally by the shipped ad
       builtIn: NO_TAGS.builtIn,
       tags: [{ tagName: 'environment', label: 'Environment' }, { tagName: 'team', label: 'Team' }],
     });
-    const envs = await rowsOf(`SELECT DISTINCT tag_environment AS env FROM ${source} ORDER BY 1`);
+    const envs = await rowsOf(`SELECT DISTINCT ${ENVIRONMENT_COLUMN} AS env FROM ${source} ORDER BY 1`);
     expect(envs.map(r => r['env'])).toEqual(['production', 'sandbox', 'staging']);
 
     // The precedence itself: rows whose binding disagrees with the project
     // default resolve to the binding, not to `production`.
-    const [overridden] = await rowsOf(`SELECT COUNT(*) AS n FROM ${source} WHERE tag_environment IN ('staging', 'sandbox')`);
+    const [overridden] = await rowsOf(`SELECT COUNT(*) AS n FROM ${source} WHERE ${ENVIRONMENT_COLUMN} IN ('staging', 'sandbox')`);
     expect(Number(overridden?.['n'])).toBeGreaterThan(0);
 
     // A key only the resource labels carry still comes through.
-    const [teams] = await rowsOf(`SELECT COUNT(DISTINCT tag_team) AS n FROM ${source}`);
+    const [teams] = await rowsOf(`SELECT COUNT(DISTINCT ${TEAM_COLUMN}) AS n FROM ${source}`);
     expect(Number(teams?.['n'])).toBeGreaterThan(1);
   });
 
@@ -372,7 +375,7 @@ describe('GCP FOCUS 1.2 BigQuery export (canonicalized locally by the shipped ad
       tags: [{ tagName: 'environment', label: 'Environment' }, { tagName: 'team', label: 'Team' }],
     });
     const [row] = await rowsOf(`
-      SELECT COUNT(tag_team) AS tagged, COUNT(tag_environment) AS with_env FROM ${source}`);
+      SELECT COUNT(${TEAM_COLUMN}) AS tagged, COUNT(${ENVIRONMENT_COLUMN}) AS with_env FROM ${source}`);
     expect(Number(row?.['tagged'])).toBe(SAMPLE_TAGGED_ROW_COUNT);
     expect(Number(row?.['with_env'])).toBe(SAMPLE_ROW_COUNT);
   });
@@ -443,7 +446,7 @@ describe('cross-provider', () => {
         builtIn: NO_TAGS.builtIn,
         tags: [{ tagName: key, label: 'Team' }],
       });
-      const [row] = await rowsOf(`SELECT COUNT(tag_${key}) AS tagged FROM ${source}`);
+      const [row] = await rowsOf(`SELECT COUNT(${tagSqlColumn({ tagName: key })}) AS tagged FROM ${source}`);
       expect(Number(row?.['tagged']), provider).toBe(SAMPLE_TAGGED_ROW_COUNT);
     }
   });

@@ -34,33 +34,13 @@ import type {
 } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
 import { type AppContext, prefsPath } from './context.js';
-import { buildAccountReverseMap, columnForDimension, resolveRollupSource, toNum, toStr } from './query-utils.js';
+import { buildAccountReverseMap, columnForDimension, resolveRollupSource, tagSqlColumnsById, toNum, toStr } from './query-utils.js';
+import { explorerSqlColumn } from './explorer-columns.js';
 import { readExplorerPreferences, writeExplorerPreferences } from './explorer-prefs.js';
 import { resolveScopeMetric } from './explorer-scope.js';
 import { resolveExplorerDateRange } from './query-windows.js';
 
 const MAX_ROW_LIMIT = 1000;
-
-const SORTABLE_SCALAR_COLUMNS: ReadonlySet<string> = new Set([
-  'usage_date',
-  'usage_hour',
-  'account_id',
-  'account_name',
-  'region',
-  'service',
-  'service_code',
-  'service_category',
-  'charge_category',
-  'pricing_category',
-  'commitment_status',
-  'operation',
-  'sku_meter',
-  'description',
-  'resource_id',
-  'usage_amount',
-  'cost',
-  'list_cost',
-]);
 
 function clampRowLimit(n: number): number {
   if (!Number.isFinite(n) || n <= 0) return 500;
@@ -91,14 +71,12 @@ function buildExplorerFilterPredicate(
 
 function buildOrderBy(
   sort: ExplorerSort | undefined,
-  tagColumnIds: ReadonlySet<string>,
+  tagSqlColumns: ReadonlyMap<string, string>,
 ): string {
   if (sort === undefined) return 'ABS(cost) DESC';
-  const dir = sort.direction === 'asc' ? 'ASC' : 'DESC';
-  if (SORTABLE_SCALAR_COLUMNS.has(sort.column) || tagColumnIds.has(sort.column)) {
-    return `${sort.column} ${dir}`;
-  }
-  return 'ABS(cost) DESC';
+  const column = explorerSqlColumn(sort.column, tagSqlColumns);
+  if (column === null) return 'ABS(cost) DESC';
+  return `${column} ${sort.direction === 'asc' ? 'ASC' : 'DESC'}`;
 }
 
 /** Everything the overview / rows / filter-values handlers compute up front.
@@ -114,7 +92,8 @@ interface QueryContext {
   readonly windowDays: number;
   readonly tier: 'daily' | 'hourly';
   readonly tagColumns: readonly ExplorerTagColumn[];
-  readonly tagIdSet: ReadonlySet<string>;
+  /** Tag id → SQL column; see tagSqlColumnsById. */
+  readonly tagSqlColumns: ReadonlyMap<string, string>;
   readonly dimensions: DimensionsConfig;
   readonly accountMap: ReadonlyMap<string, string>;
 }
@@ -266,8 +245,8 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
     id: tagDimColumn(t),
     label: t.label,
   }));
-  const tagIdSet = new Set(tagColumns.map(t => t.id));
-  const shared = { providers, startStr, endStr, windowDays, tier, tagColumns, tagIdSet, dimensions, accountMap } as const;
+  const tagSqlColumns = tagSqlColumnsById(dimensions);
+  const shared = { providers, startStr, endStr, windowDays, tier, tagColumns, tagSqlColumns, dimensions, accountMap } as const;
 
   if (periods.length === 0) {
     return { empty: true, source: '', whereStr: '', ...shared };
@@ -291,13 +270,14 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
 function appendRowFilters(
   baseWhere: string,
   rowFilters: Record<string, string> | undefined,
-  tagIdSet: ReadonlySet<string>,
+  tagSqlColumns: ReadonlyMap<string, string>,
 ): string {
   if (rowFilters === undefined) return baseWhere;
   const extra: string[] = [];
-  for (const [col, val] of Object.entries(rowFilters)) {
+  for (const [id, val] of Object.entries(rowFilters)) {
     if (val.length === 0) continue;
-    if (!SORTABLE_SCALAR_COLUMNS.has(col) && !tagIdSet.has(col)) continue;
+    const col = explorerSqlColumn(id, tagSqlColumns);
+    if (col === null) continue;
     const escaped = val.replaceAll("'", "''");
     const colExpr = col === 'usage_date' ? `usage_date::VARCHAR` : col;
     extra.push(`${colExpr} = '${escaped}'`);
@@ -315,12 +295,19 @@ const AGG_SORT_COLUMNS: Record<string, (dir: string) => string> = {
   row_count: (dir) => `COUNT(*) ${dir}`,
 };
 
-function resolveAggregatedSort(sort: ExplorerSort | undefined, groupByColumns: readonly string[]): string {
+/** An aggregated-table group-by column: the renderer's id and the SQL column behind it. */
+interface GroupByColumn {
+  readonly id: string;
+  readonly column: string;
+}
+
+function resolveAggregatedSort(sort: ExplorerSort | undefined, groupBy: readonly GroupByColumn[]): string {
   if (sort === undefined) return 'SUM(cost) DESC';
   const dir = sort.direction === 'asc' ? 'ASC' : 'DESC';
   const fn = AGG_SORT_COLUMNS[sort.column];
   if (fn !== undefined) return fn(dir);
-  if (groupByColumns.includes(sort.column)) return `${sort.column} ${dir}`;
+  const grouped = groupBy.find(g => g.id === sort.column);
+  if (grouped !== undefined) return `${grouped.column} ${dir}`;
   return 'SUM(cost) DESC';
 }
 
@@ -486,10 +473,10 @@ export function registerExplorerHandlers(app: AppContext): void {
 
     if (qc.empty) return { sampleRows: [], tagColumns: qc.tagColumns };
 
-    const tagSelectSql = qc.tagColumns.length > 0
-      ? qc.tagColumns.map(t => `COALESCE(${t.id}, '') AS ${t.id}`).join(',\n          ')
+    const tagSelectSql = qc.tagSqlColumns.size > 0
+      ? [...qc.tagSqlColumns.values()].map(c => `COALESCE(${c}, '') AS ${c}`).join(',\n          ')
       : null;
-    const orderBy = buildOrderBy(params.sort, qc.tagIdSet);
+    const orderBy = buildOrderBy(params.sort, qc.tagSqlColumns);
     // Hourly tier exposes `usage_hour` as a TIMESTAMP in the source — cast
     // to VARCHAR so it survives IPC cleanly. Daily has no usage_hour
     // column, so emit a literal empty string.
@@ -514,9 +501,9 @@ export function registerExplorerHandlers(app: AppContext): void {
       const rows = await runQuery(sampleSql);
       sampleRows = rows.map(r => {
         const tags: Record<string, string> = {};
-        for (const t of qc.tagColumns) {
-          const v = r[t.id];
-          tags[t.id] = typeof v === 'string' ? v : '';
+        for (const [id, column] of qc.tagSqlColumns) {
+          const v = r[column];
+          tags[id] = typeof v === 'string' ? v : '';
         }
         return {
           date: toStr(r['usage_date']),
@@ -551,13 +538,14 @@ export function registerExplorerHandlers(app: AppContext): void {
 
     if (qc.empty) return { rows: [], totalRows: 0, tagColumns: qc.tagColumns };
 
-    const whereStr = appendRowFilters(qc.whereStr, params.rowFilters, qc.tagIdSet);
+    const whereStr = appendRowFilters(qc.whereStr, params.rowFilters, qc.tagSqlColumns);
 
-    const groupByColumns = params.groupByColumns.filter(
-      col => SORTABLE_SCALAR_COLUMNS.has(col) || qc.tagIdSet.has(col),
-    );
+    const groupBy: GroupByColumn[] = params.groupByColumns.flatMap(id => {
+      const column = explorerSqlColumn(id, qc.tagSqlColumns);
+      return column === null ? [] : [{ id, column }];
+    });
 
-    if (groupByColumns.length === 0) {
+    if (groupBy.length === 0) {
       const sql = `
         SELECT
           CAST(SUM(cost) AS DOUBLE) AS cost,
@@ -577,16 +565,17 @@ export function registerExplorerHandlers(app: AppContext): void {
       };
     }
 
-    const selectCols = groupByColumns.map(col => {
-      if (col === 'usage_date') return `usage_date::VARCHAR AS usage_date`;
-      return col;
+    const selectCols = groupBy.map(({ column }) => {
+      if (column === 'usage_date') return `usage_date::VARCHAR AS usage_date`;
+      return column;
     });
-    const orderBy = resolveAggregatedSort(params.sort, groupByColumns);
+    const groupByList = groupBy.map(g => g.column).join(', ');
+    const orderBy = resolveAggregatedSort(params.sort, groupBy);
 
     const countSql = `
       SELECT CAST(COUNT(*) AS DOUBLE) AS n FROM (
         SELECT 1 FROM ${qc.source} ${whereStr}
-        GROUP BY ${groupByColumns.join(', ')}
+        GROUP BY ${groupByList}
       ) AS _cnt
     `.trim();
     const dataSql = `
@@ -598,7 +587,7 @@ export function registerExplorerHandlers(app: AppContext): void {
         CAST(COUNT(*) AS DOUBLE) AS row_count
       FROM ${qc.source}
       ${whereStr}
-      GROUP BY ${groupByColumns.join(', ')}
+      GROUP BY ${groupByList}
       ORDER BY ${orderBy}
       LIMIT ${String(rowLimit)}
     `.trim();
@@ -607,8 +596,8 @@ export function registerExplorerHandlers(app: AppContext): void {
     const totalRows = countResult[0] === undefined ? 0 : toNum(countResult[0]['n']);
     const resultRows: AggregatedTableRow[] = dataResult.map(r => {
       const values: Record<string, string> = {};
-      for (const col of groupByColumns) {
-        values[col] = toStr(r[col]);
+      for (const { id, column } of groupBy) {
+        values[id] = toStr(r[column]);
       }
       return {
         values,

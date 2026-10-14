@@ -3,7 +3,7 @@ import { DuckDBInstance } from '@duckdb/node-api';
 import type { DuckDBConnection } from '@duckdb/node-api';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadConfig, loadCostScope, loadDimensions, SecurityError } from '@costgoblin/core';
+import { loadConfig, loadCostScope, loadDimensions, SecurityError, tagSqlColumn } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
 import { exploreData } from '../tools/explore-data.js';
 import { fetchRows, fetchRowsPrepared } from './helpers/duckdb-rows.js';
@@ -155,6 +155,33 @@ describe('explore_data', () => {
     const call = calls.find(c => c.kind === 'prepared');
     expect(call?.sql).not.toContain('Amazon Elastic Compute Cloud');
     expect(call?.params).toContain('Amazon Elastic Compute Cloud');
+  });
+
+  it('groups and sorts by a tag dimension id through its SQL column', async () => {
+    const result = await exploreData(ctx, {
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+      groupByColumns: ['tag_team'],
+      sort: { column: 'tag_team', direction: 'asc' },
+      limit: 200,
+      format: 'json',
+    });
+    const teams = jsonRows(result.content[0].text).map(r => r[0]);
+    expect(teams.filter(t => t !== '').length).toBeGreaterThan(1);
+
+    const call = calls.find(c => c.kind === 'prepared');
+    const column = tagSqlColumn({ tagName: 'team' });
+    expect(call?.sql).toContain(`GROUP BY ${column}`);
+    expect(call?.sql).toContain(`ORDER BY ${column} ASC`);
+  });
+
+  it('drops a tag_ column that names no configured tag dimension', async () => {
+    const result = await exploreData(ctx, {
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+      groupByColumns: ['tag_not_configured'],
+      format: 'json',
+    });
+    // Nothing left to group by, so it falls back to raw rows.
+    expect(result.content[0].text).toContain('Raw Data');
   });
 
   it('applies filters to raw rows too', async () => {

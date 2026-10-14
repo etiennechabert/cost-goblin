@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadConfig, loadCostScope, loadDimensions, sqlStringLiteral } from '@costgoblin/core';
+import { loadConfig, loadCostScope, loadDimensions, sqlStringLiteral, tagSqlColumn } from '@costgoblin/core';
 import type { DimensionsConfig } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
 import { listBaselines, getBaselineDrift } from '../tools/baselines.js';
@@ -16,6 +16,9 @@ import { queryCosts } from '../tools/query-costs.js';
 import { queryDailyCosts } from '../tools/query-daily-costs.js';
 import { runSql } from '../tools/run-sql.js';
 import { fetchRows, fetchRowsPrepared } from './helpers/duckdb-rows.js';
+
+/** The `owner` tag's column in the run_sql `costs` table (its id is `tag_owner`). */
+const OWNER_COLUMN = tagSqlColumn({ tagName: 'owner' });
 import {
   isCsvComment,
   markdownTables,
@@ -176,7 +179,7 @@ describe('MCP output neutralization (DuckDB)', () => {
 
     it('run_sql with a GROUP BY', async () => {
       const text = textOf(await runSql(ctx, {
-        sql: 'SELECT tag_owner, SUM(cost) AS c FROM costs GROUP BY tag_owner ORDER BY tag_owner',
+        sql: `SELECT ${OWNER_COLUMN}, SUM(cost) AS c FROM costs GROUP BY ${OWNER_COLUMN} ORDER BY ${OWNER_COLUMN}`,
         dateRange: JAN,
       }));
       expect(text).toContain('Forged');
@@ -185,7 +188,7 @@ describe('MCP output neutralization (DuckDB)', () => {
 
     it('run_sql with a PIVOT (the values are column names)', async () => {
       const text = textOf(await runSql(ctx, {
-        sql: 'SELECT * FROM (PIVOT costs ON tag_owner USING sum(cost) GROUP BY service)',
+        sql: `SELECT * FROM (PIVOT costs ON ${OWNER_COLUMN} USING sum(cost) GROUP BY service)`,
         dateRange: JAN,
       }));
       expect(text).toContain('Forged');
@@ -201,7 +204,7 @@ describe('MCP output neutralization (DuckDB)', () => {
 
   it('a query error echoing a multi-line value stays one line', async () => {
     const result = await runSql(ctx, {
-      sql: "SELECT CAST(tag_owner AS INTEGER) FROM costs WHERE tag_owner LIKE '%Forged%'",
+      sql: `SELECT CAST(${OWNER_COLUMN} AS INTEGER) FROM costs WHERE ${OWNER_COLUMN} LIKE '%Forged%'`,
       dateRange: JAN,
     });
     expect(isErrorResult(result)).toBe(true);

@@ -2,7 +2,7 @@ import type { BuiltInDimension, DimensionsConfig, TagDimension } from '../types/
 import type { CostQueryParams, DailyCostsParams, DateRange, FilterMap, TrendQueryParams, MissingTagsParams, EntityDetailParams } from '../types/query.js';
 import { DEFAULT_PLACEHOLDER_PATTERNS } from '../types/query.js';
 import type { DimensionId, ProviderName } from '../types/branded.js';
-import { tagDimColumn } from '../types/branded.js';
+import { tagDimColumn, tagSqlColumn } from '../types/branded.js';
 import { OU_PATH_SOURCE_KEY } from '../types/config.js';
 import type { CostMetric, CostScopeConfig, ExclusionRule, MarketplaceAttributionConfig, MarketplaceAttributionRule } from '../types/cost-scope.js';
 import { DEFAULT_COST_METRIC } from '../types/cost-scope.js';
@@ -97,9 +97,11 @@ export function tryResolveField(dimensionId: DimensionId, dimensions: Dimensions
     return { fieldExpr, rawField: builtIn.field, dim: builtIn };
   }
 
+  // The id is matched case-sensitively here (JS), but the column comes from
+  // tagSqlColumn: DuckDB would read `tag_STAGE` and `tag_stage` as one column.
   const tag = dimensions.tags.find(d => tagDimColumn(d) === dimensionId);
   if (tag !== undefined) {
-    const rawField = tagDimColumn(tag);
+    const rawField = tagSqlColumn(tag);
     return { fieldExpr: buildAliasSqlCase(rawField, tag), rawField, dim: tag };
   }
 
@@ -298,7 +300,7 @@ function buildTagSelect(
   t: DimensionsConfig['tags'][number],
   needsOrgJoin: boolean,
 ): string {
-  const colName = tagDimColumn(t);
+  const colName = tagSqlColumn(t);
   const valueExpr = buildTagValueExpr(t, needsOrgJoin, colName);
   const wrapped = applyPathSegment(valueExpr, t.pathSegment);
   return `${wrapped} AS ${colName}`;
@@ -445,7 +447,7 @@ function buildRawTagSelects(dimensions: DimensionsConfig): string[] {
     if (t.accountTagFallback === undefined) continue;
     if (t.tagName === undefined || t.tagName.length === 0) continue;
     const tagKey = sqlEscapeString(t.tagName);
-    const colName = tagDimColumn(t);
+    const colName = tagSqlColumn(t);
     selects.push(`element_at(src.Tags, '${tagKey}')[1] AS raw_${colName}`);
   }
   return selects;
@@ -485,7 +487,7 @@ function buildFromClause(
   const fallbackSelects = dimensions.tags
     .filter(t => t.accountTagFallback !== undefined)
     .map(t => {
-      const colName = tagDimColumn(t);
+      const colName = tagSqlColumn(t);
       const fallback = t.accountTagFallback ?? '';
       if (fallback === OU_PATH_SOURCE_KEY) {
         return `ouPath AS fallback_${colName}`;

@@ -1,4 +1,4 @@
-import { asBucketPath, asDimensionId } from '../types/branded.js';
+import { asBucketPath, asDimensionId, tagSourceKey, tagSqlColumn } from '../types/branded.js';
 import type { BucketPath } from '../types/branded.js';
 import { isSafeColumnIdentifier } from '../query/identifier-validator.js';
 import { parseProviderName } from './provider-name.js';
@@ -539,6 +539,27 @@ function validateTagDimension(tag: unknown, i: number) {
   };
 }
 
+/** Each distinct tag key must own its SQL column, or DuckDB reads both tags
+ *  from one column. `tagSqlColumn` hashes the exact key, so only a 32-bit hash
+ *  collision between keys with the same lowercase slug can break this. The
+ *  same key declared twice shares its column, as it always has. */
+function assertDistinctTagColumns(tags: readonly DimensionsConfig['tags'][number][]): void {
+  const owners = new Map<string, { readonly key: string; readonly index: number }>();
+  tags.forEach((tag, index) => {
+    const column = tagSqlColumn(tag);
+    const key = tagSourceKey(tag);
+    const owner = owners.get(column);
+    if (owner === undefined) {
+      owners.set(column, { key, index });
+    } else if (owner.key !== key) {
+      throw new ConfigValidationError(
+        `tags[${String(index)}] "${key}" collides with tags[${String(owner.index)}] "${owner.key}": ` +
+        `both map to SQL column ${column}. Remove one of them.`,
+      );
+    }
+  });
+}
+
 export function validateDimensions(raw: unknown, options: ValidateDimensionsOptions = {}): DimensionsConfig {
   assertObject(raw, 'dimensions');
   assertArray(raw['builtIn'], 'builtIn');
@@ -547,6 +568,7 @@ export function validateDimensions(raw: unknown, options: ValidateDimensionsOpti
   const stripPatternLimits = options.stripPatternLimits ?? 'drop';
   const builtIn = raw['builtIn'].map((dim, i) => validateBuiltInDimension(dim, i, stripPatternLimits));
   const tags = raw['tags'].map((tag, i) => validateTagDimension(tag, i));
+  assertDistinctTagColumns(tags);
 
   let order: string[] | undefined;
   if (raw['order'] !== undefined) {

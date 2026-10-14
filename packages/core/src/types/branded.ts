@@ -54,14 +54,51 @@ export function tagColumnName(tagName: string): string {
   return `tag_${tagName.replaceAll(/[^a-zA-Z0-9]/g, '_')}`;
 }
 
-/** Returns the SQL column name for a tag dimension. When the dimension has no
- *  resource `tagName` (account-only dimension), the column name is derived
- *  from the account-level source: `tag_ou_path` for the OU Path sentinel, or
- *  a slugified `accountTagFallback`. */
-export function tagDimColumn(t: { readonly tagName?: string | undefined; readonly accountTagFallback?: string | undefined }): string {
-  if (t.tagName !== undefined && t.tagName.length > 0) return tagColumnName(t.tagName);
+interface TagColumnSource {
+  readonly tagName?: string | undefined;
+  readonly accountTagFallback?: string | undefined;
+}
+
+/** The key a tag dimension's id and SQL column derive from: the resource
+ *  `tagName`, or for an account-only dimension its account-level source
+ *  (`ou_path` for the OU Path sentinel, else `accountTagFallback`). */
+export function tagSourceKey(t: TagColumnSource): string {
+  if (t.tagName !== undefined && t.tagName.length > 0) return t.tagName;
   const fallback = t.accountTagFallback;
-  if (fallback === '__ouPath__') return tagColumnName('ou_path');
-  if (fallback !== undefined && fallback.length > 0) return tagColumnName(fallback);
-  return tagColumnName('unknown');
+  if (fallback === '__ouPath__') return 'ou_path';
+  if (fallback !== undefined && fallback.length > 0) return fallback;
+  return 'unknown';
+}
+
+/** Returns the dimension id of a tag dimension (`tag_<key>`, case kept). It is
+ *  persisted in saved views, baselines, cost scopes, explorer preferences and
+ *  sharing bundles, so it never changes shape. It is NOT the SQL column: use
+ *  `tagSqlColumn` for anything DuckDB reads. */
+export function tagDimColumn(t: TagColumnSource): string {
+  return tagColumnName(tagSourceKey(t));
+}
+
+/** Returns the SQL column a tag dimension is materialized under, in the query
+ *  source, the rollup Parquet and every query reading them. DuckDB matches
+ *  identifiers case-insensitively, even quoted, so the case-preserving id
+ *  can't double as the column: `STAGE` and `stage` tags made `tag_STAGE` and
+ *  `tag_stage`, one column to DuckDB, and every query read whichever tag was
+ *  declared first. Lowercasing the slug takes case out of play; the hash of
+ *  the exact key keeps distinct keys (`STAGE`/`stage`, `cost-center`/
+ *  `cost_center`) distinct. */
+export function tagSqlColumn(t: TagColumnSource): string {
+  const key = tagSourceKey(t);
+  return `tag_${key.toLowerCase().replaceAll(/[^a-z0-9]/g, '_')}_${fnv1a32Hex(key)}`;
+}
+
+/** FNV-1a (32-bit) over the code points, as 8 hex digits. Not cryptographic: it
+ *  only has to tell tag keys apart, and it runs in the renderer bundle too, so
+ *  no node:crypto. */
+function fnv1a32Hex(value: string): string {
+  let hash = 0x811c9dc5;
+  for (const ch of value) {
+    hash ^= ch.codePointAt(0) ?? 0;
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
 }

@@ -8,6 +8,7 @@ import {
   logger,
   sqlStringLiteral,
   tagDimColumn,
+  tagSqlColumn,
 } from '@costgoblin/core';
 import type {
   CostResult,
@@ -40,14 +41,28 @@ export function rawGlobLiteral(dataDir: string, provider: string, subPath: strin
   return sqlStringLiteral(`${dataDir}/${provider}/raw/${subPath}`);
 }
 
-/** The grain column a dimension id resolves to (built-in `field` or tag column),
- *  mirroring builder.ts resolveField. Used to gate a query against the rollup
- *  grain — an unknown/disabled dim returns its raw id, which won't be in-grain. */
+/** Tag dimension id → SQL column, in config order. The renderer speaks ids
+ *  (`tag_STAGE`); DuckDB needs `tagSqlColumn`, since ids that differ only by
+ *  case are one identifier to it. A repeated id keeps its first tag, as
+ *  resolveField does. */
+export function tagSqlColumnsById(dimensions: DimensionsConfig): ReadonlyMap<string, string> {
+  const columns = new Map<string, string>();
+  for (const t of dimensions.tags) {
+    const id = tagDimColumn(t);
+    if (!columns.has(id)) columns.set(id, tagSqlColumn(t));
+  }
+  return columns;
+}
+
+/** The grain column a dimension id resolves to (built-in `field` or the tag's
+ *  `tagSqlColumn`), mirroring builder.ts resolveField. Used to gate a query
+ *  against the rollup grain — an unknown/disabled dim returns its raw id,
+ *  which won't be in-grain. */
 export function columnForDimension(dimensions: DimensionsConfig, dimId: string): string {
   const builtIn = dimensions.builtIn.find(d => d.name === dimId);
   if (builtIn !== undefined) return builtIn.field;
   const tag = dimensions.tags.find(t => tagDimColumn(t) === dimId);
-  if (tag !== undefined) return tagDimColumn(tag);
+  if (tag !== undefined) return tagSqlColumn(tag);
   return dimId;
 }
 

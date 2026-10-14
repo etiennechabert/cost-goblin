@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildCostQuery, buildDailyCostsQuery, buildTrendQuery, buildMissingTagsQuery, buildNonResourceCostQuery, buildEntityDetailQuery, buildSource, computePeriodsInRange } from '../query/builder.js';
 import type { DimensionsConfig } from '../types/config.js';
-import { asDimensionId, asDateString, asDollars, asEntityRef, asHourString, asProviderName, asTagValue } from '../types/branded.js';
+import { asDimensionId, asDateString, asDollars, asEntityRef, asHourString, asProviderName, asTagValue, tagSqlColumn } from '../types/branded.js';
 
 const dimensions: DimensionsConfig = {
   builtIn: [
@@ -169,6 +169,8 @@ describe('buildTrendQuery with fallback-bearing tag dim', () => {
     }],
   };
 
+  const sbColumn = tagSqlColumn({ tagName: 'user_sb_system' });
+
   it('produces SQL referencing the materialized column in the alias CASE', () => {
     const { sql } = buildTrendQuery(
       {
@@ -185,11 +187,11 @@ describe('buildTrendQuery with fallback-bearing tag dim', () => {
     // verbatim — no CUR-style user_ prefixing), and the org-join table alias
     // is `src`.
     expect(sql).toContain("COALESCE(NULLIF(element_at(src.Tags, 'user_sb_system')[1], '')");
-    expect(sql).toContain("'unknown-' || acct_tags.fallback_tag_user_sb_system || ''");
+    expect(sql).toContain(`'unknown-' || acct_tags.fallback_${sbColumn} || ''`);
     // The OUTER group-by references the bare column name (not the COALESCE), so
     // the alias CASE doesn't repeat the full expression for every WHEN.
-    expect(sql).toContain('LOWER(tag_user_sb_system)');
-    expect(sql).toContain("WHEN LOWER(tag_user_sb_system) IN ('core_banking', 'corebanking') THEN 'core-banking'");
+    expect(sql).toContain(`LOWER(${sbColumn})`);
+    expect(sql).toContain(`WHEN LOWER(${sbColumn}) IN ('core_banking', 'corebanking') THEN 'core-banking'`);
     expect(sql).not.toContain("WHEN LOWER(COALESCE");
   });
 
@@ -205,7 +207,7 @@ describe('buildTrendQuery with fallback-bearing tag dim', () => {
       { dataDir: '/data', dimensions: dims, orgAccountsPath: '/org.json', materializedSource: 'mat_table', providers },
     );
     expect(sql).toContain('FROM mat_table');
-    expect(sql).toContain('LOWER(tag_user_sb_system)');
+    expect(sql).toContain(`LOWER(${sbColumn})`);
   });
 });
 
@@ -327,6 +329,8 @@ describe('buildNonResourceCostQuery', () => {
 });
 
 describe('buildSource with account tag fallback', () => {
+  const ouColumn = tagSqlColumn({ accountTagFallback: '__ouPath__' });
+
   it('generates COALESCE with raw fallback when no template', () => {
     const dims: DimensionsConfig = {
       builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id' }],
@@ -334,7 +338,7 @@ describe('buildSource with account tag fallback', () => {
     };
     const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json', providers });
     expect(sql).toContain('COALESCE(NULLIF(');
-    expect(sql).toContain('fallback_tag_system');
+    expect(sql).toContain(`fallback_${tagSqlColumn({ tagName: 'system' })}`);
     expect(sql).not.toContain('unknown');
   });
 
@@ -345,7 +349,7 @@ describe('buildSource with account tag fallback', () => {
     };
     const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json', providers });
     expect(sql).toContain("'unknown-'");
-    expect(sql).toContain('fallback_tag_system');
+    expect(sql).toContain(`fallback_${tagSqlColumn({ tagName: 'system' })}`);
     expect(sql).toContain('COALESCE');
   });
 
@@ -356,7 +360,7 @@ describe('buildSource with account tag fallback', () => {
     };
     const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json', providers });
     expect(sql).toContain('COALESCE(NULLIF(');
-    expect(sql).toContain('fallback_tag_team');
+    expect(sql).toContain(`fallback_${tagSqlColumn({ tagName: 'team' })}`);
     // Should NOT contain string concatenation — {fallback} is passthrough
     expect(sql).not.toContain("'' ||");
   });
@@ -377,7 +381,7 @@ describe('buildSource with account tag fallback', () => {
       tags: [{ tagName: 'team', label: 'Team', accountTagFallback: '__ouPath__' }],
     };
     const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json', providers });
-    expect(sql).toContain('ouPath AS fallback_tag_team');
+    expect(sql).toContain(`ouPath AS fallback_${tagSqlColumn({ tagName: 'team' })}`);
     expect(sql).toContain('COALESCE(NULLIF(');
   });
 
@@ -388,8 +392,9 @@ describe('buildSource with account tag fallback', () => {
     };
     const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json', providers });
     // Column name derives from "ou_path" since no tagName was provided.
-    expect(sql).toContain('acct_tags.fallback_tag_ou_path AS tag_ou_path');
-    expect(sql).toContain('ouPath AS fallback_tag_ou_path');
+    expect(ouColumn).toMatch(/^tag_ou_path_[0-9a-f]{8}$/);
+    expect(sql).toContain(`acct_tags.fallback_${ouColumn} AS ${ouColumn}`);
+    expect(sql).toContain(`ouPath AS fallback_${ouColumn}`);
     // No resource-tag map read — there is no resource tag to read.
     expect(sql).not.toContain('element_at(src.Tags');
   });
@@ -405,8 +410,9 @@ describe('buildSource with account tag fallback', () => {
       }],
     };
     const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json', providers });
-    expect(sql).toContain("split_part(COALESCE(NULLIF(element_at(src.Tags, 'department')[1], ''), acct_tags.fallback_tag_department), ' / ', 1)");
-    expect(sql).toContain('AS tag_department');
+    const departmentColumn = tagSqlColumn({ tagName: 'department' });
+    expect(sql).toContain(`split_part(COALESCE(NULLIF(element_at(src.Tags, 'department')[1], ''), acct_tags.fallback_${departmentColumn}), ' / ', 1)`);
+    expect(sql).toContain(`AS ${departmentColumn}`);
   });
 
   it('segments an account-source-only column', () => {
@@ -419,8 +425,8 @@ describe('buildSource with account tag fallback', () => {
       }],
     };
     const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json', providers });
-    expect(sql).toContain("split_part(acct_tags.fallback_tag_ou_path, ' / ', 1)");
-    expect(sql).toContain('AS tag_ou_path');
+    expect(sql).toContain(`split_part(acct_tags.fallback_${ouColumn}, ' / ', 1)`);
+    expect(sql).toContain(`AS ${ouColumn}`);
   });
 
   it('supports negative segment indices', () => {
@@ -433,7 +439,7 @@ describe('buildSource with account tag fallback', () => {
       }],
     };
     const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json', providers });
-    expect(sql).toContain("split_part(acct_tags.fallback_tag_ou_path, ' / ', -1)");
+    expect(sql).toContain(`split_part(acct_tags.fallback_${ouColumn}, ' / ', -1)`);
   });
 });
 

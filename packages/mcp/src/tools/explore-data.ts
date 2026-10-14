@@ -2,11 +2,12 @@ import {
   buildFilterClauses,
   buildSource,
   computePeriodsInRange,
-  isSafeColumnIdentifier,
   logger,
   QueryBuilder,
+  tagDimColumn,
+  tagSqlColumn,
 } from '@costgoblin/core';
-import type { DateRange } from '@costgoblin/core';
+import type { DateRange, DimensionsConfig } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
 import type { Cell, Column, StructuredResult } from '../formatters/result.js';
 import {
@@ -32,11 +33,14 @@ const VALID_COLUMNS: ReadonlySet<string> = new Set([
   'description', 'resource_id', 'usage_amount', 'cost', 'list_cost',
 ]);
 
-function isValidColumn(col: string): boolean {
-  // The tag_ branch admits caller-supplied names into bare SQL positions
-  // (SELECT/GROUP BY/ORDER BY), so it must stay identifier-shaped — a bare
-  // prefix check would wave through `tag_x = read_csv(...)`.
-  return VALID_COLUMNS.has(col) || (col.startsWith('tag_') && isSafeColumnIdentifier(col));
+/** The SQL column behind a caller-supplied column: a VALID_COLUMNS name is its
+ *  own column, a tag dimension id (`tag_team`, as list_dimensions shows it)
+ *  maps to its tagSqlColumn. Null for anything else: these land in bare SQL
+ *  positions (SELECT/GROUP BY/ORDER BY), so only allow-listed names get in. */
+function sqlColumnFor(col: string, dimensions: DimensionsConfig): string | null {
+  if (VALID_COLUMNS.has(col)) return col;
+  const tag = dimensions.tags.find(t => tagDimColumn(t) === col);
+  return tag === undefined ? null : tagSqlColumn(tag);
 }
 
 function sortDirectionSql(direction: 'asc' | 'desc'): string {
@@ -45,6 +49,12 @@ function sortDirectionSql(direction: 'asc' | 'desc'): string {
 
 function groupedSortColumn(column: string): string {
   return column === 'cost' ? 'SUM(cost)' : column;
+}
+
+/** A group-by column: the caller's name (used for the output) and its SQL column. */
+interface GroupByColumn {
+  readonly key: string;
+  readonly column: string;
 }
 
 export async function exploreData(
@@ -105,19 +115,24 @@ export async function exploreData(
     costMetric: scopeMetric,
   });
 
-  const groupByColumns = params.groupByColumns?.filter(c => isValidColumn(c));
+  const groupBy: GroupByColumn[] = (params.groupByColumns ?? []).flatMap(key => {
+    const column = sqlColumnFor(key, dimensions);
+    return column === null ? [] : [{ key, column }];
+  });
+  const sortColumn = params.sort === undefined ? null : sqlColumnFor(params.sort.column, dimensions);
 
-  logger.info('explore-data', { dateRange, grouped: groupByColumns !== undefined && groupByColumns.length > 0 });
+  logger.info('explore-data', { dateRange, grouped: groupBy.length > 0 });
 
   const isSlim = matSource !== undefined;
   const hasListCost = !isSlim;
 
-  if (groupByColumns !== undefined && groupByColumns.length > 0) {
-    const selectCols = groupByColumns.map(col =>
-      col === 'usage_date' ? `usage_date::VARCHAR AS usage_date` : col,
+  if (groupBy.length > 0) {
+    const selectCols = groupBy.map(({ column }) =>
+      column === 'usage_date' ? `usage_date::VARCHAR AS usage_date` : column,
     );
-    const sortExpr = params.sort !== undefined && isValidColumn(params.sort.column)
-      ? `${groupedSortColumn(params.sort.column)} ${sortDirectionSql(params.sort.direction)}`
+    const groupByList = groupBy.map(g => g.column).join(', ');
+    const sortExpr = params.sort !== undefined && sortColumn !== null
+      ? `${groupedSortColumn(sortColumn)} ${sortDirectionSql(params.sort.direction)}`
       : 'SUM(cost) DESC';
 
     const aggCols = [
@@ -133,7 +148,7 @@ export async function exploreData(
         ${aggCols.join(',\n        ')}
       FROM ${source}
       ${whereClause}
-      GROUP BY ${groupByColumns.join(', ')}
+      GROUP BY ${groupByList}
       ORDER BY ${sortExpr}
       LIMIT ${limitParam}
     `.trim();
@@ -141,13 +156,13 @@ export async function exploreData(
     const rows = await ctx.runPreparedQuery(sql, queryParams);
 
     const columns: Column[] = [
-      ...groupByColumns.map((c): Column => ({ key: c, header: c })),
+      ...groupBy.map(({ key }): Column => ({ key, header: key })),
       { key: 'cost', header: 'Cost', type: 'currency' },
       { key: 'row_count', header: 'Rows', type: 'number' },
     ];
 
     const tableRows: Cell[][] = rows.map(r => [
-      ...groupByColumns.map((c): Cell => toStr(r[c])),
+      ...groupBy.map(({ column }): Cell => toStr(r[column])),
       toNum(r['cost']),
       toNum(r['row_count']),
     ]);
@@ -156,14 +171,14 @@ export async function exploreData(
     const result: StructuredResult = {
       title: `Aggregated Data (${dateRange.start} to ${dateRange.end})`,
       coverage,
-      meta: [{ label: 'Group By', value: groupByColumns.join(', ') }],
+      meta: [{ label: 'Group By', value: groupBy.map(g => g.key).join(', ') }],
       tables: [{ columns, rows: tableRows }],
     };
     return structuredToolResult(result, format);
   }
 
-  const sortExpr = params.sort !== undefined && isValidColumn(params.sort.column)
-    ? `${params.sort.column} ${sortDirectionSql(params.sort.direction)}`
+  const sortExpr = params.sort !== undefined && sortColumn !== null
+    ? `${sortColumn} ${sortDirectionSql(params.sort.direction)}`
     : 'ABS(cost) DESC';
 
   const rawCols = [

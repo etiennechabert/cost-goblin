@@ -21,6 +21,7 @@ export {
   asProviderName,
   tagColumnName,
   tagDimColumn,
+  tagSqlColumn,
 } from './branded.js';
 
 export type {

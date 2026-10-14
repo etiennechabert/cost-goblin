@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronUp, ChevronDown, GripVertical, Lock, Database, AlertTriangle } from 'lucide-react';
 import type { BuiltInDimension, ColumnValuesPreview, DimensionsConfig, TagDimension, ConceptType, NormalizationRule, RollupGrainEstimate, RollupSizeBand, StripPatternIssues } from '@costgoblin/core/browser';
-import { asDimensionId, nameStripPatternViolations, OU_PATH_SOURCE_KEY, tagDimColumn } from '@costgoblin/core/browser';
+import { asDimensionId, nameStripPatternViolations, OU_PATH_SOURCE_KEY, tagSqlColumn } from '@costgoblin/core/browser';
 import { formatBytes } from '../components/format.js';
 
 const OU_PATH_LABEL = 'OU Path';
@@ -1578,7 +1578,7 @@ function grainSignature(config: DimensionsConfig): string {
     cols.push(d.field);
     if (d.displayField !== undefined && d.displayField.length > 0) cols.push(d.displayField);
   }
-  for (const t of config.tags) if (t.enabled !== false) cols.push(tagDimColumn(t));
+  for (const t of config.tags) if (t.enabled !== false) cols.push(tagSqlColumn(t));
   return [...new Set(cols)].sort((a, b) => a.localeCompare(b)).join(',');
 }
 
@@ -1618,7 +1618,7 @@ function RawOnlyBadge({ cardinality }: Readonly<{ cardinality: number | undefine
 function columnLabel(config: DimensionsConfig, column: string): string {
   const b = config.builtIn.find(d => d.field === column);
   if (b !== undefined) return b.label;
-  const t = config.tags.find(tg => tagDimColumn(tg) === column);
+  const t = config.tags.find(tg => tagSqlColumn(tg) === column);
   if (t !== undefined) return t.label;
   return column;
 }
@@ -2333,7 +2333,7 @@ export function DimensionsView(): React.JSX.Element {
             <div className="flex flex-wrap gap-1.5">
               {config.tags.map((tag, idx) => {
                 const isOn = tag.enabled !== false;
-                const rawOnly = isOn && rawOnlyColumns.has(tagDimColumn(tag));
+                const rawOnly = isOn && rawOnlyColumns.has(tagSqlColumn(tag));
                 return (
                   <button
                     key={tagOrderKey(tag)}
@@ -2343,7 +2343,7 @@ export function DimensionsView(): React.JSX.Element {
                     className={pillClass(isOn, rawOnly)}
                   >
                     {tag.label}
-                    {rawOnly && <RawOnlyBadge cardinality={cardinalityByColumn.get(tagDimColumn(tag))} />}
+                    {rawOnly && <RawOnlyBadge cardinality={cardinalityByColumn.get(tagSqlColumn(tag))} />}
                   </button>
                 );
               })}
