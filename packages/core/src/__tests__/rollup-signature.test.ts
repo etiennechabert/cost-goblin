@@ -81,6 +81,27 @@ describe('computeShapeSignature', () => {
     expect(sig({ rules: teamRule, dimensions: validateDimensions(baseDims()) })).toBe(sig({ rules: teamRule }));
   });
 
+  describe('NULL-safe exclusions (#451)', () => {
+    // Signatures this function returned BEFORE exclusions became NULL-safe, for
+    // the `sig()` fixture with no rules and with `rulesOnService()`. A partition
+    // built back then under an enabled rule dropped every untagged row, so it
+    // must no longer match. With no enabled rule no clause was emitted and the
+    // stored bytes are unchanged, so it must still match (no needless re-roll
+    // of the default config, which ships with every rule disabled). Update these
+    // only for a deliberate change that re-rolls every partition.
+    const PRE_451_NO_RULES = '46fbf6c0c375cf9a01e5abf33622adc7ac8ebc5ff0a2200295134b85be6d5aa3';
+    const PRE_451_SERVICE_RULE = 'ff1f3c3f36c364b67594028dc9e699c74bfa8a9c2ea9fc3780fc24e4fd5b6f65';
+
+    it('keeps the pre-fix signature when no rule is enabled', () => {
+      expect(sig({ rules: [] })).toBe(PRE_451_NO_RULES);
+      expect(sig({ rules: rulesOnService().map(r => ({ ...r, enabled: false })) })).toBe(PRE_451_NO_RULES);
+    });
+
+    it('re-rolls partitions built under an enabled rule', () => {
+      expect(sig()).not.toBe(PRE_451_SERVICE_RULE);
+    });
+  });
+
   it('alias change on a dim NOT referenced by any rule does NOT change the signature', () => {
     // rules are on `service`, not the tag → the tag's aliases never enter the signature
     expect(sig({ dimensions: dimsWithTeamAliases({ architects: ['arch', 'foo'] }) })).toBe(sig());

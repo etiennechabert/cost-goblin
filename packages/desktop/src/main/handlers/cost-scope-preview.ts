@@ -1,0 +1,285 @@
+/** The Cost Scope preview: what the edited (unsaved) scope would exclude over
+ *  the last 30 days of billing data. Kept apart from the IPC handlers (no
+ *  electron import) so it runs in unit tests against real DuckDB. */
+
+import {
+  DEFAULT_LAG_DAYS,
+  dimensionIdSet,
+  validateCostScope,
+  buildSource,
+  buildRuleMatchExpr,
+  computePeriodsInRange,
+  logger,
+  tagDimColumn,
+} from '@costgoblin/core';
+import type {
+  CostScopeDailyRow,
+  CostScopePreviewResult,
+  CostScopePreviewRow,
+  CostScopeSampleRow,
+} from '@costgoblin/core';
+import type { RawRow } from '../duckdb-client.js';
+import type { AppContext } from './context.js';
+import { toNum, toStr } from './query-utils.js';
+import { costScopePreviewWindow } from './query-windows.js';
+
+const SAMPLE_ROW_LIMIT = 500;
+
+function mapSampleRow(
+  r: RawRow,
+  tagColumns: readonly { id: string; label: string }[],
+): CostScopeSampleRow {
+  const tags: Record<string, string> = {};
+  for (const t of tagColumns) {
+    const v = r[t.id];
+    tags[t.id] = typeof v === 'string' ? v : '';
+  }
+  return {
+    date: toStr(r['usage_date']),
+    accountId: toStr(r['account_id']),
+    accountName: toStr(r['account_name']),
+    region: toStr(r['region']),
+    service: toStr(r['service']),
+    serviceCategory: toStr(r['service_category']),
+    chargeCategory: toStr(r['charge_category']),
+    operation: toStr(r['operation']),
+    skuMeter: toStr(r['sku_meter']),
+    description: toStr(r['description']),
+    resourceId: toStr(r['resource_id']),
+    usageAmount: toNum(r['usage_amount']),
+    cost: toNum(r['cost']),
+    listCost: toNum(r['list_cost']),
+    excluded: toNum(r['excluded']) === 1,
+    tags,
+  };
+}
+
+function logSettledError(label: string, result: PromiseSettledResult<unknown>): void {
+  if (result.status === 'rejected') {
+    logger.warn(`cost-scope: ${label} query failed: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`);
+  }
+}
+
+export type CostScopePreviewDeps = Pick<
+  AppContext,
+  'getQueryDimensions' | 'getQueryProviders' | 'getOrgAccountsPath' | 'getAccountReverseMap' | 'runQuery'
+> & {
+  readonly dataDir: string;
+  /** The app clock (pinned by COSTGOBLIN_NOW in e2e). */
+  readonly now: () => number;
+};
+
+/** Preview the scope in `payload` (validated here, like a save). */
+export async function previewCostScope(deps: CostScopePreviewDeps, payload: unknown): Promise<CostScopePreviewResult> {
+  const { dataDir, now, getQueryDimensions, getQueryProviders, getOrgAccountsPath, getAccountReverseMap, runQuery } = deps;
+  const dimensions = await getQueryDimensions();
+  const config = validateCostScope(payload, dimensionIdSet(dimensions));
+  const enabledRules = config.rules.filter(r => r.enabled);
+
+  const { windowDays, startDate: startStr, endDate: endStr } = costScopePreviewWindow(now(), config.lagDays ?? DEFAULT_LAG_DAYS);
+
+  const zero: CostScopePreviewResult = {
+    windowDays,
+    startDate: startStr,
+    endDate: endStr,
+    perRule: enabledRules.map(r => ({ ruleId: r.id, excludedCost: 0, excludedRows: 0 })),
+    combined: { excludedCost: 0, excludedRows: 0 },
+    unscopedTotalCost: 0,
+    scopedTotalCost: 0,
+    dailyTotals: [],
+    sampleRows: [],
+    sampleTotalRowCount: 0,
+    tagColumns: [],
+  };
+
+  // Empty while onboarding (no provider configured) — same zero-period
+  // early return as "no months on disk". Months are intersected PER
+  // provider: a shared list would hand a provider globs for months it
+  // doesn't have, and one zero-match glob fails the whole union.
+  const providers = await getQueryProviders('daily');
+  const required = computePeriodsInRange({ start: startStr, end: endStr });
+  const branches = providers
+    .map(p => ({
+      name: p.name,
+      periods: required.filter(m => p.availablePeriods?.includes(m) ?? false),
+    }))
+    .filter(b => b.periods.length > 0);
+  if (branches.length === 0) return zero;
+
+  const orgPath = await getOrgAccountsPath();
+  // Account rules can name accounts by display name; the dashboards expand
+  // those to ids through this map, so the preview must too or it reports
+  // $0 excluded for a rule that does drop spend.
+  const accountReverseMap = await getAccountReverseMap();
+
+  // Marketplace re-attribution rewrites `service` (and the list-metric cost)
+  // in every dashboard source, so the preview applies it too: otherwise a rule
+  // on a re-attributed service (Amazon Bedrock) previews only its native rows.
+  const source = buildSource({
+    dataDir: dataDir, tier: 'daily', dimensions, orgAccountsPath: orgPath,
+    providers: branches,
+    costMetric: config.costMetric,
+    marketplaceAttribution: config.marketplaceAttribution,
+  });
+
+  // Pre-compute each rule's positive match expression once — used to
+  // build the `excluded` predicate for the main aggregate query, each
+  // per-rule tally, the daily breakdown, and the sample row flag. Rules
+  // whose expression is null (all conditions empty) are treated as
+  // no-ops and don't appear in the SQL at all.
+  const ruleExprs: { readonly rule: typeof enabledRules[number]; readonly expr: string | null }[] =
+    enabledRules.map(rule => ({ rule, expr: buildRuleMatchExpr(rule, dimensions, accountReverseMap) }));
+  const liveExprs = ruleExprs.flatMap(e => e.expr === null ? [] : [e.expr]);
+  const excludedPredicate = liveExprs.length > 0
+    ? liveExprs.map(e => `(${e})`).join(' OR ')
+    : 'FALSE';
+
+  const tagColumns = dimensions.tags.map(t => ({
+    id: tagDimColumn(t),
+    label: t.label,
+  }));
+
+  // === Query 1: every aggregate in one scan ===
+  // Merges what used to be 5 separate queries (per-rule + combined +
+  // unscoped total + scoped total + total row count) into a single pass.
+  // DuckDB evaluates each SUM(CASE...) during the same scan, so the cost
+  // is roughly one full scan regardless of how many rules are enabled.
+  const ruleAggSelects = ruleExprs.map((entry, i) => {
+    if (entry.expr === null) return `CAST(0 AS DOUBLE) AS rule_${String(i)}_cost,
+        CAST(0 AS DOUBLE) AS rule_${String(i)}_rows`;
+    return `CAST(COALESCE(SUM(CASE WHEN (${entry.expr}) THEN cost ELSE 0 END), 0) AS DOUBLE) AS rule_${String(i)}_cost,
+        CAST(COALESCE(SUM(CASE WHEN (${entry.expr}) THEN 1 ELSE 0 END), 0) AS DOUBLE) AS rule_${String(i)}_rows`;
+  }).join(',\n          ');
+
+  const aggSql = `
+    SELECT
+      CAST(COALESCE(SUM(cost), 0) AS DOUBLE) AS unscoped_total,
+      CAST(COALESCE(SUM(CASE WHEN (${excludedPredicate}) THEN 0 ELSE cost END), 0) AS DOUBLE) AS scoped_total,
+      CAST(COALESCE(SUM(CASE WHEN (${excludedPredicate}) THEN cost ELSE 0 END), 0) AS DOUBLE) AS combined_excluded_cost,
+      CAST(COALESCE(SUM(CASE WHEN (${excludedPredicate}) THEN 1 ELSE 0 END), 0) AS DOUBLE) AS combined_excluded_rows,
+      CAST(COUNT(*) AS DOUBLE) AS total_rows${ruleAggSelects.length > 0 ? `,\n          ${ruleAggSelects}` : ''}
+    FROM ${source}
+    WHERE usage_date BETWEEN '${startStr}' AND '${endStr}'
+  `.trim();
+
+  // === Query 2: daily breakdown (separate because GROUP BY) ===
+  const dailySql = `
+    SELECT
+      usage_date::VARCHAR AS date,
+      CAST(COALESCE(SUM(CASE WHEN (${excludedPredicate}) THEN 0 ELSE cost END), 0) AS DOUBLE) AS kept_cost,
+      CAST(COALESCE(SUM(CASE WHEN (${excludedPredicate}) THEN cost ELSE 0 END), 0) AS DOUBLE) AS excluded_cost
+    FROM ${source}
+    WHERE usage_date BETWEEN '${startStr}' AND '${endStr}'
+    GROUP BY usage_date
+    ORDER BY usage_date
+  `.trim();
+
+  // === Query 3: top-|cost| sample rows (separate because ORDER BY LIMIT) ===
+  // CAST numerics to DOUBLE inside the CTE so DECIMAL-typed columns
+  // come back as plain numbers — bare source.cost would return a
+  // DuckDBDecimalValue object and toNum would yield 0 for every row.
+  // Partition-rank the rows so we always return up to SAMPLE_ROW_LIMIT
+  // from EACH bucket (kept vs excluded) rather than top-|cost| of the
+  // combined set. Otherwise a few very large excluded rows (tax, EDP
+  // discount, RI upfront) eat the whole limit and the table looks
+  // empty when the user toggles "Hide excluded" on.
+  const tagSelectSql = tagColumns.length > 0
+    ? tagColumns.map(t => `COALESCE(${t.id}, '') AS ${t.id}`).join(',\n          ')
+    : null;
+  const sampleSql = `
+    WITH scoped AS (
+      SELECT
+        usage_date,
+        account_id, account_name, region, service, service_category,
+        charge_category, operation, sku_meter, description, resource_id,
+        CAST(usage_amount AS DOUBLE) AS usage_amount,
+        CAST(cost AS DOUBLE) AS cost,
+        CAST(list_cost AS DOUBLE) AS list_cost,
+        CASE WHEN (${excludedPredicate}) THEN 1 ELSE 0 END AS excluded${tagSelectSql === null ? '' : `,\n          ${tagSelectSql}`}
+      FROM ${source}
+      WHERE usage_date BETWEEN '${startStr}' AND '${endStr}'
+    ),
+    ranked AS (
+      SELECT *,
+        ROW_NUMBER() OVER (PARTITION BY excluded ORDER BY ABS(cost) DESC) AS rn
+      FROM scoped
+    )
+    SELECT
+      usage_date::VARCHAR AS usage_date,
+      account_id, account_name, region, service, service_category,
+      charge_category, operation, sku_meter, description, resource_id,
+      usage_amount, cost, list_cost, excluded${tagSelectSql === null ? '' : ',\n        ' + tagColumns.map(t => t.id).join(', ')}
+    FROM ranked
+    WHERE rn <= ${String(SAMPLE_ROW_LIMIT)}
+    ORDER BY excluded ASC, ABS(cost) DESC
+  `.trim();
+
+  // Run all three in parallel. The DuckDB worker pool (default size 4)
+  // lets independent queries execute concurrently. `allSettled` so one
+  // failing query doesn't drop the other two's results.
+  const [aggResult, dailyResult, sampleResult] = await Promise.allSettled([
+    runQuery(aggSql),
+    runQuery(dailySql),
+    runQuery(sampleSql),
+  ]);
+
+  // Agg → totals + per-rule + combined
+  let unscopedTotalCost = 0;
+  let scopedTotalCost = 0;
+  let sampleTotalRowCount = 0;
+  let combined = { excludedCost: 0, excludedRows: 0 };
+  const perRule: CostScopePreviewRow[] = ruleExprs.map(e => ({
+    ruleId: e.rule.id, excludedCost: 0, excludedRows: 0,
+  }));
+  if (aggResult.status === 'fulfilled') {
+    const row = aggResult.value[0];
+    unscopedTotalCost = toNum(row?.['unscoped_total']);
+    scopedTotalCost = toNum(row?.['scoped_total']);
+    sampleTotalRowCount = toNum(row?.['total_rows']);
+    combined = {
+      excludedCost: toNum(row?.['combined_excluded_cost']),
+      excludedRows: toNum(row?.['combined_excluded_rows']),
+    };
+    for (let i = 0; i < ruleExprs.length; i++) {
+      const entry = ruleExprs[i];
+      const prev = perRule[i];
+      if (entry === undefined || prev === undefined) continue;
+      perRule[i] = {
+        ruleId: entry.rule.id,
+        excludedCost: toNum(row?.[`rule_${String(i)}_cost`]),
+        excludedRows: toNum(row?.[`rule_${String(i)}_rows`]),
+      };
+    }
+  }
+  logSettledError('agg', aggResult);
+
+  let dailyTotals: readonly CostScopeDailyRow[] = [];
+  if (dailyResult.status === 'fulfilled') {
+    dailyTotals = dailyResult.value.map(r => ({
+      date: toStr(r['date']),
+      keptCost: toNum(r['kept_cost']),
+      excludedCost: toNum(r['excluded_cost']),
+    }));
+  }
+  logSettledError('daily', dailyResult);
+
+  let sampleRows: readonly CostScopeSampleRow[] = [];
+  if (sampleResult.status === 'fulfilled') {
+    sampleRows = sampleResult.value.map(r => mapSampleRow(r, tagColumns));
+  }
+  logSettledError('sample', sampleResult);
+
+  return {
+    windowDays,
+    startDate: startStr,
+    endDate: endStr,
+    perRule,
+    combined,
+    unscopedTotalCost,
+    scopedTotalCost,
+    dailyTotals,
+    sampleRows,
+    sampleTotalRowCount,
+    tagColumns,
+  };
+}
