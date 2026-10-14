@@ -15,11 +15,13 @@ export function parseDimensionsPayload(payload: unknown, options?: ValidateDimen
 }
 
 /** Parse a renderer-supplied config that is about to be PERSISTED. Same checks
- *  as `parseDimensionsPayload`, except `nameStripPatterns` beyond the caps
- *  (16 patterns of at most 256 characters) are rejected rather than dropped:
- *  the editor already refuses them, so a payload that still carries them is
- *  refused visibly instead of being silently truncated on disk.
+ *  as `parseDimensionsPayload`, except what a load repairs is rejected: the
+ *  editor already refuses both, so a payload that still carries them is
+ *  refused visibly instead of being silently rewritten on disk.
+ *  - `nameStripPatterns` beyond the caps (16 patterns of at most 256
+ *    characters), which a load drops;
+ *  - two tags with the same dimension id, which a load disables.
  *  @throws {ConfigValidationError} when the payload is not a valid config */
 export function parseDimensionsSavePayload(payload: unknown): DimensionsConfig {
-  return parseDimensionsPayload(payload, { stripPatternLimits: 'reject' });
+  return parseDimensionsPayload(payload, { stripPatternLimits: 'reject', tagIdCollisions: 'reject' });
 }

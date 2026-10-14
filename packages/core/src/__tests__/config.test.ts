@@ -431,6 +431,70 @@ describe('validateDimensions', () => {
     })).toThrow(/"CostCEntEREnviROnment" collides with tags\[0\] "CoStCEntEReNVIRonment"/);
   });
 
+  // Keys that differ only by punctuation share a dimension id (`tag_cost_center`),
+  // and every id lookup resolves to the first tag, so the second dimension
+  // would silently show the first one's data in every widget.
+  describe('tags sharing a dimension id', () => {
+    afterEach(() => { vi.restoreAllMocks(); });
+
+    const costCenter = { tagName: 'cost-center', label: 'Cost Center' };
+    const costUnderscore = { tagName: 'cost_center', label: 'Cost center (new)' };
+
+    it('loads, disabling the later tag and warning with both keys', () => {
+      const warn = vi.spyOn(logger, 'warn');
+      const dims = validateDimensions({ builtIn: [], tags: [costCenter, costUnderscore] });
+      expect(dims.tags).toEqual([costCenter, { ...costUnderscore, enabled: false }]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      const message = String(warn.mock.calls[0]?.[0]);
+      expect(message).toContain('tags[1] (tag "cost_center")');
+      expect(message).toContain('tags[0] (tag "cost-center")');
+      expect(message).toContain('tag_cost_center');
+    });
+
+    it('disables every later tag of a group, keeping the first: the one id lookups resolve to', () => {
+      vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+      const dims = validateDimensions({
+        builtIn: [],
+        tags: [
+          { ...costCenter, enabled: false },
+          costUnderscore,
+          { tagName: 'team', label: 'Team' },
+          { tagName: 'cost center', label: 'CC' },
+        ],
+      });
+      expect(dims.tags.map(t => t.enabled)).toEqual([false, false, undefined, false]);
+    });
+
+    it('disables a resource tag named ou_path declared after the OU Path dimension', () => {
+      vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+      const dims = validateDimensions({
+        builtIn: [],
+        tags: [{ label: 'OU', accountTagFallback: OU_PATH_SOURCE_KEY }, { tagName: 'ou_path', label: 'ou_path' }],
+      });
+      expect(dims.tags.map(t => t.enabled)).toEqual([undefined, false]);
+    });
+
+    it('is refused when saving, naming both keys', () => {
+      expect(() => validateDimensions({ builtIn: [], tags: [costCenter, costUnderscore] }, { tagIdCollisions: 'reject' }))
+        .toThrow(/tags\[1\] \(tag "cost_center"\) has the same dimension id, tag_cost_center, as tags\[0\] \(tag "cost-center"\)/);
+    });
+
+    it('is refused when saving even if the later tag is disabled', () => {
+      expect(() => validateDimensions(
+        { builtIn: [], tags: [costCenter, { ...costUnderscore, enabled: false }] },
+        { tagIdCollisions: 'reject' },
+      )).toThrow(ConfigValidationError);
+    });
+
+    it('leaves configs without a shared id alone, in both modes', () => {
+      const warn = vi.spyOn(logger, 'warn');
+      const tags = [{ tagName: 'STAGE', label: 'Stage' }, { tagName: 'stage', label: 'stage' }, costCenter];
+      expect(validateDimensions({ builtIn: [], tags }).tags).toEqual(tags);
+      expect(validateDimensions({ builtIn: [], tags }, { tagIdCollisions: 'reject' }).tags).toEqual(tags);
+      expect(warn).not.toHaveBeenCalled();
+    });
+  });
+
   it('accepts a legitimately-named built-in column', () => {
     expect(() => validateDimensions({
       builtIn: [{ name: 'svc', label: 'Service', field: 'product_service_name', displayField: 'account_name' }],

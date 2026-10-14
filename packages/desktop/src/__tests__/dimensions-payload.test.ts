@@ -46,6 +46,21 @@ describe('parseDimensionsPayload', () => {
     expect(parseDimensionsPayload(payload)).toEqual(payload);
   });
 
+  describe('tags sharing a dimension id', () => {
+    const payload = {
+      builtIn: [],
+      tags: [{ tagName: 'cost-center', label: 'Cost Center' }, { tagName: 'cost_center', label: 'Cost center' }],
+    };
+
+    it('disables the later tag when only reading (estimate), so a draft still probes', () => {
+      expect(parseDimensionsPayload(payload).tags.map(t => t.enabled)).toEqual([undefined, false]);
+    });
+
+    it('rejects the payload when saving', () => {
+      expect(() => parseDimensionsSavePayload(payload)).toThrow(/same dimension id, tag_cost_center/);
+    });
+  });
+
   describe('nameStripPatterns caps', () => {
     function withPatterns(nameStripPatterns: readonly string[]): unknown {
       return { builtIn: [{ name: 'account', label: 'Account', field: 'account_id', nameStripPatterns }], tags: [] };

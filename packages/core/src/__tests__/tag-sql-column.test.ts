@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { isSafeColumnIdentifier } from '../query/identifier-validator.js';
-import { tagDimColumn, tagSqlColumn, tagSqlColumnsById } from '../types/branded.js';
+import { describeTagSource, findTagIdCollisions, tagDimColumn, tagSqlColumn, tagSqlColumnsById } from '../types/branded.js';
 import { OU_PATH_SOURCE_KEY } from '../types/config.js';
 
 /** DuckDB matches identifiers case-insensitively, even when quoted, so two
@@ -65,5 +65,45 @@ describe('tagSqlColumnsById', () => {
 
   it('keeps the first tag when two share an id, as resolveField does', () => {
     expect(tagSqlColumnsById(tags).get('tag_cost_center')).toBe(tagSqlColumn({ tagName: 'cost-center' }));
+  });
+});
+
+describe('findTagIdCollisions', () => {
+  it('reports every later tag whose key differs from an earlier one only by punctuation', () => {
+    const tags = [{ tagName: 'cost-center' }, { tagName: 'cost_center' }, { tagName: 'cost center' }, { tagName: 'cost.center' }];
+    expect(findTagIdCollisions(tags)).toEqual([
+      { id: 'tag_cost_center', ownerIndex: 0, index: 1 },
+      { id: 'tag_cost_center', ownerIndex: 0, index: 2 },
+      { id: 'tag_cost_center', ownerIndex: 0, index: 3 },
+    ]);
+  });
+
+  it('reports a resource tag named ou_path against the OU Path dimension', () => {
+    const tags = [{ accountTagFallback: OU_PATH_SOURCE_KEY }, { tagName: 'ou_path' }];
+    expect(findTagIdCollisions(tags)).toEqual([{ id: 'tag_ou_path', ownerIndex: 0, index: 1 }]);
+  });
+
+  it('reports a resource tag against an account-only dimension with the same key', () => {
+    const tags = [{ tagName: 'CostCenter' }, { accountTagFallback: 'CostCenter' }];
+    expect(findTagIdCollisions(tags)).toEqual([{ id: 'tag_CostCenter', ownerIndex: 0, index: 1 }]);
+  });
+
+  it('reports the same key declared twice', () => {
+    expect(findTagIdCollisions([{ tagName: 'team' }, { tagName: 'team' }])).toEqual([{ id: 'tag_team', ownerIndex: 0, index: 1 }]);
+  });
+
+  it('ignores ids that differ by case, and a fallback behind a resource tag', () => {
+    expect(findTagIdCollisions([{ tagName: 'STAGE' }, { tagName: 'stage' }])).toEqual([]);
+    // The first is keyed by its resource tag (tag_team), not its fallback.
+    expect(findTagIdCollisions([{ tagName: 'team', accountTagFallback: 'Owner' }, { accountTagFallback: 'Owner' }])).toEqual([]);
+  });
+});
+
+describe('describeTagSource', () => {
+  it('names the key a dimension id derives from', () => {
+    expect(describeTagSource({ tagName: 'cost-center' })).toBe('tag "cost-center"');
+    expect(describeTagSource({ tagName: 'team', accountTagFallback: 'Owner' })).toBe('tag "team"');
+    expect(describeTagSource({ accountTagFallback: 'CostCenter' })).toBe('account tag "CostCenter"');
+    expect(describeTagSource({ accountTagFallback: OU_PATH_SOURCE_KEY })).toBe('OU Path');
   });
 });
