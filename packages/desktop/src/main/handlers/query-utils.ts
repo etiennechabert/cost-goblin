@@ -41,6 +41,22 @@ export function rawGlobLiteral(dataDir: string, provider: string, subPath: strin
   return sqlStringLiteral(`${dataDir}/${provider}/raw/${subPath}`);
 }
 
+/** `COALESCE(col, '') AS col` for each tag column, for a SELECT list. */
+export function tagSelectItems(tagSqlColumns: ReadonlyMap<string, string>): string[] {
+  return [...tagSqlColumns.values()].map(c => `COALESCE(${c}, '') AS ${c}`);
+}
+
+/** A result row's tag values keyed by tag id: the renderer speaks ids, the
+ *  row is keyed by SQL column. A non-string value reads as ''. */
+export function tagValuesById(row: RawRow, tagSqlColumns: ReadonlyMap<string, string>): Record<string, string> {
+  const tags: Record<string, string> = {};
+  for (const [id, column] of tagSqlColumns) {
+    const v = row[column];
+    tags[id] = typeof v === 'string' ? v : '';
+  }
+  return tags;
+}
+
 /** The grain column a dimension id resolves to (built-in `field` or the tag's
  *  `tagSqlColumn`), mirroring builder.ts resolveField. Used to gate a query
  *  against the rollup grain — an unknown/disabled dim returns its raw id,
