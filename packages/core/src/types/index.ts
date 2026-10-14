@@ -8,6 +8,7 @@ export type {
   HourString,
   WorkspaceName,
   ProviderName,
+  TagIdCollision,
 } from './branded.js';
 export {
   asDimensionId,
@@ -21,6 +22,11 @@ export {
   asProviderName,
   tagColumnName,
   tagDimColumn,
+  tagSqlColumn,
+  tagSqlColumnsById,
+  findTagIdCollisions,
+  describeTagSource,
+  hasTagSource,
 } from './branded.js';
 
 export type {

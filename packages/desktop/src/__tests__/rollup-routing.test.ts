@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { type DimensionsConfig, asDimensionId, asProviderName } from '@costgoblin/core';
+import { type DimensionsConfig, asDimensionId, asProviderName, tagSqlColumn } from '@costgoblin/core';
 import { columnForDimension, providersEmptyForRange, resolveRollupSource } from '../main/handlers/query-utils.js';
 import { RollupStore } from '../main/rollup-store.js';
 
@@ -15,7 +15,13 @@ describe('columnForDimension', () => {
   it('maps a built-in id to its field and a tag id to its column', () => {
     expect(columnForDimension(dims, 'account')).toBe('account_id');
     expect(columnForDimension(dims, 'service')).toBe('service');
-    expect(columnForDimension(dims, 'tag_team')).toBe('tag_team');
+    expect(columnForDimension(dims, 'tag_team')).toBe(tagSqlColumn({ tagName: 'team' }));
+  });
+  it('maps tag ids that differ only by case to distinct columns', () => {
+    const cased: DimensionsConfig = { builtIn: [], tags: [{ tagName: 'STAGE', label: 'STAGE' }, { tagName: 'stage', label: 'stage' }] };
+    const upper = columnForDimension(cased, 'tag_STAGE');
+    const lower = columnForDimension(cased, 'tag_stage');
+    expect(upper.toLowerCase()).not.toBe(lower.toLowerCase());
   });
   it('returns an unknown/disabled id unchanged (so it gates out of the rollup grain)', () => {
     expect(columnForDimension(dims, 'resource_id')).toBe('resource_id');

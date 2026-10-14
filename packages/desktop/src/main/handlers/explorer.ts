@@ -9,6 +9,7 @@ import {
   logger,
   resolveField,
   tagDimColumn,
+  tagSqlColumnsById,
 } from '@costgoblin/core';
 import type {
   ExclusionRule,
@@ -23,7 +24,6 @@ import type {
   ExplorerRowsParams,
   ExplorerRowsResult,
   ExplorerSampleRow,
-  ExplorerSort,
   ExplorerDailyRow,
   ExplorerTagColumn,
   DimensionsConfig,
@@ -34,33 +34,13 @@ import type {
 } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
 import { type AppContext, prefsPath } from './context.js';
-import { buildAccountReverseMap, columnForDimension, resolveRollupSource, toNum, toStr } from './query-utils.js';
+import { buildAccountReverseMap, columnForDimension, resolveRollupSource, tagSelectItems, tagValuesById, toNum, toStr } from './query-utils.js';
+import { aggregatedOrderBy, appendRowFilters, explorerGroupBy, explorerOrderBy, groupBySelectList, groupByValues } from './explorer-columns.js';
 import { readExplorerPreferences, writeExplorerPreferences } from './explorer-prefs.js';
 import { resolveScopeMetric } from './explorer-scope.js';
 import { resolveExplorerDateRange } from './query-windows.js';
 
 const MAX_ROW_LIMIT = 1000;
-
-const SORTABLE_SCALAR_COLUMNS: ReadonlySet<string> = new Set([
-  'usage_date',
-  'usage_hour',
-  'account_id',
-  'account_name',
-  'region',
-  'service',
-  'service_code',
-  'service_category',
-  'charge_category',
-  'pricing_category',
-  'commitment_status',
-  'operation',
-  'sku_meter',
-  'description',
-  'resource_id',
-  'usage_amount',
-  'cost',
-  'list_cost',
-]);
 
 function clampRowLimit(n: number): number {
   if (!Number.isFinite(n) || n <= 0) return 500;
@@ -89,18 +69,6 @@ function buildExplorerFilterPredicate(
   return buildRuleMatchExpr(synthetic, dimensions, accountReverseMap);
 }
 
-function buildOrderBy(
-  sort: ExplorerSort | undefined,
-  tagColumnIds: ReadonlySet<string>,
-): string {
-  if (sort === undefined) return 'ABS(cost) DESC';
-  const dir = sort.direction === 'asc' ? 'ASC' : 'DESC';
-  if (SORTABLE_SCALAR_COLUMNS.has(sort.column) || tagColumnIds.has(sort.column)) {
-    return `${sort.column} ${dir}`;
-  }
-  return 'ABS(cost) DESC';
-}
-
 /** Everything the overview / rows / filter-values handlers compute up front.
  *  `empty === true` when no matching months are on disk — caller returns a
  *  zero-filled result without bothering DuckDB. */
@@ -114,7 +82,8 @@ interface QueryContext {
   readonly windowDays: number;
   readonly tier: 'daily' | 'hourly';
   readonly tagColumns: readonly ExplorerTagColumn[];
-  readonly tagIdSet: ReadonlySet<string>;
+  /** Tag id → SQL column; see tagSqlColumnsById. */
+  readonly tagSqlColumns: ReadonlyMap<string, string>;
   readonly dimensions: DimensionsConfig;
   readonly accountMap: ReadonlyMap<string, string>;
 }
@@ -266,8 +235,8 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
     id: tagDimColumn(t),
     label: t.label,
   }));
-  const tagIdSet = new Set(tagColumns.map(t => t.id));
-  const shared = { providers, startStr, endStr, windowDays, tier, tagColumns, tagIdSet, dimensions, accountMap } as const;
+  const tagSqlColumns = tagSqlColumnsById(dimensions.tags);
+  const shared = { providers, startStr, endStr, windowDays, tier, tagColumns, tagSqlColumns, dimensions, accountMap } as const;
 
   if (periods.length === 0) {
     return { empty: true, source: '', whereStr: '', ...shared };
@@ -286,42 +255,6 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
     tier, periods, providers, dimensions, filterPredicate, accountReverseMap,
   });
   return { empty: false, source, whereStr, ...shared };
-}
-
-function appendRowFilters(
-  baseWhere: string,
-  rowFilters: Record<string, string> | undefined,
-  tagIdSet: ReadonlySet<string>,
-): string {
-  if (rowFilters === undefined) return baseWhere;
-  const extra: string[] = [];
-  for (const [col, val] of Object.entries(rowFilters)) {
-    if (val.length === 0) continue;
-    if (!SORTABLE_SCALAR_COLUMNS.has(col) && !tagIdSet.has(col)) continue;
-    const escaped = val.replaceAll("'", "''");
-    const colExpr = col === 'usage_date' ? `usage_date::VARCHAR` : col;
-    extra.push(`${colExpr} = '${escaped}'`);
-  }
-  if (extra.length === 0) return baseWhere;
-  const joined = extra.join(' AND ');
-  if (baseWhere.length === 0) return `WHERE ${joined}`;
-  return `${baseWhere} AND ${joined}`;
-}
-
-const AGG_SORT_COLUMNS: Record<string, (dir: string) => string> = {
-  cost: (dir) => `SUM(cost) ${dir}`,
-  list_cost: (dir) => `SUM(list_cost) ${dir}`,
-  usage_amount: (dir) => `SUM(usage_amount) ${dir}`,
-  row_count: (dir) => `COUNT(*) ${dir}`,
-};
-
-function resolveAggregatedSort(sort: ExplorerSort | undefined, groupByColumns: readonly string[]): string {
-  if (sort === undefined) return 'SUM(cost) DESC';
-  const dir = sort.direction === 'asc' ? 'ASC' : 'DESC';
-  const fn = AGG_SORT_COLUMNS[sort.column];
-  if (fn !== undefined) return fn(dir);
-  if (groupByColumns.includes(sort.column)) return `${sort.column} ${dir}`;
-  return 'SUM(cost) DESC';
 }
 
 /** The dashboard Table widget hits the overview with the GLOBAL cost scope and
@@ -486,10 +419,8 @@ export function registerExplorerHandlers(app: AppContext): void {
 
     if (qc.empty) return { sampleRows: [], tagColumns: qc.tagColumns };
 
-    const tagSelectSql = qc.tagColumns.length > 0
-      ? qc.tagColumns.map(t => `COALESCE(${t.id}, '') AS ${t.id}`).join(',\n          ')
-      : null;
-    const orderBy = buildOrderBy(params.sort, qc.tagIdSet);
+    const tagSelects = tagSelectItems(qc.tagSqlColumns);
+    const orderBy = explorerOrderBy(params.sort, qc.tagSqlColumns);
     // Hourly tier exposes `usage_hour` as a TIMESTAMP in the source — cast
     // to VARCHAR so it survives IPC cleanly. Daily has no usage_hour
     // column, so emit a literal empty string.
@@ -502,7 +433,7 @@ export function registerExplorerHandlers(app: AppContext): void {
         charge_category, operation, sku_meter, description, resource_id,
         CAST(usage_amount AS DOUBLE) AS usage_amount,
         CAST(cost AS DOUBLE) AS cost,
-        CAST(list_cost AS DOUBLE) AS list_cost${tagSelectSql === null ? '' : `,\n        ${tagSelectSql}`}
+        CAST(list_cost AS DOUBLE) AS list_cost${tagSelects.length === 0 ? '' : `,\n        ${tagSelects.join(',\n        ')}`}
       FROM ${qc.source}
       ${qc.whereStr}
       ORDER BY ${orderBy}
@@ -512,31 +443,24 @@ export function registerExplorerHandlers(app: AppContext): void {
     let sampleRows: readonly ExplorerSampleRow[] = [];
     try {
       const rows = await runQuery(sampleSql);
-      sampleRows = rows.map(r => {
-        const tags: Record<string, string> = {};
-        for (const t of qc.tagColumns) {
-          const v = r[t.id];
-          tags[t.id] = typeof v === 'string' ? v : '';
-        }
-        return {
-          date: toStr(r['usage_date']),
-          hour: toStr(r['usage_hour']),
-          accountId: toStr(r['account_id']),
-          accountName: toStr(r['account_name']),
-          region: toStr(r['region']),
-          service: toStr(r['service']),
-          serviceCategory: toStr(r['service_category']),
-          chargeCategory: toStr(r['charge_category']),
-          operation: toStr(r['operation']),
-          skuMeter: toStr(r['sku_meter']),
-          description: toStr(r['description']),
-          resourceId: toStr(r['resource_id']),
-          usageAmount: toNum(r['usage_amount']),
-          cost: toNum(r['cost']),
-          listCost: toNum(r['list_cost']),
-          tags,
-        };
-      });
+      sampleRows = rows.map(r => ({
+        date: toStr(r['usage_date']),
+        hour: toStr(r['usage_hour']),
+        accountId: toStr(r['account_id']),
+        accountName: toStr(r['account_name']),
+        region: toStr(r['region']),
+        service: toStr(r['service']),
+        serviceCategory: toStr(r['service_category']),
+        chargeCategory: toStr(r['charge_category']),
+        operation: toStr(r['operation']),
+        skuMeter: toStr(r['sku_meter']),
+        description: toStr(r['description']),
+        resourceId: toStr(r['resource_id']),
+        usageAmount: toNum(r['usage_amount']),
+        cost: toNum(r['cost']),
+        listCost: toNum(r['list_cost']),
+        tags: tagValuesById(r, qc.tagSqlColumns),
+      }));
     } catch (err) {
       logger.warn(`explorer: sample query failed: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -551,13 +475,11 @@ export function registerExplorerHandlers(app: AppContext): void {
 
     if (qc.empty) return { rows: [], totalRows: 0, tagColumns: qc.tagColumns };
 
-    const whereStr = appendRowFilters(qc.whereStr, params.rowFilters, qc.tagIdSet);
+    const whereStr = appendRowFilters(qc.whereStr, params.rowFilters, qc.tagSqlColumns);
 
-    const groupByColumns = params.groupByColumns.filter(
-      col => SORTABLE_SCALAR_COLUMNS.has(col) || qc.tagIdSet.has(col),
-    );
+    const groupBy = explorerGroupBy(params.groupByColumns, qc.tagSqlColumns);
 
-    if (groupByColumns.length === 0) {
+    if (groupBy.length === 0) {
       const sql = `
         SELECT
           CAST(SUM(cost) AS DOUBLE) AS cost,
@@ -577,47 +499,38 @@ export function registerExplorerHandlers(app: AppContext): void {
       };
     }
 
-    const selectCols = groupByColumns.map(col => {
-      if (col === 'usage_date') return `usage_date::VARCHAR AS usage_date`;
-      return col;
-    });
-    const orderBy = resolveAggregatedSort(params.sort, groupByColumns);
+    const groupByList = groupBy.map(g => g.column).join(', ');
+    const orderBy = aggregatedOrderBy(params.sort, groupBy);
 
     const countSql = `
       SELECT CAST(COUNT(*) AS DOUBLE) AS n FROM (
         SELECT 1 FROM ${qc.source} ${whereStr}
-        GROUP BY ${groupByColumns.join(', ')}
+        GROUP BY ${groupByList}
       ) AS _cnt
     `.trim();
     const dataSql = `
       SELECT
-        ${selectCols.join(', ')},
+        ${groupBySelectList(groupBy)},
         CAST(SUM(cost) AS DOUBLE) AS cost,
         CAST(SUM(list_cost) AS DOUBLE) AS list_cost,
         CAST(SUM(usage_amount) AS DOUBLE) AS usage_amount,
         CAST(COUNT(*) AS DOUBLE) AS row_count
       FROM ${qc.source}
       ${whereStr}
-      GROUP BY ${groupByColumns.join(', ')}
+      GROUP BY ${groupByList}
       ORDER BY ${orderBy}
       LIMIT ${String(rowLimit)}
     `.trim();
 
     const [countResult, dataResult] = await Promise.all([runQuery(countSql), runQuery(dataSql)]);
     const totalRows = countResult[0] === undefined ? 0 : toNum(countResult[0]['n']);
-    const resultRows: AggregatedTableRow[] = dataResult.map(r => {
-      const values: Record<string, string> = {};
-      for (const col of groupByColumns) {
-        values[col] = toStr(r[col]);
-      }
-      return {
-        values,
-        cost: toNum(r['cost']),
-        listCost: toNum(r['list_cost']),
-        usageAmount: toNum(r['usage_amount']),
-        rowCount: toNum(r['row_count']),
-      };
-    });
+    const resultRows: AggregatedTableRow[] = dataResult.map(r => ({
+      values: groupByValues(r, groupBy),
+      cost: toNum(r['cost']),
+      listCost: toNum(r['list_cost']),
+      usageAmount: toNum(r['usage_amount']),
+      rowCount: toNum(r['row_count']),
+    }));
 
     return { rows: resultRows, totalRows, tagColumns: qc.tagColumns };
   }));

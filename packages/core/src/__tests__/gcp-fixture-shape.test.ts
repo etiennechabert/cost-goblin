@@ -3,7 +3,7 @@ import { DuckDBInstance } from '@duckdb/node-api';
 import { join } from 'node:path';
 import { buildSource } from '../query/builder.js';
 import type { DimensionsConfig } from '../types/config.js';
-import { asDimensionId, asProviderName } from '../types/branded.js';
+import { asDimensionId, asProviderName, tagSqlColumn } from '../types/branded.js';
 import { FIXTURE_GCP_PROVIDER_NAME, FIXTURE_PROVIDER_NAME } from '../__fixtures__/layout.js';
 
 /**
@@ -118,11 +118,12 @@ describe('the fixture tree serves a mixed workspace', () => {
     // Derived from the same synthetic rows on purpose: a mixed query has to
     // have something to get wrong. If the tag expression failed on one branch
     // the owner totals would come from a single provider.
-    const rows = await rowsOf(`SELECT tag_team, COUNT(DISTINCT provider) AS providers
+    const team = tagSqlColumn({ tagName: 'team' });
+    const rows = await rowsOf(`SELECT ${team} AS team, COUNT(DISTINCT provider) AS providers
       FROM ${source([FIXTURE_PROVIDER_NAME, FIXTURE_GCP_PROVIDER_NAME])}
-      WHERE tag_team IS NOT NULL AND tag_team <> ''
+      WHERE ${team} IS NOT NULL AND ${team} <> ''
       GROUP BY 1 ORDER BY 1`);
     expect(rows.length).toBeGreaterThan(0);
-    for (const r of rows) expect(Number(r['providers']), String(r['tag_team'])).toBe(2);
+    for (const r of rows) expect(Number(r['providers']), String(r['team'])).toBe(2);
   });
 });

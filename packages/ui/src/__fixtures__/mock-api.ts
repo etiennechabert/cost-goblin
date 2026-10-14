@@ -69,7 +69,7 @@ import {
   type ExplorerPreferences,
   type ExplorerPreferencesUpdate,
 } from '@costgoblin/core/browser';
-import { DEFAULT_COST_SCOPE, DEFAULT_EXPLORER_HIDDEN_COLUMNS, computeRollupEstimate } from '@costgoblin/core/browser';
+import { DEFAULT_COST_SCOPE, DEFAULT_EXPLORER_HIDDEN_COLUMNS, computeRollupEstimate, tagSqlColumn } from '@costgoblin/core/browser';
 
 const MOCK_PEER_HOST = 'mock-peer.local';
 
@@ -509,6 +509,8 @@ export class MockCostApi implements CostApi {
     const hasResourceId = candidate.builtIn.some(d => d.field === 'resource_id' && enabled(d));
     const probeLineItems = 2_100_000;
     const probeGrainRows = hasResourceId ? 1_840_000 : 92_000;
+    // The handler reports tags under their SQL column, as the rollup stores them.
+    const teamColumn = tagSqlColumn({ tagName: 'team' });
     // leaveOneOutGrainRows = grain with that dim removed. With resource_id
     // enabled it dominates (removing it collapses the grain ~20×); the others
     // are near-redundant (loo ≈ full grain → ≈ ×1).
@@ -516,13 +518,13 @@ export class MockCostApi implements CostApi {
       ? [
           { column: 'account_id', cardinality: 14, leaveOneOutGrainRows: 1_800_000 },
           { column: 'service', cardinality: 38, leaveOneOutGrainRows: 1_780_000 },
-          { column: 'tag_team', cardinality: 22, leaveOneOutGrainRows: 1_820_000 },
+          { column: teamColumn, cardinality: 22, leaveOneOutGrainRows: 1_820_000 },
           { column: 'resource_id', cardinality: 1_820_000, leaveOneOutGrainRows: 92_000 },
         ]
       : [
           { column: 'account_id', cardinality: 14, leaveOneOutGrainRows: 84_000 },
           { column: 'service', cardinality: 38, leaveOneOutGrainRows: 66_000 },
-          { column: 'tag_team', cardinality: 22, leaveOneOutGrainRows: 88_000 },
+          { column: teamColumn, cardinality: 22, leaveOneOutGrainRows: 88_000 },
         ];
     return Promise.resolve(computeRollupEstimate({
       probePeriod: '2026-04',

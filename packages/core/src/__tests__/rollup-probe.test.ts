@@ -9,7 +9,7 @@ import { computeRollupEstimate } from '../rollup/estimator.js';
 import { FIXTURE_PROVIDER_NAME } from '../__fixtures__/layout.js';
 import type { DimensionsConfig } from '../types/config.js';
 import type { CostScopeConfig } from '../types/cost-scope.js';
-import { asDimensionId, asProviderName } from '../types/branded.js';
+import { asDimensionId, asProviderName, tagSqlColumn } from '../types/branded.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SYNTHETIC_DIR = join(__dirname, '..', '__fixtures__', 'synthetic');
@@ -113,7 +113,7 @@ describe('buildGrainProbeQuery identifier checks', () => {
   it('builds the default-config probe unchanged', () => {
     const sql = buildGrainProbeQuery(PERIOD, rollupGrainColumns(stableGrain), opts);
     expect(sql).toContain(
-      'CAST(COUNT(DISTINCT hash(concat_ws(chr(31), usage_date, account_id, account_name, region, service, tag_environment, tag_team))) AS BIGINT) AS grain_rows',
+      `CAST(COUNT(DISTINCT hash(concat_ws(chr(31), usage_date, account_id, account_name, region, service, ${tagSqlColumn({ tagName: 'environment' })}, ${tagSqlColumn({ tagName: 'team' })}))) AS BIGINT) AS grain_rows`,
     );
   });
 });

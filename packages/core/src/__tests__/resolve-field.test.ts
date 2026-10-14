@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { resolveField, tryResolveField } from '../query/builder.js';
 import { SecurityError } from '../query/identifier-validator.js';
 import type { DimensionsConfig } from '../types/config.js';
-import { asDimensionId } from '../types/branded.js';
+import { asDimensionId, tagSqlColumn } from '../types/branded.js';
 
 const testDimensions: DimensionsConfig = {
   builtIn: [
@@ -47,16 +47,25 @@ describe('resolveField', () => {
     expect(resolved.fieldExpr).toContain('EC2');
   });
 
-  it('resolves a tag dimension by its tag column id', () => {
+  it('resolves a tag dimension by its id to its SQL column', () => {
     const resolved = resolveField(asDimensionId('tag_cost_center'), testDimensions);
-    expect(resolved.rawField).toBe('tag_cost_center');
-    expect(resolved.fieldExpr).toBe('tag_cost_center');
+    expect(resolved.rawField).toBe(tagSqlColumn({ tagName: 'cost-center' }));
+    expect(resolved.fieldExpr).toBe(tagSqlColumn({ tagName: 'cost-center' }));
+  });
+
+  it('matches tag ids case-sensitively, so STAGE and stage resolve to their own columns', () => {
+    const dims: DimensionsConfig = {
+      builtIn: [],
+      tags: [{ tagName: 'STAGE', label: 'STAGE' }, { tagName: 'stage', label: 'stage' }],
+    };
+    expect(resolveField(asDimensionId('tag_STAGE'), dims).rawField).toBe(tagSqlColumn({ tagName: 'STAGE' }));
+    expect(resolveField(asDimensionId('tag_stage'), dims).rawField).toBe(tagSqlColumn({ tagName: 'stage' }));
   });
 
   it('applies normalization to a tag dimension', () => {
     const resolved = resolveField(asDimensionId('tag_team'), testDimensions);
-    expect(resolved.rawField).toBe('tag_team');
-    expect(resolved.fieldExpr).not.toBe('tag_team');
+    expect(resolved.rawField).toBe(tagSqlColumn({ tagName: 'team' }));
+    expect(resolved.fieldExpr).not.toBe(resolved.rawField);
   });
 
   it('throws SecurityError for an unknown dimension id', () => {

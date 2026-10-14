@@ -3,6 +3,7 @@ import type { Dirent } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import {
   classifyPackPath,
+  describePeerConnectError,
   encodeSharingKey,
   fetchFile,
   fetchManifest,
@@ -120,7 +121,7 @@ async function connect(payload: SharingKeyPayload): Promise<{ endpoint: PeerEndp
   const psk = Buffer.from(payload.psk, 'base64url');
   let endpoint: PeerEndpoint | null = null;
   let signed: SignedPackManifest | null = null;
-  let lastError: unknown = null;
+  const errors: unknown[] = [];
   for (const host of payload.hosts) {
     try {
       const candidate: PeerEndpoint = { host, port: payload.port, psk };
@@ -128,11 +129,11 @@ async function connect(payload: SharingKeyPayload): Promise<{ endpoint: PeerEndp
       endpoint = candidate;
       break;
     } catch (err: unknown) {
-      lastError = err;
+      errors.push(err);
     }
   }
   if (endpoint === null || signed === null) {
-    throw new Error(`Could not reach the shared source. ${errorMessage(lastError)}`);
+    throw new Error(`Could not reach the shared source. ${describePeerConnectError(errors, process.platform)}`);
   }
   if (!verifyManifestSignature(signed)) {
     throw new Error('Snapshot signature is invalid — refusing to import.');

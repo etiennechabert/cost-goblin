@@ -2,7 +2,7 @@ import { ipcMain } from 'electron';
 import { applyNormalizationRule, buildGrainProbeQuery, buildSource, computeRollupEstimate, dimensionsConfigToYaml, emptyRollupEstimate, generateAliasSuggestions, isStringRecord, rollupGrainColumns, rollupGrainDimensions, sqlEscapeString } from '@costgoblin/core';
 import type { AliasSuggestion, ColumnValuesPreview, DimensionsConfig, NormalizationRule, RollupGrainEstimate } from '@costgoblin/core';
 import { type AppContext, loadOrgAccountsMap } from './context.js';
-import { parseDimensionsPayload, parseDimensionsSavePayload } from './dimensions-payload.js';
+import { parseDimensionsPayload, parseDimensionsRewritePayload, parseDimensionsSavePayload, withAcceptedAliasSuggestion } from './dimensions-payload.js';
 import { applyNormalizeAndStrip, mergeValuesByLabel, NO_STRIP_ISSUES, parsePreviewStripPatterns, type ValueCostPair } from './dimensions-preview.js';
 import { rawGlobLiteral, toNum, toStr } from './query-utils.js';
 import { tagDiscoverySince } from './query-windows.js';
@@ -214,8 +214,11 @@ export function registerDimensionsHandlers(app: AppContext): void {
   // renderer payload (or an edited draft) can never persist a dimensions.yaml
   // that fails the next load — it is rejected here, visibly, instead.
   async function saveDimensionsConfig(payload: unknown): Promise<void> {
-    // Persisting: over-limit nameStripPatterns are rejected, not dropped.
-    const config = parseDimensionsSavePayload(payload);
+    // Persisting: over-limit nameStripPatterns and tag-id clashes are rejected.
+    await writeDimensionsConfig(parseDimensionsSavePayload(payload));
+  }
+
+  async function writeDimensionsConfig(config: DimensionsConfig): Promise<void> {
     const yaml = await import('yaml');
     const fs = await import('node:fs/promises');
     await fs.writeFile(ctx.dimensionsPath, yaml.stringify(dimensionsConfigToYaml(config)));
@@ -357,20 +360,10 @@ export function registerDimensionsHandlers(app: AppContext): void {
   });
 
   ipcMain.handle('dimensions:accept-suggestion', async (_event, tagName: string, canonical: string, aliases: string[]): Promise<void> => {
-    const config = await getDimensions();
-    const tagIndex = config.tags.findIndex(t => t.tagName === tagName);
-    if (tagIndex === -1) return;
-    const tag = config.tags[tagIndex];
-    if (tag === undefined) return;
-
-    const existing = tag.aliases ?? {};
-    const updatedAliases: Record<string, readonly string[]> = { ...existing, [canonical]: aliases };
-    const updatedTags = [
-      ...config.tags.slice(0, tagIndex),
-      { ...tag, aliases: updatedAliases },
-      ...config.tags.slice(tagIndex + 1),
-    ];
-    await saveDimensionsConfig({ ...config, tags: updatedTags });
+    const updated = withAcceptedAliasSuggestion(await getDimensions(), tagName, canonical, aliases);
+    if (updated === null) return;
+    // A write-back of the loaded config: a tag-id clash it already had isn't refused.
+    await writeDimensionsConfig(parseDimensionsRewritePayload(updated));
   });
 }
 
