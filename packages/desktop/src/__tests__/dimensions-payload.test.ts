@@ -1,6 +1,6 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { ConfigValidationError, logger } from '@costgoblin/core';
-import { parseDimensionsPayload, parseDimensionsSavePayload } from '../main/handlers/dimensions-payload.js';
+import { parseDimensionsPayload, parseDimensionsRewritePayload, parseDimensionsSavePayload, withAcceptedAliasSuggestion } from '../main/handlers/dimensions-payload.js';
 import { DEFAULT_BUILT_INS } from '../main/handlers/dimensions-merge.js';
 import { rawGlobLiteral } from '../main/handlers/query-utils.js';
 
@@ -61,6 +61,53 @@ describe('parseDimensionsPayload', () => {
 
     it('rejects the payload when saving', () => {
       expect(() => parseDimensionsSavePayload(payload)).toThrow(/same dimension id, tag_cost_center/);
+    });
+  });
+
+  // An accepted alias suggestion writes back the config the main process
+  // loaded. A clash already in it isn't this write's doing: refusing it would
+  // make every suggestion fail until the user fixed the clash in Dimensions.
+  describe('writing back a loaded config (accepted alias suggestion)', () => {
+    afterEach(() => { vi.restoreAllMocks(); });
+
+    const clash = {
+      builtIn: [],
+      tags: [{ tagName: 'cost-center', label: 'Cost Center' }, { tagName: 'cost_center', label: 'Cost center', enabled: false }],
+    };
+
+    it('keeps a tag-id clash it already had, with the later tag disabled', () => {
+      expect(parseDimensionsRewritePayload(clash).tags.map(t => t.enabled)).toEqual([undefined, false]);
+    });
+
+    it('still validates what the renderer sent, like a save', () => {
+      vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+      const seventeen = Array.from({ length: 17 }, (_, i) => `^p${String(i)}-`);
+      expect(() => parseDimensionsRewritePayload({
+        builtIn: [{ name: 'account', label: 'Account', field: 'account_id', nameStripPatterns: seventeen }],
+        tags: [],
+      })).toThrow(ConfigValidationError);
+      expect(() => parseDimensionsRewritePayload({ builtIn: [], tags: [{ tagName: "x'", label: 'X' }] })).toThrow(ConfigValidationError);
+    });
+  });
+
+  describe('withAcceptedAliasSuggestion', () => {
+    const config = {
+      builtIn: [],
+      tags: [
+        { tagName: 'env', label: 'Env', aliases: { prod: ['production'] } },
+        { tagName: 'team', label: 'Team' },
+      ],
+    };
+
+    it('adds the canonical value and its aliases to the named tag only', () => {
+      expect(withAcceptedAliasSuggestion(config, 'env', 'dev', ['development'])?.tags).toEqual([
+        { tagName: 'env', label: 'Env', aliases: { prod: ['production'], dev: ['development'] } },
+        { tagName: 'team', label: 'Team' },
+      ]);
+    });
+
+    it('returns null for a tag that is not a dimension', () => {
+      expect(withAcceptedAliasSuggestion(config, 'owner', 'a', ['b'])).toBeNull();
     });
   });
 
