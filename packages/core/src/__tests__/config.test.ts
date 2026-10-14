@@ -7,7 +7,7 @@ import { logger } from '../logger/logger.js';
 import { dimensionsConfigToYaml } from '../config/dimensions-serialize.js';
 import type { AwsProviderConfig, DimensionsConfig, GcpProviderConfig, ProviderConfig } from '../types/config.js';
 import { OU_PATH_SOURCE_KEY } from '../types/config.js';
-import { asDimensionId } from '../types/branded.js';
+import { asDimensionId, tagSqlColumn } from '../types/branded.js';
 
 const fixturesDir = join(import.meta.dirname, '..', '__fixtures__', 'config');
 
@@ -421,6 +421,7 @@ describe('validateDimensions', () => {
   it('rejects two tag keys whose SQL columns collide anyway', () => {
     // Same lowercase slug and same 32-bit hash (found by brute force), so
     // DuckDB would read both tags from one column.
+    expect(tagSqlColumn({ tagName: 'CoStCEntEReNVIRonment' })).toBe(tagSqlColumn({ tagName: 'CostCEntEREnviROnment' }));
     expect(() => validateDimensions({
       builtIn: [],
       tags: [

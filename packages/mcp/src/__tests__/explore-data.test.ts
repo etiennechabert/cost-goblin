@@ -174,6 +174,28 @@ describe('explore_data', () => {
     expect(call?.sql).toContain(`ORDER BY ${column} ASC`);
   });
 
+  it('also accepts the SQL column list_dimensions shows for a tag', async () => {
+    const column = tagSqlColumn({ tagName: 'team' });
+    const result = await exploreData(ctx, {
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+      groupByColumns: [column],
+      format: 'json',
+    });
+    expect(result.content[0].text).toContain('Aggregated Data');
+    expect(calls.find(c => c.kind === 'prepared')?.sql).toContain(`GROUP BY ${column}`);
+  });
+
+  it('falls back to the cost sort when a grouped query sorts on an ungrouped column', async () => {
+    const result = await exploreData(ctx, {
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+      groupByColumns: ['service'],
+      sort: { column: 'region', direction: 'asc' },
+      format: 'json',
+    });
+    expect(result.content[0].text).toContain('Aggregated Data');
+    expect(calls.find(c => c.kind === 'prepared')?.sql).toContain('ORDER BY SUM(cost) DESC');
+  });
+
   it('drops a tag_ column that names no configured tag dimension', async () => {
     const result = await exploreData(ctx, {
       dateRange: { start: '2026-01-01', end: '2026-01-31' },

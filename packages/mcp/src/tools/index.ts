@@ -213,7 +213,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
         dateRange: dateRangeSchema,
         filters: filtersSchema,
         groupByColumns: z.array(z.string()).optional()
-          .describe('Columns to GROUP BY for aggregation (e.g. ["service", "region"]). Omit for raw rows.'),
+          .describe('Columns to GROUP BY for aggregation (e.g. ["service", "region"]); a tag dimension is accepted by its ID or SQL Column from list_dimensions. Omit for raw rows.'),
         sort: z.object({
           column: z.string(),
           direction: z.enum(['asc', 'desc']),

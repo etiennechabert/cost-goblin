@@ -4,8 +4,8 @@ import {
   computePeriodsInRange,
   logger,
   QueryBuilder,
-  tagDimColumn,
   tagSqlColumn,
+  tagSqlColumnsById,
 } from '@costgoblin/core';
 import type { DateRange, DimensionsConfig } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
@@ -33,23 +33,28 @@ const VALID_COLUMNS: ReadonlySet<string> = new Set([
   'description', 'resource_id', 'usage_amount', 'cost', 'list_cost',
 ]);
 
-/** The SQL column behind a caller-supplied column: a VALID_COLUMNS name is its
- *  own column, a tag dimension id (`tag_team`, as list_dimensions shows it)
- *  maps to its tagSqlColumn. Null for anything else: these land in bare SQL
- *  positions (SELECT/GROUP BY/ORDER BY), so only allow-listed names get in. */
-function sqlColumnFor(col: string, dimensions: DimensionsConfig): string | null {
-  if (VALID_COLUMNS.has(col)) return col;
-  const tag = dimensions.tags.find(t => tagDimColumn(t) === col);
-  return tag === undefined ? null : tagSqlColumn(tag);
+/** Every name a caller may use for a column, mapped to the SQL column behind
+ *  it: a VALID_COLUMNS name is its own column, and a tag is reachable by its
+ *  dimension id (`tag_team`) or its SQL column (`tag_team_<hash>`), both of
+ *  which list_dimensions shows. Anything else is refused: these land in bare
+ *  SQL positions (SELECT/GROUP BY/ORDER BY), so only allow-listed names get in. */
+function columnsByName(dimensions: DimensionsConfig): ReadonlyMap<string, string> {
+  const columns = new Map<string, string>();
+  for (const c of VALID_COLUMNS) columns.set(c, c);
+  for (const t of dimensions.tags) {
+    const column = tagSqlColumn(t);
+    columns.set(column, column);
+  }
+  for (const [id, column] of tagSqlColumnsById(dimensions.tags)) {
+    if (!columns.has(id)) columns.set(id, column);
+  }
+  return columns;
 }
 
 function sortDirectionSql(direction: 'asc' | 'desc'): string {
   return direction === 'asc' ? 'ASC' : 'DESC';
 }
 
-function groupedSortColumn(column: string): string {
-  return column === 'cost' ? 'SUM(cost)' : column;
-}
 
 /** A group-by column: the caller's name (used for the output) and its SQL column. */
 interface GroupByColumn {
@@ -115,11 +120,12 @@ export async function exploreData(
     costMetric: scopeMetric,
   });
 
+  const allowedColumns = columnsByName(dimensions);
   const groupBy: GroupByColumn[] = (params.groupByColumns ?? []).flatMap(key => {
-    const column = sqlColumnFor(key, dimensions);
-    return column === null ? [] : [{ key, column }];
+    const column = allowedColumns.get(key);
+    return column === undefined ? [] : [{ key, column }];
   });
-  const sortColumn = params.sort === undefined ? null : sqlColumnFor(params.sort.column, dimensions);
+  const sortColumn = params.sort === undefined ? undefined : allowedColumns.get(params.sort.column);
 
   logger.info('explore-data', { dateRange, grouped: groupBy.length > 0 });
 
@@ -131,8 +137,11 @@ export async function exploreData(
       column === 'usage_date' ? `usage_date::VARCHAR AS usage_date` : column,
     );
     const groupByList = groupBy.map(g => g.column).join(', ');
-    const sortExpr = params.sort !== undefined && sortColumn !== null
-      ? `${groupedSortColumn(sortColumn)} ${sortDirectionSql(params.sort.direction)}`
+    // A grouped query can only order by cost or by a grouped column; anything
+    // else is not in scope after GROUP BY, so it falls back to the cost sort.
+    const groupedSortExpr = sortColumn === 'cost' ? 'SUM(cost)' : groupBy.find(g => g.column === sortColumn)?.column;
+    const sortExpr = params.sort !== undefined && groupedSortExpr !== undefined
+      ? `${groupedSortExpr} ${sortDirectionSql(params.sort.direction)}`
       : 'SUM(cost) DESC';
 
     const aggCols = [
@@ -177,7 +186,7 @@ export async function exploreData(
     return structuredToolResult(result, format);
   }
 
-  const sortExpr = params.sort !== undefined && sortColumn !== null
+  const sortExpr = params.sort !== undefined && sortColumn !== undefined
     ? `${sortColumn} ${sortDirectionSql(params.sort.direction)}`
     : 'ABS(cost) DESC';
 

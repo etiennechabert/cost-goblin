@@ -13,6 +13,7 @@ import {
   computePeriodsInRange,
   logger,
   tagDimColumn,
+  tagSqlColumnsById,
 } from '@costgoblin/core';
 import type {
   CostScopeConfig,
@@ -24,7 +25,7 @@ import type {
 } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
 import type { AppContext } from './context.js';
-import { tagSqlColumnsById, toNum } from './query-utils.js';
+import { toNum } from './query-utils.js';
 import { costScopePreviewWindow } from './query-windows.js';
 
 const SAMPLE_ROW_LIMIT = 500;
@@ -179,7 +180,7 @@ export function registerCostScopeHandlers(app: AppContext): void {
       label: t.label,
     }));
     // The renderer keys tags by id; the SQL reads each tag's own column.
-    const tagSqlColumns = tagSqlColumnsById(dimensions);
+    const tagSqlColumns = tagSqlColumnsById(dimensions.tags);
     const tagSqlColumnList = [...tagSqlColumns.values()];
 
     // === Query 1: every aggregate in one scan ===

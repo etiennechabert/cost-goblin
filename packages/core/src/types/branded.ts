@@ -1,3 +1,5 @@
+import { OU_PATH_SOURCE_KEY } from './config.js';
+
 type Brand<T, B extends string> = T & { readonly __brand: B };
 
 export type DimensionId = Brand<string, 'DimensionId'>;
@@ -65,7 +67,7 @@ interface TagColumnSource {
 export function tagSourceKey(t: TagColumnSource): string {
   if (t.tagName !== undefined && t.tagName.length > 0) return t.tagName;
   const fallback = t.accountTagFallback;
-  if (fallback === '__ouPath__') return 'ou_path';
+  if (fallback === OU_PATH_SOURCE_KEY) return 'ou_path';
   if (fallback !== undefined && fallback.length > 0) return fallback;
   return 'unknown';
 }
@@ -89,6 +91,18 @@ export function tagDimColumn(t: TagColumnSource): string {
 export function tagSqlColumn(t: TagColumnSource): string {
   const key = tagSourceKey(t);
   return `tag_${key.toLowerCase().replaceAll(/[^a-z0-9]/g, '_')}_${fnv1a32Hex(key)}`;
+}
+
+/** Tag dimension id → SQL column, in config order: how a consumer that speaks
+ *  ids (the renderer, MCP clients) finds the column DuckDB reads. A repeated
+ *  id keeps its first tag, as resolveField does. */
+export function tagSqlColumnsById(tags: readonly TagColumnSource[]): ReadonlyMap<string, string> {
+  const columns = new Map<string, string>();
+  for (const t of tags) {
+    const id = tagDimColumn(t);
+    if (!columns.has(id)) columns.set(id, tagSqlColumn(t));
+  }
+  return columns;
 }
 
 /** FNV-1a (32-bit) over the code points, as 8 hex digits. Not cryptographic: it

@@ -9,6 +9,7 @@ import {
   logger,
   resolveField,
   tagDimColumn,
+  tagSqlColumnsById,
 } from '@costgoblin/core';
 import type {
   ExclusionRule,
@@ -34,7 +35,7 @@ import type {
 } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
 import { type AppContext, prefsPath } from './context.js';
-import { buildAccountReverseMap, columnForDimension, resolveRollupSource, tagSqlColumnsById, toNum, toStr } from './query-utils.js';
+import { buildAccountReverseMap, columnForDimension, resolveRollupSource, toNum, toStr } from './query-utils.js';
 import { explorerSqlColumn } from './explorer-columns.js';
 import { readExplorerPreferences, writeExplorerPreferences } from './explorer-prefs.js';
 import { resolveScopeMetric } from './explorer-scope.js';
@@ -245,7 +246,7 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
     id: tagDimColumn(t),
     label: t.label,
   }));
-  const tagSqlColumns = tagSqlColumnsById(dimensions);
+  const tagSqlColumns = tagSqlColumnsById(dimensions.tags);
   const shared = { providers, startStr, endStr, windowDays, tier, tagColumns, tagSqlColumns, dimensions, accountMap } as const;
 
   if (periods.length === 0) {

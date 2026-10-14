@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { isSafeColumnIdentifier } from '../query/identifier-validator.js';
-import { tagDimColumn, tagSqlColumn } from '../types/branded.js';
+import { tagDimColumn, tagSqlColumn, tagSqlColumnsById } from '../types/branded.js';
 import { OU_PATH_SOURCE_KEY } from '../types/config.js';
 
 /** DuckDB matches identifiers case-insensitively, even when quoted, so two
@@ -46,5 +46,24 @@ describe('tagSqlColumn', () => {
     expect(tagDimColumn({ tagName: 'STAGE' })).toBe('tag_STAGE');
     expect(tagDimColumn({ tagName: 'stage' })).toBe('tag_stage');
     expect(tagDimColumn({ tagName: 'cost-center' })).toBe('tag_cost_center');
+  });
+});
+
+describe('tagSqlColumnsById', () => {
+  const tags = [
+    { tagName: 'STAGE' },
+    { tagName: 'stage' },
+    { tagName: 'cost-center' },
+    { tagName: 'cost_center' },
+  ];
+
+  it('maps each tag id to its own SQL column, even when ids differ only by case', () => {
+    const columns = tagSqlColumnsById(tags);
+    expect(columns.get('tag_STAGE')).toBe(tagSqlColumn({ tagName: 'STAGE' }));
+    expect(columns.get('tag_stage')).toBe(tagSqlColumn({ tagName: 'stage' }));
+  });
+
+  it('keeps the first tag when two share an id, as resolveField does', () => {
+    expect(tagSqlColumnsById(tags).get('tag_cost_center')).toBe(tagSqlColumn({ tagName: 'cost-center' }));
   });
 });

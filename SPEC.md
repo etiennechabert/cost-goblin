@@ -1177,15 +1177,16 @@ cd packages/desktop && npm run check && npm run dev
 ### DuckDB Query Pattern
 
 ```typescript
+const team = tagSqlColumn({ tagName: 'team' }); // tag_team_<hash>, not the tag_team id
 const sql = `
   SELECT
-    tag_team AS entity,
+    ${team} AS entity,
     SUM(cost) AS total_cost,
     SUM(CASE WHEN service = 'AmazonEC2' THEN cost ELSE 0 END) AS ec2_cost,
     SUM(CASE WHEN service = 'AmazonRDS' THEN cost ELSE 0 END) AS rds_cost
   FROM read_parquet('${dataDir}/${providerName}/raw/daily-*/*.parquet')
   WHERE usage_date BETWEEN ? AND ?
-  GROUP BY tag_team
+  GROUP BY ${team}
   ORDER BY total_cost DESC
 `;
 ```
