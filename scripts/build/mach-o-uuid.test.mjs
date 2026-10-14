@@ -8,7 +8,7 @@
 // it is installed, and the hook's wiring in electron-builder.yml.
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as yaml from 'js-yaml';
@@ -19,6 +19,7 @@ import { MachOError, readMachOUuids, rewriteMachOUuids } from './mach-o-uuid.mjs
 const LC_UUID = 0x1b;
 const LC_SEGMENT_64 = 0x19;
 const LC_MAIN = 0x80000028;
+const LC_CODE_SIGNATURE = 0x1d;
 const CPU_ARM64 = 0x0100000c;
 const CPU_X86_64 = 0x01000007;
 
@@ -48,6 +49,19 @@ function thinMachO({ uuid = UUID_A, cputype = CPU_ARM64, is64 = true, commands }
   header.writeUInt32LE(cmds.length, 16);
   header.writeUInt32LE(body.length, 20);
   return Buffer.concat([header, body, Buffer.alloc(64, 0x33)]);
+}
+
+/** Like Electron's arm64 binaries, which ship ad-hoc (linker) signed; its x64
+ *  ones ship unsigned, like thinMachO(). */
+function signedMachO(opts = {}) {
+  return thinMachO({
+    ...opts,
+    commands: [
+      loadCommand(LC_SEGMENT_64, Buffer.alloc(64, 0x11)),
+      loadCommand(LC_UUID, opts.uuid ?? UUID_A),
+      loadCommand(LC_CODE_SIGNATURE, Buffer.alloc(8, 0x44)),
+    ],
+  });
 }
 
 /** A universal binary: big-endian fat header, each slice at a 0x1000 boundary. */
@@ -87,7 +101,16 @@ describe('readMachOUuids', () => {
   it('finds the LC_UUID of a thin 64-bit binary past the other load commands', () => {
     const bin = thinMachO();
     const found = readMachOUuids(bin);
-    expect(found).toEqual([{ offset: 32 + 72 + 8, uuid: '4C4C44F8-5555-3144-A1B8-270B7145EDA0' }]);
+    expect(found).toEqual([{ offset: 32 + 72 + 8, uuid: '4C4C44F8-5555-3144-A1B8-270B7145EDA0', signed: false }]);
+  });
+
+  it('says which slices carry a code signature the rewrite will break', () => {
+    expect(readMachOUuids(signedMachO()).map((u) => u.signed)).toEqual([true]);
+    const fat = fatMachO([
+      { cputype: CPU_X86_64, data: thinMachO({ cputype: CPU_X86_64 }) },
+      { cputype: CPU_ARM64, data: signedMachO({ uuid: UUID_B }) },
+    ]);
+    expect(readMachOUuids(fat).map((u) => u.signed)).toEqual([false, true]);
   });
 
   it('reads 32-bit thin binaries and both fat header widths', () => {
@@ -195,9 +218,9 @@ describe('afterPack hook', () => {
   });
   const executable = () => join(dir, 'CostGoblin.app', 'Contents', 'MacOS', 'CostGoblin');
   const hook = (hostPlatform) => createAfterPack({ hostPlatform, sign: async (file) => { signed.push(file); } });
-  const writeExecutable = () => {
+  const writeExecutable = (data = signedMachO()) => {
     mkdirSync(join(dir, 'CostGoblin.app', 'Contents', 'MacOS'), { recursive: true });
-    writeFileSync(executable(), thinMachO());
+    writeFileSync(executable(), data);
   };
 
   it('is what electron-builder loads as the default export', () => {
@@ -208,10 +231,17 @@ describe('afterPack hook', () => {
     writeExecutable();
     await hook('darwin')(context('darwin'));
     const [uuid] = readMachOUuids(readFileSync(executable()));
-    expect(uuid.uuid).toBe(rewriteMachOUuids(thinMachO(), 'com.costgoblin.app')[0].to);
+    expect(uuid.uuid).toBe(rewriteMachOUuids(signedMachO(), 'com.costgoblin.app')[0].to);
     // The rewrite breaks Electron's signature; an unsigned build (no
     // certificate) would otherwise be killed at launch on Apple Silicon.
     expect(signed).toEqual([executable()]);
+  });
+
+  it('leaves an executable that shipped unsigned unsigned, as Electron x64 does', async () => {
+    writeExecutable(thinMachO({ cputype: CPU_X86_64 }));
+    await hook('darwin')(context('darwin'));
+    expect(readMachOUuids(readFileSync(executable()))[0].uuid).not.toBe('4C4C44F8-5555-3144-A1B8-270B7145EDA0');
+    expect(signed).toEqual([]);
   });
 
   it('cannot re-sign off macOS, where codesign does not exist', async () => {
@@ -233,6 +263,17 @@ describe('afterPack hook', () => {
 });
 
 const electronExe = join(import.meta.dirname, '../../node_modules/electron/dist/Electron.app/Contents/MacOS/Electron');
+
+/** Like Electron's own linker signature, the ad-hoc one covers the executable
+ *  alone (what the kernel checks at launch), not the bundle's resources, so it
+ *  is verified on a copy outside the bundle. */
+function expectValidStandaloneSignature(exe, dir) {
+  const standalone = join(dir, 'standalone-executable');
+  writeFileSync(standalone, readFileSync(exe));
+  const verify = spawnSync('codesign', ['--verify', '--strict', standalone], { encoding: 'utf8' });
+  expect(verify.stderr).toBe('');
+  expect(verify.status).toBe(0);
+}
 
 describe.skipIf(!existsSync(electronExe))('the installed Electron binary', () => {
   it('has the LC_UUIDs dwarfdump reports, and only those bytes change', () => {
@@ -257,9 +298,34 @@ describe.skipIf(!existsSync(electronExe))('the installed Electron binary', () =>
       writeFileSync(exe, readFileSync(electronExe), { mode: 0o755 });
       await afterPack({ electronPlatformName: 'darwin', appOutDir: dir, packager: { appInfo: { productFilename: 'CostGoblin', id: 'com.costgoblin.app' } } });
       expect(readMachOUuids(readFileSync(exe)).map((u) => u.uuid)).not.toEqual(readMachOUuids(readFileSync(electronExe)).map((u) => u.uuid));
-      const verify = spawnSync('codesign', ['--verify', '--strict', exe], { encoding: 'utf8' });
-      expect(verify.stderr).toBe('');
-      expect(verify.status).toBe(0);
+      expectValidStandaloneSignature(exe, dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // The v0.8.6 x64 release job failed here: codesign given an executable inside
+  // a bundle signs the bundle, and refuses when nested code (Electron x64's
+  // frameworks) is unsigned. The executable must be signed on its own.
+  it.skipIf(process.platform !== 'darwin')('re-signs the executable even when the bundle holds unsigned frameworks', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'after-pack-nested-'));
+    try {
+      const app = join(dir, 'CostGoblin.app');
+      const exe = join(app, 'Contents', 'MacOS', 'CostGoblin');
+      const framework = join(app, 'Contents', 'Frameworks', 'Electron Framework.framework');
+      mkdirSync(join(app, 'Contents', 'MacOS'), { recursive: true });
+      mkdirSync(join(framework, 'Versions', 'A'), { recursive: true });
+      writeFileSync(exe, readFileSync(electronExe), { mode: 0o755 });
+      const frameworkBinary = join(framework, 'Versions', 'A', 'Electron Framework');
+      writeFileSync(frameworkBinary, readFileSync(electronExe), { mode: 0o755 });
+      expect(spawnSync('codesign', ['--remove-signature', frameworkBinary]).status).toBe(0);
+      symlinkSync('A', join(framework, 'Versions', 'Current'));
+      symlinkSync('Versions/Current/Electron Framework', join(framework, 'Electron Framework'));
+
+      await afterPack({ electronPlatformName: 'darwin', appOutDir: dir, packager: { appInfo: { productFilename: 'CostGoblin', id: 'com.costgoblin.app' } } });
+
+      expectValidStandaloneSignature(exe, dir);
+      expect(readdirSync(join(app, 'Contents', 'MacOS'))).toEqual(['CostGoblin']);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

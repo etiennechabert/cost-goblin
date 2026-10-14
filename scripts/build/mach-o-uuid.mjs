@@ -20,6 +20,7 @@ const MH_MAGIC_64 = 0xfeedfacf;
 const FAT_MAGIC = 0xcafebabe;
 const FAT_MAGIC_64 = 0xcafebabf;
 const LC_UUID = 0x1b;
+const LC_CODE_SIGNATURE = 0x1d;
 const UUID_COMMAND_SIZE = 24;
 
 export class MachOError extends Error {
@@ -40,7 +41,8 @@ function requireRange(buf, start, length, what) {
   }
 }
 
-/** Absolute offset of the one LC_UUID payload in the image at `base`. */
+/** Absolute offset of the one LC_UUID payload in the image at `base`, and
+ *  whether the image carries a code signature. */
 function findImageUuid(buf, base, end) {
   requireRange(buf, base, 4, 'Mach-O header');
   const magic = buf.readUInt32LE(base);
@@ -56,6 +58,7 @@ function findImageUuid(buf, base, end) {
   if (cmdsEnd > end) throw new MachOError('load commands run past the end of the image');
 
   let found = null;
+  let signed = false;
   let at = cmdsStart;
   for (let i = 0; i < ncmds; i++) {
     if (at + 8 > cmdsEnd) throw new MachOError('load commands run past sizeofcmds');
@@ -67,18 +70,21 @@ function findImageUuid(buf, base, end) {
       if (found !== null) throw new MachOError('image has more than one LC_UUID');
       found = at + 8;
     }
+    if (cmd === LC_CODE_SIGNATURE) signed = true;
     at += cmdsize;
   }
   if (found === null) throw new MachOError('image has no LC_UUID');
-  return found;
+  return { offset: found, signed };
 }
 
 /** Every LC_UUID in `buf`: one for a thin image, one per slice of a fat one.
- *  `offset` is where the 16 UUID bytes sit in `buf`. */
+ *  `offset` is where the 16 UUID bytes sit in `buf`; `signed` says the slice
+ *  has a code signature, which rewriting the UUID invalidates. Electron ships
+ *  its arm64 binaries ad-hoc signed and its x64 ones unsigned. */
 export function readMachOUuids(buf) {
   requireRange(buf, 0, 4, 'Mach-O header');
   const fatMagic = buf.readUInt32BE(0);
-  const offsets = [];
+  const images = [];
   if (fatMagic === FAT_MAGIC || fatMagic === FAT_MAGIC_64) {
     const is64 = fatMagic === FAT_MAGIC_64;
     const entrySize = is64 ? 32 : 20;
@@ -90,16 +96,16 @@ export function readMachOUuids(buf) {
       const offset = is64 ? Number(buf.readBigUInt64BE(at + 8)) : buf.readUInt32BE(at + 8);
       const size = is64 ? Number(buf.readBigUInt64BE(at + 16)) : buf.readUInt32BE(at + 12);
       requireRange(buf, offset, size, `fat slice ${i}`);
-      const uuidOffset = findImageUuid(buf, offset, offset + size);
+      const image = findImageUuid(buf, offset, offset + size);
       // Rewriting a slice twice would hash the already-rewritten UUID.
-      if (offsets.includes(uuidOffset)) throw new MachOError(`fat slice ${i} is listed more than once`);
-      offsets.push(uuidOffset);
+      if (images.some((seen) => seen.offset === image.offset)) throw new MachOError(`fat slice ${i} is listed more than once`);
+      images.push(image);
     }
-    if (offsets.length === 0) throw new MachOError('fat binary has no slices');
+    if (images.length === 0) throw new MachOError('fat binary has no slices');
   } else {
-    offsets.push(findImageUuid(buf, 0, buf.length));
+    images.push(findImageUuid(buf, 0, buf.length));
   }
-  return offsets.map((offset) => ({ offset, uuid: formatUuid(buf.subarray(offset, offset + 16)) }));
+  return images.map(({ offset, signed }) => ({ offset, uuid: formatUuid(buf.subarray(offset, offset + 16)), signed }));
 }
 
 /** A name-based (version 5 style, SHA-256) UUID from the app id and the
@@ -116,8 +122,8 @@ function derivedUuid(appId, original) {
  *  unsigned (or about-to-be re-signed) executable: it invalidates any existing
  *  code signature. */
 export function rewriteMachOUuids(buf, appId) {
-  return readMachOUuids(buf).map(({ offset, uuid }) => {
+  return readMachOUuids(buf).map(({ offset, uuid, signed }) => {
     derivedUuid(appId, buf.subarray(offset, offset + 16)).copy(buf, offset);
-    return { offset, from: uuid, to: formatUuid(buf.subarray(offset, offset + 16)) };
+    return { offset, from: uuid, to: formatUuid(buf.subarray(offset, offset + 16)), signed };
   });
 }
