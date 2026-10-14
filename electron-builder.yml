@@ -12,6 +12,11 @@ npmRebuild: false
 asar: true
 asarUnpack:
   - "node_modules/@duckdb/**"
+# Gives the macOS executable its own Mach-O UUID before signing. The stock
+# Electron UUID is shared by every app on the same Electron release, and macOS
+# keys Local Network privacy on it, so another app's deny (the dev Electron.app,
+# Slack, ...) would block peer-sharing pulls. No-op on Windows and Linux.
+afterPack: ./scripts/build/after-pack.mjs
 # No per-target `arch:` lists on purpose. Each release job runs ONE
 # electron-builder invocation per arch (`--<platform> --<arch>`) on a
 # matching-arch runner, so the CLI flag — not a pinned config list — selects the
@@ -28,6 +33,10 @@ mac:
     - zip
   category: public.app-category.business
   notarize: true
+  extendInfo:
+    # Shown in macOS's Local Network permission prompt. Pulling a teammate's
+    # shared configuration connects to their machine on the LAN.
+    NSLocalNetworkUsageDescription: CostGoblin connects to teammates' CostGoblin on your local network to import the configuration and cost data they share.
 win:
   target:
     - nsis
