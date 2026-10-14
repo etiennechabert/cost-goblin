@@ -25,6 +25,8 @@ export interface DuckDBPreparedStatement {
   bindVarchar: (index: number, value: string) => void;
   bindDouble: (index: number, value: number) => void;
   bindInteger: (index: number, value: number) => void;
+  bindBigInt: (index: number, value: bigint) => void;
+  bindHugeInt: (index: number, value: bigint) => void;
   bindBoolean: (index: number, value: boolean) => void;
   bindNull: (index: number) => void;
   run: () => Promise<DuckDBResult>;

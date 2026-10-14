@@ -11,6 +11,10 @@ export * from './models/index.js';
 export { QUERY_CANCELLED_MESSAGE } from './query/cancellation.js';
 export { buildDuckDbSandboxStatements, isDuckDbSandboxOptions } from './query/duckdb-sandbox.js';
 export type { DuckDbSandboxOptions } from './query/duckdb-sandbox.js';
+// The DuckDB worker binds prepared-query parameters with this (it imports the
+// browser entry to keep node-only modules out of its bundle). Leaf module.
+export { bindParams } from './query/duckdb-bind.js';
+export type { DuckDBParamBinder } from './query/duckdb-bind.js';
 export { validateViews } from './config/views-validator.js';
 export { widgetToYaml, viewToYaml, viewsConfigToYaml } from './config/views-serialize.js';
 export { ConfigValidationError } from './config/validator.js';

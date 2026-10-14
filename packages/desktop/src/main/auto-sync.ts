@@ -37,6 +37,9 @@ export interface AutoSyncDeps {
 
 let status: AutoSyncStatus = { state: 'disabled' };
 let timer: ReturnType<typeof setTimeout> | null = null;
+// Bumped by every stopAutoSync (startAutoSync stops first), so a schedule can
+// tell it was superseded while its first pass was still running.
+let scheduleGeneration = 0;
 let running = false;
 // Captured by startAutoSync so an out-of-band trigger (e.g. right after the
 // user restores credentials via SSO login) can run a pass immediately instead
@@ -318,19 +321,27 @@ export function startAutoSync(deps: AutoSyncDeps, intervalMinutes: number): void
   lastDeps = deps;
   const clamped = clampInterval(intervalMinutes);
   currentIntervalMs = clamped * 60 * 1000;
+  const generation = scheduleGeneration;
 
   // initial run after short delay (let the app finish loading)
   timer = setTimeout(() => {
-    void runOnce(deps).then(() => {
-      // schedule recurring
-      timer = setInterval(() => { void runOnce(deps); }, currentIntervalMs);
-    });
+    void runOnce(deps)
+      .catch((err: unknown) => { logger.warn(`Auto-sync: pass failed — ${errorMessage(err)}`); })
+      .then(() => {
+        // A stop or restart during this first pass owns `timer` now. Installing
+        // the interval anyway would overwrite that handle, leaving a second
+        // scheduler that ticks with stale deps and that nothing can clear.
+        if (generation !== scheduleGeneration) return;
+        // schedule recurring
+        timer = setInterval(() => { void runOnce(deps); }, currentIntervalMs);
+      });
   }, 5000);
 
   logger.info(`Auto-sync: scheduled every ${String(clamped)} minutes`);
 }
 
 export function stopAutoSync(): void {
+  scheduleGeneration += 1;
   if (timer !== null) {
     clearTimeout(timer);
     clearInterval(timer);

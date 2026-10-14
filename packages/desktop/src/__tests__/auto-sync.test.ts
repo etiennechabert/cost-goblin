@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { LocalSyncStateError } from '@costgoblin/core';
-import { runOnce, getAutoSyncStatus, type AutoSyncDeps, type AutoSyncProvider } from '../main/auto-sync.js';
+import { runOnce, getAutoSyncStatus, startAutoSync, stopAutoSync, type AutoSyncDeps, type AutoSyncProvider } from '../main/auto-sync.js';
 import { parseSyncId, resolveProvider, resolveSyncId, syncStatusKey } from '../main/sync-id.js';
 
 describe('sync-id (composite syncId convention)', () => {
@@ -451,5 +451,96 @@ describe('auto-sync runOnce (multi-provider orchestration)', () => {
       expect(status.providerErrors).toBeUndefined();
     }
     expect(calls.inventory).toEqual([]);
+  });
+});
+
+describe('auto-sync scheduler (startAutoSync / stopAutoSync)', () => {
+  const HOUR_MS = 60 * 60 * 1000;
+  // Holds the first pass in flight until the test releases it.
+  let releaseFirstPass = (): void => undefined;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(async () => {
+    // Never leave a pass blocked: runOnce's module-level `running` guard
+    // would silently skip every later pass in this file.
+    releaseFirstPass();
+    await vi.advanceTimersByTimeAsync(0);
+    stopAutoSync();
+    vi.useRealTimers();
+  });
+
+  /** Deps that record each pass under `label`. Every pass ends at its first
+   *  dep (no prefs-file I/O), so it settles inside the microtask flush that
+   *  advanceTimersByTimeAsync performs and the `running` guard never hides a
+   *  tick. With `holdFirst`, the first pass instead blocks until released. */
+  function schedulerDeps(label: string, passes: string[], holdFirst = false): AutoSyncDeps {
+    let held = holdFirst;
+    const endPass = (): Promise<string> => Promise.reject(new Error('pass ends here'));
+    return {
+      now: () => Date.now(),
+      getPrefsPath: () => {
+        passes.push(label);
+        if (!held) return endPass();
+        held = false;
+        return new Promise<string>((_resolve, reject) => {
+          releaseFirstPass = () => { reject(new Error('pass ends here')); };
+        });
+      },
+      getConfig: () => Promise.resolve({ providers: [] }),
+      getInventory: () => Promise.resolve({ periods: [] }),
+      syncPeriods: () => Promise.resolve({ filesDownloaded: 0 }),
+      getLocalPeriods: () => Promise.resolve([]),
+      deletePeriods: () => Promise.resolve(),
+    };
+  }
+
+  it('runs the first pass after 5s, then on every interval', async () => {
+    const passes: string[] = [];
+    startAutoSync(schedulerDeps('a', passes), 60);
+
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(passes).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(passes).toEqual(['a']);
+    await vi.advanceTimersByTimeAsync(2 * HOUR_MS);
+    expect(passes).toEqual(['a', 'a', 'a']);
+    expect(vi.getTimerCount()).toBe(1);
+  });
+
+  it('installs no recurring timer for a first pass that outlives stopAutoSync', async () => {
+    const passes: string[] = [];
+    startAutoSync(schedulerDeps('a', passes, true), 60);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(passes).toEqual(['a']); // the first pass is in flight
+
+    stopAutoSync();
+    releaseFirstPass();
+    await vi.advanceTimersByTimeAsync(3 * HOUR_MS);
+
+    // Nothing left to tick: an interval installed now could never be cleared.
+    expect(passes).toEqual(['a']);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('keeps only the new schedule when a restart lands during the first pass', async () => {
+    const passes: string[] = [];
+    startAutoSync(schedulerDeps('old', passes, true), 60);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(passes).toEqual(['old']);
+
+    // e.g. the user changes the interval while the first pass is running.
+    startAutoSync(schedulerDeps('new', passes), 120);
+    releaseFirstPass();
+    await vi.advanceTimersByTimeAsync(5_000); // the new schedule's first pass
+    expect(passes).toEqual(['old', 'new']);
+
+    await vi.advanceTimersByTimeAsync(4 * HOUR_MS);
+    // One pass every 2 hours, all on the new deps: no stale 'old' interval,
+    // no doubled 'new' ticks.
+    expect(passes).toEqual(['old', 'new', 'new', 'new']);
+    expect(vi.getTimerCount()).toBe(1);
   });
 });
