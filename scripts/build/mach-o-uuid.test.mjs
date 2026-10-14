@@ -217,7 +217,7 @@ describe('afterPack hook', () => {
     packager: { appInfo: { productFilename: 'CostGoblin', id: 'com.costgoblin.app' } },
   });
   const executable = () => join(dir, 'CostGoblin.app', 'Contents', 'MacOS', 'CostGoblin');
-  const hook = (hostPlatform) => createAfterPack({ hostPlatform, sign: async (file) => { signed.push(file); } });
+  const hook = (hostPlatform) => createAfterPack({ hostPlatform, sign: async (file, identifier) => { signed.push({ file, identifier }); } });
   const writeExecutable = (data = signedMachO()) => {
     mkdirSync(join(dir, 'CostGoblin.app', 'Contents', 'MacOS'), { recursive: true });
     writeFileSync(executable(), data);
@@ -234,7 +234,8 @@ describe('afterPack hook', () => {
     expect(uuid.uuid).toBe(rewriteMachOUuids(signedMachO(), 'com.costgoblin.app')[0].to);
     // The rewrite breaks Electron's signature; an unsigned build (no
     // certificate) would otherwise be killed at launch on Apple Silicon.
-    expect(signed).toEqual([executable()]);
+    // Signed as the app, like codesign signing it inside the bundle would.
+    expect(signed).toEqual([{ file: executable(), identifier: 'com.costgoblin.app' }]);
   });
 
   it('leaves an executable that shipped unsigned unsigned, as Electron x64 does', async () => {
@@ -244,8 +245,16 @@ describe('afterPack hook', () => {
     expect(signed).toEqual([]);
   });
 
-  it('cannot re-sign off macOS, where codesign does not exist', async () => {
+  it('leaves a signed executable untouched off macOS, where it could not be re-signed', async () => {
+    // A shared UUID beats an executable Apple Silicon refuses to launch.
     writeExecutable();
+    await hook('linux')(context('darwin'));
+    expect(readFileSync(executable())).toEqual(signedMachO());
+    expect(signed).toEqual([]);
+  });
+
+  it('still rewrites an unsigned executable off macOS: there is no signature to break', async () => {
+    writeExecutable(thinMachO({ cputype: CPU_X86_64 }));
     await hook('linux')(context('darwin'));
     expect(readMachOUuids(readFileSync(executable()))[0].uuid).not.toBe('4C4C44F8-5555-3144-A1B8-270B7145EDA0');
     expect(signed).toEqual([]);
@@ -273,6 +282,8 @@ function expectValidStandaloneSignature(exe, dir) {
   const verify = spawnSync('codesign', ['--verify', '--strict', standalone], { encoding: 'utf8' });
   expect(verify.stderr).toBe('');
   expect(verify.status).toBe(0);
+  const details = spawnSync('codesign', ['-dv', standalone], { encoding: 'utf8' });
+  expect(details.stderr).toContain('Identifier=com.costgoblin.app');
 }
 
 describe.skipIf(!existsSync(electronExe))('the installed Electron binary', () => {
