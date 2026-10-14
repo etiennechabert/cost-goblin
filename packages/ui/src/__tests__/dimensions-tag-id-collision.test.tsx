@@ -107,4 +107,16 @@ describe('DimensionsView — tags sharing a dimension id', () => {
     await waitFor(() => { expect(saveSpy).toHaveBeenCalledTimes(1); });
     expect(saveSpy).toHaveBeenCalledWith(expect.objectContaining({ tags: [COST_CENTER] }));
   });
+
+  it('keeps an open editor and its edits when the banner removes another tag', async () => {
+    const duplicate: TagDimension = { tagName: 'cost_center', label: 'Cost center (new)', enabled: false };
+    const { user } = renderView([COST_CENTER, duplicate, TEAM]);
+    const banner = await screen.findByRole('alert');
+    await user.click(screen.getByRole('button', { name: /tag:team/ }));
+    const label = await screen.findByDisplayValue('Team');
+    await user.type(label, ' (edited)');
+
+    await user.click(within(banner).getByRole('button', { name: 'Remove "Cost center (new)"' }));
+    expect(screen.getByDisplayValue('Team (edited)')).toBeDefined();
+  });
 });

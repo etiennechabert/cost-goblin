@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { ConfigValidationError } from '@costgoblin/core';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import { ConfigValidationError, logger } from '@costgoblin/core';
 import { parseDimensionsPayload, parseDimensionsSavePayload } from '../main/handlers/dimensions-payload.js';
 import { DEFAULT_BUILT_INS } from '../main/handlers/dimensions-merge.js';
 import { rawGlobLiteral } from '../main/handlers/query-utils.js';
@@ -47,12 +47,15 @@ describe('parseDimensionsPayload', () => {
   });
 
   describe('tags sharing a dimension id', () => {
+    afterEach(() => { vi.restoreAllMocks(); });
+
     const payload = {
       builtIn: [],
       tags: [{ tagName: 'cost-center', label: 'Cost Center' }, { tagName: 'cost_center', label: 'Cost center' }],
     };
 
     it('disables the later tag when only reading (estimate), so a draft still probes', () => {
+      vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
       expect(parseDimensionsPayload(payload).tags.map(t => t.enabled)).toEqual([undefined, false]);
     });
 

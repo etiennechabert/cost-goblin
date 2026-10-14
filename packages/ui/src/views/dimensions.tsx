@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronUp, ChevronDown, GripVertical, Lock, Database, AlertTriangle } from 'lucide-react';
 import type { BuiltInDimension, ColumnValuesPreview, DimensionsConfig, TagDimension, ConceptType, NormalizationRule, RollupGrainEstimate, RollupSizeBand, StripPatternIssues } from '@costgoblin/core/browser';
-import { asDimensionId, describeTagSource, findTagIdCollisions, nameStripPatternViolations, OU_PATH_SOURCE_KEY, tagDimColumn, tagSqlColumn } from '@costgoblin/core/browser';
+import { asDimensionId, describeTagSource, findTagIdCollisions, hasTagSource, nameStripPatternViolations, OU_PATH_SOURCE_KEY, tagDimColumn, tagSqlColumn } from '@costgoblin/core/browser';
 import { formatBytes } from '../components/format.js';
 
 const OU_PATH_LABEL = 'OU Path';
@@ -1577,8 +1577,7 @@ function builtInGrainColumn(d: BuiltInDimension): string { return d.field; }
  *  the estimate payload and would reject the whole candidate (surfacing the
  *  estimate error hint) over a row the user is still typing. */
 export function withoutSourcelessTags(config: DimensionsConfig): DimensionsConfig {
-  const hasSource = (v: string | undefined): boolean => v !== undefined && v.length > 0;
-  const tags = config.tags.filter(t => hasSource(t.tagName) || hasSource(t.accountTagFallback));
+  const tags = config.tags.filter(hasTagSource);
   return tags.length === config.tags.length ? config : { ...config, tags };
 }
 
@@ -2070,14 +2069,13 @@ export function DimensionsView(): React.JSX.Element {
   }
 
   /** Refuses a tag whose dimension id another tag (other than the one at
-   *  `editingIdx`, when editing) already has. */
-  function tagIdConflict(editing: EditingTag, editingIdx: number | null): string | null {
+   *  `skipIdx`, the tag being edited) already has. */
+  function tagIdConflict(editing: EditingTag, skipIdx: number | null): string | null {
     if (config === null) return null;
     const candidate = editingToTagDimension(editing);
-    const hasSource = candidate.tagName !== undefined || candidate.accountTagFallback !== undefined;
-    if (!hasSource) return null;
+    if (!hasTagSource(candidate)) return null;
     const id = tagDimColumn(candidate);
-    const owner = config.tags.find((t, i) => i !== editingIdx && tagDimColumn(t) === id);
+    const owner = config.tags.find((t, i) => i !== skipIdx && hasTagSource(t) && tagDimColumn(t) === id);
     return owner === undefined ? null : tagIdConflictMessage(candidate, owner);
   }
 
@@ -2101,7 +2099,12 @@ export function DimensionsView(): React.JSX.Element {
     if (config === null) return;
     const tags = config.tags.filter((_, i) => i !== idx);
     setConfig({ ...config, tags, order: reconcileOrder({ ...config, tags }) });
-    setEditingIdx(null);
+    // The clash banner can remove a tag while another one's editor is open:
+    // keep that editor (and its unsaved edits) on its tag, now one index down.
+    setEditingIdx(cur => {
+      if (cur === null || cur === idx) return null;
+      return cur > idx ? cur - 1 : cur;
+    });
   }
 
   function handleSaveBuiltIn(idx: number, edited: EditingBuiltIn): void {

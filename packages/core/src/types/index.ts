@@ -26,6 +26,7 @@ export {
   tagSqlColumnsById,
   findTagIdCollisions,
   describeTagSource,
+  hasTagSource,
 } from './branded.js';
 
 export type {

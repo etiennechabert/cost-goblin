@@ -119,11 +119,21 @@ export interface TagIdCollision {
   readonly index: number;
 }
 
-/** Every tag whose id an earlier tag already has, in config order. */
+/** Whether a tag dimension has a key to derive its id from: a resource tag or
+ *  an account source. An editor draft may not have one yet (a saved config
+ *  always does); its `tag_unknown` id is a placeholder, not a real id. */
+export function hasTagSource(t: TagColumnSource): boolean {
+  return (t.tagName !== undefined && t.tagName.length > 0)
+    || (t.accountTagFallback !== undefined && t.accountTagFallback.length > 0);
+}
+
+/** Every tag whose id an earlier tag already has, in config order. Tags with
+ *  no source yet are skipped: they have no id to share. */
 export function findTagIdCollisions(tags: readonly TagColumnSource[]): TagIdCollision[] {
   const owners = new Map<string, number>();
   const collisions: TagIdCollision[] = [];
   tags.forEach((t, index) => {
+    if (!hasTagSource(t)) return;
     const id = tagDimColumn(t);
     const ownerIndex = owners.get(id);
     if (ownerIndex === undefined) owners.set(id, index);

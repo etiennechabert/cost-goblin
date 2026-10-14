@@ -441,7 +441,7 @@ describe('validateDimensions', () => {
     const costUnderscore = { tagName: 'cost_center', label: 'Cost center (new)' };
 
     it('loads, disabling the later tag and warning with both keys', () => {
-      const warn = vi.spyOn(logger, 'warn');
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
       const dims = validateDimensions({ builtIn: [], tags: [costCenter, costUnderscore] });
       expect(dims.tags).toEqual([costCenter, { ...costUnderscore, enabled: false }]);
       expect(warn).toHaveBeenCalledTimes(1);
@@ -463,6 +463,13 @@ describe('validateDimensions', () => {
         ],
       });
       expect(dims.tags.map(t => t.enabled)).toEqual([false, false, undefined, false]);
+    });
+
+    it('loads a later tag that is already disabled as-is, without a warning', () => {
+      const warn = vi.spyOn(logger, 'warn');
+      const tags = [costCenter, { ...costUnderscore, enabled: false }];
+      expect(validateDimensions({ builtIn: [], tags }).tags).toEqual(tags);
+      expect(warn).not.toHaveBeenCalled();
     });
 
     it('disables a resource tag named ou_path declared after the OU Path dimension', () => {

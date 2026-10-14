@@ -92,6 +92,11 @@ describe('findTagIdCollisions', () => {
     expect(findTagIdCollisions([{ tagName: 'team' }, { tagName: 'team' }])).toEqual([{ id: 'tag_team', ownerIndex: 0, index: 1 }]);
   });
 
+  it('ignores tags with no source yet: they have no id to share', () => {
+    expect(findTagIdCollisions([{}, { tagName: '' }, { accountTagFallback: 'unknown' }, { tagName: 'unknown' }]))
+      .toEqual([{ id: 'tag_unknown', ownerIndex: 2, index: 3 }]);
+  });
+
   it('ignores ids that differ by case, and a fallback behind a resource tag', () => {
     expect(findTagIdCollisions([{ tagName: 'STAGE' }, { tagName: 'stage' }])).toEqual([]);
     // The first is keyed by its resource tag (tag_team), not its fallback.

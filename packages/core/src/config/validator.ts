@@ -574,10 +574,12 @@ function assertDistinctTagColumns(tags: readonly DimensionsConfig['tags'][number
 
 type ValidatedTag = DimensionsConfig['tags'][number];
 
-/** Applies `mode` to tags that share a dimension id with an earlier tag. */
-function resolveTagIdCollisions(tags: readonly ValidatedTag[], mode: TagIdCollisionMode): ValidatedTag[] {
+/** Applies `mode` to tags that share a dimension id with an earlier tag. A
+ *  later tag that is already disabled is left as-is, without a warning: it
+ *  can't show anything, and drafts carry one through every estimate probe. */
+function resolveTagIdCollisions(tags: ValidatedTag[], mode: TagIdCollisionMode): ValidatedTag[] {
   const collisions = findTagIdCollisions(tags);
-  if (collisions.length === 0) return [...tags];
+  if (collisions.length === 0) return tags;
   const describe = (index: number): string => {
     const tag = tags[index];
     return `tags[${String(index)}] (${tag === undefined ? 'unknown' : describeTagSource(tag)})`;
@@ -588,6 +590,7 @@ function resolveTagIdCollisions(tags: readonly ValidatedTag[], mode: TagIdCollis
     if (mode === 'reject') {
       throw new ConfigValidationError(`${clash}: it would show that dimension's data. Remove one of them.`);
     }
+    if (tags[index]?.enabled === false) continue;
     logger.warn(`${clash}, so it would show that dimension's data; it is disabled. Remove one of them in Dimensions.`);
     disabled.add(index);
   }
