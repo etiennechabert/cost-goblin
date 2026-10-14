@@ -20,6 +20,19 @@ const MAX_MANIFEST_BYTES = 16 * 1024 * 1024;
  *  to disk is the eventual optimization for very large monthly files. */
 const MAX_FILE_BYTES = 1024 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
+/** A host that hasn't finished the TLS handshake by then isn't coming: off its
+ *  own network an address swallows the connection instead of refusing it, so
+ *  without this each dead address of a sharing key stalled the full
+ *  REQUEST_TIMEOUT_MS. Matches the server's own handshake deadline. */
+const CONNECT_TIMEOUT_MS = 10_000;
+
+export interface PeerRequestOptions {
+  /** Aborts the request — e.g. once another address of the key answered. */
+  readonly signal?: AbortSignal;
+  /** Deadline for the TCP connect + TLS handshake of a new socket. A socket
+   *  reused from the agent's keep-alive pool is already past it. */
+  readonly connectTimeoutMs?: number;
+}
 
 function requestOptions(endpoint: PeerEndpoint, path: string): RequestOptions & ConnectionOptions {
   return {
@@ -37,14 +50,15 @@ function requestOptions(endpoint: PeerEndpoint, path: string): RequestOptions & 
   };
 }
 
-function get(endpoint: PeerEndpoint, path: string, maxBytes: number): Promise<Buffer> {
+function get(endpoint: PeerEndpoint, path: string, maxBytes: number, options: PeerRequestOptions): Promise<Buffer> {
   return new Promise<Buffer>((resolve, reject) => {
     // Settle exactly once: aborting the request emits further 'error' events on
     // both req and res, which we absorb here rather than leaving unhandled.
     let settled = false;
     const fail = (err: Error): void => { if (!settled) { settled = true; reject(err); } };
     const succeed = (buf: Buffer): void => { if (!settled) { settled = true; resolve(buf); } };
-    const req = request(requestOptions(endpoint, path), (res) => {
+    const signal = options.signal === undefined ? {} : { signal: options.signal };
+    const req = request({ ...requestOptions(endpoint, path), ...signal }, (res) => {
       res.on('error', fail);
       if (res.statusCode !== 200) {
         res.resume();
@@ -65,6 +79,16 @@ function get(endpoint: PeerEndpoint, path: string, maxBytes: number): Promise<Bu
       res.on('end', () => { succeed(Buffer.concat(chunks)); });
     });
     req.on('error', fail);
+    req.on('socket', (socket) => {
+      if (req.reusedSocket) return;
+      const connectTimeoutMs = options.connectTimeoutMs ?? CONNECT_TIMEOUT_MS;
+      const timer = setTimeout(() => {
+        fail(new Error(`Peer did not answer within ${String(connectTimeoutMs / 1000)} s`));
+        req.destroy();
+      }, connectTimeoutMs);
+      socket.once('secureConnect', () => { clearTimeout(timer); });
+      socket.once('close', () => { clearTimeout(timer); });
+    });
     req.setTimeout(REQUEST_TIMEOUT_MS, () => { fail(new Error('Peer request timed out')); req.destroy(); });
     req.end();
   });
@@ -72,14 +96,19 @@ function get(endpoint: PeerEndpoint, path: string, maxBytes: number): Promise<Bu
 
 /** Fetch the publisher's serialized SignedPackManifest. The caller must parse
  *  it, verify the signature, and check the publisher key is the pinned one. */
-export function fetchManifest(endpoint: PeerEndpoint): Promise<string> {
-  return get(endpoint, '/manifest', MAX_MANIFEST_BYTES).then((buf) => buf.toString('utf-8'));
+export function fetchManifest(endpoint: PeerEndpoint, options: PeerRequestOptions = {}): Promise<string> {
+  return get(endpoint, '/manifest', MAX_MANIFEST_BYTES, options).then((buf) => buf.toString('utf-8'));
 }
 
 /** Fetch one data file by its safe pack path. Verify its SHA-256 before use.
  *  `maxBytes` (the manifest's advertised size) caps the in-memory buffer so a
  *  publisher can't stream far more than it claimed; it is clamped to the
  *  absolute MAX_FILE_BYTES ceiling regardless. */
-export function fetchFile(endpoint: PeerEndpoint, path: string, maxBytes = MAX_FILE_BYTES): Promise<Buffer> {
-  return get(endpoint, `/file?path=${encodeURIComponent(path)}`, Math.min(maxBytes, MAX_FILE_BYTES));
+export function fetchFile(
+  endpoint: PeerEndpoint,
+  path: string,
+  maxBytes = MAX_FILE_BYTES,
+  options: PeerRequestOptions = {},
+): Promise<Buffer> {
+  return get(endpoint, `/file?path=${encodeURIComponent(path)}`, Math.min(maxBytes, MAX_FILE_BYTES), options);
 }

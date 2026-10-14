@@ -36,7 +36,9 @@ export { startSharingServer } from './secure-server.js';
 export type { SharingAccessEvent, SharingServer, SharingServerConfig, SharingServerHandlers } from './secure-server.js';
 export { fetchManifest, fetchFile } from './secure-client.js';
 export { describePeerConnectError } from './connect-error.js';
-export type { PeerEndpoint } from './secure-client.js';
+export type { PeerEndpoint, PeerRequestOptions } from './secure-client.js';
+export { firstReachable } from './first-reachable.js';
+export type { FirstReachableResult } from './first-reachable.js';
 export { readFileWithinRoot, ContainedReadError } from './contained-read.js';
 export {
   SHARING_PSK_IDENTITY,

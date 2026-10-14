@@ -23,15 +23,27 @@ describe('describePeerConnectError', () => {
     expect(text).toContain('Privacy & Security › Local Network');
   });
 
-  it('keeps the plain message on other platforms and for other failures', () => {
-    expect(describePeerConnectError([connectError('EHOSTUNREACH')], 'win32')).toBe(
-      'connect EHOSTUNREACH 192.168.0.28:53178 - Local (192.168.0.251:49169)',
-    );
-    expect(describePeerConnectError([connectError('ECONNREFUSED')], 'darwin')).toBe(
-      'connect ECONNREFUSED 192.168.0.28:53178 - Local (192.168.0.251:49169)',
-    );
-    expect(describePeerConnectError([new Error('Peer request timed out')], 'darwin')).toBe('Peer request timed out');
-    expect(describePeerConnectError(['boom'], 'darwin')).toBe('boom');
-    expect(describePeerConnectError([], 'darwin')).toBe('no host to connect to');
+  it('adds no Local Network hint on other platforms or for other failures', () => {
+    const cases: [unknown[], NodeJS.Platform, string][] = [
+      [[connectError('EHOSTUNREACH')], 'win32', 'connect EHOSTUNREACH 192.168.0.28:53178 - Local (192.168.0.251:49169)'],
+      [[connectError('ECONNREFUSED')], 'darwin', 'connect ECONNREFUSED 192.168.0.28:53178 - Local (192.168.0.251:49169)'],
+      [[new Error('Peer request timed out')], 'darwin', 'Peer request timed out'],
+      [['boom'], 'darwin', 'boom'],
+      [[], 'darwin', 'no host to connect to'],
+    ];
+    for (const [errors, platform, message] of cases) {
+      const text = describePeerConnectError(errors, platform);
+      expect(text.startsWith(`${message}. `)).toBe(true);
+      expect(text).not.toContain('Local Network');
+    }
+  });
+
+  it('suggests Tailscale for a teammate on another network, on every platform', () => {
+    for (const platform of ['darwin', 'win32', 'linux'] as const) {
+      const text = describePeerConnectError([connectError('ETIMEDOUT', '100.101.102.103')], platform);
+      expect(text).toContain('Not on the same network as your teammate?');
+      expect(text).toContain('Tailscale');
+      expect(text.endsWith('.')).toBe(true);
+    }
   });
 });
