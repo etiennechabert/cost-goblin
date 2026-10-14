@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as yaml from 'js-yaml';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import afterPack from './after-pack.mjs';
+import afterPack, { createAfterPack } from './after-pack.mjs';
 import { MachOError, readMachOUuids, rewriteMachOUuids } from './mach-o-uuid.mjs';
 
 const LC_UUID = 0x1b;
@@ -127,6 +127,20 @@ describe('readMachOUuids', () => {
     const fat = fatMachO([{ cputype: CPU_ARM64, data: thinMachO() }]);
     fat.writeUInt32BE(0x100000, 8 + 12); // slice size past EOF
     expect(() => readMachOUuids(fat)).toThrow(MachOError);
+    // A slice too short for its own header must not read the next slice's bytes.
+    const short = fatMachO([{ cputype: CPU_ARM64, data: thinMachO() }, { cputype: CPU_X86_64, data: thinMachO({ uuid: UUID_B }) }]);
+    short.writeUInt32BE(16, 8 + 12);
+    expect(() => readMachOUuids(short)).toThrow(/header/);
+  });
+
+  it('rejects a fat table that lists the same slice twice, which would rewrite it twice', () => {
+    const fat = fatMachO([
+      { cputype: CPU_X86_64, data: thinMachO({ uuid: UUID_A, cputype: CPU_X86_64 }) },
+      { cputype: CPU_ARM64, data: thinMachO({ uuid: UUID_B }) },
+    ]);
+    fat.writeUInt32BE(fat.readUInt32BE(8 + 8), 8 + 20 + 8);
+    fat.writeUInt32BE(fat.readUInt32BE(8 + 12), 8 + 20 + 12);
+    expect(() => readMachOUuids(fat)).toThrow(/more than once/);
   });
 });
 
@@ -167,7 +181,11 @@ describe('rewriteMachOUuids', () => {
 
 describe('afterPack hook', () => {
   let dir;
-  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'after-pack-')); });
+  let signed;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'after-pack-'));
+    signed = [];
+  });
   afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
 
   const context = (electronPlatformName) => ({
@@ -176,22 +194,41 @@ describe('afterPack hook', () => {
     packager: { appInfo: { productFilename: 'CostGoblin', id: 'com.costgoblin.app' } },
   });
   const executable = () => join(dir, 'CostGoblin.app', 'Contents', 'MacOS', 'CostGoblin');
-
-  it('rewrites the packaged macOS executable in place', async () => {
+  const hook = (hostPlatform) => createAfterPack({ hostPlatform, sign: async (file) => { signed.push(file); } });
+  const writeExecutable = () => {
     mkdirSync(join(dir, 'CostGoblin.app', 'Contents', 'MacOS'), { recursive: true });
     writeFileSync(executable(), thinMachO());
-    await afterPack(context('darwin'));
+  };
+
+  it('is what electron-builder loads as the default export', () => {
+    expect(typeof afterPack).toBe('function');
+  });
+
+  it('rewrites the packaged macOS executable in place, then re-signs it', async () => {
+    writeExecutable();
+    await hook('darwin')(context('darwin'));
     const [uuid] = readMachOUuids(readFileSync(executable()));
     expect(uuid.uuid).toBe(rewriteMachOUuids(thinMachO(), 'com.costgoblin.app')[0].to);
+    // The rewrite breaks Electron's signature; an unsigned build (no
+    // certificate) would otherwise be killed at launch on Apple Silicon.
+    expect(signed).toEqual([executable()]);
+  });
+
+  it('cannot re-sign off macOS, where codesign does not exist', async () => {
+    writeExecutable();
+    await hook('linux')(context('darwin'));
+    expect(readMachOUuids(readFileSync(executable()))[0].uuid).not.toBe('4C4C44F8-5555-3144-A1B8-270B7145EDA0');
+    expect(signed).toEqual([]);
   });
 
   it('leaves Windows and Linux packages alone', async () => {
-    await expect(afterPack(context('win32'))).resolves.toBeUndefined();
-    await expect(afterPack(context('linux'))).resolves.toBeUndefined();
+    await expect(hook('darwin')(context('win32'))).resolves.toBeUndefined();
+    await expect(hook('darwin')(context('linux'))).resolves.toBeUndefined();
+    expect(signed).toEqual([]);
   });
 
   it('fails the build when the macOS executable is missing rather than shipping it shared', async () => {
-    await expect(afterPack(context('darwin'))).rejects.toThrow(/CostGoblin\.app\/Contents\/MacOS\/CostGoblin/);
+    await expect(hook('darwin')(context('darwin'))).rejects.toThrow(/CostGoblin\.app\/Contents\/MacOS\/CostGoblin/);
   });
 });
 
@@ -210,6 +247,22 @@ describe.skipIf(!existsSync(electronExe))('the installed Electron binary', () =>
     const changes = rewriteMachOUuids(bin, 'com.costgoblin.app');
     expect(changes).toHaveLength(found.length);
     expect(differingOffsets(original, bin).every((o) => changes.some((c) => o >= c.offset && o < c.offset + 16))).toBe(true);
+  });
+
+  it.skipIf(process.platform !== 'darwin')('comes out of the real hook with a valid signature', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'after-pack-real-'));
+    try {
+      const exe = join(dir, 'CostGoblin.app', 'Contents', 'MacOS', 'CostGoblin');
+      mkdirSync(join(dir, 'CostGoblin.app', 'Contents', 'MacOS'), { recursive: true });
+      writeFileSync(exe, readFileSync(electronExe), { mode: 0o755 });
+      await afterPack({ electronPlatformName: 'darwin', appOutDir: dir, packager: { appInfo: { productFilename: 'CostGoblin', id: 'com.costgoblin.app' } } });
+      expect(readMachOUuids(readFileSync(exe)).map((u) => u.uuid)).not.toEqual(readMachOUuids(readFileSync(electronExe)).map((u) => u.uuid));
+      const verify = spawnSync('codesign', ['--verify', '--strict', exe], { encoding: 'utf8' });
+      expect(verify.stderr).toBe('');
+      expect(verify.status).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

@@ -48,7 +48,7 @@ function findImageUuid(buf, base, end) {
     throw new MachOError(`not a little-endian Mach-O image (magic 0x${magic.toString(16)})`);
   }
   const headerSize = magic === MH_MAGIC_64 ? 32 : 28;
-  requireRange(buf, base, headerSize, 'Mach-O header');
+  if (base + headerSize > end) throw new MachOError('Mach-O header runs past the end of the image');
   const ncmds = buf.readUInt32LE(base + 16);
   const sizeofcmds = buf.readUInt32LE(base + 20);
   const cmdsStart = base + headerSize;
@@ -90,7 +90,10 @@ export function readMachOUuids(buf) {
       const offset = is64 ? Number(buf.readBigUInt64BE(at + 8)) : buf.readUInt32BE(at + 8);
       const size = is64 ? Number(buf.readBigUInt64BE(at + 16)) : buf.readUInt32BE(at + 12);
       requireRange(buf, offset, size, `fat slice ${i}`);
-      offsets.push(findImageUuid(buf, offset, offset + size));
+      const uuidOffset = findImageUuid(buf, offset, offset + size);
+      // Rewriting a slice twice would hash the already-rewritten UUID.
+      if (offsets.includes(uuidOffset)) throw new MachOError(`fat slice ${i} is listed more than once`);
+      offsets.push(uuidOffset);
     }
     if (offsets.length === 0) throw new MachOError('fat binary has no slices');
   } else {
