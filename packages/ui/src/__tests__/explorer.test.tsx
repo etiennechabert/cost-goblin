@@ -1,8 +1,9 @@
-import { render, screen, waitFor, cleanup, fireEvent, within } from '@testing-library/react';
+import { act, render, screen, waitFor, cleanup, fireEvent, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import type {
   CostGoblinConfig,
+  CostScopeConfig,
   ExplorerFilterValue,
   ExplorerFilterValuesParams,
   ExplorerOverviewParams,
@@ -11,10 +12,11 @@ import type {
   ExplorerRowsParams,
   ExplorerRowsResult,
 } from '@costgoblin/core/browser';
-import { asBucketPath, asProviderName, DEFAULT_EXPLORER_HIDDEN_COLUMNS } from '@costgoblin/core/browser';
+import { asBucketPath, asDateString, asProviderName, DEFAULT_COST_SCOPE, DEFAULT_EXPLORER_HIDDEN_COLUMNS } from '@costgoblin/core/browser';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { ExplorerView } from '../views/explorer.js';
+import { getDefaultDateRange } from '../components/date-range-picker.js';
 import { daysAgo } from '../lib/dates.js';
 
 /** The default hidden set, served as *saved* preferences. The prefs response
@@ -455,6 +457,48 @@ describe('ExplorerView', () => {
         expect(api.savedExplorerPreferences.at(-1)?.lastUsedDateRange).toEqual(expected);
       });
       expect(api.savedExplorerPreferences.at(-1)?.lastUsedGranularity).toBe('daily');
+    });
+
+    it('opens on the default window for the configured lag, without persisting it', async () => {
+      const api = new ExplorerMockApi();
+      api.getCostScope = () => Promise.resolve({ ...DEFAULT_COST_SCOPE, lagDays: 5 });
+      renderExplorer(api);
+
+      await waitFor(() => {
+        expect(api.overviewCalls.at(-1)?.dateRange).toEqual(getDefaultDateRange(5));
+        expect(api.rowsCalls.at(-1)?.dateRange).toEqual(getDefaultDateRange(5));
+      });
+      // The picker's presets use the same lag, so they agree with the range.
+      expect(screen.getByRole('button', { name: /Last 30 days/ })).toBeDefined();
+      // Re-seeding is not a range the user chose: persisting it would make the
+      // next session restore a fixed, ageing window instead of the default.
+      expect(api.savedExplorerPreferences.filter(p => p.lastUsedDateRange !== undefined)).toEqual([]);
+    });
+
+    it('never re-seeds over a restored range when the configured lag lands later', async () => {
+      const restored = { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') };
+      class RestoringApi extends ExplorerMockApi {
+        readonly scopeReads: ((scope: CostScopeConfig) => void)[] = [];
+        override getExplorerPreferences(): Promise<ExplorerPreferences> {
+          return Promise.resolve({ hiddenColumns: SAVED_HIDDEN, columnOrder: [], lastUsedDateRange: restored });
+        }
+        override getCostScope(): Promise<CostScopeConfig> {
+          return new Promise(resolve => { this.scopeReads.push(resolve); });
+        }
+      }
+      const api = new RestoringApi();
+      renderExplorer(api);
+      await waitFor(() => {
+        expect(api.overviewCalls.at(-1)?.dateRange).toEqual(restored);
+      });
+
+      await act(async () => {
+        for (const resolve of api.scopeReads) resolve({ ...DEFAULT_COST_SCOPE, lagDays: 5 });
+        await Promise.resolve();
+      });
+      // Past the 250ms query debounce: a wrongful re-seed would have re-queried.
+      await new Promise(resolve => setTimeout(resolve, 400));
+      expect(api.overviewCalls.at(-1)?.dateRange).toEqual(restored);
     });
   });
 

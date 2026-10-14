@@ -10,14 +10,15 @@ import type {
 import { asDimensionId, asDollars } from '@costgoblin/core/browser';
 import type { SortingState } from '@tanstack/react-table';
 import { useCostApi } from '../hooks/use-cost-api.js';
+import { useDefaultDateRange } from '../hooks/use-default-date-range.js';
 import { useLagDays } from '../hooks/use-lag-days.js';
 import { useQuery } from '../hooks/use-query.js';
 import { getDimensionId, isTagDimension } from '../lib/dimensions.js';
 import { formatDollars } from '../components/format.js';
 import { DataTable } from '../components/data-table.js';
 import type { TableColumn } from '../lib/table-types.js';
-import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
-import type { DateRange, Granularity } from '../components/date-range-picker.js';
+import { DateRangePicker } from '../components/date-range-picker.js';
+import type { Granularity } from '../components/date-range-picker.js';
 import { ClipboardCopy, Check, ChevronDown, CheckIcon } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover.js';
 
@@ -187,10 +188,10 @@ interface MissingTagsProps {
 
 export function MissingTags({ onEntityClick }: MissingTagsProps = {}) {
   const api = useCostApi();
-  const lagDays = useLagDays();
+  const lag = useLagDays();
   const dimensionsQuery = useQuery(() => api.getDimensions(), []);
 
-  const [dateRange, setDateRange] = useState<DateRange>(() => getDefaultDateRange(lagDays));
+  const [dateRange, setDateRange] = useDefaultDateRange(lag);
   const [granularity, setGranularity] = useState<Granularity>('daily');
   const [minCost, setMinCost] = useState(1);
   const [selectedTag, setSelectedTag] = useState<DimensionId | null>(null);
@@ -293,7 +294,7 @@ export function MissingTags({ onEntityClick }: MissingTagsProps = {}) {
           value={dateRange}
           granularity={granularity}
           onChange={(range, g) => { setDateRange(range); setGranularity(g); }}
-          lagDays={lagDays}
+          lagDays={lag.lagDays}
         />
       </div>
 

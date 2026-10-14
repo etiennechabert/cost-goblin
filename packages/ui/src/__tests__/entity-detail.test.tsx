@@ -1,12 +1,13 @@
 import { render, screen, waitFor, cleanup } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { afterEach, describe, it, expect, vi } from 'vitest';
-import type { ExplorerPreferences } from '@costgoblin/core/browser';
-import { asDateString } from '@costgoblin/core/browser';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
+import type { CostScopeConfig, EntityDetailParams, EntityDetailResult, ExplorerPreferences } from '@costgoblin/core/browser';
+import { DEFAULT_COST_SCOPE, asDateString } from '@costgoblin/core/browser';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { PaletteProvider } from '../hooks/use-palette.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { EntityDetail } from '../views/entity-detail.js';
+import { getDefaultDateRange } from '../components/date-range-picker.js';
 
 /** Serves a non-empty hidden set plus a restorable date range: the restore
  *  triggers a save, and MockCostApi's recorded payloads then let us prove the
@@ -113,5 +114,48 @@ describe('EntityDetail', () => {
     }
     expect(api.savedExplorerPreferences.at(-1)?.lastUsedDateRange).toEqual({ start: '2026-01-01', end: '2026-01-31' });
     expect(api.savedExplorerPreferences.at(-1)?.lastUsedGranularity).toBe('daily');
+  });
+
+  describe('with a configured lag', () => {
+    /** Configures a 5-day lag and records every entity-detail query. Its
+     *  prefs (the base mock's) carry no range to restore. */
+    class Lag5DetailApi extends MockCostApi {
+      readonly detailCalls: EntityDetailParams[] = [];
+      override getCostScope(): Promise<CostScopeConfig> {
+        return Promise.resolve({ ...DEFAULT_COST_SCOPE, lagDays: 5 });
+      }
+      override queryEntityDetail(params?: EntityDetailParams): Promise<EntityDetailResult> {
+        if (params !== undefined) this.detailCalls.push(params);
+        return super.queryEntityDetail();
+      }
+    }
+
+    // Pinned so the view's seed and the expected range share one "today".
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-03-15T12:00:00Z'));
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('opens on the default window for that lag, without persisting it', async () => {
+      const api = new Lag5DetailApi();
+      render(
+        <PaletteProvider>
+          <CostApiProvider value={api}>
+            <EntityDetail entity="platform" dimension="account" onBack={vi.fn()} />
+          </CostApiProvider>
+        </PaletteProvider>,
+      );
+      await waitFor(() => {
+        expect(api.detailCalls.at(-1)?.dateRange).toEqual(getDefaultDateRange(5));
+      });
+      expect(screen.getByRole('button', { name: /Last 30 days/ })).toBeDefined();
+      // Nothing was restored and the user changed nothing: the re-seeded
+      // default must not be written back as a chosen range.
+      expect(api.savedExplorerPreferences).toHaveLength(0);
+    });
   });
 });
