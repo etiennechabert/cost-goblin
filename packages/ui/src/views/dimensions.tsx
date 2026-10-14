@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronUp, ChevronDown, GripVertical, Lock, Database, AlertTriangle } from 'lucide-react';
 import type { BuiltInDimension, ColumnValuesPreview, DimensionsConfig, TagDimension, ConceptType, NormalizationRule, RollupGrainEstimate, RollupSizeBand, StripPatternIssues } from '@costgoblin/core/browser';
-import { asDimensionId, nameStripPatternViolations, OU_PATH_SOURCE_KEY, tagSqlColumn } from '@costgoblin/core/browser';
+import { asDimensionId, describeTagSource, findTagIdCollisions, hasTagSource, nameStripPatternViolations, OU_PATH_SOURCE_KEY, tagDimColumn, tagSqlColumn } from '@costgoblin/core/browser';
 import { formatBytes } from '../components/format.js';
 
 const OU_PATH_LABEL = 'OU Path';
@@ -1041,11 +1041,14 @@ function TagValuePreview({ tagMatch, fallbackValues, missingValueTemplate, norma
   );
 }
 
-function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredTags: discovered, accountTagKeys: acctTags, orgAccounts }: Readonly<{
+function TagEditor({ tag, onSave, onCancel, onRemove, idConflict, availableTags, discoveredTags: discovered, accountTagKeys: acctTags, orgAccounts }: Readonly<{
   tag: EditingTag;
   onSave: (tag: EditingTag) => void;
   onCancel: () => void;
   onRemove: (() => void) | undefined;
+  /** Why this tag can't be saved because another tag already has its
+   *  dimension id, or null when the id is free. */
+  idConflict: (tag: EditingTag) => string | null;
   availableTags: readonly string[];
   discoveredTags: readonly { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[];
   accountTagKeys: readonly string[];
@@ -1088,6 +1091,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
   })();
   const fallbackOptions = [OU_PATH_SOURCE_KEY, ...acctTags];
   const noSourceWarning = state.tagName.length === 0 && (state.fallbackTag === undefined || state.fallbackTag.length === 0);
+  const conflict = idConflict(state);
 
   // Resolved value list for the Default filter picker. Mirrors the same
   // transformation TagValuePreview applies (normalize + alias-resolve) so the
@@ -1219,6 +1223,10 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
         </label>
       </div>
 
+      {conflict !== null && (
+        <p className="text-xs text-negative" aria-live="polite">{conflict}</p>
+      )}
+
       {/* OU-Path-only: extract a single segment of the slash-joined path.
           The OU Path is built with ` / ` in aws-org-client; users only pick
           which segment to keep, not the separator. */}
@@ -1325,7 +1333,13 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
 
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <button type="button" onClick={() => { onSave(state); }} className="rounded-md bg-accent px-4 py-1.5 text-xs font-medium text-white hover:bg-accent-hover transition-colors">
+          <button
+            type="button"
+            onClick={() => { onSave(state); }}
+            disabled={conflict !== null}
+            title={conflict === null ? undefined : 'Another dimension already has this id'}
+            className="rounded-md bg-accent px-4 py-1.5 text-xs font-medium text-white hover:bg-accent-hover transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-accent"
+          >
             Save
           </button>
           <button type="button" onClick={requestCancel} className="rounded-md px-4 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-tertiary transition-colors">
@@ -1563,8 +1577,7 @@ function builtInGrainColumn(d: BuiltInDimension): string { return d.field; }
  *  the estimate payload and would reject the whole candidate (surfacing the
  *  estimate error hint) over a row the user is still typing. */
 export function withoutSourcelessTags(config: DimensionsConfig): DimensionsConfig {
-  const hasSource = (v: string | undefined): boolean => v !== undefined && v.length > 0;
-  const tags = config.tags.filter(t => hasSource(t.tagName) || hasSource(t.accountTagFallback));
+  const tags = config.tags.filter(hasTagSource);
   return tags.length === config.tags.length ? config : { ...config, tags };
 }
 
@@ -1904,6 +1917,20 @@ function resolveOrderedRows(config: DimensionsConfig): OrderedRow[] {
   return rows;
 }
 
+/** Every id lookup resolves to the first tag with an id, so a second tag with
+ *  it (`cost_center` next to `cost-center`) would show the first one's data. */
+function tagIdConflictMessage(candidate: TagDimension, owner: TagDimension): string {
+  return `Can't save: ${describeTagSource(candidate)} maps to the same dimension id (${tagDimColumn(candidate)}) ` +
+    `as ${describeTagSource(owner)}, used by "${owner.label}". Two dimensions can't share an id, so pick another ` +
+    `source or remove "${owner.label}" first.`;
+}
+
+function tagIdCollisionMessage(owner: TagDimension, other: TagDimension, id: string): string {
+  return `"${owner.label}" (${describeTagSource(owner)}) and "${other.label}" (${describeTagSource(other)}) ` +
+    `share the dimension id ${id}, so both would show the data of "${owner.label}". ` +
+    'Remove one of them to apply your changes.';
+}
+
 export function DimensionsView(): React.JSX.Element {
   const api = useCostApi();
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
@@ -1965,6 +1992,11 @@ export function DimensionsView(): React.JSX.Element {
   // in-progress draft is lost.
   const dirty = config !== null && savedConfig !== null && stableStringify(config) !== stableStringify(savedConfig);
   useUnsavedChanges(dirty, 'Dimensions');
+
+  // Tags sharing a dimension id. The editors refuse to create one, but a
+  // config loaded with one (the validator disabled the later tag) must be
+  // resolved before it can be saved: the backend refuses it too.
+  const idCollisions = config === null ? [] : findTagIdCollisions(config.tags);
 
   // Live rollup cost/benefit estimate for the current enabled grain. Keyed on
   // the grain signature so it refetches when a dim is toggled (the grain
@@ -2036,8 +2068,19 @@ export function DimensionsView(): React.JSX.Element {
     return { ...base, concept, normalize, aliases, accountTagFallback, missingValueTemplate, pathSegment, defaultFilterValues };
   }
 
+  /** Refuses a tag whose dimension id another tag (other than the one at
+   *  `skipIdx`, the tag being edited) already has. */
+  function tagIdConflict(editing: EditingTag, skipIdx: number | null): string | null {
+    if (config === null) return null;
+    const candidate = editingToTagDimension(editing);
+    if (!hasTagSource(candidate)) return null;
+    const id = tagDimColumn(candidate);
+    const owner = config.tags.find((t, i) => i !== skipIdx && hasTagSource(t) && tagDimColumn(t) === id);
+    return owner === undefined ? null : tagIdConflictMessage(candidate, owner);
+  }
+
   function handleSaveTag(idx: number, editing: EditingTag): void {
-    if (config === null) return;
+    if (config === null || tagIdConflict(editing, idx) !== null) return;
     const tags = [...config.tags];
     tags[idx] = editingToTagDimension(editing);
     setConfig({ ...config, tags, order: reconcileOrder({ ...config, tags }) });
@@ -2045,7 +2088,7 @@ export function DimensionsView(): React.JSX.Element {
   }
 
   function handleAddTag(editing: EditingTag): void {
-    if (config === null) return;
+    if (config === null || tagIdConflict(editing, null) !== null) return;
     const newTag = editingToTagDimension(editing);
     const tags = [...config.tags, newTag];
     setConfig({ ...config, tags, order: reconcileOrder({ ...config, tags }) });
@@ -2056,7 +2099,12 @@ export function DimensionsView(): React.JSX.Element {
     if (config === null) return;
     const tags = config.tags.filter((_, i) => i !== idx);
     setConfig({ ...config, tags, order: reconcileOrder({ ...config, tags }) });
-    setEditingIdx(null);
+    // The clash banner can remove a tag while another one's editor is open:
+    // keep that editor (and its unsaved edits) on its tag, now one index down.
+    setEditingIdx(cur => {
+      if (cur === null || cur === idx) return null;
+      return cur > idx ? cur - 1 : cur;
+    });
   }
 
   function handleSaveBuiltIn(idx: number, edited: EditingBuiltIn): void {
@@ -2108,7 +2156,7 @@ export function DimensionsView(): React.JSX.Element {
   // rebuilds it for the new grain (debounced, in the background) — this is the
   // ONLY path that triggers a re-roll now. Exploring/editing the draft never does.
   async function confirmChanges(): Promise<void> {
-    if (config === null) return;
+    if (config === null || idCollisions.length > 0) return;
     setSaving(true);
     setSaveError(null);
     try {
@@ -2259,8 +2307,8 @@ export function DimensionsView(): React.JSX.Element {
                 <button
                   type="button"
                   onClick={() => { confirmChanges().catch(() => undefined); }}
-                  disabled={saving}
-                  title="Save these dimensions and rebuild the rollup for the new grain"
+                  disabled={saving || idCollisions.length > 0}
+                  title={idCollisions.length > 0 ? 'Two dimensions share an id: remove one of them first' : 'Save these dimensions and rebuild the rollup for the new grain'}
                   className="rounded-md bg-accent px-4 py-1.5 text-xs font-medium text-bg-primary hover:bg-accent/90 transition-colors disabled:opacity-50"
                 >
                   {saving ? 'Applying…' : 'Apply & rebuild rollup'}
@@ -2288,6 +2336,34 @@ export function DimensionsView(): React.JSX.Element {
           >
             Dismiss
           </button>
+        </div>
+      )}
+
+      {config !== null && idCollisions.length > 0 && (
+        <div role="alert" className="flex flex-col gap-2 rounded-lg border border-negative/50 bg-negative-muted px-4 py-2.5">
+          {idCollisions.map(({ id, ownerIndex, index }) => {
+            const owner = config.tags[ownerIndex];
+            const other = config.tags[index];
+            if (owner === undefined || other === undefined) return null;
+            return (
+              <div key={`${String(ownerIndex)}:${String(index)}`} className="flex items-start justify-between gap-3">
+                <p className="text-sm text-negative">{tagIdCollisionMessage(owner, other, id)}</p>
+                <div className="flex shrink-0 gap-2">
+                  {[{ i: ownerIndex, tag: owner }, { i: index, tag: other }].map(({ i, tag }) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => { handleRemoveTag(i); }}
+                      title={describeTagSource(tag)}
+                      className="text-xs font-medium text-negative/80 hover:text-negative"
+                    >
+                      Remove "{tag.label}"
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -2369,6 +2445,7 @@ export function DimensionsView(): React.JSX.Element {
               onSave={(edited) => { handleAddTag(edited); }}
               onCancel={() => { setAddingNew(false); setQuickAddState(null); }}
               onRemove={undefined}
+              idConflict={(edited) => tagIdConflict(edited, null)}
               availableTags={unmappedTagKeys}
               discoveredTags={discoveredTags}
               accountTagKeys={accountTagKeys}
@@ -2476,6 +2553,7 @@ export function DimensionsView(): React.JSX.Element {
                   onSave={(edited) => { handleSaveTag(row.idx, edited); }}
                   onCancel={() => { setEditingIdx(null); }}
                   onRemove={() => { handleRemoveTag(row.idx); }}
+                  idConflict={(edited) => tagIdConflict(edited, row.idx)}
                   availableTags={unmappedTagKeys}
                   discoveredTags={discoveredTags}
                   accountTagKeys={accountTagKeys}

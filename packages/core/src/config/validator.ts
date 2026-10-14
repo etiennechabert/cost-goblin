@@ -1,4 +1,4 @@
-import { asBucketPath, asDimensionId, tagSourceKey, tagSqlColumn } from '../types/branded.js';
+import { asBucketPath, asDimensionId, describeTagSource, findTagIdCollisions, tagSourceKey, tagSqlColumn } from '../types/branded.js';
 import type { BucketPath } from '../types/branded.js';
 import { isSafeColumnIdentifier } from '../query/identifier-validator.js';
 import { parseProviderName } from './provider-name.js';
@@ -383,8 +383,19 @@ function optionalStringArray(value: unknown, context: string): string[] | undefi
  *    list is refused visibly instead of being silently truncated on disk. */
 export type StripPatternLimitMode = 'drop' | 'reject';
 
+/** How `validateDimensions` treats two tags with the same dimension id (keys
+ *  that differ only by punctuation, a resource tag `ou_path` next to the OU
+ *  Path dimension, ...). Every id lookup resolves to the first, so the later
+ *  one would show the first one's data in every widget:
+ *  - `'disable'` (load) keeps the workspace loadable: each later tag is
+ *    disabled, with a warning naming both keys;
+ *  - `'reject'` (saving a renderer-edited config) throws, so a saved
+ *    dimensions.yaml never has two tags with one id. */
+export type TagIdCollisionMode = 'disable' | 'reject';
+
 export interface ValidateDimensionsOptions {
   readonly stripPatternLimits?: StripPatternLimitMode | undefined;
+  readonly tagIdCollisions?: TagIdCollisionMode | undefined;
 }
 
 function capNameStripPatterns(patterns: string[] | undefined, ctx: string, mode: StripPatternLimitMode): string[] | undefined {
@@ -542,7 +553,8 @@ function validateTagDimension(tag: unknown, i: number) {
 /** Each distinct tag key must own its SQL column, or DuckDB reads both tags
  *  from one column. `tagSqlColumn` hashes the exact key, so only a 32-bit hash
  *  collision between keys with the same lowercase slug can break this. The
- *  same key declared twice shares its column, as it always has. */
+ *  same key declared twice shares its column (and its id: see
+ *  `resolveTagIdCollisions`). */
 function assertDistinctTagColumns(tags: readonly DimensionsConfig['tags'][number][]): void {
   const owners = new Map<string, { readonly key: string; readonly index: number }>();
   tags.forEach((tag, index) => {
@@ -560,6 +572,31 @@ function assertDistinctTagColumns(tags: readonly DimensionsConfig['tags'][number
   });
 }
 
+type ValidatedTag = DimensionsConfig['tags'][number];
+
+/** Applies `mode` to tags that share a dimension id with an earlier tag. A
+ *  later tag that is already disabled is left as-is, without a warning: it
+ *  can't show anything, and drafts carry one through every estimate probe. */
+function resolveTagIdCollisions(tags: ValidatedTag[], mode: TagIdCollisionMode): ValidatedTag[] {
+  const collisions = findTagIdCollisions(tags);
+  if (collisions.length === 0) return tags;
+  const describe = (index: number): string => {
+    const tag = tags[index];
+    return `tags[${String(index)}] (${tag === undefined ? 'unknown' : describeTagSource(tag)})`;
+  };
+  const disabled = new Set<number>();
+  for (const { id, ownerIndex, index } of collisions) {
+    const clash = `${describe(index)} has the same dimension id, ${id}, as ${describe(ownerIndex)}`;
+    if (mode === 'reject') {
+      throw new ConfigValidationError(`${clash}: it would show that dimension's data. Remove one of them.`);
+    }
+    if (tags[index]?.enabled === false) continue;
+    logger.warn(`${clash}, so it would show that dimension's data; it is disabled. Remove one of them in Dimensions.`);
+    disabled.add(index);
+  }
+  return tags.map((tag, index) => (disabled.has(index) ? { ...tag, enabled: false } : tag));
+}
+
 export function validateDimensions(raw: unknown, options: ValidateDimensionsOptions = {}): DimensionsConfig {
   assertObject(raw, 'dimensions');
   assertArray(raw['builtIn'], 'builtIn');
@@ -567,8 +604,9 @@ export function validateDimensions(raw: unknown, options: ValidateDimensionsOpti
 
   const stripPatternLimits = options.stripPatternLimits ?? 'drop';
   const builtIn = raw['builtIn'].map((dim, i) => validateBuiltInDimension(dim, i, stripPatternLimits));
-  const tags = raw['tags'].map((tag, i) => validateTagDimension(tag, i));
-  assertDistinctTagColumns(tags);
+  const validatedTags = raw['tags'].map((tag, i) => validateTagDimension(tag, i));
+  assertDistinctTagColumns(validatedTags);
+  const tags = resolveTagIdCollisions(validatedTags, options.tagIdCollisions ?? 'disable');
 
   let order: string[] | undefined;
   if (raw['order'] !== undefined) {

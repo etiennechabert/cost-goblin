@@ -1,6 +1,6 @@
 export { loadConfig, loadDimensions, loadOrgTree, loadViews, loadCostScope } from './loader.js';
 export { validateConfig, validateDimensions, validateOrgTree, ConfigValidationError, assertObject, assertArray, assertString, assertNumber, hasControlChar } from './validator.js';
-export type { StripPatternLimitMode, ValidateDimensionsOptions } from './validator.js';
+export type { StripPatternLimitMode, TagIdCollisionMode, ValidateDimensionsOptions } from './validator.js';
 export { MAX_NAME_STRIP_PATTERNS, MAX_NAME_STRIP_PATTERN_LENGTH, nameStripPatternViolations } from './strip-pattern-limits.js';
 export { validateViews } from './views-validator.js';
 export { LEGACY_DIMENSION_ID_RENAMES, dimensionIdSet, migrateLegacyDimensionId } from './legacy-renames.js';
