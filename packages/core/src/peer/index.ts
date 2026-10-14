@@ -35,6 +35,7 @@ export type {
 export { startSharingServer } from './secure-server.js';
 export type { SharingAccessEvent, SharingServer, SharingServerConfig, SharingServerHandlers } from './secure-server.js';
 export { fetchManifest, fetchFile } from './secure-client.js';
+export { describePeerConnectError } from './connect-error.js';
 export type { PeerEndpoint } from './secure-client.js';
 export { readFileWithinRoot, ContainedReadError } from './contained-read.js';
 export {
