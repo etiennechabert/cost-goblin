@@ -29,15 +29,11 @@ jobs:
 
       - run: npm ci
 
-      - name: Type check
-        run: |
-          npx tsc --noEmit -p packages/core/tsconfig.json
-          npx tsc --noEmit -p packages/ui/tsconfig.json
-          npx tsc --noEmit -p packages/desktop/tsconfig.json
-          npx tsc --noEmit -p packages/mcp/tsconfig.json
-
-      - name: Lint
-        run: npx eslint packages/*/src/
+      # The same script `npm run check` and `make lint` run, so the three can't
+      # type-check or lint different sets of packages (#465). Pinned by
+      # scripts/ci/makefile-targets.test.mjs.
+      - name: Type check and lint
+        run: npm run lint
 
   security-audit:
     runs-on: ubuntu-latest
