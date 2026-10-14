@@ -1,7 +1,7 @@
 import { render, screen, waitFor, cleanup } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, it, expect, vi } from 'vitest';
-import { asDimensionId } from '@costgoblin/core/browser';
+import { asDimensionId, tagSqlColumn } from '@costgoblin/core/browser';
 import type { DimensionsConfig } from '@costgoblin/core/browser';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
@@ -51,6 +51,15 @@ describe('DimensionsView — rollup grain estimate', () => {
     await waitFor(() => { expect(screen.getByText(/multiplies the rollup/i)).toBeDefined(); });
     // The resource pill still carries a high-cardinality count badge (~1.8M distinct).
     expect(screen.getAllByText('1.8M').length).toBeGreaterThan(0);
+  });
+
+  it('names a tag dimension by its label, not its SQL column, in the per-dimension list', async () => {
+    renderView();
+    await waitFor(() => { expect(screen.getByText('Per-dimension impact')).toBeDefined(); });
+    // The estimate reports the tag under its SQL column; the row must map it
+    // back to the tag (the pill is the other "Team").
+    expect(screen.queryByText(tagSqlColumn({ tagName: 'team' }))).toBeNull();
+    expect(screen.getAllByText('Team').length).toBeGreaterThan(1);
   });
 
   it('re-estimates and clears the outlier warning when the dim is toggled off', async () => {

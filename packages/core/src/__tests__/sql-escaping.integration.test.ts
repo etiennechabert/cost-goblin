@@ -7,7 +7,7 @@ import { buildRollupPartitionQuery, buildSource, sqlEscapeString, sqlStringLiter
 import { SecurityError } from '../query/identifier-validator.js';
 import type { DimensionsConfig } from '../types/config.js';
 import { OU_PATH_SOURCE_KEY } from '../types/config.js';
-import { asDimensionId, asProviderName } from '../types/branded.js';
+import { asDimensionId, asProviderName, tagSqlColumn } from '../types/branded.js';
 
 /**
  * Behavioral lock on `sqlEscapeString` and the escaping applied to config
@@ -124,7 +124,7 @@ describe('SQL escaping of config literals (DuckDB execution)', () => {
     expect(source).toContain("element_at(Tags, 'o''brien team')");
 
     // ...and DuckDB extracts the value under the original quoted key.
-    const rows = await queryAll(conn, `SELECT account_id, tag_o_brien_team AS v FROM ${source} ORDER BY account_id`);
+    const rows = await queryAll(conn, `SELECT account_id, ${tagSqlColumn({ tagName: QUOTED_TAG_KEY })} AS v FROM ${source} ORDER BY account_id`);
     expect(rows).toHaveLength(2);
     expect(rows[0]?.['v']).toBe('Platform');
     expect(rows[1]?.['v']).toBeNull();
@@ -148,7 +148,7 @@ describe('SQL escaping of config literals (DuckDB execution)', () => {
 
     // acct-1 has the resource tag, acct-2 falls back to the org-accounts
     // value formatted through the quoted template.
-    const rows = await queryAll(conn, `SELECT account_id, tag_o_brien_team AS v FROM ${source} ORDER BY account_id`);
+    const rows = await queryAll(conn, `SELECT account_id, ${tagSqlColumn({ tagName: QUOTED_TAG_KEY })} AS v FROM ${source} ORDER BY account_id`);
     expect(rows).toHaveLength(2);
     expect(rows[0]?.['v']).toBe('Platform');
     expect(rows[1]?.['v']).toBe("don't know (cc-two)");
@@ -175,7 +175,7 @@ describe('SQL escaping of config literals (DuckDB execution)', () => {
     const emptyOrg = join(dataDir, "empty-o'rg.json").replaceAll('\\', '/');
     await writeFile(emptyOrg, '[]');
     const source = buildSource({ dataDir, tier: 'daily', dimensions: fallbackDims, orgAccountsPath: emptyOrg, providers: [{ name: PROVIDER }] });
-    const rows = await queryAll(conn, `SELECT account_id, tag_team AS team, tag_ou_path AS ou FROM ${source} ORDER BY account_id`);
+    const rows = await queryAll(conn, `SELECT account_id, ${tagSqlColumn({ tagName: 'team' })} AS team, ${tagSqlColumn({ accountTagFallback: OU_PATH_SOURCE_KEY })} AS ou FROM ${source} ORDER BY account_id`);
     expect(rows).toHaveLength(2);
     expect(rows.every(r => r['team'] === null && r['ou'] === null)).toBe(true);
   });
@@ -188,7 +188,7 @@ describe('SQL escaping of config literals (DuckDB execution)', () => {
       { id: 'acct-2' },
     ]));
     const source = buildSource({ dataDir, tier: 'daily', dimensions: fallbackDims, orgAccountsPath: legacyOrg, providers: [{ name: PROVIDER }] });
-    const rows = await queryAll(conn, `SELECT account_id, tag_team AS team, tag_ou_path AS ou FROM ${source} ORDER BY account_id`);
+    const rows = await queryAll(conn, `SELECT account_id, ${tagSqlColumn({ tagName: 'team' })} AS team, ${tagSqlColumn({ accountTagFallback: OU_PATH_SOURCE_KEY })} AS ou FROM ${source} ORDER BY account_id`);
     expect(rows).toHaveLength(2);
     expect(rows[0]?.['team']).toBe('cc-one');
     expect(rows[0]?.['ou']).toBeNull();

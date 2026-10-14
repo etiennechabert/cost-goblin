@@ -10,12 +10,15 @@ import { SecurityError } from '../query/identifier-validator.js';
 import { FIXTURE_PROVIDER_NAME } from '../__fixtures__/layout.js';
 import type { DimensionsConfig } from '../types/config.js';
 import type { CostScopeConfig } from '../types/cost-scope.js';
-import { asDimensionId, asProviderName } from '../types/branded.js';
+import { asDimensionId, asProviderName, tagSqlColumn } from '../types/branded.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SYNTHETIC_DIR = join(__dirname, '..', '__fixtures__', 'synthetic');
 const PROVIDER = asProviderName(FIXTURE_PROVIDER_NAME);
 const PERIOD = '2026-01';
+
+const TEAM_COLUMN = tagSqlColumn({ tagName: 'team' });
+const ENVIRONMENT_COLUMN = tagSqlColumn({ tagName: 'environment' });
 
 const dimensions: DimensionsConfig = {
   builtIn: [
@@ -70,9 +73,9 @@ describe('rollupGrainDimensions', () => {
     // disabled operation is absent; single-column dims carry just themselves.
     expect(dims.some(d => d.column === 'operation')).toBe(false);
     expect(dims.find(d => d.column === 'service')?.columns).toEqual(['service']);
-    expect(dims.find(d => d.column === 'tag_team')?.columns).toEqual(['tag_team']);
+    expect(dims.find(d => d.column === TEAM_COLUMN)?.columns).toEqual([TEAM_COLUMN]);
     // Built-ins first, then tags; one entry per enabled dimension.
-    expect(dims.map(d => d.column)).toEqual(['account_id', 'service', 'region', 'tag_team', 'tag_environment']);
+    expect(dims.map(d => d.column)).toEqual(['account_id', 'service', 'region', TEAM_COLUMN, ENVIRONMENT_COLUMN]);
   });
 
   it('skips the provider built-in — injected at read time, never stored in the grain', () => {
@@ -139,7 +142,7 @@ describe('grain producers check identifiers', () => {
 
   it('keeps the valid-config grain unchanged', () => {
     expect(rollupGrainColumns(dimensions)).toEqual([
-      'usage_date', 'account_id', 'account_name', 'region', 'service', 'tag_environment', 'tag_team',
+      'usage_date', 'account_id', 'account_name', 'region', 'service', ENVIRONMENT_COLUMN, TEAM_COLUMN,
     ]);
   });
 });

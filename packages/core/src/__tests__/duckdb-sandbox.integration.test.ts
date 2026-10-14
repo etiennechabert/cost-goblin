@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { buildSource } from '../query/builder.js';
 import { buildDuckDbSandboxStatements } from '../query/duckdb-sandbox.js';
 import type { DimensionsConfig } from '../types/config.js';
-import { asProviderName } from '../types/branded.js';
+import { asProviderName, tagSqlColumn } from '../types/branded.js';
 
 /**
  * Layer-2 proof of the MCP DuckDB sandbox (#594): a real instance configured
@@ -173,7 +173,7 @@ describe('DuckDB sandbox (real DuckDB)', () => {
       // The org-accounts join reads with an explicit-schema read_json (#603);
       // it must still resolve inside the sandbox's allowed_paths.
       expect(source).toContain(`read_json('${orgAccountsPath}', format='array'`);
-      const rows = await queryAll(sandbox, `SELECT account_id, tag_team AS v FROM ${source} ORDER BY account_id`);
+      const rows = await queryAll(sandbox, `SELECT account_id, ${tagSqlColumn({ tagName: 'team' })} AS v FROM ${source} ORDER BY account_id`);
       expect(rows).toHaveLength(2);
       expect(rows[0]?.['v']).toBe('Platform');
       expect(rows[1]?.['v']).toBe('cc-two');

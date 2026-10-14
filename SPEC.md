@@ -411,7 +411,7 @@ canonical column is a trivial rename/cast of a FOCUS column:
 | `sku_meter` | `VARCHAR` | `SkuMeter` | Usage meter (usage-type equivalent) |
 | `operation` | `VARCHAR` | `x_Operation` | Operation type |
 | `provider` | `VARCHAR` | (injected) | Which configured provider branch the row came from |
-| `tag_{name}` | `VARCHAR` | `Tags` map | One column per configured tag dimension |
+| `tag_{slug}_{hash}` | `VARCHAR` | `Tags` map | One column per configured tag dimension (`tagSqlColumn`): lowercased slug + hash of the exact key. Not the `tag_{name}` dimension id: DuckDB identifiers are case-insensitive, so `STAGE` and `stage` tags need columns that differ beyond case |
 
 Cost metrics are direct column reads: `billed` ← `BilledCost`, `effective` ←
 `EffectiveCost` (the default; amortized, including unused commitment),
@@ -1177,15 +1177,16 @@ cd packages/desktop && npm run check && npm run dev
 ### DuckDB Query Pattern
 
 ```typescript
+const team = tagSqlColumn({ tagName: 'team' }); // tag_team_<hash>, not the tag_team id
 const sql = `
   SELECT
-    tag_team AS entity,
+    ${team} AS entity,
     SUM(cost) AS total_cost,
     SUM(CASE WHEN service = 'AmazonEC2' THEN cost ELSE 0 END) AS ec2_cost,
     SUM(CASE WHEN service = 'AmazonRDS' THEN cost ELSE 0 END) AS rds_cost
   FROM read_parquet('${dataDir}/${providerName}/raw/daily-*/*.parquet')
   WHERE usage_date BETWEEN ? AND ?
-  GROUP BY tag_team
+  GROUP BY ${team}
   ORDER BY total_cost DESC
 `;
 ```

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { asDimensionId } from '../types/branded.js';
+import { asDimensionId, tagSqlColumn } from '../types/branded.js';
 import type { DimensionsConfig } from '../types/config.js';
 import type { ExclusionRule } from '../types/cost-scope.js';
 import {
@@ -128,7 +128,7 @@ describe('computeOrgAccountsDigest', () => {
 
 describe('enabledGrainColumns', () => {
   it('returns enabled dim columns only, sorted', () => {
-    expect(enabledGrainColumns(baseDims())).toEqual(['account_id', 'service', 'tag_sb_team']);
+    expect(enabledGrainColumns(baseDims())).toEqual(['account_id', 'service', tagSqlColumn({ tagName: 'sb_team' })]);
   });
 });
 

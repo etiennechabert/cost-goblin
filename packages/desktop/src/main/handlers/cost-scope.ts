@@ -13,6 +13,7 @@ import {
   computePeriodsInRange,
   logger,
   tagDimColumn,
+  tagSqlColumnsById,
 } from '@costgoblin/core';
 import type {
   CostScopeConfig,
@@ -24,7 +25,7 @@ import type {
 } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
 import type { AppContext } from './context.js';
-import { toNum } from './query-utils.js';
+import { tagSelectItems, tagValuesById, toNum } from './query-utils.js';
 import { costScopePreviewWindow } from './query-windows.js';
 
 const SAMPLE_ROW_LIMIT = 500;
@@ -37,13 +38,8 @@ function toStr(v: unknown): string {
 
 function mapSampleRow(
   r: RawRow,
-  tagColumns: readonly { id: string; label: string }[],
+  tagSqlColumns: ReadonlyMap<string, string>,
 ): CostScopeSampleRow {
-  const tags: Record<string, string> = {};
-  for (const t of tagColumns) {
-    const v = r[t.id];
-    tags[t.id] = typeof v === 'string' ? v : '';
-  }
   return {
     date: toStr(r['usage_date']),
     accountId: toStr(r['account_id']),
@@ -60,7 +56,7 @@ function mapSampleRow(
     cost: toNum(r['cost']),
     listCost: toNum(r['list_cost']),
     excluded: toNum(r['excluded']) === 1,
-    tags,
+    tags: tagValuesById(r, tagSqlColumns),
   };
 }
 
@@ -178,6 +174,8 @@ export function registerCostScopeHandlers(app: AppContext): void {
       id: tagDimColumn(t),
       label: t.label,
     }));
+    // The renderer keys tags by id; the SQL reads each tag's own column.
+    const tagSqlColumns = tagSqlColumnsById(dimensions.tags);
 
     // === Query 1: every aggregate in one scan ===
     // Merges what used to be 5 separate queries (per-rule + combined +
@@ -223,9 +221,8 @@ export function registerCostScopeHandlers(app: AppContext): void {
     // combined set. Otherwise a few very large excluded rows (tax, EDP
     // discount, RI upfront) eat the whole limit and the table looks
     // empty when the user toggles "Hide excluded" on.
-    const tagSelectSql = tagColumns.length > 0
-      ? tagColumns.map(t => `COALESCE(${t.id}, '') AS ${t.id}`).join(',\n          ')
-      : null;
+    const tagSelects = tagSelectItems(tagSqlColumns);
+    const tagSelectSql = tagSelects.length > 0 ? tagSelects.join(',\n          ') : null;
     const sampleSql = `
       WITH scoped AS (
         SELECT
@@ -248,7 +245,7 @@ export function registerCostScopeHandlers(app: AppContext): void {
         usage_date::VARCHAR AS usage_date,
         account_id, account_name, region, service, service_category,
         charge_category, operation, sku_meter, description, resource_id,
-        usage_amount, cost, list_cost, excluded${tagSelectSql === null ? '' : ',\n        ' + tagColumns.map(t => t.id).join(', ')}
+        usage_amount, cost, list_cost, excluded${tagSelectSql === null ? '' : ',\n        ' + [...tagSqlColumns.values()].join(', ')}
       FROM ranked
       WHERE rn <= ${String(SAMPLE_ROW_LIMIT)}
       ORDER BY excluded ASC, ABS(cost) DESC
@@ -305,7 +302,7 @@ export function registerCostScopeHandlers(app: AppContext): void {
 
     let sampleRows: readonly CostScopeSampleRow[] = [];
     if (sampleResult.status === 'fulfilled') {
-      sampleRows = sampleResult.value.map(r => mapSampleRow(r, tagColumns));
+      sampleRows = sampleResult.value.map(r => mapSampleRow(r, tagSqlColumns));
     }
     logSettledError('sample', sampleResult);
 

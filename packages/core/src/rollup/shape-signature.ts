@@ -1,14 +1,16 @@
 import type { BuiltInDimension, DimensionsConfig, TagDimension } from '../types/config.js';
 import type { CostMetric, ExclusionRule, MarketplaceAttributionConfig } from '../types/cost-scope.js';
-import { tagDimColumn } from '../types/branded.js';
+import { tagDimColumn, tagSqlColumn } from '../types/branded.js';
 import { normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
 import { canonicalJson, sha256Hex } from './digest.js';
 
 /** Bump to invalidate every persisted rollup partition (e.g. when the stored
  *  partition schema or build semantics change in a backwards-incompatible way).
  *  v2: FOCUS 1.2 migration (#515) — canonical columns and cost metrics changed,
- *  so every CUR-era partition is invalid. */
-export const ROLLUP_SCHEMA_VERSION = 2;
+ *  so every CUR-era partition is invalid.
+ *  v3: tag columns are stored under `tagSqlColumn` instead of the `tag_<key>`
+ *  dimension id, which DuckDB could not tell apart from a case variant. */
+export const ROLLUP_SCHEMA_VERSION = 3;
 
 function isEnabled(d: { readonly enabled?: boolean | undefined }): boolean {
   return d.enabled !== false;
@@ -44,12 +46,12 @@ export interface ShapeSignatureInput {
 
 /** The set of enabled dimension columns that form the rollup grain, sorted.
  *  Built-in dims contribute their output column (`field`); tag dims their
- *  `tagDimColumn`. This is what downstream routing compares a query's needed
+ *  `tagSqlColumn`. This is what downstream routing compares a query's needed
  *  columns against. */
 export function enabledGrainColumns(dims: DimensionsConfig): string[] {
   const cols = new Set<string>();
   for (const d of dims.builtIn) if (isEnabled(d)) cols.add(d.field);
-  for (const t of dims.tags) if (isEnabled(t)) cols.add(tagDimColumn(t));
+  for (const t of dims.tags) if (isEnabled(t)) cols.add(tagSqlColumn(t));
   return [...cols].sort((a, b) => a.localeCompare(b));
 }
 
@@ -88,7 +90,7 @@ export function computeShapeSignature(input: ShapeSignatureInput): string {
     .filter(isEnabled)
     .map(t => ({
       kind: 'tag',
-      column: tagDimColumn(t),
+      column: tagSqlColumn(t),
       tagName: t.tagName ?? null,
       accountTagFallback: t.accountTagFallback ?? null,
       missingValueTemplate: t.missingValueTemplate ?? null,
