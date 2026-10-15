@@ -38,10 +38,12 @@ describe('describePeerConnectError', () => {
     }
   });
 
-  it('suggests Tailscale for a teammate on another network, on every platform', () => {
+  it('says to check the teammate is still sharing, then suggests Tailscale, on every platform', () => {
     for (const platform of ['darwin', 'win32', 'linux'] as const) {
       const text = describePeerConnectError([connectError('ETIMEDOUT', '100.101.102.103')], platform);
-      expect(text).toContain('Not on the same network as your teammate?');
+      expect(text).toContain('still sharing');
+      expect(text.indexOf('still sharing')).toBeLessThan(text.indexOf('Tailscale'));
+      expect(text).toContain('Not on the same network?');
       expect(text).toContain('Tailscale');
       expect(text.endsWith('.')).toBe(true);
     }

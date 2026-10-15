@@ -6,8 +6,7 @@ import {
   describePeerConnectError,
   encodeSharingKey,
   fetchFile,
-  fetchManifest,
-  firstReachable,
+  fetchManifestFromAny,
   isSafePackPath,
   logger,
   parseConfigBundle,
@@ -120,15 +119,14 @@ const SHARING_IDLE_TIMEOUT_MS = 30 * 60_000;
  *  preview (no download) and pull (download). */
 async function connect(payload: SharingKeyPayload): Promise<{ endpoint: PeerEndpoint; signed: SignedPackManifest }> {
   const psk = Buffer.from(payload.psk, 'base64url');
-  const candidates = payload.hosts.map((host): PeerEndpoint => ({ host, port: payload.port, psk }));
   // All addresses at once: from another network only one (e.g. Tailscale) may
   // route, and the dead ones would otherwise each stall a timeout first.
-  const reached = await firstReachable(candidates, async (candidate, signal) =>
-    parseSignedManifest(await fetchManifest(candidate, { signal })));
+  const reached = await fetchManifestFromAny(payload.hosts.map((host): PeerEndpoint => ({ host, port: payload.port, psk })));
   if (reached.status === 'unreachable') {
     throw new Error(`Could not reach the shared source. ${describePeerConnectError(reached.errors, process.platform)}`);
   }
-  const { candidate: endpoint, value: signed } = reached;
+  const { endpoint } = reached;
+  const signed = parseSignedManifest(reached.manifest);
   if (!verifyManifestSignature(signed)) {
     throw new Error('Snapshot signature is invalid — refusing to import.');
   }

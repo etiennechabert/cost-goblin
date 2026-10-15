@@ -1,5 +1,6 @@
 import { request, type RequestOptions } from 'node:https';
-import type { ConnectionOptions } from 'node:tls';
+import { connect as tlsConnect, type ConnectionOptions } from 'node:tls';
+import { firstReachable } from './first-reachable.js';
 import {
   SHARING_PSK_IDENTITY,
   SHARING_TLS_CIPHERS,
@@ -27,19 +28,24 @@ const REQUEST_TIMEOUT_MS = 30_000;
 const CONNECT_TIMEOUT_MS = 10_000;
 
 export interface PeerRequestOptions {
-  /** Aborts the request — e.g. once another address of the key answered. */
-  readonly signal?: AbortSignal;
   /** Deadline for the TCP connect + TLS handshake of a new socket. A socket
    *  reused from the agent's keep-alive pool is already past it. */
   readonly connectTimeoutMs?: number;
 }
 
-function requestOptions(endpoint: PeerEndpoint, path: string): RequestOptions & ConnectionOptions {
+export interface PeerProbeOptions extends PeerRequestOptions {
+  /** Hangs up — e.g. once another address of the key answered. */
+  readonly signal?: AbortSignal;
+}
+
+function connectTimeoutError(connectTimeoutMs: number): Error {
+  return new Error(`Peer did not answer within ${String(connectTimeoutMs / 1000)} s`);
+}
+
+function tlsOptions(endpoint: PeerEndpoint): ConnectionOptions {
   return {
     host: endpoint.host,
     port: endpoint.port,
-    path,
-    method: 'GET',
     ciphers: SHARING_TLS_CIPHERS,
     minVersion: SHARING_TLS_MIN_VERSION,
     maxVersion: SHARING_TLS_MAX_VERSION,
@@ -50,6 +56,10 @@ function requestOptions(endpoint: PeerEndpoint, path: string): RequestOptions & 
   };
 }
 
+function requestOptions(endpoint: PeerEndpoint, path: string): RequestOptions & ConnectionOptions {
+  return { ...tlsOptions(endpoint), path, method: 'GET' };
+}
+
 function get(endpoint: PeerEndpoint, path: string, maxBytes: number, options: PeerRequestOptions): Promise<Buffer> {
   return new Promise<Buffer>((resolve, reject) => {
     // Settle exactly once: aborting the request emits further 'error' events on
@@ -57,8 +67,7 @@ function get(endpoint: PeerEndpoint, path: string, maxBytes: number, options: Pe
     let settled = false;
     const fail = (err: Error): void => { if (!settled) { settled = true; reject(err); } };
     const succeed = (buf: Buffer): void => { if (!settled) { settled = true; resolve(buf); } };
-    const signal = options.signal === undefined ? {} : { signal: options.signal };
-    const req = request({ ...requestOptions(endpoint, path), ...signal }, (res) => {
+    const req = request(requestOptions(endpoint, path), (res) => {
       res.on('error', fail);
       if (res.statusCode !== 200) {
         res.resume();
@@ -83,7 +92,7 @@ function get(endpoint: PeerEndpoint, path: string, maxBytes: number, options: Pe
       if (req.reusedSocket) return;
       const connectTimeoutMs = options.connectTimeoutMs ?? CONNECT_TIMEOUT_MS;
       const timer = setTimeout(() => {
-        fail(new Error(`Peer did not answer within ${String(connectTimeoutMs / 1000)} s`));
+        fail(connectTimeoutError(connectTimeoutMs));
         req.destroy();
       }, connectTimeoutMs);
       socket.once('secureConnect', () => { clearTimeout(timer); });
@@ -92,6 +101,61 @@ function get(endpoint: PeerEndpoint, path: string, maxBytes: number, options: Pe
     req.setTimeout(REQUEST_TIMEOUT_MS, () => { fail(new Error('Peer request timed out')); req.destroy(); });
     req.end();
   });
+}
+
+/** Resolve once a TLS-PSK handshake with `endpoint` completes, then hang up.
+ *  A completed handshake proves the address routes to a holder of the psk
+ *  (each side's Finished is keyed from it), and no request is sent, so the
+ *  publisher builds and serves nothing. */
+export function probeEndpoint(endpoint: PeerEndpoint, options: PeerProbeOptions = {}): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const { signal } = options;
+    const connectTimeoutMs = options.connectTimeoutMs ?? CONNECT_TIMEOUT_MS;
+    const socket = tlsConnect(tlsOptions(endpoint));
+    let settled = false;
+    const finish = (err: Error | null): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      if (err === null) {
+        socket.end();
+        resolve();
+      } else {
+        socket.destroy();
+        reject(err);
+      }
+    };
+    const onAbort = (): void => { finish(new Error('Peer probe aborted')); };
+    const timer = setTimeout(() => { finish(connectTimeoutError(connectTimeoutMs)); }, connectTimeoutMs);
+    socket.once('secureConnect', () => { finish(null); });
+    // Kept for the socket's lifetime: a late error must not go unhandled.
+    socket.on('error', (err) => { finish(err); });
+    if (signal?.aborted === true) onAbort();
+    else signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+export type ManifestFromAnyResult =
+  | { readonly status: 'reached'; readonly endpoint: PeerEndpoint; readonly manifest: string }
+  | { readonly status: 'unreachable'; readonly errors: readonly unknown[] };
+
+/** Fetch the manifest through whichever of a sharing key's addresses answers
+ *  first. Only handshakes are raced (see firstReachable): requesting the
+ *  manifest on every address that routes — LAN and Tailscale both do in the
+ *  office — would have the publisher read and hash its whole data tree once
+ *  per address. The manifest is then fetched once, from the winner. */
+export async function fetchManifestFromAny(
+  endpoints: readonly PeerEndpoint[],
+  options: PeerRequestOptions = {},
+): Promise<ManifestFromAnyResult> {
+  const reached = await firstReachable(endpoints, (endpoint, signal) => probeEndpoint(endpoint, { ...options, signal }));
+  if (reached.status === 'unreachable') return reached;
+  try {
+    return { status: 'reached', endpoint: reached.candidate, manifest: await fetchManifest(reached.candidate, options) };
+  } catch (err: unknown) {
+    return { status: 'unreachable', errors: [err] };
+  }
 }
 
 /** Fetch the publisher's serialized SignedPackManifest. The caller must parse

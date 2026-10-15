@@ -17,8 +17,7 @@ import {
   type SharingServerConfig,
   type SharingServerHandlers,
 } from '../peer/secure-server.js';
-import { firstReachable } from '../peer/first-reachable.js';
-import { fetchFile, fetchManifest, type PeerEndpoint } from '../peer/secure-client.js';
+import { fetchFile, fetchManifest, fetchManifestFromAny, probeEndpoint, type PeerEndpoint } from '../peer/secure-client.js';
 import {
   SHARING_PSK_IDENTITY,
   SHARING_TLS_CIPHERS,
@@ -493,27 +492,99 @@ describe('reaching a publisher across networks', () => {
     }
   });
 
-  it('connects through the reachable address without waiting on the dead ones', async () => {
+  it('probes with a bare handshake: resolves against the publisher, which serves nothing', async () => {
+    const accesses: SharingAccessEvent[] = [];
+    const server = await startTestServer({ onAccess: (e) => accesses.push(e) });
+    try {
+      await probeEndpoint({ host: '127.0.0.1', port: server.port, psk: PSK });
+      await sleep(50);
+      expect(accesses).toHaveLength(0);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('rejects a probe with the wrong psk', async () => {
+    const server = await startTestServer({});
+    try {
+      await expect(probeEndpoint({ host: '127.0.0.1', port: server.port, psk: Buffer.from('WRONG-secret-bbbbbbbbbbbbbbbbbbbb') }))
+        .rejects.toThrow();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('hangs up a probe on abort or after the connect timeout', async () => {
+    const hole = await startBlackhole();
+    const endpoint: PeerEndpoint = { host: '127.0.0.1', port: hole.port, psk: PSK };
+    try {
+      await expect(probeEndpoint(endpoint, { connectTimeoutMs: 150 })).rejects.toThrow(/did not answer/);
+      const controller = new AbortController();
+      const probe = probeEndpoint(endpoint, { signal: controller.signal });
+      await sleep(50);
+      controller.abort();
+      await expect(probe).rejects.toThrow(/aborted/);
+      expect(await eventually(() => hole.openSockets() === 0, 1000)).toBe(true);
+    } finally {
+      await hole.close();
+    }
+  });
+
+  it('fetches through the reachable address without waiting on the dead ones', async () => {
     const hole = await startBlackhole();
     const server = await startTestServer({});
-    // The dead address is listed first, as a LAN address is on a remote pull.
-    const candidates: PeerEndpoint[] = [
-      { host: '127.0.0.1', port: hole.port, psk: PSK },
-      { host: '127.0.0.1', port: server.port, psk: PSK },
-    ];
     try {
       const started = Date.now();
-      const result = await firstReachable(candidates, (candidate, signal) => fetchManifest(candidate, { signal }));
+      // The dead address is listed first, as a LAN address is on a remote pull.
+      const result = await fetchManifestFromAny([
+        { host: '127.0.0.1', port: hole.port, psk: PSK },
+        { host: '127.0.0.1', port: server.port, psk: PSK },
+      ]);
       expect(Date.now() - started).toBeLessThan(2000);
       expect(result.status).toBe('reached');
       if (result.status !== 'reached') return;
-      expect(result.candidate.port).toBe(server.port);
-      expect(result.value).toContain('Test Publisher');
-      // The losing attempt is aborted, not left to run out its timeout.
+      expect(result.endpoint.port).toBe(server.port);
+      expect(result.manifest).toContain('Test Publisher');
+      // The losing probe is hung up, not left to run out its timeout.
       expect(await eventually(() => hole.openSockets() === 0, 1000)).toBe(true);
     } finally {
       await hole.close();
       await server.close();
+    }
+  });
+
+  it('asks for the manifest once even when several addresses reach the publisher', async () => {
+    const accesses: SharingAccessEvent[] = [];
+    const server = await startTestServer({ onAccess: (e) => accesses.push(e) });
+    const endpoint: PeerEndpoint = { host: '127.0.0.1', port: server.port, psk: PSK };
+    try {
+      // LAN and Tailscale addresses of one machine, both routable.
+      const result = await fetchManifestFromAny([endpoint, { ...endpoint }, { ...endpoint }]);
+      expect(result.status).toBe('reached');
+      await sleep(50);
+      expect(accesses.filter(e => e.kind === 'manifest')).toHaveLength(1);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('reports one error per address, in key order, when none answers', async () => {
+    const hole = await startBlackhole();
+    const server = await startTestServer({});
+    const closedPort = server.port;
+    await server.close();
+    try {
+      const result = await fetchManifestFromAny([
+        { host: '127.0.0.1', port: hole.port, psk: PSK },
+        { host: '127.0.0.1', port: closedPort, psk: PSK },
+      ], { connectTimeoutMs: 150 });
+      expect(result.status).toBe('unreachable');
+      if (result.status !== 'unreachable') return;
+      expect(result.errors).toHaveLength(2);
+      expect(String(result.errors[0])).toMatch(/did not answer/);
+      expect(String(result.errors[1])).toMatch(/ECONNREFUSED/);
+    } finally {
+      await hole.close();
     }
   });
 });

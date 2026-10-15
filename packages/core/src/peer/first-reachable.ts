@@ -1,3 +1,5 @@
+import { setMaxListeners } from 'node:events';
+
 export type FirstReachableResult<C, T> =
   | { readonly status: 'reached'; readonly candidate: C; readonly value: T }
   /** One error per candidate, in candidate order (not completion order). */
@@ -13,37 +15,24 @@ export type FirstReachableResult<C, T> =
  *  success — or the slowest failure when none answers.
  *
  *  Once one succeeds, the shared signal aborts the attempts still in flight. */
-export function firstReachable<C, T>(
+export async function firstReachable<C, T>(
   candidates: readonly C[],
   attempt: (candidate: C, signal: AbortSignal) => Promise<T>,
 ): Promise<FirstReachableResult<C, T>> {
-  if (candidates.length === 0) return Promise.resolve({ status: 'unreachable', errors: [] });
   const controller = new AbortController();
-  const errors: unknown[] = candidates.map(() => undefined);
-  let failed = 0;
-  let settled = false;
-  return new Promise((resolve) => {
-    const succeed = (candidate: C, value: T): void => {
-      if (settled) return;
-      settled = true;
-      controller.abort();
-      resolve({ status: 'reached', candidate, value });
-    };
-    const fail = (i: number, err: unknown): void => {
-      errors[i] = err;
-      failed += 1;
-      if (settled || failed < candidates.length) return;
-      settled = true;
-      resolve({ status: 'unreachable', errors });
-    };
-    candidates.forEach((candidate, i) => {
-      // Started synchronously, all together. An attempt that throws instead
-      // of rejecting is just a failed candidate, not an escape from the race.
-      try {
-        attempt(candidate, controller.signal).then((value) => { succeed(candidate, value); }, (err: unknown) => { fail(i, err); });
-      } catch (err: unknown) {
-        fail(i, err);
-      }
-    });
-  });
+  // One abort listener per attempt in flight: past Node's default of 10 that
+  // reads as a leak warning, yet a host with many interfaces is legitimate.
+  setMaxListeners(Math.max(10, candidates.length), controller.signal);
+  try {
+    // Started together; the async wrapper turns an attempt that throws
+    // instead of rejecting into a failed candidate. AggregateError keeps the
+    // errors in candidate order.
+    return await Promise.any(candidates.map(async (candidate): Promise<FirstReachableResult<C, T>> =>
+      ({ status: 'reached', candidate, value: await attempt(candidate, controller.signal) })));
+  } catch (err: unknown) {
+    if (err instanceof AggregateError) return { status: 'unreachable', errors: err.errors };
+    throw err;
+  } finally {
+    controller.abort();
+  }
 }

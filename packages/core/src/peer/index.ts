@@ -34,9 +34,9 @@ export type {
 } from './pack-manifest.js';
 export { startSharingServer } from './secure-server.js';
 export type { SharingAccessEvent, SharingServer, SharingServerConfig, SharingServerHandlers } from './secure-server.js';
-export { fetchManifest, fetchFile } from './secure-client.js';
+export { fetchManifest, fetchManifestFromAny, fetchFile, probeEndpoint } from './secure-client.js';
 export { describePeerConnectError } from './connect-error.js';
-export type { PeerEndpoint, PeerRequestOptions } from './secure-client.js';
+export type { ManifestFromAnyResult, PeerEndpoint, PeerProbeOptions, PeerRequestOptions } from './secure-client.js';
 export { firstReachable } from './first-reachable.js';
 export type { FirstReachableResult } from './first-reachable.js';
 export { readFileWithinRoot, ContainedReadError } from './contained-read.js';
