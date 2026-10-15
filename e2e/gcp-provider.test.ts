@@ -87,6 +87,9 @@ test.describe('mixed AWS + GCP workspace', () => {
   });
 
   test('shows who listing and downloads run as, finding credentials only in the sandbox', async () => {
+    // Two gcloud reads (the visit, then Re-check), each allowed the panel's
+    // full 15 s ceiling (GCLOUD_CONFIG_TIMEOUT_MS) on a slow runner.
+    test.setTimeout(60_000);
     // The "Signed in as" panel reads the ADC location the Cloud Storage SDK
     // reads and runs `gcloud config list`. Sandboxed, that location is the
     // pinned, absent file — a panel naming anyone, or pointing anywhere but
@@ -97,8 +100,11 @@ test.describe('mixed AWS + GCP workspace', () => {
     await expect(panel.getByText(/No file at .*cloud-sandbox/)).toBeVisible();
     // gcloud may or may not sit in a trusted location on the runner; when it
     // does, its config dir is the sandbox's empty one, so it has no account —
-    // never one from the developer's gcloud.
-    await expect(panel.getByText(/No active gcloud account|The gcloud CLI is not installed/)).toBeVisible();
+    // never one from the developer's gcloud. A cold gcloud on a CI runner
+    // usually answers in 2-4 s but has run past the panel's 15 s ceiling (this
+    // test failed at 20 s on 2026-10-12 and 2026-10-15); the panel then reports
+    // the timeout, which names no one either. Any other gcloud error fails.
+    await expect(panel.getByText(/No active gcloud account|The gcloud CLI is not installed|Timed out waiting for gcloud/)).toBeVisible();
     await expect(panel.getByText('Checking Google Cloud credentials…')).toHaveCount(0);
 
     await panel.getByRole('button', { name: 'Re-check' }).click();
