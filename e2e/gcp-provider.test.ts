@@ -100,15 +100,19 @@ test.describe('mixed AWS + GCP workspace', () => {
     await expect(panel.getByText(/No file at .*cloud-sandbox/)).toBeVisible();
     // gcloud may or may not sit in a trusted location on the runner; when it
     // does, its config dir is the sandbox's empty one, so it has no account —
-    // never one from the developer's gcloud. A cold gcloud on a CI runner
-    // usually answers in 2-4 s but has run past the panel's 15 s ceiling (this
-    // test failed at 20 s on 2026-10-12 and 2026-10-15); the panel then reports
-    // the timeout, which names no one either. Any other gcloud error fails.
-    await expect(panel.getByText(/No active gcloud account|The gcloud CLI is not installed|Timed out waiting for gcloud/)).toBeVisible();
+    // never one from the developer's gcloud.
+    const gcloudAnswer = panel.getByText(/No active gcloud account|The gcloud CLI is not installed/);
+    // A cold gcloud on a CI runner usually answers in 2-4 s but has run past
+    // the panel's 15 s ceiling (this test failed at 20 s on 2026-10-12 and
+    // 2026-10-15). Tolerate that once: the warm Re-check below must answer, so
+    // a gcloud that hangs on every read still fails. The message is the
+    // desktop's (gcp-identity.ts, 'timeout' case).
+    await expect(gcloudAnswer.or(panel.getByText('Timed out waiting for gcloud.'))).toBeVisible();
     await expect(panel.getByText('Checking Google Cloud credentials…')).toHaveCount(0);
 
     await panel.getByRole('button', { name: 'Re-check' }).click();
-    await expect(panel.getByText('Not signed in')).toBeVisible({ timeout: 30_000 });
+    await expect(gcloudAnswer).toBeVisible({ timeout: 30_000 });
+    await expect(panel.getByText('Not signed in')).toBeVisible();
     // Running gcloud against the sandbox config must not have minted a
     // credential store there.
     await expectCloudSandboxed(app);
