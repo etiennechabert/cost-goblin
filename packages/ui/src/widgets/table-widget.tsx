@@ -134,7 +134,11 @@ export function TableWidget({
   const explorerFilters = useMemo(() => toExplorerFilters(globalFilters), [globalFilters]);
 
   const [sort, setSort] = useState<ExplorerSort | undefined>(undefined);
-  const [enabledColumns, setEnabledColumns] = useState(specEnabled);
+  // Which columns show, and separately in what order: the view's configured
+  // order first, then every other column in its usual place. Showing or
+  // hiding a column therefore never moves the others.
+  const [enabledColumns, setEnabledColumns] = useState<readonly string[]>(specEnabled);
+  const [columnOrder, setColumnOrder] = useState<readonly string[]>(specEnabled);
 
   const overviewQuery = useQuery(
     () => api.queryExplorerOverview({ filters: explorerFilters, dateRange, granularity, applyCostScope: true, origin: 'widget:table:overview' }),
@@ -225,9 +229,11 @@ export function TableWidget({
     return ids;
   }, [dimensions]);
 
+  // The picker lists the columns in the table's order, so a drag lands where
+  // it is dropped.
   const allTableColumns = useMemo(
-    () => allColumnSpecs.map(s => specToTableColumn(s, activeDimIds)),
-    [allColumnSpecs, activeDimIds],
+    () => applyColumnOrder(allColumnSpecs, columnOrder).map(s => specToTableColumn(s, activeDimIds)),
+    [allColumnSpecs, columnOrder, activeDimIds],
   );
 
   const deltaColumn = useMemo<TableColumn<AggregatedTableRow> | null>(() => {
@@ -259,14 +265,14 @@ export function TableWidget({
 
   const visibleTableColumns = useMemo(() => {
     const enabled = allColumnSpecs.filter(c => enabledSet.has(c.key));
-    const ordered = applyColumnOrder(enabled, [...enabledColumns]);
+    const ordered = applyColumnOrder(enabled, columnOrder);
     const cols = ordered.map(s => specToTableColumn(s, activeDimIds));
     if (deltaColumn !== null) {
       const costIdx = cols.findIndex(c => c.id === 'cost');
       cols.splice(costIdx + 1, 0, deltaColumn);
     }
     return cols;
-  }, [allColumnSpecs, enabledSet, enabledColumns, activeDimIds, deltaColumn]);
+  }, [allColumnSpecs, enabledSet, columnOrder, activeDimIds, deltaColumn]);
 
   const hiddenColumns = useMemo(
     () => allColumnSpecs.filter(c => !enabledSet.has(c.key)).map(c => c.key),
@@ -298,14 +304,21 @@ export function TableWidget({
     }
   }, [allColumnSpecs, onSetFilter, activeDimIds]);
 
+  // The picker hides only the columns it lists. An enabled one it doesn't list
+  // yet (a tag column before the overview loads) stays enabled.
   const handleHiddenChange = useCallback((nextHidden: readonly string[]) => {
     const hiddenSet = new Set(nextHidden);
-    setEnabledColumns(allColumnSpecs.filter(c => !hiddenSet.has(c.key)).map(c => c.key));
+    const listed = allColumnSpecs.map(c => c.key);
+    setEnabledColumns(prev => [
+      ...prev.filter(k => !listed.includes(k)),
+      ...listed.filter(k => !hiddenSet.has(k)),
+    ]);
   }, [allColumnSpecs]);
 
-  const handleOrderChange = useCallback(() => {
-    // no-op: column order controlled by enabledColumns in views editor
-  }, []);
+  // The picker's "Reset order" sends no order: back to the view's own.
+  const handleOrderChange = useCallback((next: readonly string[]) => {
+    setColumnOrder(next.length === 0 ? specEnabled : next);
+  }, [specEnabled]);
 
   const fetchDetailRows = useCallback(async (row: AggregatedTableRow) => {
     const allDimKeys = allColumnSpecs.filter(c => c.dimId !== null).map(c => c.key);
