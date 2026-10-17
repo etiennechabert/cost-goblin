@@ -305,11 +305,14 @@ jobs:
           E2E_RESULT: ${{ needs.test-e2e.result }}
         run: |
           set -euo pipefail
-          # Shards expected to upload coverage. navigation-, csp- and
-          # sandbox-verification deliberately collect none. Keep in sync with
-          # the shard names passed to finishCoverage(app, page, '<shard>') in
-          # e2e/*.test.ts.
-          expected="views-core views-config views-defaults stress gcp-provider workspaces clickability"
+          # Shards expected to upload coverage: every shard, since every
+          # launch measures its main process (launchElectron sets
+          # NODE_V8_COVERAGE). The first seven also harvest the renderer —
+          # keep those in sync with the shard names passed to
+          # finishCoverage(app, page, '<shard>') in e2e/*.test.ts. navigation-,
+          # csp- and sandbox-verification deliberately harvest no renderer
+          # coverage, so theirs is main-process only.
+          expected="views-core views-config views-defaults stress gcp-provider workspaces clickability navigation-verification csp-verification sandbox-verification"
           missing=0
           mkdir -p coverage-e2e
           : > coverage-e2e/lcov.info

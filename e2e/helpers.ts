@@ -14,6 +14,15 @@ export const ROOT = join(import.meta.dirname, '..');
 const DESKTOP_DIR = join(ROOT, 'packages', 'desktop');
 export const SCREENSHOT_DIR = join(tmpdir(), 'costgoblin-e2e');
 export const V8_DIR = join(tmpdir(), 'costgoblin-e2e-v8');
+/** Where every launch's main process writes its V8 coverage. launchElectron
+ *  sets NODE_V8_COVERAGE to it, so Node measures the main bundle from its
+ *  first line and writes `coverage-<pid>-<time>-<thread>.json` as the app
+ *  exits — no attach step, so none of attachCoverage's ordering applies. A
+ *  launch closeApp has to SIGKILL writes nothing, which only loses that
+ *  launch's coverage. A subdirectory, so the dumps can't be mistaken for the
+ *  renderer shards `coverage-<shard>.json` beside it; globalSetup empties
+ *  both. collect-coverage.ts converts it next to the renderer shards. */
+export const MAIN_V8_DIR = join(V8_DIR, 'main');
 /** Debug screenshots from {@link screenshot} are opt-in. Nothing reads them:
  *  CI doesn't upload SCREENSHOT_DIR, and the homepage images come from
  *  homepage-screenshots.ts, which takes its own. Taking them on every run
@@ -108,7 +117,13 @@ export async function launchElectron(options: {
     // Empty dirs (gcloud's config dir): the CLI finds no account in them. The
     // credential FILES the sandbox points at are deliberately never created.
     for (const dir of cloudSandboxDirs(sandboxDir)) mkdirSync(dir, { recursive: true });
-    const env = { ...cloudSandboxEnv(options.inherited ?? process.env, sandboxDir), ...options.env };
+    const env = {
+      ...cloudSandboxEnv(options.inherited ?? process.env, sandboxDir),
+      // Main-process coverage: Node records it from the bundle's first line
+      // and writes the dump as the app exits — see MAIN_V8_DIR.
+      NODE_V8_COVERAGE: MAIN_V8_DIR,
+      ...options.env,
+    };
     const violations = cloudSandboxViolations(env, sandboxDir);
     if (violations.length > 0) {
       throw new Error(`launchElectron: refusing to start the app with cloud credentials reachable:\n${violations.join('\n')}`);
