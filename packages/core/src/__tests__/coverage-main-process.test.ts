@@ -7,6 +7,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { auditCoverageReport, describeMainCoverageFailure } from '../e2e-coverage/audit.js';
 import { createCoverageReport, isCoverageShardFile } from '../e2e-coverage/collect.js';
 import {
+  dumpEntryFreshness,
   isMainBundleUrl,
   isNodeCoverageDumpFile,
   parseNodeCoverageDump,
@@ -54,6 +55,22 @@ describe('isMainBundleUrl', () => {
     expect(isMainBundleUrl('node:internal/bootstrap/node')).toBe(false);
     expect(isMainBundleUrl('electron/js2c/browser_init')).toBe(false);
     expect(isMainBundleUrl('https://example.com/packages/desktop/out/main/main.js')).toBe(false);
+  });
+});
+
+describe('dumpEntryFreshness', () => {
+  it('maps a dump written after the build onto it', () => {
+    expect(dumpEntryFreshness(2_000, 1_000)).toBe('fresh');
+    // Same timestamp: a coarse filesystem clock, not a rebuild.
+    expect(dumpEntryFreshness(1_000, 1_000)).toBe('fresh');
+  });
+
+  it('refuses a dump the bundle was rebuilt after', () => {
+    expect(dumpEntryFreshness(1_000, 2_000)).toBe('stale');
+  });
+
+  it('tells a missing bundle apart from a stale dump', () => {
+    expect(dumpEntryFreshness(1_000, null)).toBe('bundle-missing');
   });
 });
 

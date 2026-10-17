@@ -227,6 +227,16 @@ export async function launchApp(overrides?: {
  *  collector merges the two. Best-effort: a failure costs coverage, never the
  *  suite. */
 async function flushMainCoverage(app: ElectronApplication): Promise<void> {
+  // A test that quit the app itself already got its exit dump. Playwright
+  // throws from process() once it has seen the app close, so that counts too.
+  let exited: boolean;
+  try {
+    const child = app.process();
+    exited = child.exitCode !== null || child.signalCode !== null;
+  } catch {
+    exited = true;
+  }
+  if (exited) return;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([

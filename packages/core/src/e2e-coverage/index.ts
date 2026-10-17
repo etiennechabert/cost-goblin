@@ -36,7 +36,13 @@ export type { BundleCoverage, BundleEntry, BundleEntryResult } from './bundle-co
 
 export { generateLcov } from './lcov.js';
 
-export { isMainBundleUrl, isNodeCoverageDumpFile, parseNodeCoverageDump } from './main-process.js';
+export {
+  dumpEntryFreshness,
+  isMainBundleUrl,
+  isNodeCoverageDumpFile,
+  parseNodeCoverageDump,
+} from './main-process.js';
+export type { DumpEntryFreshness } from './main-process.js';
 
 export {
   auditCoverageReport,
