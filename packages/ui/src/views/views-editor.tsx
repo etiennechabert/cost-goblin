@@ -1,5 +1,5 @@
 import { useDeferredValue, useEffect, useRef, useState } from 'react';
-import { asDimensionId, SEED_VIEWS_CONFIG } from '@costgoblin/core/browser';
+import { asDimensionId, SEED_VIEWS_CONFIG, withMissingSeedViews } from '@costgoblin/core/browser';
 import type {
   Dimension,
   ViewSpec,
@@ -218,21 +218,12 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
 
   async function handleReset(): Promise<void> {
     if (!globalThis.confirm('Reset built-in views to defaults? Your custom views will be kept (delete them manually to fully reset).')) return;
-    // Client-side merge: built-ins from seed replace any current same-id built-in,
+    // Client-side merge: built-ins from seed replace any current same-id view,
     // custom (non-builtIn) views in the editor are preserved in place. Missing
-    // built-ins are prepended.
+    // built-ins are inserted where the seed order puts them.
     const seedById = new Map(SEED_VIEWS_CONFIG.views.map(v => [v.id, v]));
-    const seenSeedIds = new Set<string>();
-    const replaced: ViewSpec[] = state.config.views.map(v => {
-      const seed = seedById.get(v.id);
-      if (seed?.builtIn === true) {
-        seenSeedIds.add(v.id);
-        return seed;
-      }
-      return v;
-    });
-    const missing = SEED_VIEWS_CONFIG.views.filter(v => v.builtIn === true && !seenSeedIds.has(v.id));
-    const newConfig: ViewsConfig = { views: [...missing, ...replaced] };
+    const replaced: ViewSpec[] = state.config.views.map(v => seedById.get(v.id) ?? v);
+    const newConfig: ViewsConfig = { views: withMissingSeedViews(replaced) };
 
     setSaving(true);
     setError(null);

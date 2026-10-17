@@ -39,9 +39,9 @@ export const OVERVIEW_SEED_VIEW: ViewSpec = {
 /** Built-in dashboards beyond the overview, each answering one question by
  *  combining the widgets that answer it. Group-bys stick to account, region and
  *  service: the dimensions every provider populates (GCP has no
- *  service_category). Between them they use every widget type except baseline,
- *  which reads the Baselines page rather than the dashboard's filters and
- *  range. Marked built-in (see SEED_VIEWS_CONFIG) so the editor's "Reset
+ *  service_category). With the overview, the set uses every widget type except
+ *  baseline, which reads the Baselines page rather than the dashboard's filters
+ *  and range. Marked built-in (see SEED_VIEWS_CONFIG) so the editor's "Reset
  *  built-ins" restores them; that reset only re-adds seed views flagged
  *  builtIn, leaving the user's own dashboards untouched. Ids must not reuse a
  *  retired seed id (RETIRED_SEED_VIEW_IDS in config/retired-seed-views.ts). */
@@ -73,7 +73,7 @@ const QUESTION_VIEWS: readonly Omit<ViewSpec, 'builtIn'>[] = [
   {
     id: 'spend-pacing',
     name: 'Spend pacing',
-    description: 'Where this period is heading against the previous one, and the daily run rate behind it',
+    description: 'Cumulative spend against the previous period and the daily run rate behind it. Pick This month to project where the month lands',
     rows: [
       {
         widgets: [
@@ -123,3 +123,21 @@ const QUESTION_VIEWS: readonly Omit<ViewSpec, 'builtIn'>[] = [
 export const SEED_VIEWS_CONFIG: ViewsConfig = {
   views: [OVERVIEW_SEED_VIEW, ...QUESTION_VIEWS.map(v => ({ ...v, builtIn: true }))],
 };
+
+/** The given views plus every seed view they lack (matched by id), each
+ *  inserted where the seed order puts it: right after the nearest earlier seed
+ *  view present, or first. Every seed view is built-in. */
+export function withMissingSeedViews(views: readonly ViewSpec[]): ViewSpec[] {
+  const out = [...views];
+  let insertAt = 0;
+  for (const seed of SEED_VIEWS_CONFIG.views) {
+    const existing = out.findIndex(v => v.id === seed.id);
+    if (existing >= 0) {
+      insertAt = existing + 1;
+      continue;
+    }
+    out.splice(insertAt, 0, seed);
+    insertAt += 1;
+  }
+  return out;
+}

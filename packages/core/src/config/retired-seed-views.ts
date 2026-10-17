@@ -1,5 +1,5 @@
 import { asDimensionId } from '../types/branded.js';
-import { SEED_VIEWS_CONFIG } from '../types/seed-views.js';
+import { withMissingSeedViews } from '../types/seed-views.js';
 import type { ViewSpec, ViewsConfig } from '../types/views.js';
 import { viewToYaml } from './views-serialize.js';
 
@@ -232,24 +232,6 @@ function sameView(a: ViewSpec, b: ViewSpec): boolean {
   // viewToYaml emits keys in a fixed order and drops unset optionals, so equal
   // specs serialize identically however they were built.
   return JSON.stringify(viewToYaml(a)) === JSON.stringify(viewToYaml(b));
-}
-
-/** Insert every built-in seed view the list lacks where the seed order puts
- *  it: right after the nearest earlier seed view the list has, or first. */
-function withMissingSeedViews(views: readonly ViewSpec[]): ViewSpec[] {
-  const out = [...views];
-  let insertAt = 0;
-  for (const seed of SEED_VIEWS_CONFIG.views) {
-    const existing = out.findIndex(v => v.id === seed.id);
-    if (existing >= 0) {
-      insertAt = existing + 1;
-      continue;
-    }
-    if (seed.builtIn !== true) continue;
-    out.splice(insertAt, 0, seed);
-    insertAt += 1;
-  }
-  return out;
 }
 
 export interface SeedViewsMigration {

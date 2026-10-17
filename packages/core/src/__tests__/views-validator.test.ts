@@ -89,10 +89,13 @@ describe('validateViews', () => {
       views: [
         { id: 'a', name: 'A', description: 'What this answers', rows: [] },
         { id: 'b', name: 'B', rows: [] },
+        { id: 'c', name: 'C', description: '  ', rows: [] },
       ],
     });
     expect(cfg.views[0]?.description).toBe('What this answers');
     expect(cfg.views[1]).not.toHaveProperty('description');
+    // Blank reads as absent, so the header falls back to its tagline.
+    expect(cfg.views[2]).not.toHaveProperty('description');
   });
 
   it('rejects a non-string view description', () => {
