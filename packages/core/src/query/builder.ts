@@ -12,6 +12,7 @@ import { QueryBuilder, type ParameterizedQuery } from './parameterized.js';
 import { assertBillingPeriod, assertDateString, assertHourString, assertSafeColumnIdentifier, assertTier, isSafeColumnIdentifier, SecurityError } from './identifier-validator.js';
 import { rollupGrainColumns, rollupGrainDimensions } from '../rollup/grain.js';
 import { sqlEscapeString, sqlStringLiteral } from './sql-escape.js';
+import { trendPercentChangeSql } from './trend-change.js';
 
 /** Label for rows whose SubAccountId is NULL. FOCUS allows a null SubAccountId
  *  and GCP emits it for charges not tied to a project (account-level taxes,
@@ -831,10 +832,7 @@ export function buildTrendQuery(
       current_cost,
       previous_cost,
       current_cost - previous_cost AS delta,
-      CASE
-        WHEN previous_cost = 0 THEN NULL
-        ELSE (current_cost - previous_cost) / previous_cost * 100
-      END AS percent_change
+      ${trendPercentChangeSql('current_cost', 'previous_cost')} AS percent_change
     FROM agg
     WHERE ABS(current_cost - previous_cost) >= ${deltaThresholdPlaceholder}
     ORDER BY ABS(current_cost - previous_cost) DESC

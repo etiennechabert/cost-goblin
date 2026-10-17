@@ -2,7 +2,9 @@ import {
   asEntityRef,
   asDollars,
   buildTrendQuery,
+  isNewTrend,
   logger,
+  meetsTrendThresholds,
 } from '@costgoblin/core';
 import type { DateRange, DimensionId, TrendRow } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
@@ -24,6 +26,14 @@ import {
   toNum,
   toStr,
 } from './tool-helpers.js';
+
+/** Legend for the ±100% of an entity with no previous-period cost, which an
+ *  MCP client would otherwise read as a doubling or a drop to zero. */
+const NEW_TREND_NOTE = '*+100% / -100% marks new spend / a new credit: the previous period had no cost.*';
+
+function showsNewTrend(rows: readonly TrendRow[]): boolean {
+  return rows.some(r => isNewTrend(r.currentCost, r.previousCost));
+}
 
 export async function queryTrends(
   ctx: McpContext,
@@ -74,8 +84,7 @@ export async function queryTrends(
     const delta = toNum(row['delta']);
     const percentChange = toNum(row['percent_change']);
 
-    if (Math.abs(delta) < deltaThreshold) continue;
-    if (Math.abs(percentChange) < percentThreshold) continue;
+    if (!meetsTrendThresholds({ currentCost, previousCost, delta, percentChange }, deltaThreshold, percentThreshold)) continue;
 
     const trendRow: TrendRow = {
       entity: asEntityRef(entity),
@@ -109,9 +118,11 @@ export async function queryTrends(
 
   const tables: Table[] = [];
   const notes: string[] = [];
+  const shown: (readonly TrendRow[])[] = [];
 
   if (increases.length > 0) {
     const { visible, hiddenCount, hiddenCost } = truncateRows(increases, limit, r => r.delta);
+    shown.push(visible);
     const rows: Cell[][] = visible.map(r => [r.entity, r.currentCost, r.previousCost, r.delta, r.percentChange]);
     tables.push({
       title: `Top Increases (${formatDollars(totalIncrease)} total)`,
@@ -125,6 +136,7 @@ export async function queryTrends(
 
   if (savings.length > 0) {
     const { visible, hiddenCount, hiddenCost } = truncateRows(savings, limit, r => Math.abs(r.delta));
+    shown.push(visible);
     const rows: Cell[][] = visible.map(r => [r.entity, r.currentCost, r.previousCost, r.delta, r.percentChange]);
     tables.push({
       title: `Top Savings (${formatDollars(totalSavings)} total)`,
@@ -135,6 +147,7 @@ export async function queryTrends(
   } else {
     notes.push('*No significant savings found.*');
   }
+  if (shown.some(showsNewTrend)) notes.push(NEW_TREND_NOTE);
 
   const coverage = await computeDataCoverage(ctx, dateRange);
   const result: StructuredResult = {

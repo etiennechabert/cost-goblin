@@ -6,9 +6,11 @@ import {
   getDescendantTagValues,
   listLocalMonths,
   logger,
+  meetsTrendThresholds,
   sqlStringLiteral,
   tagDimColumn,
   tagSqlColumnsById,
+  trendPercentChange,
 } from '@costgoblin/core';
 import type {
   CostResult,
@@ -207,10 +209,7 @@ export function mergeTrendRowsByEntity(rows: readonly TrendRow[]): TrendRow[] {
     currentCost: asDollars(d.currentCost),
     previousCost: asDollars(d.previousCost),
     delta: asDollars(d.delta),
-    percentChange: (() => {
-      if (d.previousCost === 0) return d.currentCost === 0 ? 0 : 100;
-      return (d.delta / d.previousCost) * 100;
-    })(),
+    percentChange: trendPercentChange(d.currentCost, d.previousCost),
   })).sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
 }
 
@@ -277,8 +276,7 @@ export function buildTrendResult(rows: RawRow[], deltaThreshold: number, percent
     const delta = toNum(row['delta']);
     const percentChange = toNum(row['percent_change']);
 
-    if (Math.abs(delta) < deltaThreshold) continue;
-    if (Math.abs(percentChange) < percentThreshold) continue;
+    if (!meetsTrendThresholds({ currentCost, previousCost, delta, percentChange }, deltaThreshold, percentThreshold)) continue;
 
     const trendRow: TrendRow = {
       entity: asEntityRef(entity),
