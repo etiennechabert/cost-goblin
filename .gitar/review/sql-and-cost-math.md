@@ -22,7 +22,7 @@ Covers `packages/core/src/query/`, `packages/core/src/normalize/`, `packages/cor
 ## Cost semantics
 
 - The default metric is EffectiveCost. Use `DEFAULT_COST_METRIC`, not a literal, so the rollup's signature and build agree. `list` and `contracted` count only `ChargeCategory = 'Usage'` rows, or commitments count twice (`packages/core/src/query/cost-metric.ts`).
-- Credits and refunds are negative and net into every SUM. Dropping non-positive totals must be deliberate and say why.
+- Credits and refunds are negative and net into every SUM, so a percent change divides by the baseline's absolute value. Dropping non-positive totals must be deliberate and say why.
 - Currencies are never converted, so don't add math that assumes a single one.
 - A hand-built source must apply the whole cost scope (metric, marketplace attribution, exclusions) or state why not. Otherwise one dropdown shows different dollars before and after the rollup is ready.
 

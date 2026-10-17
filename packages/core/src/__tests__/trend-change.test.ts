@@ -24,6 +24,15 @@ describe('trendPercentChange', () => {
     expect(trendPercentChange(-75, 0)).toBe(-NEW_TREND_PERCENT);
     expect(trendPercentChange(0, 0)).toBe(0);
   });
+
+  it('is signed like the change when the previous period was a net credit', () => {
+    // A credit that grew is a saving and one that shrank or ended is an
+    // increase: dividing by the negative previous cost would flip both.
+    expect(trendPercentChange(-150, -100)).toBe(-50);
+    expect(trendPercentChange(-50, -100)).toBe(50);
+    expect(trendPercentChange(0, -100)).toBe(100);
+    expect(trendPercentChange(50, -100)).toBe(150);
+  });
 });
 
 describe('isNewTrend', () => {
@@ -60,6 +69,12 @@ describe('meetsTrendThresholds', () => {
 
   it('does not treat an entity with no cost in either period as new', () => {
     expect(meetsTrendThresholds(row(0, 0), 0, 5)).toBe(false);
+  });
+
+  it('holds a change from a net-credit previous period to the percent threshold by its size', () => {
+    expect(meetsTrendThresholds(row(-104, -100), 1, 5)).toBe(false);
+    expect(meetsTrendThresholds(row(-110, -100), 1, 5)).toBe(true);
+    expect(meetsTrendThresholds(row(-90, -100), 1, 5)).toBe(true);
   });
 });
 

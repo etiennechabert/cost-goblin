@@ -673,6 +673,7 @@ Compares costs between the current period and the previous equivalent period.
 - Bubble visualization: each bubble is an entity with significant change, sized by dollar impact.
 
 **Behavior:**
+- An item's percentage change is its dollar change over the size of its previous-period cost, so it always carries the dollar change's sign, even when the previous period was a net credit: a credit growing from -$100 to -$150 is a -50% saving.
 - Shows only items exceeding both thresholds. An item with no cost in the previous period (new spend, or a new credit) has no ratio to compare: it exceeds any percentage threshold, and its change shows as +100% / -100%.
 - Clicking a bubble navigates to entity detail.
 
