@@ -3100,6 +3100,9 @@ gcloud auth application-default login
       if (!link || !isPlainClick(e)) return;
       e.preventDefault();
       history.replaceState(history.state, '', link.hash);
+      // A feature's link now names its slide, so keep the gallery on it.
+      const tab = document.getElementById(link.hash.slice(1))?.closest('.showcase-tab');
+      if (tab) featureGallery?.select(tab);
       navigator.clipboard?.writeText(location.href).then(() => showCopied(link), () => {});
     });
 

@@ -338,6 +338,22 @@ describe('costgoblin.com permalinks', () => {
     expect(link.classList).toContain('is-copied');
   });
 
+  it('stop the rotation when they copy a feature, so the slide stays the one the URL names', () => {
+    const { window, document, intervals, reveal } = loadPage();
+    const gallery = document.querySelector('.showcase-gallery');
+    reveal(gallery);
+    expect(intervals).toContain(6000);
+
+    const link = document.querySelector('.showcase-slide.is-active a.anchor-link');
+    link.click();
+    expect(window.location.hash).toBe(link.getAttribute('href'));
+    // Leaving the gallery, or scrolling it back into view, would restart a rotation that wasn't stopped.
+    intervals.length = 0;
+    gallery.dispatchEvent(new window.MouseEvent('mouseleave'));
+    reveal(gallery);
+    expect(intervals).not.toContain(6000);
+  });
+
   it('keep an open guide closable back to where the reader was', async () => {
     const { window, document, copied } = loadPage(`${SITE}#get-started`);
     document.querySelector('a.integration-card[href="#get-started-aws"]').click();
