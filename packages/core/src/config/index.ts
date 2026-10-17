@@ -7,6 +7,8 @@ export { LEGACY_DIMENSION_ID_RENAMES, dimensionIdSet, migrateLegacyDimensionId }
 export { validateCostScope } from './cost-scope-validator.js';
 export { validateBaselines } from './baselines-validator.js';
 export { widgetToYaml, viewToYaml, viewsConfigToYaml } from './views-serialize.js';
+export { RETIRED_SEED_VIEW_IDS, migrateRetiredSeedViews } from './retired-seed-views.js';
+export type { SeedViewsMigration } from './retired-seed-views.js';
 export { costScopeToYaml } from './cost-scope-serialize.js';
 export { baselineSpecToYaml, baselinesToYaml } from './baselines-serialize.js';
 export { dimensionsConfigToYaml } from './dimensions-serialize.js';

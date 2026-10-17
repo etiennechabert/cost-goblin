@@ -135,6 +135,10 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
     updateSelectedView(v => ({ ...v, name }));
   }
 
+  function setViewDescription(description: string): void {
+    updateSelectedView(v => ({ ...v, description: description.trim() === '' ? undefined : description }));
+  }
+
   function addRow(): void {
     updateSelectedView(v => ({
       ...v,
@@ -383,6 +387,14 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
                 />
                 <span className="text-xs text-text-muted">{WIDGET_CATALOG.length} widget types available</span>
               </div>
+              <input
+                type="text"
+                value={selectedView.description ?? ''}
+                onChange={(e) => { setViewDescription(e.target.value); }}
+                placeholder="Description (optional): the question this dashboard answers"
+                aria-label="View description"
+                className="bg-transparent border border-border rounded px-3 py-1.5 text-sm text-text-secondary placeholder:text-text-muted"
+              />
 
               {selectedView.rows.map((row, rowIdx) => (
                 <div key={row.widgets[0]?.id ?? `row-${String(rowIdx)}`} className="rounded-lg border border-border bg-bg-secondary/30 p-3 flex flex-col gap-2">

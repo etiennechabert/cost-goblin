@@ -59,6 +59,7 @@ export function widgetToYaml(w: WidgetSpec): Record<string, unknown> {
 
 export function viewToYaml(v: ViewSpec): Record<string, unknown> {
   const out: Record<string, unknown> = { id: v.id, name: v.name };
+  if (v.description !== undefined) out['description'] = v.description;
   if (v.icon !== undefined) out['icon'] = v.icon;
   if (v.builtIn === true) out['builtIn'] = true;
   out['rows'] = v.rows.map(r => ({ widgets: r.widgets.map(widgetToYaml) }));

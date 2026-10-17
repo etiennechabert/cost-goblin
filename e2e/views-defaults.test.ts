@@ -17,22 +17,13 @@ import {
 let app: ElectronApplication;
 let page: Page;
 
-// One default dashboard per widget type, exactly as seeded by
-// SEED_VIEWS_CONFIG. Keep in sync with packages/core/src/types/seed-views.ts.
+// The built-in dashboards, exactly as seeded by SEED_VIEWS_CONFIG. Keep in
+// sync with packages/core/src/types/seed-views.ts.
 const DEFAULT_VIEWS = [
   'Cost Overview',
-  'Trend lines',
-  'Stacked over time',
-  'Top N',
-  'Distribution',
-  'Treemap',
-  'Heatmap',
-  'Movers',
-  'Line items',
-  'Cost drivers',
-  'Price vs volume',
-  'Budget pacing',
-  'Concentration',
+  'What changed',
+  'Spend pacing',
+  'Where the money goes',
 ];
 
 function escapeRe(s: string): string {

@@ -84,6 +84,22 @@ describe('validateViews', () => {
     expect(widgets[1]).toMatchObject({ enabledColumns: ['cost', 'tag_environment'] });
   });
 
+  it('parses an optional view description', () => {
+    const cfg = validateViews({
+      views: [
+        { id: 'a', name: 'A', description: 'What this answers', rows: [] },
+        { id: 'b', name: 'B', rows: [] },
+      ],
+    });
+    expect(cfg.views[0]?.description).toBe('What this answers');
+    expect(cfg.views[1]).not.toHaveProperty('description');
+  });
+
+  it('rejects a non-string view description', () => {
+    expect(() => validateViews({ views: [{ id: 'a', name: 'A', description: 42, rows: [] }] }))
+      .toThrow(ConfigValidationError);
+  });
+
   it('rejects an unknown widget type', () => {
     expect(() => validateViews({
       views: [{

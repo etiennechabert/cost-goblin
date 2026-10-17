@@ -1247,7 +1247,7 @@ function AppShell(): React.JSX.Element {
               const spec = findViewSpec(view.viewId) ?? OVERVIEW_SEED_VIEW;
               return (
                 <Profiler id={`custom:${view.viewId}`} onRender={onPerfRender}>
-                  <CustomView spec={spec} headerSubtitle="Cloud spending visibility" initialFilter={view.initialFilter} rollupStatus={rollupStatus} />
+                  <CustomView spec={spec} headerSubtitle={spec.description ?? 'Cloud spending visibility'} initialFilter={view.initialFilter} rollupStatus={rollupStatus} />
                 </Profiler>
               );
             })()}

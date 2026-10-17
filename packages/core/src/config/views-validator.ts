@@ -188,6 +188,9 @@ function validateView(raw: unknown, ctx: string, liveDimensionIds?: ReadonlySet<
   assertString(raw['name'], `${ctx}.name`);
   assertArray(raw['rows'], `${ctx}.rows`);
 
+  const description = raw['description'] === undefined
+    ? undefined
+    : (assertString(raw['description'], `${ctx}.description`), raw['description']);
   const icon = raw['icon'] === undefined
     ? undefined
     : (assertString(raw['icon'], `${ctx}.icon`), raw['icon']);
@@ -215,6 +218,7 @@ function validateView(raw: unknown, ctx: string, liveDimensionIds?: ReadonlySet<
   return {
     id: raw['id'],
     name: raw['name'],
+    ...(description === undefined ? {} : { description }),
     ...(icon === undefined ? {} : { icon }),
     ...(builtIn === true ? { builtIn } : {}),
     rows,

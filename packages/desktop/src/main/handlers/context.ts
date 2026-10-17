@@ -1,3 +1,4 @@
+import { stringify } from 'yaml';
 import type { DuckDBClient, RawRow } from '../duckdb-client.js';
 import { LRUCache } from '../lru-cache.js';
 import { QueryLog } from '../query-log.js';
@@ -16,6 +17,8 @@ import {
   loadViews,
   loadCostScope,
   mergeBuiltInExclusionRules,
+  migrateRetiredSeedViews,
+  viewsConfigToYaml,
   buildRollupPartitionQuery,
   computeShapeSignature,
   computeOrgAccountsDigest,
@@ -264,7 +267,18 @@ export function createAppContext(ctx: IpcContext): AppContext {
 
   async function getViews(): Promise<ViewsConfig> {
     if (state.views !== null) return state.views;
-    const views = await loadViews(ctx.viewsPath, await getLiveDimensionIds());
+    const loaded = await loadViews(ctx.viewsPath, await getLiveDimensionIds());
+    // A file seeded before the question-led dashboards still holds the retired
+    // per-widget showcase set. Swap it for the current built-ins and write the
+    // result back so views.yaml matches what the app shows; a failed write
+    // only means the migration re-runs on the next load.
+    const { config: views, changed } = migrateRetiredSeedViews(loaded);
+    if (changed) {
+      const fs = await import('node:fs/promises');
+      await fs.writeFile(ctx.viewsPath, stringify(viewsConfigToYaml(views))).catch((err: unknown) => {
+        logger.warn(`views: could not persist the dashboard migration: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }
     state.views = views;
     return views;
   }
