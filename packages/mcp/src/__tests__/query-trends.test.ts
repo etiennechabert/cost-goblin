@@ -141,12 +141,26 @@ describe('query_trends', () => {
 
   it('explains the ±100% only when a reported entity is new', async () => {
     const withNew = await trends({});
-    expect(withNew.notes.some(n => /previous period had no cost/.test(n))).toBe(true);
+    expect(withNew.notes.some(n => /previous cost of \$0 is new spend/.test(n))).toBe(true);
 
     // Mid-January to mid-February: the Tax and Credit lines fall in both
     // periods, so nothing reported is new.
     const withoutNew = await trends({ groupBy: 'charge_category', dateRange: { start: '2026-01-15', end: '2026-02-14' } });
     expect(withoutNew.increases.map(l => l.entity)).toEqual(['Usage']);
-    expect(withoutNew.notes.some(n => /previous period had no cost/.test(n))).toBe(false);
+    expect(withoutNew.notes.some(n => /previous cost of \$0 is new spend/.test(n))).toBe(false);
+  });
+
+  it('warns when the previous period has no synced data, so a gap is not read as new spend', async () => {
+    // The fixtures start on 2026-01-01: the two weeks before have no data.
+    const firstWeeks = await trends({ dateRange: { start: '2026-01-01', end: '2026-01-14' } });
+    expect(firstWeeks.increases.length).toBeGreaterThan(5);
+    expect(firstWeeks.increases.every(l => l.previous === 0 && l.change === 100)).toBe(true);
+    expect(firstWeeks.notes).toContain(
+      '*The previous period (2025-12-18 to 2025-12-31) has no synced data for 2025-12: an entity shown as new may only be missing that history.*',
+    );
+
+    // 1–2 Feb compares against 30–31 Jan, which is synced: new means new.
+    const synced = await trends({});
+    expect(synced.notes.some(n => /no synced data/.test(n))).toBe(false);
   });
 });

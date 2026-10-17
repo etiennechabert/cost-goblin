@@ -1,13 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { SecurityError } from '../query/identifier-validator.js';
-import { isNewTrend, meetsTrendThresholds, NEW_TREND_PERCENT, trendPercentChange, trendPercentChangeSql } from '../query/trend-change.js';
+import { isNewTrend, meetsTrendThresholds, NEW_TREND_PERCENT, previousTrendPeriod, trendPercentChange, trendPercentChangeSql } from '../query/trend-change.js';
+import type { TrendChange } from '../query/trend-change.js';
 
-function row(currentCost: number, previousCost: number): {
-  currentCost: number;
-  previousCost: number;
-  delta: number;
-  percentChange: number;
-} {
+function row(currentCost: number, previousCost: number): TrendChange {
   return {
     currentCost,
     previousCost,
@@ -72,5 +68,14 @@ describe('trendPercentChangeSql', () => {
     expect(trendPercentChangeSql('current_cost', 'previous_cost')).toContain('previous_cost = 0');
     expect(() => trendPercentChangeSql('current_cost); DROP TABLE t; --', 'previous_cost')).toThrow(SecurityError);
     expect(() => trendPercentChangeSql('current_cost', '1 OR 1=1')).toThrow(SecurityError);
+  });
+});
+
+describe('previousTrendPeriod', () => {
+  it('is as many days as the range, ending the day before it starts', () => {
+    expect(previousTrendPeriod({ start: '2026-02-01', end: '2026-02-02' })).toEqual({ start: '2026-01-30', end: '2026-01-31' });
+    expect(previousTrendPeriod({ start: '2026-02-10', end: '2026-02-10' })).toEqual({ start: '2026-02-09', end: '2026-02-09' });
+    expect(previousTrendPeriod({ start: '2026-03-01', end: '2026-03-31' })).toEqual({ start: '2026-01-29', end: '2026-02-28' });
+    expect(previousTrendPeriod({ start: '2026-01-01', end: '2026-01-14' })).toEqual({ start: '2025-12-18', end: '2025-12-31' });
   });
 });

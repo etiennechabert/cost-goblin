@@ -44,6 +44,19 @@ export function trendPercentChangeSql(current: string, previous: string): string
   return `CASE WHEN ${previous} = 0 THEN SIGN(${current}) * ${String(NEW_TREND_PERCENT)} ELSE (${current} - ${previous}) / ${previous} * 100 END`;
 }
 
+const DAY_MS = 86_400_000;
+
+/** The period a trend compares against: as many days as `range`, ending the
+ *  day before it starts — the span the trend SQL buckets as 'previous'. */
+export function previousTrendPeriod(range: { readonly start: string; readonly end: string }): { start: string; end: string } {
+  const startMs = Date.parse(`${range.start}T00:00:00Z`);
+  const days = Math.round((Date.parse(`${range.end}T00:00:00Z`) - startMs) / DAY_MS) + 1;
+  return {
+    start: new Date(startMs - days * DAY_MS).toISOString().slice(0, 10),
+    end: new Date(startMs - DAY_MS).toISOString().slice(0, 10),
+  };
+}
+
 /** Whether a trend row clears both thresholds. An entity new this period
  *  ({@link isNewTrend}) clears any percent threshold: from $0 its relative
  *  change is unbounded, and comparing its ±100 display value would drop new
