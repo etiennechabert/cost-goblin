@@ -98,9 +98,17 @@ describe('validateViews', () => {
     expect(cfg.views[2]).not.toHaveProperty('description');
   });
 
-  it('rejects a non-string view description', () => {
-    expect(() => validateViews({ views: [{ id: 'a', name: 'A', description: 42, rows: [] }] }))
-      .toThrow(ConfigValidationError);
+  // Failing the load would let views:get-config reseed the file and drop the
+  // user's dashboards over a subtitle. A bare `description:` parses as null.
+  it('loads a null or non-string view description as absent', () => {
+    const cfg = validateViews({
+      views: [
+        { id: 'a', name: 'A', description: null, rows: [] },
+        { id: 'b', name: 'B', description: 42, rows: [] },
+      ],
+    });
+    expect(cfg.views[0]).not.toHaveProperty('description');
+    expect(cfg.views[1]).not.toHaveProperty('description');
   });
 
   it('rejects an unknown widget type', () => {

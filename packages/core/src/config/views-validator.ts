@@ -188,10 +188,11 @@ function validateView(raw: unknown, ctx: string, liveDimensionIds?: ReadonlySet<
   assertString(raw['name'], `${ctx}.name`);
   assertArray(raw['rows'], `${ctx}.rows`);
 
-  // Blank reads as absent, so the dashboard header falls back to its tagline.
-  const description = raw['description'] === undefined
-    ? undefined
-    : (assertString(raw['description'], `${ctx}.description`), raw['description'].trim() === '' ? undefined : raw['description']);
+  // Lenient: anything but a non-blank string (a bare `description:` parses as
+  // null) reads as absent, so the header falls back to its tagline instead of
+  // the whole file failing to load over a subtitle.
+  const rawDescription = raw['description'];
+  const description = typeof rawDescription === 'string' && rawDescription.trim() !== '' ? rawDescription : undefined;
   const icon = raw['icon'] === undefined
     ? undefined
     : (assertString(raw['icon'], `${ctx}.icon`), raw['icon']);

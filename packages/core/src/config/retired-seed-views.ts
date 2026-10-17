@@ -1,237 +1,37 @@
-import { asDimensionId } from '../types/branded.js';
+import { createHash } from 'node:crypto';
 import { withMissingSeedViews } from '../types/seed-views.js';
 import type { ViewSpec, ViewsConfig } from '../types/views.js';
 import { viewToYaml } from './views-serialize.js';
 
-/** The per-widget-type showcase dashboards seeded built-in from #427 until the
- *  question-led set in SEED_VIEWS_CONFIG replaced them. Frozen exactly as they
- *  were last seeded (after the #526 service_family → service_category rename,
- *  which validateViews applies to older files on load), so an untouched copy in
- *  an existing views.yaml can be told apart from one the user edited. Never
- *  edit these: a change makes every untouched copy look edited. */
-const RETIRED_SHOWCASE_VIEWS: readonly Omit<ViewSpec, 'builtIn'>[] = [
-  {
-    id: 'trend-lines',
-    name: 'Trend lines',
-    rows: [
-      {
-        widgets: [
-          { id: 'trends-summary', type: 'summary', size: 'small', metric: 'total' },
-          { id: 'trends-line-service', type: 'line', size: 'large', groupBy: asDimensionId('service'), topN: 6 },
-        ],
-      },
-      {
-        widgets: [
-          { id: 'trends-line-account', type: 'line', size: 'medium', groupBy: asDimensionId('account'), topN: 6 },
-          { id: 'trends-line-region', type: 'line', size: 'medium', groupBy: asDimensionId('region'), topN: 6 },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'stacked',
-    name: 'Stacked over time',
-    rows: [
-      {
-        widgets: [
-          { id: 'stacked-summary', type: 'summary', size: 'small', metric: 'total' },
-          { id: 'stacked-service', type: 'stackedBar', size: 'large', groupBy: asDimensionId('service') },
-        ],
-      },
-      {
-        widgets: [
-          { id: 'stacked-account', type: 'stackedBar', size: 'full', groupBy: asDimensionId('account') },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'top-n',
-    name: 'Top N',
-    rows: [
-      {
-        widgets: [
-          { id: 'topn-summary', type: 'summary', size: 'small', metric: 'total' },
-          { id: 'topn-service', type: 'topNBar', size: 'large', groupBy: asDimensionId('service'), topN: 12 },
-        ],
-      },
-      {
-        widgets: [
-          { id: 'topn-account', type: 'topNBar', size: 'medium', groupBy: asDimensionId('account'), topN: 12 },
-          { id: 'topn-family', type: 'topNBar', size: 'medium', groupBy: asDimensionId('service_category'), topN: 12 },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'distribution',
-    name: 'Distribution',
-    rows: [
-      {
-        widgets: [
-          { id: 'dist-account', type: 'pie', size: 'medium', groupBy: asDimensionId('account') },
-          { id: 'dist-region', type: 'pie', size: 'medium', groupBy: asDimensionId('region') },
-        ],
-      },
-      {
-        widgets: [
-          { id: 'dist-service', type: 'pie', size: 'medium', groupBy: asDimensionId('service') },
-          { id: 'dist-family', type: 'pie', size: 'medium', groupBy: asDimensionId('service_category') },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'treemap',
-    name: 'Treemap',
-    rows: [
-      {
-        widgets: [
-          { id: 'treemap-summary', type: 'summary', size: 'small', metric: 'total' },
-          { id: 'treemap-service', type: 'treemap', size: 'large', groupBy: asDimensionId('service') },
-        ],
-      },
-      {
-        widgets: [
-          { id: 'treemap-account', type: 'treemap', size: 'full', groupBy: asDimensionId('account') },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'heatmap',
-    name: 'Heatmap',
-    rows: [
-      {
-        widgets: [
-          { id: 'heatmap-summary', type: 'summary', size: 'small', metric: 'total' },
-          { id: 'heatmap-service', type: 'heatmap', size: 'large', groupBy: asDimensionId('service'), topN: 10 },
-        ],
-      },
-      {
-        widgets: [
-          { id: 'heatmap-account', type: 'heatmap', size: 'full', groupBy: asDimensionId('account'), topN: 10 },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'movers',
-    name: 'Movers',
-    rows: [
-      {
-        widgets: [
-          { id: 'movers-summary', type: 'summary', size: 'small', metric: 'delta' },
-          { id: 'movers-service', type: 'bubble', size: 'large', groupBy: asDimensionId('service') },
-        ],
-      },
-      {
-        widgets: [
-          { id: 'movers-account', type: 'bubble', size: 'full', groupBy: asDimensionId('account') },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'line-items',
-    name: 'Line items',
-    rows: [
-      {
-        widgets: [
-          { id: 'items-total', type: 'summary', size: 'small', metric: 'total' },
-          { id: 'items-delta', type: 'summary', size: 'small', metric: 'delta' },
-          { id: 'items-count', type: 'summary', size: 'small', metric: 'entityCount' },
-        ],
-      },
-      {
-        widgets: [
-          { id: 'items-table', type: 'table', size: 'full', enabledColumns: ['cost', 'service', 'account_name', 'resource_id', 'description'] },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'drivers',
-    name: 'Cost drivers',
-    rows: [
-      {
-        widgets: [
-          { id: 'drivers-summary', type: 'summary', size: 'small', metric: 'delta' },
-          { id: 'drivers-service', type: 'waterfall', size: 'large', groupBy: asDimensionId('service'), topN: 8 },
-        ],
-      },
-      {
-        widgets: [
-          { id: 'drivers-account', type: 'waterfall', size: 'full', groupBy: asDimensionId('account'), topN: 8 },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'price-volume',
-    name: 'Price vs volume',
-    rows: [
-      {
-        widgets: [
-          { id: 'pv-summary', type: 'summary', size: 'small', metric: 'delta' },
-          { id: 'pv-service', type: 'priceVolume', size: 'large', groupBy: asDimensionId('service'), topN: 6 },
-        ],
-      },
-      {
-        widgets: [
-          { id: 'pv-family', type: 'priceVolume', size: 'full', groupBy: asDimensionId('service_category'), topN: 8 },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'pacing',
-    name: 'Budget pacing',
-    rows: [
-      {
-        widgets: [
-          { id: 'pacing-summary', type: 'summary', size: 'small', metric: 'total' },
-          { id: 'pacing-burndown', type: 'burndown', size: 'large' },
-        ],
-      },
-      {
-        widgets: [
-          { id: 'pacing-line', type: 'line', size: 'full', groupBy: asDimensionId('service'), topN: 6 },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'concentration',
-    name: 'Concentration',
-    rows: [
-      {
-        widgets: [
-          { id: 'conc-summary', type: 'summary', size: 'small', metric: 'total' },
-          { id: 'conc-service', type: 'pareto', size: 'large', groupBy: asDimensionId('service') },
-        ],
-      },
-      {
-        widgets: [
-          { id: 'conc-account', type: 'pareto', size: 'full', groupBy: asDimensionId('account') },
-        ],
-      },
-    ],
-  },
-];
-
-const RETIRED_SEED_VIEWS_BY_ID: ReadonlyMap<string, ViewSpec> = new Map(
-  RETIRED_SHOWCASE_VIEWS.map(v => [v.id, { ...v, builtIn: true }]),
-);
+/** The per-widget-type showcase dashboards seeded built-in from v0.5.3 until the
+ *  question-led set in SEED_VIEWS_CONFIG replaced them, each as the digest of
+ *  its canonical form exactly as last seeded. The views themselves are in
+ *  __fixtures__/views/seeded-v0.7.0.yaml, which the tests migrate. A
+ *  v0.5.3-v0.6.x copy matches too: it differs only by the CUR-era
+ *  service_family ids, which validateViews renames on load. */
+const RETIRED_SEED_VIEW_DIGESTS: ReadonlyMap<string, string> = new Map([
+  ['trend-lines', '465fe2f11a37d4501fd93cfdb952ecdb3efaeeb967d574cb34193494ad28635d'],
+  ['stacked', '406a44546955f313fd2fe044941086b62b112baaffaa00ff86f10db880418025'],
+  ['top-n', 'f966583e559fe03762fd0945ea457dde746bf484b4ce7c25c853879e77a24e53'],
+  ['distribution', '2c37fc22da7d1decf7b0fef366cad0814fbc7b5634b8069ee32b3401a888d718'],
+  ['treemap', '6ca8ba1e93a58d4e183eddf2d5a933dfd85df073a69726418e27bce7cca35651'],
+  ['heatmap', '14908749e42910ad824f5619df4038c7d162e54641791e8554bb0e558bd84236'],
+  ['movers', '95e941f8c45ef3f970814033430f377958eb9ec4ec9d9ec6a4df4182285be363'],
+  ['line-items', '6b4f1851db08aade78dc84b344cb093fc15ae96248749dccdbd9210369760988'],
+  ['drivers', '185e4aa1f74ee0fd890e6c7b7e83e7ce1d34a9b3cb56f3334a2e56a89646943f'],
+  ['price-volume', '457824957b2870bc2c5694868bfee83d16511e2fa55377526e269a26b31931dc'],
+  ['pacing', 'fe3b070e21c5d68c7f16712c381b991ecb19b9cda60c172d095e918882d6a8d7'],
+  ['concentration', 'b497b90e6366a8b7368d9879dd8d9769cfbf39cdf5599dcdff1e6b92b390a0e2'],
+]);
 
 /** Ids of the retired showcase dashboards. A new seed view must not reuse one,
  *  or the migration below would treat it as retired. */
-export const RETIRED_SEED_VIEW_IDS: ReadonlySet<string> = new Set(RETIRED_SEED_VIEWS_BY_ID.keys());
+export const RETIRED_SEED_VIEW_IDS: ReadonlySet<string> = new Set(RETIRED_SEED_VIEW_DIGESTS.keys());
 
-function sameView(a: ViewSpec, b: ViewSpec): boolean {
-  // viewToYaml emits keys in a fixed order and drops unset optionals, so equal
-  // specs serialize identically however they were built.
-  return JSON.stringify(viewToYaml(a)) === JSON.stringify(viewToYaml(b));
+/** viewToYaml emits keys in a fixed order and drops unset optionals, so equal
+ *  specs digest identically however they were built. */
+function viewDigest(view: ViewSpec): string {
+  return createHash('sha256').update(JSON.stringify(viewToYaml(view))).digest('hex');
 }
 
 export interface SeedViewsMigration {
@@ -250,13 +50,13 @@ export function migrateRetiredSeedViews(config: ViewsConfig): SeedViewsMigration
   let sawRetired = false;
   const kept: ViewSpec[] = [];
   for (const view of config.views) {
-    const retired = view.builtIn === true ? RETIRED_SEED_VIEWS_BY_ID.get(view.id) : undefined;
-    if (retired === undefined) {
+    const retiredDigest = view.builtIn === true ? RETIRED_SEED_VIEW_DIGESTS.get(view.id) : undefined;
+    if (retiredDigest === undefined) {
       kept.push(view);
       continue;
     }
     sawRetired = true;
-    if (!sameView(view, retired)) kept.push({ ...view, builtIn: undefined });
+    if (viewDigest(view) !== retiredDigest) kept.push({ ...view, builtIn: undefined });
   }
   if (!sawRetired) return { config, changed: false };
   return { config: { views: withMissingSeedViews(kept) }, changed: true };
