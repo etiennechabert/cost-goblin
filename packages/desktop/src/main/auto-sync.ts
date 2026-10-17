@@ -37,19 +37,34 @@ export interface AutoSyncDeps {
 
 let status: AutoSyncStatus = { state: 'disabled' };
 let timer: ReturnType<typeof setTimeout> | null = null;
-let running = false;
+// The pass running now, if any: a second runOnce joins it instead of
+// starting another.
+let inFlight: Promise<void> | null = null;
+// When the last pass ended (epoch ms, on Date like lastRun/nextRun). The
+// schedule counts each interval from it, so an out-of-band pass pushes the
+// next scheduled one back too, to the nextRun that pass reported.
+let lastPassEndedAt = 0;
+// Bumped by every stop (and so every restart): a pass finishing for a
+// schedule that has since been stopped or replaced must not re-arm it.
+let scheduleGeneration = 0;
 // Captured by startAutoSync so an out-of-band trigger (e.g. right after the
 // user restores credentials via SSO login) can run a pass immediately instead
 // of waiting up to a full interval for the next scheduled run.
 let lastDeps: AutoSyncDeps | null = null;
-// Captured so `runOnce` can report the correct nextRun without needing
-// to know the scheduler's interval — `startAutoSync` refreshes this on
-// every (re)start.
+// The schedule's interval: the scheduler waits it out and `runOnce` reports
+// nextRun from it. `startAutoSync` refreshes this on every (re)start.
 let currentIntervalMs = 24 * 60 * 60 * 1000;
+
+/** The longest delay a Node timer holds: it keeps the ms in a signed 32-bit
+ *  int, about 24.8 days. Ask for longer and it fires after 1 ms instead (with
+ *  a TimeoutOverflowWarning), so a Monthly interval would run continuously.
+ *  Longer waits are chained from steps of at most this. */
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
 
 /** Minimum / maximum interval the UI can request. Anything sub-hour risks
  *  hammering S3 for a typical multi-tier sync and the upper bound (one month)
- *  is the slowest cadence the UI offers ("Monthly"). */
+ *  is the slowest cadence the UI offers ("Monthly"). Monthly and the maximum
+ *  both outlast a single Node timer: see MAX_TIMER_DELAY_MS. */
 export const MIN_AUTO_SYNC_INTERVAL_MINUTES = 60;
 export const MAX_AUTO_SYNC_INTERVAL_MINUTES = 31 * 24 * 60;
 export const DEFAULT_AUTO_SYNC_INTERVAL_MINUTES = 24 * 60;
@@ -218,19 +233,29 @@ async function prunePass(deps: AutoSyncDeps, provider: AutoSyncProvider): Promis
  *  hide another provider's sync: each provider's tier loop is isolated, its
  *  failure collected as a ProviderSyncError, and the pass keeps going. All
  *  providers failed → 'error'; some failed → 'idle' with providerErrors.
+ *  A call while a pass is running joins that pass instead of starting
+ *  another, so a scheduled pass falling due mid-run is folded into it.
  *  Exported for unit tests — production goes through startAutoSync /
  *  triggerAutoSyncNow. */
-export async function runOnce(deps: AutoSyncDeps): Promise<void> {
-  if (running) return;
-  running = true;
+export function runOnce(deps: AutoSyncDeps): Promise<void> {
+  if (inFlight !== null) return inFlight;
+  const pass = runPass(deps).finally(() => {
+    // Every pass counts, a disabled one too, so the schedule always waits a
+    // full interval after one rather than re-running straight away.
+    lastPassEndedAt = Date.now();
+    inFlight = null;
+  });
+  inFlight = pass;
+  return pass;
+}
 
+async function runPass(deps: AutoSyncDeps): Promise<void> {
   try {
     const prefsPath = await deps.getPrefsPath();
     const syncEnabled = await readAutoSyncEnabled(prefsPath);
     const pruneEnabled = await readAutoPruneEnabled(prefsPath);
     if (!syncEnabled && !pruneEnabled) {
       status = { state: 'disabled' };
-      running = false;
       return;
     }
 
@@ -240,7 +265,6 @@ export async function runOnce(deps: AutoSyncDeps): Promise<void> {
     const config = await deps.getConfig();
     if (config.providers.length === 0) {
       status = { state: 'idle', lastRun: new Date().toISOString(), nextRun: null };
-      running = false;
       return;
     }
 
@@ -297,8 +321,6 @@ export async function runOnce(deps: AutoSyncDeps): Promise<void> {
   } catch (err: unknown) {
     status = { state: 'error', message: errorMessage(err), lastRun: new Date().toISOString() };
   }
-
-  running = false;
 }
 
 /** Run a sync/prune pass right now, out of band, reusing the scheduler's
@@ -307,9 +329,37 @@ export async function runOnce(deps: AutoSyncDeps): Promise<void> {
  *  was never started or a run is already in flight; runOnce still gates on the
  *  auto-sync / auto-prune enabled flags, so a disabled scheduler does nothing. */
 export function triggerAutoSyncNow(): void {
-  if (lastDeps === null || running) return;
+  if (lastDeps === null || inFlight !== null) return;
   logger.info('Auto-sync: out-of-band run requested (credential recovery)');
   void runOnce(lastDeps);
+}
+
+// Run a pass, then wait for the next one, unless this schedule was stopped or
+// replaced while the pass ran.
+function runScheduledPass(deps: AutoSyncDeps, generation: number): void {
+  void runOnce(deps).then(() => { armNextPass(deps, generation); });
+}
+
+// Ms until the next pass is due: one interval after the last one ended.
+function msUntilNextPass(): number {
+  const now = Date.now();
+  // A wall clock set back past the last pass (an NTP correction, say) would
+  // otherwise hold every pass until it caught up: count from now instead.
+  lastPassEndedAt = Math.min(lastPassEndedAt, now);
+  return lastPassEndedAt + currentIntervalMs - now;
+}
+
+// Wait out the time left until the next pass. No Node timer holds more than
+// MAX_TIMER_DELAY_MS, so a longer wait is a chain of shorter ones, each wake
+// re-checking on Date, which also catches an out-of-band pass that ran in the
+// meantime. Even a pass already due waits a timer turn, so passes can never
+// follow each other in a tight loop.
+function armNextPass(deps: AutoSyncDeps, generation: number): void {
+  if (generation !== scheduleGeneration) return;
+  timer = setTimeout(() => {
+    if (msUntilNextPass() > 0) armNextPass(deps, generation);
+    else runScheduledPass(deps, generation);
+  }, Math.min(Math.max(msUntilNextPass(), 0), MAX_TIMER_DELAY_MS));
 }
 
 export function startAutoSync(deps: AutoSyncDeps, intervalMinutes: number): void {
@@ -318,22 +368,18 @@ export function startAutoSync(deps: AutoSyncDeps, intervalMinutes: number): void
   lastDeps = deps;
   const clamped = clampInterval(intervalMinutes);
   currentIntervalMs = clamped * 60 * 1000;
+  const generation = scheduleGeneration;
 
   // initial run after short delay (let the app finish loading)
-  timer = setTimeout(() => {
-    void runOnce(deps).then(() => {
-      // schedule recurring
-      timer = setInterval(() => { void runOnce(deps); }, currentIntervalMs);
-    });
-  }, 5000);
+  timer = setTimeout(() => { runScheduledPass(deps, generation); }, 5000);
 
   logger.info(`Auto-sync: scheduled every ${String(clamped)} minutes`);
 }
 
 export function stopAutoSync(): void {
+  scheduleGeneration += 1;
   if (timer !== null) {
     clearTimeout(timer);
-    clearInterval(timer);
     timer = null;
   }
   status = { state: 'disabled' };
