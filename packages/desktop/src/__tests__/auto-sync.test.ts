@@ -465,7 +465,8 @@ describe('auto-sync runOnce (multi-provider orchestration)', () => {
 
 describe('auto-sync scheduler (startAutoSync)', () => {
   const MINUTE_MS = 60_000;
-  const DAY_MS = 24 * 60 * MINUTE_MS;
+  const HOUR_MS = 60 * MINUTE_MS;
+  const DAY_MS = 24 * HOUR_MS;
   const DAILY_MINUTES = 24 * 60;
   // The "Monthly" option in scheduler-controls.tsx. Its 2,592,000,000 ms is
   // longer than a Node timer holds (2^31 - 1 ms), as is the 31-day maximum;
@@ -514,12 +515,17 @@ describe('auto-sync scheduler (startAutoSync)', () => {
   }
 
   // A pass reads the prefs file for real, which no fake clock can hurry: turn
-  // the real event loop until pass `n` has read the config. Unless the test
-  // holds it there, the rest of that pass and the scheduler's re-arm are
-  // microtasks, so they have run by the time this returns.
-  async function passesReach(n: number): Promise<void> {
+  // the real event loop until `done` holds, giving up after two real seconds.
+  async function realTurnsUntil(done: () => boolean): Promise<void> {
     const deadline = performance.now() + 2_000;
-    while (configReads < n && performance.now() < deadline) await settle();
+    while (!done() && performance.now() < deadline) await settle();
+  }
+
+  // Wait for pass `n` to read the config. Unless the test holds it there, the
+  // rest of that pass and the scheduler's re-arm are microtasks, so they have
+  // run by the time this returns.
+  async function passesReach(n: number): Promise<void> {
+    await realTurnsUntil(() => configReads >= n);
     expect({ started, configReads }).toEqual({ started: n, configReads: n });
   }
 
@@ -573,7 +579,7 @@ describe('auto-sync scheduler (startAutoSync)', () => {
     { label: 'Daily', minutes: DAILY_MINUTES, intervalMs: DAY_MS },
     { label: 'Monthly', minutes: MONTHLY_MINUTES, intervalMs: MONTHLY_MINUTES * MINUTE_MS },
     // Clamped to the 31-day maximum.
-    { label: 'over-the-maximum', minutes: 2 * MAX_AUTO_SYNC_INTERVAL_MINUTES, intervalMs: MAX_AUTO_SYNC_INTERVAL_MINUTES * MINUTE_MS },
+    { label: 'capped 62-day', minutes: 2 * MAX_AUTO_SYNC_INTERVAL_MINUTES, intervalMs: MAX_AUTO_SYNC_INTERVAL_MINUTES * MINUTE_MS },
   ])('runs a $label schedule once per interval, not continuously', async ({ minutes, intervalMs }) => {
     startAutoSync(schedulerDeps(), minutes);
     await expectPassEvery(intervalMs, 2);
@@ -661,5 +667,43 @@ describe('auto-sync scheduler (startAutoSync)', () => {
     vi.setSystemTime(Date.now() - 365 * DAY_MS);
     await vi.advanceTimersByTimeAsync(2 * DAY_MS);
     await passesReach(2);
+  });
+
+  it('keeps to the wall clock across a machine sleep', async () => {
+    startAutoSync(schedulerDeps(), DAILY_MINUTES);
+    await vi.advanceTimersByTimeAsync(FIRST_PASS_DELAY_MS);
+    await passesReach(1);
+
+    // Two hours awake, then twenty asleep: the wall clock moves on while
+    // pending timers, like Node's, don't count the time asleep.
+    await vi.advanceTimersByTimeAsync(2 * HOUR_MS);
+    vi.setSystemTime(Date.now() + 20 * HOUR_MS);
+    // The pass is due two (wall-clock) hours after waking, and runs then
+    // rather than a full day of awake time after the last one.
+    await vi.advanceTimersByTimeAsync(2 * HOUR_MS - 1);
+    expect(started).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await passesReach(2);
+  });
+
+  it('counts a pass that found both toggles off toward the interval', async () => {
+    startAutoSync(schedulerDeps(), DAILY_MINUTES);
+    await vi.advanceTimersByTimeAsync(FIRST_PASS_DELAY_MS);
+    await passesReach(1);
+
+    // Both toggles go off without a restart: the next pass stops after
+    // reading the prefs.
+    writeFileSync(prefsFile, JSON.stringify({ autoSync: false, autoPrune: false }));
+    await vi.advanceTimersByTimeAsync(DAY_MS);
+    expect(started).toBe(2);
+    await realTurnsUntil(() => vi.getTimerCount() === 1);
+
+    // A day before the next, not a re-run at the next timer turn.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(started).toBe(2);
+    await vi.advanceTimersByTimeAsync(DAY_MS - 1_001);
+    expect(started).toBe(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(started).toBe(3);
   });
 });

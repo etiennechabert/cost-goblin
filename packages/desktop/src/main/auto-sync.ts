@@ -55,16 +55,18 @@ let lastDeps: AutoSyncDeps | null = null;
 // nextRun from it. `startAutoSync` refreshes this on every (re)start.
 let currentIntervalMs = 24 * 60 * 60 * 1000;
 
-/** The longest delay a Node timer holds: it keeps the ms in a signed 32-bit
- *  int, about 24.8 days. Ask for longer and it fires after 1 ms instead (with
- *  a TimeoutOverflowWarning), so a Monthly interval would run continuously.
- *  Longer waits are chained from steps of at most this. */
-const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
+/** The longest single wait before the scheduler re-checks the time left on
+ *  Date. A Node timer can't be handed the whole interval: one longer than
+ *  2^31 - 1 ms (about 24.8 days, so Monthly) fires after 1 ms instead, with a
+ *  TimeoutOverflowWarning, and no timer counts time the machine spends
+ *  asleep, so a laptop's passes would drift later and later. A pass that fell
+ *  due during sleep runs within this long of waking. */
+const WAKE_STEP_MS = 15 * 60 * 1000;
 
 /** Minimum / maximum interval the UI can request. Anything sub-hour risks
  *  hammering S3 for a typical multi-tier sync and the upper bound (one month)
  *  is the slowest cadence the UI offers ("Monthly"). Monthly and the maximum
- *  both outlast a single Node timer: see MAX_TIMER_DELAY_MS. */
+ *  both outlast a single Node timer: see WAKE_STEP_MS. */
 export const MIN_AUTO_SYNC_INTERVAL_MINUTES = 60;
 export const MAX_AUTO_SYNC_INTERVAL_MINUTES = 31 * 24 * 60;
 export const DEFAULT_AUTO_SYNC_INTERVAL_MINUTES = 24 * 60;
@@ -349,9 +351,9 @@ function msUntilNextPass(): number {
   return lastPassEndedAt + currentIntervalMs - now;
 }
 
-// Wait out the time left until the next pass. No Node timer holds more than
-// MAX_TIMER_DELAY_MS, so a longer wait is a chain of shorter ones, each wake
-// re-checking on Date, which also catches an out-of-band pass that ran in the
+// Wait out the time left until the next pass, in steps of at most
+// WAKE_STEP_MS, each wake re-checking on Date: that keeps the schedule on the
+// wall clock across sleep, and catches an out-of-band pass that ran in the
 // meantime. Even a pass already due waits a timer turn, so passes can never
 // follow each other in a tight loop.
 function armNextPass(deps: AutoSyncDeps, generation: number): void {
@@ -359,7 +361,7 @@ function armNextPass(deps: AutoSyncDeps, generation: number): void {
   timer = setTimeout(() => {
     if (msUntilNextPass() > 0) armNextPass(deps, generation);
     else runScheduledPass(deps, generation);
-  }, Math.min(Math.max(msUntilNextPass(), 0), MAX_TIMER_DELAY_MS));
+  }, Math.min(Math.max(msUntilNextPass(), 0), WAKE_STEP_MS));
 }
 
 export function startAutoSync(deps: AutoSyncDeps, intervalMinutes: number): void {
