@@ -197,7 +197,7 @@ function ConditionRow({ condition, dimensions, suggestions, onUpdate, onRemove, 
           className="accent-accent"
           checked={condition.matchMissing === true}
           onChange={e => { setMatchMissing(e.target.checked); }}
-        />
+        />{' '}
         Missing values
       </label>
       {canRemove && (

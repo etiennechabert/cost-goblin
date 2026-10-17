@@ -52,7 +52,7 @@ describe('CostScopeView — Missing values on a condition', () => {
 
     expect(screen.queryByText(/has a condition with no values/)).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => { expect(api.savedCostScopes.length).toBe(1); });
+    await waitFor(() => { expect(api.savedCostScopes).toHaveLength(1); });
     const saved = api.savedCostScopes.at(-1)?.rules.at(-1);
     expect(saved?.enabled).toBe(true);
     expect(saved?.conditions).toEqual([expect.objectContaining({ values: [], matchMissing: true })]);
@@ -75,7 +75,7 @@ describe('CostScopeView — Missing values on a condition', () => {
     await user.click(newRuleMissingCheckbox());
 
     await user.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => { expect(api.savedCostScopes.length).toBe(1); });
+    await waitFor(() => { expect(api.savedCostScopes).toHaveLength(1); });
     const condition = api.savedCostScopes.at(-1)?.rules.at(-1)?.conditions[0];
     expect(condition?.values).toEqual(['EC2']);
     // No `matchMissing: false` left behind — the dirty/Reset checks compare JSON.
