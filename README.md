@@ -301,6 +301,7 @@ CostGoblin is free and open source — kept that way with the help of companies 
 
 - **[Sentry](https://sentry.io)** — error monitoring, via their [open-source program](https://sentry.io/for/open-source/)
 - **[SonarCloud](https://sonarcloud.io)** — code quality & static analysis
+- **[Gitar](https://gitar.ai)** — AI code review, via their [free plan for open source](https://gitar.ai/pricing)
 - **[GitHub](https://github.com)** — repository hosting & CI
 - **[Cloudflare](https://www.cloudflare.com)** — website hosting & CDN
 
