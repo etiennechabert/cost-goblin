@@ -15,13 +15,20 @@ costgoblin/
     core/                   # @costgoblin/core — pure TypeScript, no framework deps
     desktop/                # Electron shell — imports @costgoblin/core
     ui/                     # @costgoblin/ui — shared React components
+    mcp/                    # @costgoblin/mcp — opt-in local MCP server exposing cost tools to AI assistants
     web-backend/            # (Future) server — imports @costgoblin/core
+  e2e/                      # Playwright suites, one CI shard per file
+  workers/signup/           # Cloudflare Worker behind costgoblin.com's launch-notification form (own lockfile)
+  scripts/                  # ci/ policy tests, build/ packaging, aws-exports/ template, gcp-focus-exporter/ (own lockfile)
+  docs/                     # costgoblin.com website (incl. the GDPR privacy.html) and design docs
+  .gitar/                   # Gitar AI-review config: review guidance, rules, risk and auto-apply policy
 ```
 
 **Package dependency rules:**
 - `core` has ZERO dependency on `desktop`, `ui`, or any framework
 - `ui` depends on `core` (for types only — never imports query/sync logic directly)
-- `desktop` depends on `core` and `ui`
+- `mcp` depends on `core` only
+- `desktop` depends on `core`, `ui` and `mcp`
 - `web-backend` (future) depends on `core` only
 
 ## Commands
