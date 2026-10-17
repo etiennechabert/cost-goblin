@@ -115,12 +115,12 @@ export function registerCostScopeHandlers(app: AppContext): void {
     invalidateCostScope();
   });
 
-  ipcMain.handle('cost-scope:preview', async (_event, payload: unknown): Promise<CostScopePreviewResult> => {
+  ipcMain.handle('cost-scope:preview', async (_event, payload: unknown, range: unknown): Promise<CostScopePreviewResult> => {
     const dimensions = await getQueryDimensions();
     const config = validateCostScope(payload, dimensionIdSet(dimensions));
     const enabledRules = config.rules.filter(r => r.enabled);
 
-    const { windowDays, startDate: startStr, endDate: endStr } = costScopePreviewWindow(ctx.now(), config.lagDays ?? DEFAULT_LAG_DAYS);
+    const { windowDays, startDate: startStr, endDate: endStr } = costScopePreviewWindow(range, ctx.now(), config.lagDays ?? DEFAULT_LAG_DAYS);
 
     const zero: CostScopePreviewResult = {
       windowDays,

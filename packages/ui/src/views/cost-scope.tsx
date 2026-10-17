@@ -4,6 +4,7 @@ import type {
   CostScopeConfig,
   MarketplaceAttributionConfig,
   CostScopeDailyRow,
+  CostScopePreviewRange,
   CostScopePreviewResult,
   CostScopePreviewRow,
   CostScopeSampleRow,
@@ -12,9 +13,12 @@ import type {
   Dimension,
 } from '@costgoblin/core/browser';
 import { BUILTIN_EXCLUSION_RULES, DEFAULT_COST_SCOPE, DEFAULT_LAG_DAYS, DEFAULT_MARKETPLACE_ATTRIBUTION, asDimensionId } from '@costgoblin/core/browser';
-import { getDimensionId } from '../lib/dimensions.js';
+import { getDimensionId, isTagDimension } from '../lib/dimensions.js';
+import { daysAgo, daysBetween } from '../lib/dates.js';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useUnsavedChanges } from '../hooks/use-unsaved-changes.js';
+import { DateRangePicker } from '../components/date-range-picker.js';
+import type { DateRange } from '../components/date-range-picker.js';
 import { formatDollars } from '../components/format.js';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card.js';
 import { Button } from '../components/ui/button.js';
@@ -74,6 +78,29 @@ interface PreviewState {
   loading: boolean;
 }
 
+/** The period the preview covers. A "Last N days" pick stays relative to the
+ *  Data freshness lag being edited below, so changing the lag moves it (and
+ *  the window is right once the saved lag loads); any other pick is fixed
+ *  dates. */
+type PreviewWindow =
+  | { readonly kind: 'trailing'; readonly days: number }
+  | { readonly kind: 'fixed'; readonly range: CostScopePreviewRange };
+
+const DEFAULT_PREVIEW_WINDOW: PreviewWindow = { kind: 'trailing', days: 30 };
+
+/** Same arithmetic as the date picker's "Last N days" presets, so the picked
+ *  preset stays highlighted. */
+function previewRange(picked: PreviewWindow, lagDays: number): CostScopePreviewRange {
+  if (picked.kind === 'fixed') return picked.range;
+  return { start: daysAgo(picked.days + lagDays), end: daysAgo(lagDays) };
+}
+
+/** A pick ending on the newest day the lag allows is a trailing window. */
+function toPreviewWindow(range: DateRange, lagDays: number): PreviewWindow {
+  if (range.end === daysAgo(lagDays)) return { kind: 'trailing', days: daysBetween(range.start, range.end) - 1 };
+  return { kind: 'fixed', range: { start: range.start, end: range.end } };
+}
+
 
 interface ConditionRowProps {
   condition: ExclusionCondition;
@@ -83,6 +110,15 @@ interface ConditionRowProps {
   onRemove: () => void;
   canRemove: boolean;
   invalid: boolean;
+}
+
+/** What "missing" means for the condition's dimension, for the checkbox
+ *  tooltip: the rows `matchMissing` adds (see missingValueSql in core). */
+function describeMissing(dim: Dimension | undefined): string {
+  if (dim === undefined) return 'rows with no value';
+  if (isTagDimension(dim)) return 'rows without this tag (untagged)';
+  if ('field' in dim && dim.field === 'account_id') return 'charges with no account, listed as "(no account)"';
+  return 'rows where this field is empty';
 }
 
 function ConditionRow({ condition, dimensions, suggestions, onUpdate, onRemove, canRemove, invalid }: Readonly<ConditionRowProps>) {
@@ -100,7 +136,7 @@ function ConditionRow({ condition, dimensions, suggestions, onUpdate, onRemove, 
   function handleDimChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const parsed = e.target.value.trim();
     if (parsed.length === 0) return;
-    onUpdate({ dimensionId: asDimensionId(parsed), values: condition.values });
+    onUpdate({ ...condition, dimensionId: asDimensionId(parsed) });
   }
 
   function commitValues() {
@@ -108,7 +144,13 @@ function ConditionRow({ condition, dimensions, suggestions, onUpdate, onRemove, 
     // Empty is valid local state (draft in-progress) — parent decides how to
     // treat it (disables save, skips preview). We still push the empty array
     // so the parent sees the latest user intent.
-    onUpdate({ dimensionId: condition.dimensionId, values });
+    onUpdate({ ...condition, values });
+  }
+
+  function setMatchMissing(matchMissing: boolean) {
+    // Unticking drops the flag rather than storing false, so the condition
+    // stays JSON-equal to its saved/seed form (the dirty and Reset checks).
+    onUpdate({ ...condition, matchMissing: matchMissing ? true : undefined });
   }
 
   // Show ALL dims in the rule picker, not just `enabled !== false` ones.
@@ -119,6 +161,8 @@ function ConditionRow({ condition, dimensions, suggestions, onUpdate, onRemove, 
   // get a "(hidden)" suffix so it's clear they're not in normal rotation.
   const currentDimId = String(condition.dimensionId);
   const inputBorder = invalid ? 'border-negative' : 'border-border';
+  const currentDim = dimensions.find(d => String(getDimensionId(d)) === currentDimId);
+  const missingHint = describeMissing(currentDim);
 
   return (
     <div className="flex items-start gap-2">
@@ -149,6 +193,18 @@ function ConditionRow({ condition, dimensions, suggestions, onUpdate, onRemove, 
           </datalist>
         )}
       </div>
+      <label
+        className="flex items-center gap-1.5 shrink-0 py-1 text-xs text-text-muted hover:text-text-secondary cursor-pointer select-none"
+        title={`Also match ${missingHint}. The values can then stay empty.`}
+      >
+        <input
+          type="checkbox"
+          className="accent-accent"
+          checked={condition.matchMissing === true}
+          onChange={e => { setMatchMissing(e.target.checked); }}
+        />
+        Missing values
+      </label>
       {canRemove && (
         <button
           type="button"
@@ -320,7 +376,7 @@ function RuleCard({ rule, preview, dimensions, suggestionsByDim, onUpdate, onDel
               onUpdate={next => { updateCondition(i, next); }}
               onRemove={() => { removeCondition(i); }}
               canRemove={rule.conditions.length > 1}
-              invalid={rule.enabled && cond.values.length === 0}
+              invalid={rule.enabled && cond.values.length === 0 && cond.matchMissing !== true}
             />
           ))}
         </div>
@@ -342,6 +398,10 @@ interface PreviewHistogramProps {
   readonly hasResult: boolean;
   readonly height?: number;
 }
+
+/** A 1px gutter per bar fits about a quarter's worth of days in the 400px
+ *  preview sidebar; over longer periods the gutters would eat the bars. */
+const MAX_GUTTERED_BARS = 92;
 
 /** Compact stacked bar chart for the Cost Scope preview. Each day shows
  *  `kept` (solid accent) over `excluded` (muted). Purpose-built rather than
@@ -368,14 +428,14 @@ function PreviewHistogram({ days, loading, hasResult, height = 120 }: PreviewHis
         data-testid="preview-histogram-empty"
         className="h-[120px] flex items-center justify-center text-xs text-text-muted"
       >
-        No data in the last 30 days.
+        No data in the selected period.
       </div>
     );
   }
   // Render as flex-bars so we don't have to measure container width — each
   // day takes an equal share, heights are proportional to maxTotal.
   return (
-    <div className="flex items-end gap-px" style={{ height }}>
+    <div className={`flex items-end ${days.length > MAX_GUTTERED_BARS ? '' : 'gap-px'}`} style={{ height }}>
       {days.map(d => {
         const total = d.keptCost + d.excludedCost;
         const totalPct = (total / maxTotal) * 100;
@@ -578,8 +638,9 @@ function Td({ children, align = 'left', mono, truncate, className, title }: Read
 }
 
 /** A draft is saveable iff every enabled rule has at least one condition and
- *  every condition has at least one value. Disabled rules can hold empty
- *  conditions without blocking saves — they're effectively draft scaffolding.
+ *  every condition matches something: a value, or missing values. Disabled
+ *  rules can hold empty conditions without blocking saves — they're
+ *  effectively draft scaffolding.
  *  The validator on the main-process side enforces the same shape, so we
  *  mirror it here to surface the check as UI affordance rather than a silent
  *  IPC rejection. */
@@ -590,8 +651,8 @@ function describeDraftError(draft: CostScopeConfig): string | null {
       return `Rule '${rule.name}' has no conditions.`;
     }
     for (const cond of rule.conditions) {
-      if (cond.values.length === 0) {
-        return `Rule '${rule.name}' has a condition with no values — fill in the values field or disable the rule.`;
+      if (cond.values.length === 0 && cond.matchMissing !== true) {
+        return `Rule '${rule.name}' has a condition with no values — fill in the values field, tick Missing values, or disable the rule.`;
       }
     }
   }
@@ -607,8 +668,12 @@ export function CostScopeView(): React.JSX.Element {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [suggestionsByDim, setSuggestionsByDim] = useState(new Map<string, readonly string[]>());
+  const [previewWindow, setPreviewWindow] = useState(DEFAULT_PREVIEW_WINDOW);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const previewSeqRef = useRef(0);
 
+  const lagDays = draft.lagDays ?? DEFAULT_LAG_DAYS;
+  const { start: rangeStart, end: rangeEnd } = previewRange(previewWindow, lagDays);
   const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
   const draftError = describeDraftError(draft);
   const canSave = dirty && draftError === null && !saving;
@@ -645,11 +710,15 @@ export function CostScopeView(): React.JSX.Element {
     return () => { cancelled = true; };
   }, [api, dimensions]);
 
-  const refreshPreview = useCallback((config: CostScopeConfig) => {
+  const refreshPreview = useCallback((config: CostScopeConfig, range: CostScopePreviewRange) => {
+    // Only the latest request may land: a year-long preview answers after
+    // the week picked once it was in flight.
+    previewSeqRef.current += 1;
+    const seq = previewSeqRef.current;
     setPreview(p => ({ ...p, loading: true }));
-    api.previewCostScope(config)
-      .then(result => { setPreview({ result, loading: false }); })
-      .catch(() => { setPreview({ result: null, loading: false }); });
+    api.previewCostScope(config, range)
+      .then(result => { if (seq === previewSeqRef.current) setPreview({ result, loading: false }); })
+      .catch(() => { if (seq === previewSeqRef.current) setPreview({ result: null, loading: false }); });
   }, [api]);
 
   useEffect(() => {
@@ -658,12 +727,13 @@ export function CostScopeView(): React.JSX.Element {
     // IPC calls always fail and would blank the preview, making the user
     // think the numbers dropped to zero while they were mid-edit.
     if (describeDraftError(draft) !== null) {
+      previewSeqRef.current += 1;
       setPreview({ result: null, loading: false });
       return;
     }
-    debounceRef.current = setTimeout(() => { refreshPreview(draft); }, 300);
+    debounceRef.current = setTimeout(() => { refreshPreview(draft, { start: rangeStart, end: rangeEnd }); }, 300);
     return () => { clearTimeout(debounceRef.current); };
-  }, [draft, refreshPreview]);
+  }, [draft, rangeStart, rangeEnd, refreshPreview]);
 
   function updateDraft(next: CostScopeConfig) {
     setDraft(next);
@@ -731,7 +801,7 @@ export function CostScopeView(): React.JSX.Element {
     try {
       await api.saveCostScope(draft);
       setSaved(draft);
-      refreshPreview(draft);
+      refreshPreview(draft, { start: rangeStart, end: rangeEnd });
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Failed to save.');
     } finally {
@@ -760,6 +830,9 @@ export function CostScopeView(): React.JSX.Element {
       combinedText={combinedText}
       metric={draft.costMetric}
       hasEnabledRules={enabledRules.length > 0}
+      range={{ start: rangeStart, end: rangeEnd }}
+      lagDays={lagDays}
+      onRangeChange={range => { setPreviewWindow(toPreviewWindow(range, lagDays)); }}
     />
   );
 
@@ -966,6 +1039,9 @@ interface PreviewPanelProps {
   readonly combinedText: string;
   readonly metric: CostMetric;
   readonly hasEnabledRules: boolean;
+  readonly range: CostScopePreviewRange;
+  readonly lagDays: number;
+  readonly onRangeChange: (range: DateRange) => void;
 }
 
 /** Compact "always-visible" preview rendered in the sticky right column on
@@ -973,7 +1049,7 @@ interface PreviewPanelProps {
  *  summary tiles + histogram — just enough to see the effect of rule
  *  toggles while scrolling through a long rules list. The detailed line-
  *  items table lives in its own full-width card below. */
-function PreviewPanel({ preview, loading, combinedText, metric, hasEnabledRules }: PreviewPanelProps): React.JSX.Element {
+function PreviewPanel({ preview, loading, combinedText, metric, hasEnabledRules, range, lagDays, onRangeChange }: PreviewPanelProps): React.JSX.Element {
   const result = preview.result;
   const metricLabel = METRIC_LABELS[metric].label;
   const excludedPct = useMemo(() => {
@@ -993,16 +1069,24 @@ function PreviewPanel({ preview, loading, combinedText, metric, hasEnabledRules 
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between gap-2">
           <CardTitle className="text-base">Preview</CardTitle>
-          <span className="text-xs text-text-muted">
-            Last 30 days · {metricLabel}
-            {loading && (
-              <>
-                {' · '}
-                <span data-testid="preview-loading" className="text-accent">loading…</span>
-              </>
-            )}
-          </span>
+          {/* The preview reads the daily tier only — no hourly toggle. */}
+          <DateRangePicker
+            value={range}
+            granularity="daily"
+            onChange={onRangeChange}
+            hideHourly
+            lagDays={lagDays}
+          />
         </div>
+        <span className="text-xs text-text-muted">
+          {metricLabel}
+          {loading && (
+            <>
+              {' · '}
+              <span data-testid="preview-loading" className="text-accent">loading…</span>
+            </>
+          )}
+        </span>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Summary tiles — single column on narrow container (sticky right

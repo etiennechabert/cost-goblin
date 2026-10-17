@@ -63,7 +63,7 @@ export const HEADLESS = process.env['COSTGOBLIN_HEADLESS'] === '0' ? '0' : '1';
  *  honours it via COSTGOBLIN_NOW in both processes: the renderer's Date is
  *  patched (packages/desktop/src/renderer/fake-clock.ts) and the main process
  *  hands handlers a pinned clock (IpcContext.now), so main-computed windows
- *  (Cost Scope preview, tag discovery, baselines, retention) hold it too. */
+ *  (tag discovery, baselines, retention) hold it too. */
 export const FIXTURE_NOW = '2026-03-02T12:00:00Z';
 
 // Per-launch temp root, keyed by the app it was created for, so closeApp can
@@ -480,8 +480,8 @@ export function costScopePreviewBars(page: Page): Locator {
 }
 
 /** Wait for the Cost Scope preview's debounced first load to paint fixture
- *  data. The main process computes the preview window from the pinned clock,
- *  so it always covers fixture days: an empty preview fails here rather than
+ *  data. Its default period ("Last 30 days") resolves on the pinned clock, so
+ *  it always covers fixture days: an empty preview fails here rather than
  *  passing as "settled". */
 export async function waitForCostScopePreview(page: Page): Promise<void> {
   await expect(costScopePreviewBars(page).first()).toBeVisible({ timeout: LOAD_TIMEOUT });

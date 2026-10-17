@@ -1,5 +1,5 @@
 import type { BuiltInDimension, DimensionsConfig, TagDimension } from '../types/config.js';
-import type { CostMetric, ExclusionRule, MarketplaceAttributionConfig } from '../types/cost-scope.js';
+import type { CostMetric, ExclusionCondition, ExclusionRule, MarketplaceAttributionConfig } from '../types/cost-scope.js';
 import { tagDimColumn, tagSqlColumn } from '../types/branded.js';
 import { normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
 import { canonicalJson, sha256Hex } from './digest.js';
@@ -29,6 +29,20 @@ function findDim(dimensionId: string, dims: DimensionsConfig): BuiltInDimension 
   const builtIn = dims.builtIn.find(d => d.name === dimensionId);
   if (builtIn !== undefined) return builtIn;
   return dims.tags.find(t => tagDimColumn(t) === dimensionId);
+}
+
+/** A condition's missing-value treatment, where it decides the stored bytes.
+ *  Built-in columns are never NULL (buildSource coalesces them), so a condition
+ *  on one without matchMissing builds what it always did and stays out of the
+ *  digest. A tag column is NULL on untagged rows, which a rule on it used to
+ *  drop as well (`NOT (NULL IN …)` is NULL); recording the flag on every tag
+ *  condition re-rolls exactly the partitions built that way. Resolution
+ *  mirrors tryResolveField: a built-in wins an id clash. */
+function missingForSignature(c: ExclusionCondition, dims: DimensionsConfig): { matchMissing?: boolean } {
+  const matchMissing = c.matchMissing === true;
+  const onTag = !dims.builtIn.some(d => d.name === c.dimensionId)
+    && dims.tags.some(t => tagDimColumn(t) === c.dimensionId);
+  return onTag || matchMissing ? { matchMissing } : {};
 }
 
 export interface ShapeSignatureInput {
@@ -104,6 +118,7 @@ export function computeShapeSignature(input: ShapeSignatureInput): string {
       conditions: r.conditions.map(c => ({
         dimensionId: c.dimensionId,
         values: [...c.values].map(v => resolveRuleValue(v, findDim(c.dimensionId, dimensions))).sort((a, b) => a.localeCompare(b)),
+        ...missingForSignature(c, dimensions),
       })),
     }));
   // Order-independent: rules are a set, not a sequence.

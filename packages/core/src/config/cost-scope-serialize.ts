@@ -1,7 +1,7 @@
 import type { CostScopeConfig, ExclusionCondition, ExclusionRule } from '../types/cost-scope.js';
 import { DEFAULT_LAG_DAYS } from '../types/cost-scope.js';
 
-interface YamlCondition { dimensionId: string; values: string[] }
+interface YamlCondition { dimensionId: string; values: string[]; matchMissing?: boolean }
 interface YamlRule {
   id: string;
   name: string;
@@ -22,7 +22,11 @@ export interface YamlCostScope {
 }
 
 function conditionToYaml(c: ExclusionCondition): YamlCondition {
-  return { dimensionId: String(c.dimensionId), values: [...c.values] };
+  return {
+    dimensionId: String(c.dimensionId),
+    values: [...c.values],
+    ...(c.matchMissing === true ? { matchMissing: true } : {}),
+  };
 }
 
 function ruleToYaml(r: ExclusionRule): YamlRule {

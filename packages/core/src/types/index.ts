@@ -112,6 +112,7 @@ export type {
   ExclusionRule,
   ExclusionCondition,
   CostScopeDailyRow,
+  CostScopePreviewRange,
   CostScopePreviewRow,
   CostScopePreviewResult,
   CostScopeSampleRow,

@@ -12,6 +12,7 @@ export {
   buildMaterializeBaseQuery,
   buildRollupPartitionQuery,
   buildGrainProbeQuery,
+  buildExclusionClauses,
   buildFilterClauses,
   buildRuleMatchExpr,
   computePeriodsInRange,
