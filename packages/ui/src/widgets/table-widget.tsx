@@ -67,9 +67,53 @@ function renderDeltaCell(value: unknown): React.ReactNode {
   return <span className={`${color} text-[11px]`}>{v >= 0 ? '↑' : '↓'}{Math.abs(v).toFixed(1)}%</span>;
 }
 
-function rowValuesKey(values: Readonly<Record<string, string>>): string {
-  return Object.entries(values).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}=${v}`).join('|');
+/** Code-unit order: unlike localeCompare, it never ties two different
+ *  strings (ICU ignores a soft hyphen, for one), so a canonical order can't
+ *  depend on the order the strings came in. */
+function byCodeUnits(a: string, b: string): number {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
 }
+
+/** A row's values as one string. As JSON, a value holding a separator can't
+ *  read as two values. */
+function rowValuesKey(values: Readonly<Record<string, string>>): string {
+  return JSON.stringify(Object.entries(values).sort(([a], [b]) => byCodeUnits(a, b)));
+}
+
+/** The groups a result shows, as the `rowKeys` asking another period for
+ *  their costs: each group once, in key order, so the same groups always
+ *  make the same request. */
+interface ShownGroups {
+  readonly keys: readonly Readonly<Record<string, string>>[];
+  readonly signature: string;
+}
+
+function shownGroupsOf(rows: readonly AggregatedTableRow[]): ShownGroups {
+  const byKey = new Map<string, Readonly<Record<string, string>>>();
+  for (const row of rows) byKey.set(rowValuesKey(row.values), row.values);
+  const sorted = [...byKey].sort(([a], [b]) => byCodeUnits(a, b));
+  return { keys: sorted.map(([, values]) => values), signature: sorted.map(([key]) => key).join('\n') };
+}
+
+/** A value and the query inputs it was loaded for. */
+interface Loaded<T> {
+  readonly inputs: string;
+  readonly value: T;
+}
+
+/** The last value loaded, as long as it was loaded for `inputs`: it stays
+ *  through a reload for the same inputs, and goes once they change.
+ *  `loaded` must keep its identity between renders (memoize it): a new
+ *  object each render would set state on every render. */
+function useLastLoaded<T>(loaded: Loaded<T> | null, inputs: string): T | null {
+  const [last, setLast] = useState<Loaded<T> | null>(loaded);
+  if (loaded !== null && loaded !== last) setLast(loaded);
+  return last !== null && last.inputs === inputs ? last.value : null;
+}
+
+const NO_COSTS: ReadonlyMap<string, number> = new Map();
+const NO_ROWS: readonly AggregatedTableRow[] = [];
 
 export function TableWidget({
   spec,
@@ -114,6 +158,12 @@ export function TableWidget({
 
   const groupByKey = groupByColumns.join(',');
 
+  // What each period's rows depend on apart from the sort and the groups
+  // asked for. A result carries the inputs it was fetched for: right after
+  // they change, the last result is still on hand for a render.
+  const rowsInputs = JSON.stringify([fk, dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour, granularity, groupByKey]);
+  const prevInputs = JSON.stringify([fk, previousDateRange.start, previousDateRange.end, previousDateRange.startHour, previousDateRange.endHour, granularity, groupByKey]);
+
   const dataQuery = useQuery(
     () => api.queryAggregatedTable({
       filters: explorerFilters,
@@ -124,33 +174,50 @@ export function TableWidget({
       ...(sort === undefined ? {} : { sort }),
       rowLimit: ROW_LIMIT,
       origin: 'widget:table:rows',
-    }),
+    }).then(result => ({ result, inputs: rowsInputs })),
     [fk, dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour, granularity, groupByKey, sort?.column, sort?.direction, api],
   );
 
+  // Kept while a re-sort reloads the rows: when the new order shows the same
+  // groups, the previous period isn't fetched again.
+  const loadedGroups = useMemo(
+    () => (compareEnabled && dataQuery.status === 'success'
+      ? { inputs: dataQuery.data.inputs, value: shownGroupsOf(dataQuery.data.result.rows) }
+      : null),
+    [compareEnabled, dataQuery],
+  );
+  const shownGroups = useLastLoaded(loadedGroups, rowsInputs);
+
   const prevDataQuery = useQuery(
-    () => compareEnabled
+    () => compareEnabled && shownGroups !== null && shownGroups.keys.length > 0
       ? api.queryAggregatedTable({
           filters: explorerFilters,
           dateRange: previousDateRange,
           granularity,
           applyCostScope: true,
           groupByColumns,
+          // The groups on screen rather than the top ones by cost: past the
+          // row limit those leave out the credits a cost-ascending sort shows.
+          rowKeys: shownGroups.keys,
           rowLimit: ROW_LIMIT,
           origin: 'widget:table:rows/prev',
-        })
+        }).then(result => ({ result, inputs: prevInputs }))
       : Promise.resolve(null),
-    [compareEnabled, fk, previousDateRange.start, previousDateRange.end, previousDateRange.startHour, previousDateRange.endHour, granularity, groupByKey, api],
+    [compareEnabled, fk, previousDateRange.start, previousDateRange.end, previousDateRange.startHour, previousDateRange.endHour, granularity, groupByKey, shownGroups?.signature, api],
   );
 
-  const prevCostMap = useMemo(() => {
-    if (prevDataQuery.status !== 'success' || prevDataQuery.data === null) return new Map<string, number>();
-    const m = new Map<string, number>();
-    for (const row of prevDataQuery.data.rows) {
-      m.set(rowValuesKey(row.values), row.cost);
-    }
-    return m;
+  const loadedPrevCosts = useMemo(() => {
+    if (prevDataQuery.status !== 'success' || prevDataQuery.data === null) return null;
+    const costs = new Map<string, number>();
+    for (const row of prevDataQuery.data.result.rows) costs.set(rowValuesKey(row.values), row.cost);
+    return { inputs: prevDataQuery.data.inputs, value: costs };
   }, [prevDataQuery]);
+  // Kept while the previous period reloads for newly shown groups: the costs
+  // already loaded still hold, and the column doesn't blink out meanwhile.
+  // A failed reload hides it, as a failed first load does, rather than leave
+  // the new rows blank as if they had no previous cost.
+  const keptPrevCosts = useLastLoaded(loadedPrevCosts, prevInputs);
+  const prevCostMap = prevDataQuery.status === 'error' ? NO_COSTS : (keptPrevCosts ?? NO_COSTS);
 
   const activeDimIds = useMemo(() => {
     const ids = new Set<string>();
@@ -182,6 +249,13 @@ export function TableWidget({
       cell: renderDeltaCell,
     };
   }, [compareEnabled, prevCostMap]);
+
+  // A new array whenever the previous costs change: the table keeps each
+  // row's cell values until its data changes, and the Δ% reads those costs.
+  const tableRows = useMemo(
+    () => (dataQuery.status === 'success' ? [...dataQuery.data.result.rows] : NO_ROWS),
+    [dataQuery, prevCostMap],
+  );
 
   const visibleTableColumns = useMemo(() => {
     const enabled = allColumnSpecs.filter(c => enabledSet.has(c.key));
@@ -258,8 +332,7 @@ export function TableWidget({
 
   if (spec.type !== 'table') return null;
 
-  const rows = dataQuery.status === 'success' ? dataQuery.data.rows : [];
-  const aggregatedTotal = dataQuery.status === 'success' ? dataQuery.data.totalRows : totalRows;
+  const aggregatedTotal = dataQuery.status === 'success' ? dataQuery.data.result.totalRows : totalRows;
   const loading = dataQuery.status === 'loading' || overviewQuery.status === 'loading';
   const error = dataQuery.status === 'error' ? dataQuery.error.message : null;
 
@@ -269,7 +342,7 @@ export function TableWidget({
         <h3 className="text-sm font-medium text-text-secondary mb-3">{spec.title}</h3>
       )}
       <DataTable<AggregatedTableRow>
-        data={rows}
+        data={tableRows}
         columns={visibleTableColumns}
         allColumns={allTableColumns}
         hiddenColumns={hiddenColumns}
