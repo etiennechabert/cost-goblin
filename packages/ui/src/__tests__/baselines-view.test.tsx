@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import type {
   BaselineCreateInput,
   BaselineDetail,
@@ -19,6 +19,16 @@ import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { Baselines } from '../views/baselines.js';
 import { baselineDetail, baselineRecord, baselineSpec, deferred, rejectWith } from './baseline-fixtures.js';
+import { setReducedMotion } from './setup.js';
+
+// Hold the coin-rain loader still. Animated, it sets state on every frame,
+// and each of those urgent updates restarts the transition useQuery commits
+// its result in; on a slow runner the list then only lands once React expires
+// the transition (~5 s), which is the whole findBy budget. setup.ts restores
+// the preference after each test.
+beforeEach(() => {
+  setReducedMotion(true);
+});
 
 function row(id: string, scopeLabel: string, triageStatus: BaselineTriageStatus, potential: number, realized: number, extra: Partial<BaselineRecord> = {}): BaselineRecord {
   return baselineRecord({
