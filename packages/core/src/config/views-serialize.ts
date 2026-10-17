@@ -26,6 +26,9 @@ export function widgetToYaml(w: WidgetSpec): Record<string, unknown> {
       if (w.metric !== undefined) base['metric'] = w.metric;
       return base;
     case 'pie':
+      addGroupByFields(base, w);
+      if (w.showLegend !== undefined) base['showLegend'] = w.showLegend;
+      return base;
     case 'stackedBar':
     case 'pareto':
       addGroupByFields(base, w);
