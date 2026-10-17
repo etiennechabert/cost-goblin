@@ -12,6 +12,7 @@ import { QueryBuilder, type ParameterizedQuery } from './parameterized.js';
 import { assertBillingPeriod, assertDateString, assertHourString, assertSafeColumnIdentifier, assertTier, isSafeColumnIdentifier, SecurityError } from './identifier-validator.js';
 import { rollupGrainColumns, rollupGrainDimensions } from '../rollup/grain.js';
 import { sqlEscapeString, sqlStringLiteral } from './sql-escape.js';
+import { previousTrendPeriod, trendPercentChangeSql } from './trend-change.js';
 
 /** Label for rows whose SubAccountId is NULL. FOCUS allows a null SubAccountId
  *  and GCP emits it for charges not tied to a project (account-level taxes,
@@ -779,13 +780,7 @@ export function buildTrendQuery(
     // period, so the source needs to cover months from both spans. The previous
     // span ends the day before `startDate`.
     const currentPeriods = computePeriodsInRange(params.dateRange);
-    const dayMs = 24 * 60 * 60 * 1000;
-    const startMs = new Date(`${startDate}T00:00:00Z`).getTime();
-    const endMs = new Date(`${endDate}T00:00:00Z`).getTime();
-    const durationDays = Math.round((endMs - startMs) / dayMs) + 1;
-    const prevEndIso = new Date(startMs - dayMs).toISOString().slice(0, 10);
-    const prevStartIso = new Date(startMs - durationDays * dayMs).toISOString().slice(0, 10);
-    const previousPeriods = computePeriodsInRange({ start: prevStartIso, end: prevEndIso });
+    const previousPeriods = computePeriodsInRange(previousTrendPeriod(params.dateRange));
     const required = [...new Set([...currentPeriods, ...previousPeriods])].sort((a, b) => a.localeCompare(b));
     const branches = resolveProviderBranches(providers, required);
     source = buildSource({ dataDir, tier: 'daily', dimensions, orgAccountsPath, providers: branches, costMetric, marketplaceAttribution: costScope?.marketplaceAttribution });
@@ -831,10 +826,7 @@ export function buildTrendQuery(
       current_cost,
       previous_cost,
       current_cost - previous_cost AS delta,
-      CASE
-        WHEN previous_cost = 0 THEN NULL
-        ELSE (current_cost - previous_cost) / previous_cost * 100
-      END AS percent_change
+      ${trendPercentChangeSql('current_cost', 'previous_cost')} AS percent_change
     FROM agg
     WHERE ABS(current_cost - previous_cost) >= ${deltaThresholdPlaceholder}
     ORDER BY ABS(current_cost - previous_cost) DESC

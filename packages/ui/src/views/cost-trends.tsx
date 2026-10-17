@@ -7,7 +7,7 @@ import type {
   TrendRow,
   EntityRef,
 } from '@costgoblin/core/browser';
-import { asDimensionId, asDollars, asEntityRef } from '@costgoblin/core/browser';
+import { asDimensionId, asDollars, asEntityRef, trendPercentChange } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useLagDays } from '../hooks/use-lag-days.js';
 import { useQuery } from '../hooks/use-query.js';
@@ -82,11 +82,6 @@ interface CostTrendsProps {
   rollupStatus?: RollupStatus;
 }
 
-function percentChangeOf(currentCost: number, previousCost: number, delta: number): number {
-  if (previousCost !== 0) return (delta / previousCost) * 100;
-  return currentCost === 0 ? 0 : 100;
-}
-
 interface ComputedTrends {
   rows: readonly TrendRow[];
   totalIncrease: number;
@@ -118,7 +113,7 @@ function computeTrends(trendData: TrendResult, direction: Direction): ComputedTr
     currentCost: asDollars(d.currentCost),
     previousCost: asDollars(d.previousCost),
     delta: asDollars(d.delta),
-    percentChange: percentChangeOf(d.currentCost, d.previousCost, d.delta),
+    percentChange: trendPercentChange(d.currentCost, d.previousCost),
   }));
   let totalIncrease = 0;
   let totalSavings = 0;

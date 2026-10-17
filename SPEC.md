@@ -673,7 +673,7 @@ Compares costs between the current period and the previous equivalent period.
 - Bubble visualization: each bubble is an entity with significant change, sized by dollar impact.
 
 **Behavior:**
-- Shows only items exceeding both thresholds.
+- Shows only items exceeding both thresholds. An item with no cost in the previous period (new spend, or a new credit) has no ratio to compare: it exceeds any percentage threshold, and its change shows as +100% / -100%.
 - Clicking a bubble navigates to entity detail.
 
 #### Feature: Missing Tags View (MVP)
