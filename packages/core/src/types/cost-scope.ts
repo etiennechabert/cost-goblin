@@ -1,4 +1,4 @@
-import type { DimensionId } from './branded.js';
+import type { DateString, DimensionId } from './branded.js';
 
 /** Which FOCUS 1.2 cost column backs the `cost` alias in every query.
  *  - `billed`     — `BilledCost`: the basis for invoicing. Excludes
@@ -42,11 +42,19 @@ export const COST_METRICS: readonly CostMetric[] = ['billed', 'effective', 'list
 export const DEFAULT_COST_METRIC: CostMetric = 'effective';
 
 /** One AND-ed condition inside an exclusion rule. Matches when the row's
- *  value for `dimensionId` is in `values` (OR within values). Empty `values`
- *  is invalid — reject it in the validator. */
+ *  value for `dimensionId` is in `values` (OR within values), or — with
+ *  `matchMissing` — when the row has no value for it. A condition must match
+ *  something: empty `values` is invalid unless `matchMissing` is set (the
+ *  validator rejects it). */
 export interface ExclusionCondition {
   readonly dimensionId: DimensionId;
   readonly values: readonly string[];
+  /** Also match rows with no value for the dimension: an untagged resource
+   *  (NULL tag), an empty built-in field, or a charge with no account
+   *  (`NO_ACCOUNT_SENTINEL`). Without it such rows never match the condition,
+   *  so a rule on a tag keeps the untagged rows. Only `true` has an effect;
+   *  the serializer omits the key otherwise. */
+  readonly matchMissing?: boolean | undefined;
 }
 
 export interface ExclusionRule {
@@ -112,6 +120,14 @@ export interface CostScopeConfig {
    *  configs default to {@link DEFAULT_MARKETPLACE_ATTRIBUTION} (enabled) at
    *  load time so existing installs pick up the fix. */
   readonly marketplaceAttribution?: MarketplaceAttributionConfig | undefined;
+}
+
+/** The days the Cost Scope preview covers, inclusive: the period picked on the
+ *  preview. The handler falls back to the last 30 days, ending `lagDays` ago,
+ *  when the range is malformed. */
+export interface CostScopePreviewRange {
+  readonly start: DateString;
+  readonly end: DateString;
 }
 
 export interface CostScopePreviewRow {

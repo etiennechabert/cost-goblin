@@ -8,6 +8,7 @@ function renderPicker(overrides?: Partial<{
   value: DateRange;
   granularity: Granularity;
   onChange: (range: DateRange, granularity: Granularity) => void;
+  hideHourly: boolean;
 }>) {
   const onChange = overrides?.onChange ?? vi.fn();
   const value = overrides?.value ?? getDefaultDateRange();
@@ -16,7 +17,7 @@ function renderPicker(overrides?: Partial<{
   return {
     onChange,
     ...render(
-      <DateRangePicker value={value} granularity={granularity} onChange={onChange} />,
+      <DateRangePicker value={value} granularity={granularity} onChange={onChange} hideHourly={overrides?.hideHourly ?? false} />,
     ),
   };
 }
@@ -69,6 +70,21 @@ describe('DateRangePicker', () => {
     expect(granularity).toBe('daily');
   });
 
+  it('reports the days of a "Last N days" preset, and none for a calendar period', async () => {
+    const onChange = vi.fn();
+    renderPicker({ onChange });
+    const user = userEvent.setup();
+
+    await user.click(screen.getByText('Last 30 days'));
+    await user.click(screen.getByText('Last 90 days'));
+    expect(onChange.mock.calls[0]?.[2]).toBe(90);
+
+    await user.click(screen.getByText('Last 30 days'));
+    await user.click(screen.getByText('Last month'));
+    expect(onChange.mock.calls[1]).toHaveLength(3);
+    expect(onChange.mock.calls[1]?.[2]).toBeUndefined();
+  });
+
   it('Last 7 days preset stays daily without hourly tier configured', async () => {
     const onChange = vi.fn();
     renderPicker({ onChange });
@@ -80,6 +96,19 @@ describe('DateRangePicker', () => {
     expect(onChange).toHaveBeenCalledOnce();
     const granularity = onChange.mock.calls[0]?.[1] as Granularity;
     expect(granularity).toBe('daily');
+  });
+
+  it('daily-only (hideHourly) keeps Last 7 days as a daily preset and drops the toggle', async () => {
+    const onChange = vi.fn();
+    renderPicker({ onChange, hideHourly: true });
+    const user = userEvent.setup();
+
+    expect(screen.queryByRole('button', { name: 'Hourly' })).toBeNull();
+    await user.click(screen.getByText('Last 30 days'));
+    await user.click(screen.getByText('Last 7 days'));
+
+    expect(onChange).toHaveBeenCalledOnce();
+    expect(onChange.mock.calls[0]?.[1]).toBe('daily');
   });
 
   it('shows custom range calendar when Custom range is clicked', async () => {

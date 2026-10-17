@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { asDimensionId, tagSqlColumn } from '../types/branded.js';
 import type { DimensionsConfig } from '../types/config.js';
-import type { ExclusionRule } from '../types/cost-scope.js';
+import type { ExclusionCondition, ExclusionRule } from '../types/cost-scope.js';
 import {
   computeShapeSignature,
   computeOrgAccountsDigest,
@@ -106,6 +106,35 @@ describe('computeShapeSignature', () => {
     it('CHANGES when the target service differs', () => {
       const other = { enabled: true, rules: [{ service: 'Amazon SageMaker', operations: ['InvokeModelInference', 'InvokeModelStreamingInference'] }] };
       expect(sig({ marketplaceAttribution: bedrock })).not.toBe(sig({ marketplaceAttribution: other }));
+    });
+  });
+
+  describe('missing values in rule conditions', () => {
+    const serviceRule = (extra: Partial<ExclusionCondition> = {}): ExclusionRule[] =>
+      [{ id: 'r1', name: 'Tax', enabled: true, builtIn: true, conditions: [{ dimensionId: asDimensionId('service'), values: ['AWSSupport'], ...extra }] }];
+    const teamRule = (extra: Partial<ExclusionCondition> = {}): ExclusionRule[] =>
+      [{ id: 'rt', name: 't', enabled: true, builtIn: false, conditions: [{ dimensionId: asDimensionId('tag_sb_team'), values: ['architecture'], ...extra }] }];
+
+    it('CHANGES when a condition starts matching missing values', () => {
+      expect(sig({ rules: serviceRule({ matchMissing: true }) })).not.toBe(sig({ rules: serviceRule() }));
+      expect(sig({ rules: teamRule({ matchMissing: true }) })).not.toBe(sig({ rules: teamRule() }));
+    });
+
+    it('treats an unset and a false flag alike', () => {
+      expect(sig({ rules: serviceRule({ matchMissing: false }) })).toBe(sig({ rules: serviceRule() }));
+      expect(sig({ rules: teamRule({ matchMissing: false }) })).toBe(sig({ rules: teamRule() }));
+    });
+
+    // Digests of these exact inputs before rule conditions became NULL-safe.
+    // A built-in column is never NULL, so those partitions are byte-identical
+    // and must keep their digest; a rule on a tag also dropped the untagged
+    // rows, so those partitions must re-roll.
+    it('keeps the earlier digest for rules on built-in columns (no re-roll)', () => {
+      expect(sig({ rules: serviceRule() })).toBe('9450a55f2ae5ec0a7795f6e1501ab575cc85d6ea618a6919c2e90b5352bef506');
+    });
+
+    it('moves the digest of rules on tags, whose partitions dropped untagged rows', () => {
+      expect(sig({ rules: teamRule() })).not.toBe('64a52fd554838073186a29f66ce6f6f2eb48bf5c187e8cef0498c3b8177502b0');
     });
   });
 });

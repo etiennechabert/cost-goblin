@@ -19,7 +19,7 @@ import type { BackfillCaseResult, BackfillRequest } from '../aws-setup/backfill.
 import type { AliasSuggestion } from '../normalize/similarity.js';
 import type { ViewsConfig } from './views.js';
 import type { GcpIdentityResult } from './gcp-identity.js';
-import type { CostScopeConfig, CostScopePreviewResult } from './cost-scope.js';
+import type { CostScopeConfig, CostScopePreviewRange, CostScopePreviewResult } from './cost-scope.js';
 import type { TelemetryPreferences, TelemetryStatus, TelemetryOutboxEntry } from '../telemetry/types.js';
 import type {
   ApplyConfigBundleParams,
@@ -398,7 +398,9 @@ export interface CostApi {
   revealViewsFolder(): Promise<void>;
   getCostScope(): Promise<CostScopeConfig>;
   saveCostScope(config: CostScopeConfig): Promise<void>;
-  previewCostScope(config: CostScopeConfig): Promise<CostScopePreviewResult>;
+  /** Exclusion tallies, daily histogram and sample line items of `config`
+   *  over `range` (the period picked on the Cost Scope preview). */
+  previewCostScope(config: CostScopeConfig, range: CostScopePreviewRange): Promise<CostScopePreviewResult>;
   revealCostScopeFolder(): Promise<void>;
   /** Daily histogram + aggregate totals for the Explorer. Independent of
    *  sort so the histogram doesn't re-fetch when the user reorders a

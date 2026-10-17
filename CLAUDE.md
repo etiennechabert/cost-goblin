@@ -71,6 +71,8 @@ Follow this sequence for EVERY feature:
 10. After pushing & opening the PR — close the review loop (see "After pushing"):
     - Run `/code-review xhigh --fix` yourself (via the `Skill` tool), review the fixes it applies, and re-run npm run check
     - Address every sentry[bot] review comment on the PR
+    - Reply to every gitar-bot[bot] finding, whether you agree with it or not
+    - Read SonarCloud's new issues on the PR (even when its gate passes) and fix the valid ones
 ```
 
 ## TypeScript Rules — STRICTLY ENFORCED
@@ -230,7 +232,7 @@ So the lifecycle is: tag `v0.2.6` released → first PR bumps both to `0.2.7` �
 
 ## After pushing — close the review loop
 
-A development cycle isn't done when the code is pushed. Once the changes are pushed and the PR is open, run BOTH of the following before considering the work finished.
+A development cycle isn't done when the code is pushed. Once the changes are pushed and the PR is open, do ALL of the following before considering the work finished. Re-check the bots after every push: each one reviews the new head again.
 
 ### 1. `/code-review xhigh --fix`
 
@@ -258,6 +260,40 @@ gh api -X POST repos/etiennechabert/cost-goblin/pulls/<pr>/comments/<id>/replies
 gh api -X POST repos/etiennechabert/cost-goblin/pulls/comments/<id>/reactions -f content='+1'   # or -1
 ```
 Keep replies professional and free of any AI attribution (see global git rules).
+
+### 3. Gitar review
+
+Gitar (`gitar-bot[bot]`) also reviews every PR: one summary comment on the PR, plus an inline comment per finding. **Reply to every Gitar finding, whether you agree with it or not**: an unanswered finding can't be told apart from an ignored one.
+
+For each inline `gitar-bot[bot]` finding:
+1. **Verify it against the actual code**, as for Sentry.
+2. **If valid**: fix it, run `npm run check`, push, and reply on the thread with what changed and the commit SHA. Gitar marks a finding it sees fixed ("✅ Fixed … in <sha>"); reply anyway.
+3. **If you disagree**: reply explaining precisely why, citing the code paths that disprove it.
+4. **Answer its "Was this helpful? React with 👍 / 👎" footer**: 👍 (`+1`) on a valid finding, 👎 (`-1`) on a wrong one. React on the summary comment too.
+
+Gitar reads replies on its threads ("Reply for a change"), so keep them to what was done and why. Don't post `gitar …` commands (e.g. `gitar auto-apply:on`, which lets it commit to the branch) unless the user asks.
+
+```bash
+gh api repos/etiennechabert/cost-goblin/pulls/<pr>/comments --jq '.[] | select(.user.login=="gitar-bot[bot]") | {id, path, line, body}'
+gh api repos/etiennechabert/cost-goblin/issues/<pr>/comments --jq '.[] | select(.user.login=="gitar-bot[bot]") | {id, body}'
+gh api -X POST repos/etiennechabert/cost-goblin/pulls/<pr>/comments/<id>/replies -f body="…"
+gh api -X POST repos/etiennechabert/cost-goblin/pulls/comments/<id>/reactions -f content='+1'    # inline finding; or -1
+gh api -X POST repos/etiennechabert/cost-goblin/issues/comments/<id>/reactions -f content='+1'   # summary comment; or -1
+```
+
+### 4. SonarCloud findings
+
+SonarCloud analyzes every PR, and the `sonarcloud` job fails when its quality gate does (most often on the 80% coverage-on-new-code condition). **Read the new issues even when the gate passes**: the gate only rates them, so code smells, bugs and security hotspots on new code can sit behind a green check. The API is public:
+
+```bash
+curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=etiennechabert_cost-goblin&pullRequest=<pr>" | jq '.projectStatus | {status, conditions: [.conditions[] | {metricKey, status, actualValue, errorThreshold}]}'
+curl -s "https://sonarcloud.io/api/issues/search?componentKeys=etiennechabert_cost-goblin&pullRequest=<pr>&resolved=false&ps=100" | jq '.issues[] | {severity, rule, component, line, message}'
+curl -s "https://sonarcloud.io/api/hotspots/search?projectKey=etiennechabert_cost-goblin&pullRequest=<pr>" | jq '.hotspots[] | {vulnerabilityProbability, component, line, message}'
+```
+
+- Fix every valid issue in the PR like any other review finding, then `npm run check` and push.
+- Cognitive complexity (`typescript:S3776`): the project threshold is **25**, not Sonar's default 15, because the strict TypeScript rules force flat guard chains the metric over-counts. A function at or under 25 needs no refactor even when Sonar flags it "…to the 15 allowed" (SonarCloud's profile still says 15).
+- A false positive can only be marked in SonarCloud's UI, which needs the maintainer's login. Leave the code as is and list the issue with your reason in the PR description or your summary.
 
 ## Key Architecture Decisions
 
@@ -288,7 +324,7 @@ Keep replies professional and free of any AI attribution (see global git rules).
 ## What NOT To Do
 
 - Do NOT skip `npm run check`. Every change must pass before moving on.
-- Do NOT consider a pushed change "done" until `/code-review xhigh --fix` has been run on it and every `sentry[bot]` comment is addressed.
+- Do NOT consider a pushed change "done" until `/code-review xhigh --fix` has been run on it, every `sentry[bot]` and `gitar-bot[bot]` comment is answered, and SonarCloud's new issues are triaged.
 - Do NOT add `any`, `@ts-ignore`, or `eslint-disable` to make code compile.
 - Do NOT write tests after implementation. Write them before or alongside.
 - Do NOT import from `core` into `ui` for anything except types.

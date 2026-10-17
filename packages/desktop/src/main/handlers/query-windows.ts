@@ -27,17 +27,26 @@ export interface ResolvedDateRange {
   readonly endHour?: string;
 }
 
+/** A renderer-supplied `{ start, end }` when both are YYYY-MM-DD days in order,
+ *  else null. The strings are re-serialized from the parsed dates, so they are
+ *  safe to interpolate into SQL. */
+function parseDayRange(raw: unknown): ResolvedDateRange | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const start = 'start' in raw && typeof raw.start === 'string' ? parseDate(raw.start) : null;
+  const end = 'end' in raw && typeof raw.end === 'string' ? parseDate(raw.end) : null;
+  if (start === null || end === null || start.getTime() > end.getTime()) return null;
+  const days = Math.floor((end.getTime() - start.getTime()) / 86_400_000) + 1;
+  return { startStr: toIsoDate(start), endStr: toIsoDate(end), windowDays: days };
+}
+
 /** The Explorer's requested range when valid, else the default window ending
  *  at the default lag before `nowMs`. */
 export function resolveExplorerDateRange(
   raw: { start?: string | undefined; end?: string | undefined; startHour?: string | undefined; endHour?: string | undefined } | undefined,
   nowMs: number,
 ): ResolvedDateRange {
-  const start = parseDate(raw?.start);
-  const end = parseDate(raw?.end);
-  if (start !== null && end !== null && start.getTime() <= end.getTime()) {
-    const days = Math.floor((end.getTime() - start.getTime()) / 86_400_000) + 1;
-    const base = { startStr: toIsoDate(start), endStr: toIsoDate(end), windowDays: days };
+  const base = parseDayRange(raw);
+  if (base !== null) {
     // Hour bounds are an additive refinement from drag-zoom on the histogram.
     // Validate up front so a malformed value can't reach the SQL builder.
     if (typeof raw?.startHour === 'string' && typeof raw.endHour === 'string') {
@@ -55,9 +64,12 @@ export function resolveExplorerDateRange(
   return { startStr: fallback.start, endStr: fallback.end, windowDays: DEFAULT_WINDOW_DAYS };
 }
 
-/** The Cost Scope preview's window: the last 30 days of billing data, ending
- *  `lagDays` before `nowMs`. */
-export function costScopePreviewWindow(nowMs: number, lagDays: number): { windowDays: number; startDate: string; endDate: string } {
+/** The Cost Scope preview's window: the period picked on the preview when
+ *  valid, else the last 30 days of billing data ending `lagDays` before
+ *  `nowMs`. */
+export function costScopePreviewWindow(requested: unknown, nowMs: number, lagDays: number): { windowDays: number; startDate: string; endDate: string } {
+  const picked = parseDayRange(requested);
+  if (picked !== null) return { windowDays: picked.windowDays, startDate: picked.startStr, endDate: picked.endStr };
   const { start, end } = trailingWindow(nowMs, lagDays, PREVIEW_WINDOW_DAYS);
   return { windowDays: PREVIEW_WINDOW_DAYS, startDate: start, endDate: end };
 }
