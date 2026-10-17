@@ -32,9 +32,11 @@ class NewEntitiesApi extends MockCostApi {
   }
 }
 
-/** The table row holding an entity's button. */
+/** The table row naming an entity. A text query, not a role query: role
+ *  queries walk the chart-heavy DOM computing accessible names on every poll,
+ *  which can outlast the find timeout on a loaded CI runner. */
 async function entityRow(entity: string): Promise<HTMLElement> {
-  const row = (await screen.findByRole('button', { name: entity })).closest('tr');
+  const row = (await screen.findByText(entity)).closest('tr');
   if (row === null) throw new Error(`no table row for ${entity}`);
   return row;
 }
