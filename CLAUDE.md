@@ -15,13 +15,20 @@ costgoblin/
     core/                   # @costgoblin/core — pure TypeScript, no framework deps
     desktop/                # Electron shell — imports @costgoblin/core
     ui/                     # @costgoblin/ui — shared React components
+    mcp/                    # @costgoblin/mcp — opt-in local MCP server exposing cost tools to AI assistants
     web-backend/            # (Future) server — imports @costgoblin/core
+  e2e/                      # Playwright suites, one CI shard per file
+  workers/signup/           # Cloudflare Worker behind costgoblin.com's launch-notification form (own lockfile)
+  scripts/                  # ci/ policy tests, build/ packaging, aws-exports/ template, gcp-focus-exporter/ (own lockfile)
+  docs/                     # costgoblin.com website (incl. the GDPR privacy.html) and design docs
+  .gitar/                   # Gitar AI-review config: review guidance, rules, risk and auto-apply policy
 ```
 
 **Package dependency rules:**
 - `core` has ZERO dependency on `desktop`, `ui`, or any framework
 - `ui` depends on `core` (for types only — never imports query/sync logic directly)
-- `desktop` depends on `core` and `ui`
+- `mcp` depends on `core` only
+- `desktop` depends on `core`, `ui` and `mcp`
 - `web-backend` (future) depends on `core` only
 
 ## Commands
@@ -273,6 +280,16 @@ gh api -X POST repos/etiennechabert/cost-goblin/pulls/<pr>/comments/<id>/replies
 gh api -X POST repos/etiennechabert/cost-goblin/pulls/comments/<id>/reactions -f content='+1'    # inline finding; or -1
 gh api -X POST repos/etiennechabert/cost-goblin/issues/comments/<id>/reactions -f content='+1'   # summary comment; or -1
 ```
+
+**Make each lesson stick.** On the free open-source plan, Gitar carries nothing learned in one PR's threads over to the next PR. When a finding shows a mistake that could recur, record it in the same PR:
+- A valid finding of a general kind → add the check, in one line, to the matching `.gitar/review/` guide. If it's also a rule for writing code here, add it to this file too.
+- A false positive Gitar will raise again → add a line to that guide's "Intentional, don't flag" list.
+
+**Check against the guides before pushing.** `.gitar/review/` holds what Gitar reviews against (SQL and cost math, security and privacy, sync and config, UI and tests). Read the guide for each area you touched, so the finding never has to be raised.
+
+**Gitar can commit to the branch:** when someone ticks a suggestion's "Apply fix" box, replies `gitar fix`, or turns on auto-apply. It also pushes a repair when one of its own commits breaks CI. If the remote branch moved, `git pull --ff-only` before pushing.
+
+**Editing `.gitar/`.** Gitar filters these files before each review, so put every instruction under a heading that matches it. On #716 a "flag this" note inside the "Don't comment on" list was dropped and never reached the reviewer. `npm run check` (`scripts/ci/gitar-config.test.mjs`) fails when a `.gitar/` file names a path or identifier that no longer exists, or when `review/` plus `instructions/` grow past 28 KB. See `.gitar/README.md` for what each file does.
 
 ### 4. SonarCloud findings
 
