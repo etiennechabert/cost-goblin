@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parseWorkspaceName } from '@costgoblin/core';
 import { registerUIHandlers } from '../main/handlers/ui.js';
-import { MAX_MEMORY_GB, MIN_MEMORY_GB, maxThreads } from '../main/duckdb-tuning.js';
+import { MAX_MEMORY_GB, MIN_MEMORY_GB, maxThreads, totalMemoryGB } from '../main/duckdb-tuning.js';
 import { at, createHarness, num, type Harness, type TestWorkspace } from './helpers/ipc-harness.js';
 import type { IpcContext } from '../main/handlers/context.js';
 
@@ -100,13 +100,16 @@ describe('Performance settings', () => {
     const h = await uiApp();
     const concurrency = vi.spyOn(h.app.rollupStore, 'setBuildConcurrency');
     await h.ipc.invoke('perf:set', { memoryLimitGB: 10_000, threads: 0, rollupConcurrency: 1 });
+    // The memory ceiling is MAX_MEMORY_GB or the machine's RAM, whichever is
+    // lower — a 16 GB CI runner clamps to 16.
+    const ceiling = Math.max(MIN_MEMORY_GB, Math.min(MAX_MEMORY_GB, totalMemoryGB()));
     const saved = at(JSON.parse(await readFile(prefsFile(h), 'utf-8')), 'performance');
-    expect(at(saved, 'memoryLimitGB')).toBe(MAX_MEMORY_GB);
+    expect(at(saved, 'memoryLimitGB')).toBe(ceiling);
     expect(at(saved, 'threads')).toBe(1);
     expect(at(saved, 'rollupConcurrency')).toBe(1);
-    expect(h.db.configure).toHaveBeenCalledWith({ memoryGB: MAX_MEMORY_GB, threads: 1 });
+    expect(h.db.configure).toHaveBeenCalledWith({ memoryGB: ceiling, threads: 1 });
     expect(concurrency).toHaveBeenCalledWith(1);
-    expect(at(await h.ipc.invoke('perf:get-info'), 'current')).toEqual({ memoryLimitGB: MAX_MEMORY_GB, threads: 1, rollupConcurrency: 1 });
+    expect(at(await h.ipc.invoke('perf:get-info'), 'current')).toEqual({ memoryLimitGB: ceiling, threads: 1, rollupConcurrency: 1 });
   });
 
   it('treats non-numeric fields as "Auto"', async () => {

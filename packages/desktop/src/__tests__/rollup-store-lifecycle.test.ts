@@ -206,19 +206,33 @@ describe('RollupStore failed builds', () => {
 });
 
 describe('RollupStore build concurrency', () => {
+  // Every build is held at a gate until the lanes have had their chance to
+  // fill, so the peak counts the lanes the store opens rather than how three
+  // unheld builds happened to interleave (a fast first build could finish
+  // before the second lane started).
+  async function peakLanes(store: RollupStore): Promise<number> {
+    const held = gate();
+    duck.holdBuild = held.promise;
+    const run = store.maintainPeriods(['2026-01', '2026-02', '2026-03'], buildSql, ETAGS, SHAPE);
+    await vi.waitFor(() => { expect(duck.inFlight).toBeGreaterThan(0); });
+    // Lanes start together; a turn of the event loop lets any further one in.
+    await new Promise<void>(resolve => { setImmediate(resolve); });
+    held.open();
+    await run;
+    return duck.peakInFlight;
+  }
+
   it('rounds the configured concurrency and never goes below one lane', async () => {
     const wide = newStore();
     wide.setBuildConcurrency(2.4);
-    await wide.maintainPeriods(['2026-01', '2026-02', '2026-03'], buildSql, ETAGS, SHAPE);
-    expect(duck.peakInFlight).toBe(2);
+    expect(await peakLanes(wide)).toBe(2);
 
     duck = new FakeDuck();
     dataDir = await mkdtemp(join(tmpdir(), 'cg-rollup-life-'));
     tmpDirs.push(dataDir);
     const narrow = newStore(4);
     narrow.setBuildConcurrency(0);
-    await narrow.maintainPeriods(['2026-01', '2026-02', '2026-03'], buildSql, ETAGS, SHAPE);
-    expect(duck.peakInFlight).toBe(1);
+    expect(await peakLanes(narrow)).toBe(1);
   });
 });
 
