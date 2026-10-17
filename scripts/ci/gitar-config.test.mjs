@@ -61,6 +61,19 @@ export function asRepoPath(span, topLevel) {
   return span;
 }
 
+/**
+ * The paths a span could name relative to the `.gitar/` file quoting it: a
+ * sibling (`sync-and-config.md`) or a `.gitar/` entry (`config/risk.md`,
+ * `instructions/`). Null when the span looks like neither, so
+ * `raw/{tier}-{YYYY-MM}/` isn't taken for a path.
+ */
+export function relativeCandidates(span, quotingFile, gitarEntries) {
+  if (/\s/.test(span)) return null;
+  if (!span.endsWith('.md') && !gitarEntries.has(span.split('/')[0])) return null;
+  const dir = quotingFile.slice(0, quotingFile.lastIndexOf('/') + 1);
+  return [`${dir}${span}`, `.gitar/${span}`];
+}
+
 /** Whether `path` (a file, a directory ending in /, or a glob) matches one of `files`. */
 export function pathExists(path, files) {
   if (/[*{<]/.test(path)) {
@@ -141,6 +154,20 @@ describe('gitar config checkers (self-test on inline input)', () => {
     expect(asRepoPath('packages', topLevel)).toBeNull();
   });
 
+  it('resolves sibling and .gitar/-relative spans, and nothing else', () => {
+    const entries = new Set(['review', 'config']);
+    expect(relativeCandidates('sync-and-config.md', '.gitar/review/focus.md', entries)).toEqual([
+      '.gitar/review/sync-and-config.md',
+      '.gitar/sync-and-config.md',
+    ]);
+    expect(relativeCandidates('config/risk.md', '.gitar/README.md', entries)).toEqual([
+      '.gitar/config/risk.md',
+      '.gitar/config/risk.md',
+    ]);
+    expect(relativeCandidates('raw/{tier}-{YYYY-MM}/', '.gitar/review/a.md', entries)).toBeNull();
+    expect(relativeCandidates('fix(ui): …', '.gitar/review/a.md', entries)).toBeNull();
+  });
+
   it('resolves files, directories, globs and <placeholders> against the file list', () => {
     expect(pathExists('packages/ui/src/api/CostApi.ts', files)).toBe(true);
     expect(pathExists('packages/ui/', files)).toBe(true);
@@ -203,6 +230,7 @@ const repoFiles = listRepoFiles();
 const read = (path) => readFileSync(new URL(path, repoRoot), 'utf8');
 const gitarFiles = repoFiles.filter((f) => f.startsWith('.gitar/') && f.endsWith('.md'));
 const topLevel = new Set(repoFiles.map((f) => f.split('/')[0]));
+const gitarEntries = new Set(gitarFiles.map((f) => f.split('/')[1]));
 
 describe('gitar config (.gitar/)', () => {
   it('finds the files it polices', () => {
@@ -210,12 +238,16 @@ describe('gitar config (.gitar/)', () => {
     expect(gitarFiles.some((f) => f.startsWith('.gitar/rules/'))).toBe(true);
   });
 
-  it('quotes only repository paths that exist', () => {
+  it('quotes only paths that exist, from the repository root or relative to .gitar/', () => {
+    const candidates = (span, file) => {
+      const rooted = asRepoPath(span, topLevel);
+      return rooted === null ? relativeCandidates(span, file, gitarEntries) : [rooted];
+    };
     const missing = gitarFiles.flatMap((file) =>
       codeSpans(read(file))
-        .map((span) => ({ ...span, path: asRepoPath(span.text, topLevel) }))
-        .filter(({ path }) => path !== null && !pathExists(path, repoFiles))
-        .map(({ path, line }) => `${file}:${line} names ${path}`),
+        .map((span) => ({ ...span, paths: candidates(span.text, file) }))
+        .filter(({ paths }) => paths !== null && !paths.some((path) => pathExists(path, repoFiles)))
+        .map(({ text, line }) => `${file}:${line} names ${text}`),
     );
     expect(missing).toEqual([]);
   });
