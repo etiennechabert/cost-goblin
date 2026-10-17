@@ -67,10 +67,18 @@ function renderDeltaCell(value: unknown): React.ReactNode {
   return <span className={`${color} text-[11px]`}>{v >= 0 ? '↑' : '↓'}{Math.abs(v).toFixed(1)}%</span>;
 }
 
+/** Code-unit order: unlike localeCompare, it never ties two different
+ *  strings (ICU ignores a soft hyphen, for one), so a canonical order can't
+ *  depend on the order the strings came in. */
+function byCodeUnits(a: string, b: string): number {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
+
 /** A row's values as one string. As JSON, a value holding a separator can't
  *  read as two values. */
 function rowValuesKey(values: Readonly<Record<string, string>>): string {
-  return JSON.stringify(Object.entries(values).sort(([a], [b]) => a.localeCompare(b)));
+  return JSON.stringify(Object.entries(values).sort(([a], [b]) => byCodeUnits(a, b)));
 }
 
 /** The groups a result shows, as the `rowKeys` asking another period for
@@ -84,7 +92,7 @@ interface ShownGroups {
 function shownGroupsOf(rows: readonly AggregatedTableRow[]): ShownGroups {
   const byKey = new Map<string, Readonly<Record<string, string>>>();
   for (const row of rows) byKey.set(rowValuesKey(row.values), row.values);
-  const sorted = [...byKey].sort(([a], [b]) => a.localeCompare(b));
+  const sorted = [...byKey].sort(([a], [b]) => byCodeUnits(a, b));
   return { keys: sorted.map(([, values]) => values), signature: sorted.map(([key]) => key).join('\n') };
 }
 
@@ -95,7 +103,9 @@ interface Loaded<T> {
 }
 
 /** The last value loaded, as long as it was loaded for `inputs`: it stays
- *  through a reload for the same inputs, and goes once they change. */
+ *  through a reload for the same inputs, and goes once they change.
+ *  `loaded` must keep its identity between renders (memoize it): a new
+ *  object each render would set state on every render. */
 function useLastLoaded<T>(loaded: Loaded<T> | null, inputs: string): T | null {
   const [last, setLast] = useState<Loaded<T> | null>(loaded);
   if (loaded !== null && loaded !== last) setLast(loaded);
@@ -204,7 +214,10 @@ export function TableWidget({
   }, [prevDataQuery]);
   // Kept while the previous period reloads for newly shown groups: the costs
   // already loaded still hold, and the column doesn't blink out meanwhile.
-  const prevCostMap = useLastLoaded(loadedPrevCosts, prevInputs) ?? NO_COSTS;
+  // A failed reload hides it, as a failed first load does, rather than leave
+  // the new rows blank as if they had no previous cost.
+  const keptPrevCosts = useLastLoaded(loadedPrevCosts, prevInputs);
+  const prevCostMap = prevDataQuery.status === 'error' ? NO_COSTS : (keptPrevCosts ?? NO_COSTS);
 
   const activeDimIds = useMemo(() => {
     const ids = new Set<string>();
@@ -237,10 +250,12 @@ export function TableWidget({
     };
   }, [compareEnabled, prevCostMap]);
 
-  const rows = useMemo(() => (dataQuery.status === 'success' ? dataQuery.data.result.rows : NO_ROWS), [dataQuery]);
   // A new array whenever the previous costs change: the table keeps each
   // row's cell values until its data changes, and the Δ% reads those costs.
-  const tableRows = useMemo(() => [...rows], [rows, prevCostMap]);
+  const tableRows = useMemo(
+    () => (dataQuery.status === 'success' ? [...dataQuery.data.result.rows] : NO_ROWS),
+    [dataQuery, prevCostMap],
+  );
 
   const visibleTableColumns = useMemo(() => {
     const enabled = allColumnSpecs.filter(c => enabledSet.has(c.key));

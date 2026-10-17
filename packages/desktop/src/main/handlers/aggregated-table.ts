@@ -1,7 +1,7 @@
 import { QueryBuilder, SecurityError } from '@costgoblin/core';
 import type { AggregatedTableRow, ExplorerSort } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
-import { aggregatedOrderBy, groupBySelectList, groupByValues } from './explorer-columns.js';
+import { aggregatedOrderBy, andWhere, groupBySelectList, groupByValues } from './explorer-columns.js';
 import type { GroupByColumn } from './explorer-columns.js';
 import { toNum } from './query-utils.js';
 
@@ -52,11 +52,6 @@ export function rowKeysFilter(rowKeys: readonly RowKey[] | undefined, groupBy: r
   const columns = groupBy.map(({ column }) => `COALESCE(CAST(${column} AS VARCHAR), '')`).join(', ');
   const rows = usable.map(key => `row(${groupBy.map(({ id }) => qb.addParam(key[id])).join(', ')})`).join(', ');
   return { kind: 'some', condition: `row(${columns}) IN (${rows})` };
-}
-
-/** `where` with `condition` ANDed on, where `where` is a WHERE clause or ''. */
-export function andWhere(where: string, condition: string): string {
-  return where.length === 0 ? `WHERE ${condition}` : `${where} AND ${condition}`;
 }
 
 export interface AggregatedRowsQuery {
@@ -124,7 +119,19 @@ export async function queryAggregatedRows(run: RunSql, q: AggregatedRowsQuery): 
     LIMIT ${String(q.rowLimit)}
   `.trim();
 
-  const [countResult, dataResult] = await Promise.all([run(countSql, params), run(dataSql, params)]);
-  const totalRows = countResult[0] === undefined ? 0 : toNum(countResult[0]['n']);
-  return { rows: dataResult.map(r => toAggregatedRow(r, q.groupBy)), totalRows };
+  const countGroups = async (): Promise<number> => {
+    const r = (await run(countSql, params))[0];
+    return r === undefined ? 0 : toNum(r['n']);
+  };
+  const toResult = (dataResult: RawRow[], totalRows: number) => ({ rows: dataResult.map(r => toAggregatedRow(r, q.groupBy)), totalRows });
+
+  if (keys.kind === 'some') {
+    // A page short of the limit holds every group that passes, and a keyed
+    // page nearly always is: count the groups (another full scan) only when
+    // the page is full.
+    const dataResult = await run(dataSql, params);
+    return toResult(dataResult, dataResult.length < q.rowLimit ? dataResult.length : await countGroups());
+  }
+  const [dataResult, totalRows] = await Promise.all([run(dataSql, params), countGroups()]);
+  return toResult(dataResult, totalRows);
 }

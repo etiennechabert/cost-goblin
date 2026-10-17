@@ -124,6 +124,20 @@ describe('queryAggregatedRows against DuckDB', () => {
     expect(result).toEqual({ rows: [], totalRows: 0 });
   });
 
+  it('counts the groups only when a keyed page is full', async () => {
+    const queries: string[] = [];
+    const recording: RunSql = (sql, params) => { queries.push(sql); return run(sql, params); };
+    const counts = (): number => queries.filter(sql => sql.includes('AS _cnt')).length;
+    const rowKeys = [{ service: 'EC2', region: 'us-east-1' }, { service: 'RDS', region: 'eu-west-1' }];
+
+    expect((await queryAggregatedRows(recording, { ...byServiceAndRegion, rowKeys })).totalRows).toBe(2);
+    expect(counts()).toBe(0);
+
+    const full = await queryAggregatedRows(recording, { ...byServiceAndRegion, rowKeys, rowLimit: 1 });
+    expect([full.rows.length, full.totalRows]).toEqual([1, 2]);
+    expect(counts()).toBe(1);
+  });
+
   it('runs nothing for keys that match no group', async () => {
     const neverRun: RunSql = () => Promise.reject(new Error('queried'));
     expect(await queryAggregatedRows(neverRun, { ...byServiceAndRegion, rowKeys: [] })).toEqual({ rows: [], totalRows: 0 });

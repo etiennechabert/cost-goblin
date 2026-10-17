@@ -32,10 +32,12 @@ function compareRows(sort: ExplorerSort | undefined): (a: AggregatedTableRow, b:
 
 /** Answers like the desktop handler, over each period's own rows: in the
  *  asked order (else by cost, largest first), only the `rowKeys` groups when
- *  given, and at most `limit` rows. Records every request, and holds the
- *  previous period's answers between `hold()` and `release()`. */
+ *  given, and at most `limit` rows. Records every request, holds the
+ *  previous period's answers between `hold()` and `release()`, and fails
+ *  them while `failPrevious` is set. */
 class PeriodTableApi extends MockCostApi {
   readonly requests: AggregatedTableParams[] = [];
+  failPrevious = false;
   private readonly current: readonly AggregatedTableRow[];
   private readonly previous: readonly AggregatedTableRow[];
   private readonly limit: number;
@@ -54,6 +56,7 @@ class PeriodTableApi extends MockCostApi {
     if (params === undefined) return super.queryAggregatedTable();
     this.requests.push(params);
     const isPrevious = params.dateRange?.start === PREVIOUS.start;
+    if (isPrevious && this.failPrevious) return Promise.reject(new Error('previous period failed'));
     const rows = isPrevious ? this.previous : this.current;
     const keys = params.rowKeys;
     const matched = keys === undefined
@@ -190,6 +193,20 @@ describe('TableWidget previous-period rows', () => {
     ]);
   });
 
+  it('hides the column when the previous period fails for the rows a re-sort brings on screen', async () => {
+    const api = new PeriodTableApi(CURRENT_ROWS, PREVIOUS_GROUPS, 3);
+    renderTable(api);
+    await expectDelta('Purchase', '↓25.0%');
+
+    api.failPrevious = true;
+    sortByChargeCategory();
+
+    await waitFor(() => { expect(shownCategories()).toEqual(['Adjustment', 'Credit', 'Purchase']); });
+    await waitFor(() => { expect(api.previousRequests()).toHaveLength(2); });
+    await waitFor(() => { expect(screen.queryByText('Δ%')).toBeNull(); });
+    expect(shownCategories()).toEqual(['Adjustment', 'Credit', 'Purchase']);
+  });
+
   it('keeps the previous period when a re-sort shows the same rows', async () => {
     const api = new PeriodTableApi(CURRENT_ROWS, PREVIOUS_ROWS);
     renderTable(api);
@@ -202,5 +219,21 @@ describe('TableWidget previous-period rows', () => {
     await act(() => new Promise(resolve => { setTimeout(resolve, 0); }));
     expect(api.previousRequests()).toHaveLength(1);
     await expectDelta('Credit', '↓50.0%');
+  });
+
+  it('keeps the previous period for a re-sort of groups that collation would tie', async () => {
+    // localeCompare ignores a soft hyphen, so it ties these two names and
+    // would leave their order in the request to the order they're shown in.
+    const softHyphen = 'Cred\u00ADit';
+    const api = new PeriodTableApi([row('Credit', -150), row(softHyphen, -20)], [row('Credit', -100), row(softHyphen, -10)]);
+    renderTable(api);
+    await expectDelta('Credit', '↓50.0%');
+
+    sortByChargeCategory();
+
+    await waitFor(() => { expect(api.requests.some(r => r.sort?.column === 'charge_category')).toBe(true); });
+    await waitFor(() => { expect(shownCategories()).toHaveLength(2); });
+    await act(() => new Promise(resolve => { setTimeout(resolve, 0); }));
+    expect(api.previousRequests()).toHaveLength(1);
   });
 });
