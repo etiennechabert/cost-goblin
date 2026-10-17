@@ -16,7 +16,8 @@
 ## Keeping it useful
 
 - `scripts/ci/gitar-config.test.mjs` (part of `npm run check`) fails when a file here names a path or identifier that no longer exists, when a rule or skill lacks the frontmatter Gitar reads, or when `review/` plus `instructions/` outgrow their 28 KB budget. Those two load on every run, so add only what changes what Gitar finds; put long procedures in a skill, which loads only when called.
-- On the free open-source plan Gitar's Knowledge feature is not available, so explaining a false positive in a reply settles that PR only. When the same wrong finding comes back, add a line to the matching `review/` file instead.
+- On the free open-source plan Gitar's Knowledge feature is not available, so a reply settles that PR only. Write lessons down instead: a valid finding of a general kind becomes a check in the matching `review/` file, and a false positive that comes back becomes a line in its "Intentional, don't flag" list (CLAUDE.md, "Gitar review").
+- Gitar filters these files before each review, so keep every instruction under a heading that matches it. On #716 a "flag this" note placed inside the "Don't comment on" list was dropped.
 - Debug a rule with a `gitar display:verbose` comment: it shows why each rule matched or was skipped.
 
 ## On the PR
