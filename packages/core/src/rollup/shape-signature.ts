@@ -36,12 +36,11 @@ function findDim(dimensionId: string, dims: DimensionsConfig): BuiltInDimension 
  *  on one without matchMissing builds what it always did and stays out of the
  *  digest. A tag column is NULL on untagged rows, which a rule on it used to
  *  drop as well (`NOT (NULL IN …)` is NULL); recording the flag on every tag
- *  condition re-rolls exactly the partitions built that way. Resolution
- *  mirrors tryResolveField: a built-in wins an id clash. */
+ *  condition re-rolls exactly the partitions built that way. */
 function missingForSignature(c: ExclusionCondition, dims: DimensionsConfig): { matchMissing?: boolean } {
   const matchMissing = c.matchMissing === true;
-  const onTag = !dims.builtIn.some(d => d.name === c.dimensionId)
-    && dims.tags.some(t => tagDimColumn(t) === c.dimensionId);
+  const dim = findDim(c.dimensionId, dims);
+  const onTag = dim !== undefined && !('field' in dim);
   return onTag || matchMissing ? { matchMissing } : {};
 }
 

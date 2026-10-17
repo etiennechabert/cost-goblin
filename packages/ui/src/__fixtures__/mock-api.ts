@@ -71,6 +71,7 @@ import {
   type ExplorerPreferencesUpdate,
 } from '@costgoblin/core/browser';
 import { DEFAULT_COST_SCOPE, DEFAULT_EXPLORER_HIDDEN_COLUMNS, computeRollupEstimate, tagSqlColumn } from '@costgoblin/core/browser';
+import { daysBetween } from '../lib/dates.js';
 
 const MOCK_PEER_HOST = 'mock-peer.local';
 
@@ -564,7 +565,7 @@ export class MockCostApi implements CostApi {
   previewCostScope(config: CostScopeConfig, range: CostScopePreviewRange): Promise<CostScopePreviewResult> {
     this.costScopePreviewRanges.push(range);
     return Promise.resolve({
-      windowDays: Math.round((Date.parse(range.end) - Date.parse(range.start)) / 86_400_000) + 1,
+      windowDays: daysBetween(range.start, range.end),
       startDate: range.start,
       endDate: range.end,
       perRule: config.rules.filter(r => r.enabled).map(r => ({ ruleId: r.id, excludedCost: 0, excludedRows: 0 })),

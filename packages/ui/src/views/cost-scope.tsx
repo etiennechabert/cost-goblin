@@ -14,10 +14,9 @@ import type {
 } from '@costgoblin/core/browser';
 import { BUILTIN_EXCLUSION_RULES, DEFAULT_COST_SCOPE, DEFAULT_LAG_DAYS, DEFAULT_MARKETPLACE_ATTRIBUTION, asDimensionId } from '@costgoblin/core/browser';
 import { getDimensionId, isTagDimension } from '../lib/dimensions.js';
-import { daysAgo, daysBetween } from '../lib/dates.js';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useUnsavedChanges } from '../hooks/use-unsaved-changes.js';
-import { DateRangePicker } from '../components/date-range-picker.js';
+import { DateRangePicker, lastNDaysRange } from '../components/date-range-picker.js';
 import type { DateRange } from '../components/date-range-picker.js';
 import { formatDollars } from '../components/format.js';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card.js';
@@ -78,26 +77,22 @@ interface PreviewState {
   loading: boolean;
 }
 
-/** The period the preview covers. A "Last N days" pick stays relative to the
- *  Data freshness lag being edited below, so changing the lag moves it (and
- *  the window is right once the saved lag loads); any other pick is fixed
- *  dates. */
+/** The period the preview covers. A "Last N days" preset stays relative to
+ *  the Data freshness lag being edited below, so changing the lag moves it
+ *  (and the window is right once the saved lag loads); any other pick is
+ *  fixed dates. */
 type PreviewWindow =
   | { readonly kind: 'trailing'; readonly days: number }
   | { readonly kind: 'fixed'; readonly range: CostScopePreviewRange };
 
 const DEFAULT_PREVIEW_WINDOW: PreviewWindow = { kind: 'trailing', days: 30 };
 
-/** Same arithmetic as the date picker's "Last N days" presets, so the picked
- *  preset stays highlighted. */
 function previewRange(picked: PreviewWindow, lagDays: number): CostScopePreviewRange {
-  if (picked.kind === 'fixed') return picked.range;
-  return { start: daysAgo(picked.days + lagDays), end: daysAgo(lagDays) };
+  return picked.kind === 'fixed' ? picked.range : lastNDaysRange(picked.days, lagDays);
 }
 
-/** A pick ending on the newest day the lag allows is a trailing window. */
-function toPreviewWindow(range: DateRange, lagDays: number): PreviewWindow {
-  if (range.end === daysAgo(lagDays)) return { kind: 'trailing', days: daysBetween(range.start, range.end) - 1 };
+function toPreviewWindow(range: DateRange, lastNDays: number | undefined): PreviewWindow {
+  if (lastNDays !== undefined) return { kind: 'trailing', days: lastNDays };
   return { kind: 'fixed', range: { start: range.start, end: range.end } };
 }
 
@@ -832,7 +827,7 @@ export function CostScopeView(): React.JSX.Element {
       hasEnabledRules={enabledRules.length > 0}
       range={{ start: rangeStart, end: rangeEnd }}
       lagDays={lagDays}
-      onRangeChange={range => { setPreviewWindow(toPreviewWindow(range, lagDays)); }}
+      onRangeChange={(range, lastNDays) => { setPreviewWindow(toPreviewWindow(range, lastNDays)); }}
     />
   );
 
@@ -1041,7 +1036,7 @@ interface PreviewPanelProps {
   readonly hasEnabledRules: boolean;
   readonly range: CostScopePreviewRange;
   readonly lagDays: number;
-  readonly onRangeChange: (range: DateRange) => void;
+  readonly onRangeChange: (range: DateRange, lastNDays: number | undefined) => void;
 }
 
 /** Compact "always-visible" preview rendered in the sticky right column on
@@ -1073,7 +1068,7 @@ function PreviewPanel({ preview, loading, combinedText, metric, hasEnabledRules,
           <DateRangePicker
             value={range}
             granularity="daily"
-            onChange={onRangeChange}
+            onChange={(next, _granularity, lastNDays) => { onRangeChange(next, lastNDays); }}
             hideHourly
             lagDays={lagDays}
           />

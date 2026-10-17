@@ -70,6 +70,21 @@ describe('DateRangePicker', () => {
     expect(granularity).toBe('daily');
   });
 
+  it('reports the days of a "Last N days" preset, and none for a calendar period', async () => {
+    const onChange = vi.fn();
+    renderPicker({ onChange });
+    const user = userEvent.setup();
+
+    await user.click(screen.getByText('Last 30 days'));
+    await user.click(screen.getByText('Last 90 days'));
+    expect(onChange.mock.calls[0]?.[2]).toBe(90);
+
+    await user.click(screen.getByText('Last 30 days'));
+    await user.click(screen.getByText('Last month'));
+    expect(onChange.mock.calls[1]).toHaveLength(3);
+    expect(onChange.mock.calls[1]?.[2]).toBeUndefined();
+  });
+
   it('Last 7 days preset stays daily without hourly tier configured', async () => {
     const onChange = vi.fn();
     renderPicker({ onChange });
