@@ -110,6 +110,11 @@ export interface AggregatedTableParams extends ExplorerBaseParams {
   readonly sort?: ExplorerSort;
   readonly rowLimit: number;
   readonly rowFilters?: Readonly<Record<string, string>> | undefined;
+  /** Only these groups: each key is a row's `values` from another result,
+   *  e.g. the current period's rows when fetching their previous-period
+   *  costs. A key matches the group with that value on every group-by
+   *  column; an empty list matches none. */
+  readonly rowKeys?: readonly Readonly<Record<string, string>>[] | undefined;
 }
 
 export interface AggregatedTableRow {
