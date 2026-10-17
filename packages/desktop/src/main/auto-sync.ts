@@ -230,6 +230,34 @@ async function prunePass(deps: AutoSyncDeps, provider: AutoSyncProvider): Promis
   }
 }
 
+/** Sync every configured tier of one provider. A failure comes back as that
+ *  provider's ProviderSyncError (null when it synced) so the pass can carry
+ *  on with the next provider. */
+async function syncProvider(deps: AutoSyncDeps, provider: AutoSyncProvider): Promise<ProviderSyncError | null> {
+  // Same tier+retention set as the auto-prune pass so sync and prune stay
+  // in lockstep — this is what pulls cost-optimization too, which the old
+  // hand-rolled daily+hourly list silently skipped (leaving it "Never").
+  const tiers = configuredTierRetentions(provider.sync)
+    .map(t => ({ name: t.tier, retention: t.retentionDays }));
+  try {
+    // Local sync state is per tier (each has its own sidecar), so one
+    // unreadable tier still reports but doesn't hold back the others.
+    let localStateError: LocalSyncStateError | null = null;
+    for (const tier of tiers) {
+      try {
+        await syncTier(deps, provider.name, tier);
+      } catch (err: unknown) {
+        if (!(err instanceof LocalSyncStateError)) throw err;
+        localStateError ??= err;
+      }
+    }
+    if (localStateError !== null) throw localStateError;
+    return null;
+  } catch (err: unknown) {
+    return { provider: provider.name, message: errorMessage(err) };
+  }
+}
+
 /** One full scheduler pass over every configured provider, sequentially
  *  (bandwidth / rate-limit safety). One provider's failure must never abort or
  *  hide another provider's sync: each provider's tier loop is isolated, its
@@ -285,27 +313,8 @@ async function runPass(deps: AutoSyncDeps): Promise<void> {
     if (syncEnabled) {
       for (const provider of config.providers) {
         status = { state: 'checking', provider: provider.name };
-        // Same tier+retention set as the auto-prune pass so sync and prune stay
-        // in lockstep — this is what pulls cost-optimization too, which the old
-        // hand-rolled daily+hourly list silently skipped (leaving it "Never").
-        const tiers = configuredTierRetentions(provider.sync)
-          .map(t => ({ name: t.tier, retention: t.retentionDays }));
-        try {
-          // Local sync state is per tier (each has its own sidecar), so one
-          // unreadable tier still reports but doesn't hold back the others.
-          let localStateError: LocalSyncStateError | null = null;
-          for (const tier of tiers) {
-            try {
-              await syncTier(deps, provider.name, tier);
-            } catch (err: unknown) {
-              if (!(err instanceof LocalSyncStateError)) throw err;
-              localStateError ??= err;
-            }
-          }
-          if (localStateError !== null) throw localStateError;
-        } catch (err: unknown) {
-          providerErrors.push({ provider: provider.name, message: errorMessage(err) });
-        }
+        const providerError = await syncProvider(deps, provider);
+        if (providerError !== null) providerErrors.push(providerError);
       }
     }
 
