@@ -27,13 +27,15 @@ export function isNewTrend(currentCost: number, previousCost: number): boolean {
   return previousCost === 0 && currentCost !== 0;
 }
 
-/** Percent change from the previous period, ±{@link NEW_TREND_PERCENT} (signed
- *  like the change) when the previous period had no cost, 0 when neither had
- *  any. JS twin of {@link trendPercentChangeSql}; a DuckDB-executed test pins
- *  the two to the same value. */
+/** Percent change from the previous period, taken against the previous cost's
+ *  size so it is always signed like the change, even from a net credit: a
+ *  credit growing from -$100 to -$150 is -50%, a saving. ±{@link NEW_TREND_PERCENT}
+ *  (signed like the change) when the previous period had no cost, 0 when
+ *  neither had any. JS twin of {@link trendPercentChangeSql}; a DuckDB-executed
+ *  test pins the two to the same value. */
 export function trendPercentChange(currentCost: number, previousCost: number): number {
   if (previousCost === 0) return Math.sign(currentCost) * NEW_TREND_PERCENT;
-  return (currentCost - previousCost) / previousCost * 100;
+  return (currentCost - previousCost) / Math.abs(previousCost) * 100;
 }
 
 /** SQL twin of {@link trendPercentChange} over two numeric columns. Both are
@@ -41,7 +43,7 @@ export function trendPercentChange(currentCost: number, previousCost: number): n
 export function trendPercentChangeSql(current: string, previous: string): string {
   assertSafeColumnIdentifier(current, 'trend percent change');
   assertSafeColumnIdentifier(previous, 'trend percent change');
-  return `CASE WHEN ${previous} = 0 THEN SIGN(${current}) * ${String(NEW_TREND_PERCENT)} ELSE (${current} - ${previous}) / ${previous} * 100 END`;
+  return `CASE WHEN ${previous} = 0 THEN SIGN(${current}) * ${String(NEW_TREND_PERCENT)} ELSE (${current} - ${previous}) / ABS(${previous}) * 100 END`;
 }
 
 const DAY_MS = 86_400_000;

@@ -65,9 +65,10 @@ describe('trend percent change (DuckDB execution)', () => {
     db.closeSync();
   });
 
-  it('SQL and JS agree, including from a $0 previous period', async () => {
+  it('SQL and JS agree, including from a $0 or net-credit previous period', async () => {
     const cases: readonly (readonly [number, number])[] = [
       [150, 100], [25, 100], [0, 100], [29.25, 1.46], [250, 0], [-75, 0], [1.08, 0], [0, 0],
+      [-150, -100], [-50, -100], [0, -100], [50, -100], [-12.34, -56.78],
     ];
     const values = cases.map(([c, p]) => `(${String(c)}::DOUBLE, ${String(p)}::DOUBLE)`).join(', ');
     const rows = await runPrepared(
@@ -103,6 +104,32 @@ describe('trend percent change (DuckDB execution)', () => {
     expect(num(byEntity.get('Credit'), 'percent_change')).toBe(-100);
     // No cost in either period: no change, not new.
     expect(num(byEntity.get('Purchase'), 'percent_change')).toBe(0);
+
+    for (const r of rows) {
+      expect(num(r, 'percent_change')).toBe(trendPercentChange(num(r, 'current_cost'), num(r, 'previous_cost')));
+    }
+  });
+
+  it('reports a credit that ended as an increase, signed like its delta', async () => {
+    // For 2–28 Feb the previous period (6 Jan – 1 Feb) holds the February
+    // credit and the current period none: net cost rose from -$75 to $0.
+    const { sql, params } = buildTrendQuery(
+      {
+        groupBy: asDimensionId('charge_category'),
+        dateRange: { start: asDateString('2026-02-02'), end: asDateString('2026-02-28') },
+        filters: {},
+        deltaThreshold: asDollars(0),
+        percentThreshold: 0,
+      },
+      { dataDir: SYNTHETIC_DIR, dimensions, providers },
+    );
+    const rows = await runPrepared(conn, sql, params);
+    const credit = rows.find(r => r['entity'] === 'Credit');
+
+    expect(num(credit, 'previous_cost')).toBe(-75);
+    expect(num(credit, 'current_cost')).toBe(0);
+    expect(num(credit, 'delta')).toBe(75);
+    expect(num(credit, 'percent_change')).toBe(100);
 
     for (const r of rows) {
       expect(num(r, 'percent_change')).toBe(trendPercentChange(num(r, 'current_cost'), num(r, 'previous_cost')));
