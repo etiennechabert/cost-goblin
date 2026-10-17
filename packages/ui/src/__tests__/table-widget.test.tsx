@@ -1,5 +1,5 @@
-import { render, screen, waitFor, cleanup } from '@testing-library/react';
-import { afterEach, describe, it, expect } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
+import { describe, it, expect } from 'vitest';
 import type { AggregatedTableParams, AggregatedTableResult, AggregatedTableRow, WidgetSpec } from '@costgoblin/core/browser';
 import { asDateString } from '@costgoblin/core/browser';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
@@ -32,8 +32,6 @@ class ChargeCategoryTableApi extends MockCostApi {
     return Promise.resolve({ rows, totalRows: rows.length, tagColumns: [] });
   }
 }
-
-afterEach(cleanup);
 
 function renderTable() {
   return render(
