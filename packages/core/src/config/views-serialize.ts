@@ -52,7 +52,7 @@ export function widgetToYaml(w: WidgetSpec): Record<string, unknown> {
       if (w.budget !== undefined) base['budget'] = w.budget;
       return base;
     case 'table':
-      if (w.enabledColumns !== undefined && w.enabledColumns.length > 0) base['enabledColumns'] = [...w.enabledColumns];
+      if (w.enabledColumns !== undefined) base['enabledColumns'] = [...w.enabledColumns];
       return base;
     case 'baseline':
       if (w.topN !== undefined) base['topN'] = w.topN;

@@ -86,6 +86,13 @@ describe('views save and reload', () => {
     expect(saveAndReload(cfg)).toStrictEqual(cfg);
   });
 
+  it('keeps a table with every column deselected', () => {
+    // The inspector's "Deselect all" stores [], which the table renders with
+    // no columns. It must not reload as the default columns.
+    const cfg = configOf([{ id: 't', type: 'table', size: 'full', enabledColumns: [] }]);
+    expect(saveAndReload(cfg)).toStrictEqual(cfg);
+  });
+
   it('writes a hidden pie legend to the YAML, and nothing for a default one', () => {
     expect(stringify(widgetToYaml({ id: 'p', type: 'pie', size: 'medium', groupBy: service, showLegend: false })))
       .toBe('id: p\ntype: pie\nsize: medium\ngroupBy: service\nshowLegend: false\n');
