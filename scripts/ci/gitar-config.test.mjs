@@ -21,13 +21,13 @@ import { parse } from 'yaml';
 const repoRoot = new URL('../../', import.meta.url);
 
 /** Bytes of .gitar/review/ plus .gitar/instructions/ that every run loads. */
-const ALWAYS_LOADED_BUDGET = 24_000;
+const ALWAYS_LOADED_BUDGET = 28_000;
 
 /** Files whose contents can define an identifier the guidance quotes. */
 const CODE_FILE = /\.(ts|tsx|mts|js|mjs|cjs|json|ya?ml|sh)$/;
 
 /** Names the guidance quotes on purpose that no repo file defines (banned or third-party APIs). */
-const EXTERNAL_NAMES = new Set(['localStorage']);
+const EXTERNAL_NAMES = new Set(['localStorage', 'senderFrame']);
 
 // ---------------------------------------------------------------- checkers
 

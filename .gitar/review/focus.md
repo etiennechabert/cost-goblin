@@ -11,8 +11,10 @@ The other files in this directory hold the checks for each area.
 
 ## Don't comment on
 
-- Anything `npm run check` already fails on: types, lint, import order. CI runs it on every PR.
+- Anything `npm run check` already fails on, such as type errors and lint rules. CI runs it on every PR. Formatting and import order aren't enforced, so leave them alone too.
 - Style, naming or comment length. The long comments are deliberate: they record why a guard exists, often citing the incident behind it.
+
+Some CLAUDE.md bans have no lint rule behind them: `as` assertions (dozens already exist), `eslint-disable` comments, and anything at all under `e2e/`, which tsc and eslint don't cover. Flag new instances; leave existing ones alone.
 - Fixes that would need a construct CLAUDE.md bans (`any`, `as`, `!`, `@ts-ignore`, `eslint-disable`, `localStorage`) or a library its "Frontend Stack" rules out.
 - Coverage percentages, which SonarCloud gates. Do flag a test that doesn't exercise the behavior the PR changes.
 - Cognitive complexity up to 25, the project's threshold (Sonar's profile still says 15).
