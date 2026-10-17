@@ -41,7 +41,7 @@ const thisFile = fileURLToPath(import.meta.url);
 function linksIntoSite() {
   const links = [];
   for (const file of repoFiles()) {
-    if (!/\.(md|ts|tsx|mjs|js|ya?ml)$/.test(file) || join(repoRoot, file) === thisFile) continue;
+    if (!/\.(md|html|ts|tsx|mjs|js|ya?ml)$/.test(file) || join(repoRoot, file) === thisFile) continue;
     const text = readFileSync(join(repoRoot, file), 'utf-8');
     for (const match of text.matchAll(/costgoblin\.com\/?#([\w-]+)/g)) links.push({ file, anchor: match[1] });
   }
@@ -120,6 +120,7 @@ function loadPage(url = SITE) {
     if (error.type !== 'not-implemented') errors.push(error);
   });
   const scrolledTo = [];
+  const focused = [];
   const copied = [];
   const intervals = [];
   const observers = [];
@@ -131,6 +132,11 @@ function loadPage(url = SITE) {
     beforeParse(window) {
       window.Element.prototype.scrollIntoView = function scrollIntoView() {
         scrolledTo.push(this);
+      };
+      const focus = window.HTMLElement.prototype.focus;
+      window.HTMLElement.prototype.focus = function recordFocus(options) {
+        focused.push({ element: this, options });
+        return focus.call(this, options);
       };
       window.IntersectionObserver = class {
         constructor(callback) {
@@ -168,7 +174,7 @@ function loadPage(url = SITE) {
       if (observer.targets.includes(target)) observer.callback([{ target, isIntersecting: true }]);
     }
   }
-  return { window, document: window.document, scrolledTo, copied, intervals, reveal };
+  return { window, document: window.document, scrolledTo, focused, copied, intervals, reveal };
 }
 
 /** Resolves on the window's next hashchange (history traversal is asynchronous). */
@@ -179,10 +185,10 @@ function nextHashChange(window) {
 const isOpen = (guide) => guide.classList.contains('open');
 
 afterEach(() => {
-  for (const { window, errors } of loaded.splice(0)) {
-    window.close();
-    expect(errors.map((error) => error.message)).toEqual([]);
-  }
+  const pages = loaded.splice(0);
+  // Close every window before asserting, so a failure can't leave one running.
+  for (const { window } of pages) window.close();
+  expect(pages.flatMap(({ errors }) => errors.map((error) => error.message))).toEqual([]);
 });
 
 describe('costgoblin.com setup guides follow the URL', () => {
@@ -266,6 +272,18 @@ describe('costgoblin.com setup guides follow the URL', () => {
     // jsdom has no tabs, so it follows the link in place rather than in a new one.
     await followed;
     expect(isOpen(document.getElementById('get-started-aws'))).toBe(true);
+  });
+
+  it('returns focus to the card without scrolling the page away from where the URL went', async () => {
+    const { window, document, focused } = loadPage(`${SITE}#get-started-gcp`);
+    const change = nextHashChange(window);
+    window.location.hash = '#roadmap';
+    await change;
+    expect(isOpen(document.getElementById('get-started-gcp'))).toBe(false);
+    const card = document.querySelector('a.integration-card[href="#get-started-gcp"]');
+    expect(document.activeElement).toBe(card);
+    // The browser has already scrolled to #roadmap; focusing must not pull the page back up to the card.
+    expect(focused.findLast((call) => call.element === card)?.options).toEqual({ preventScroll: true });
   });
 
   it('leaves the URL alone when Escape has no guide to close', () => {

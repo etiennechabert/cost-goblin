@@ -2868,6 +2868,8 @@ gcloud auth application-default login
     // Whether the current history entry is the one a card click pushed, so that
     // closing the guide can step back over it rather than leave it behind.
     let guideEntryPushed = false;
+    // The section the guide cards sit in.
+    const guidesSection = document.getElementById('get-started');
 
     // A plain left click; modified ones (new tab, new window) keep the default.
     function isPlainClick(e) {
@@ -2905,15 +2907,18 @@ gcloud auth application-default login
       document.body.style.overflow = '';
       // Return focus to the card that opened it (or, for a guide that came from
       // a link, to its card), so keyboard users don't get dropped back at the
-      // top of the document.
-      (lastModalTrigger ?? document.querySelector(`.integration-card[href="#${open[0].id}"]`))?.focus();
+      // top of the document. Without scrolling to it: when the URL moved on,
+      // the browser has already scrolled (or restored the scroll) to where
+      // the reader is going.
+      (lastModalTrigger ?? document.querySelector(`.integration-card[href="#${open[0].id}"]`))
+        ?.focus({ preventScroll: true });
       lastModalTrigger = null;
       if (fromUrl) return;
       if (guideEntryPushed) {
         guideEntryPushed = false;
         history.back();
       } else {
-        history.replaceState(history.state, '', '#get-started');
+        history.replaceState(history.state, '', `#${guidesSection.id}`);
       }
     }
 
@@ -3052,7 +3057,7 @@ gcloud auth application-default login
         openProviderModal(modal, { target });
         // Bring the page behind to the guide cards, so closing the guide shows
         // where it opens from rather than wherever the page was.
-        jumpTo(document.getElementById('get-started'));
+        jumpTo(guidesSection);
         return;
       }
       closeProviderModals({ fromUrl: true });
