@@ -175,7 +175,9 @@ export function TableWidget({
       accessorFn: (row: AggregatedTableRow) => {
         const prev = prevCostMap.get(rowValuesKey(row.values));
         if (prev === undefined || prev === 0) return null;
-        return ((row.cost - prev) / prev) * 100;
+        // Against the previous cost's size, so the sign follows the change
+        // even from a net credit: -$100 → -$150 is a 50% saving.
+        return ((row.cost - prev) / Math.abs(prev)) * 100;
       },
       cell: renderDeltaCell,
     };
