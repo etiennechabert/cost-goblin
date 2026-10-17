@@ -136,6 +136,41 @@ describe('the exports stack template', () => {
     ]);
   });
 
+  // AWS allows two FOCUS 1.2 exports per account, so an account that already
+  // has them can still use the stack for the exports it lacks.
+  it('creates each export only when asked, the daily one by default', () => {
+    const parameters = section(template, 'Parameters');
+    expect(at(parameters, EXPORTS_STACK_PARAMETERS.daily, 'Default')).toBe('yes');
+    expect(at(parameters, EXPORTS_STACK_PARAMETERS.daily, 'AllowedValues')).toEqual(['no', 'yes']);
+    expect(at(section(template, 'Conditions'), 'WantsDaily')).toEqual({ 'Fn::Equals': [{ Ref: EXPORTS_STACK_PARAMETERS.daily }, 'yes'] });
+    expect(at(resources, 'DailyFocusExport', 'Condition')).toBe('WantsDaily');
+    expect(at(resources, 'HourlyFocusExport', 'Condition')).toBe('WantsHourly');
+    expect(at(resources, 'CostOptimizationExport', 'Condition')).toBe('WantsCostOptimization');
+    expect(at(section(template, 'Outputs'), 'DailyExportPath', 'Condition')).toBe('WantsDaily');
+  });
+
+  it('refuses a stack that creates no export', () => {
+    const wants = (parameter: string): TemplateObject => ({ 'Fn::Equals': [{ Ref: parameter }, 'yes'] });
+    expect(at(section(template, 'Rules'), 'CreatesAnExport', 'Assertions')).toEqual([
+      expect.objectContaining({
+        Assert: { 'Fn::Or': [
+          wants(EXPORTS_STACK_PARAMETERS.daily), wants(EXPORTS_STACK_PARAMETERS.hourly), wants(EXPORTS_STACK_PARAMETERS.costOptimization),
+        ] },
+      }),
+    ]);
+  });
+
+  it('shows every parameter in a group of the console form', () => {
+    const groups = at(template, 'Metadata', 'AWS::CloudFormation::Interface', 'ParameterGroups');
+    const grouped = Array.isArray(groups) ? groups.flatMap(group => {
+      const names = at(group, 'Parameters');
+      return Array.isArray(names) ? names : [];
+    }) : [];
+    const defined = Object.keys(section(template, 'Parameters'));
+    expect(grouped).toHaveLength(defined.length);
+    expect(new Set(grouped)).toEqual(new Set(defined));
+  });
+
   it('only references parameters, resources and conditions it defines', () => {
     const parameters = Object.keys(section(template, 'Parameters'));
     const resourceIds = Object.keys(resources);
