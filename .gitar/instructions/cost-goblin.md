@@ -35,7 +35,9 @@ When one of them fails:
 
 - **`npm ci` fails with `ESTRICTALLOWSCRIPTS`.** A dependency, usually `esbuild` (transitive under `vite` and `tsx`), moved to a version whose install script has no pin in the root `package.json` `allowScripts`. Name the package and both versions, and point to CLAUDE.md's approval flow. Don't add or edit `allowScripts` entries yourself: approving an install script is the maintainer's security decision.
 - **The version check fails.** Set the root and `packages/desktop/package.json` versions to the one the job log expects. Leave `package-lock.json` alone.
-- **A policy test fails**, such as `scripts/ci/workflow-policy.test.mjs`, `scripts/ci/assert-npm-guards.test.mjs`, `scripts/ci/check-cla.test.mjs`, `scripts/ci/gitar-config.test.mjs`, `packages/core/src/__tests__/e2e-cloud-sandbox.test.ts` or `packages/core/src/__tests__/focus-1-2-samples.integration.test.ts`. These pin an invariant; change the code to meet it, never the test.
+- **A policy test fails**, such as `scripts/ci/workflow-policy.test.mjs`, `scripts/ci/assert-npm-guards.test.mjs`, `scripts/ci/check-cla.test.mjs` or `packages/core/src/__tests__/e2e-cloud-sandbox.test.ts`. These pin an invariant; change the code to meet it, never the test.
+- **`packages/core/src/__tests__/focus-1-2-samples.integration.test.ts` fails.** If the PR changed the sample generator on purpose, the committed samples need regenerating with `packages/core/src/__fixtures__/focus-1-2/write-samples.ts`. Otherwise the change broke the provider shapes.
+- **`scripts/ci/gitar-config.test.mjs` fails.** A file in `.gitar/` names a path or identifier the PR renamed or removed. Quote the stale line and what it should say now; the maintainer edits `.gitar/`.
 - **`e2e/collect-coverage.ts` reports coverage inflation.** A suite awaited something between `firstWindow()` and `attachCoverage` (CLAUDE.md, "Coverage-attach ordering"). It is a bug, not flakiness.
 - **The Sonar gate fails on coverage.** The fix is tests. Exclusions in `sonar-project.properties` are not.
 

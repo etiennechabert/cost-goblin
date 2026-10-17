@@ -28,7 +28,7 @@ Covers `packages/core/src/sync/`, `packages/core/src/config/`, `packages/core/sr
 
 ## Time
 
-Calendar windows (retention, default ranges, previews, baselines) use `IpcContext` or the injected `now`. Elapsed and audit times (scheduling, last sync, logs) use `Date` on purpose. Days are UTC, except retention's month math, which the data-management view mirrors in local time.
+Calendar windows (retention, default ranges, previews, baselines) use `IpcContext` or the injected `now`. Elapsed and audit times (scheduling, last sync, logs) use `Date` on purpose. Days are UTC, except retention's month math, which uses local time and is duplicated in the data-management view: change both together.
 
 ## Providers and exporters
 
