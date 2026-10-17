@@ -42,7 +42,11 @@
       overflow-x: hidden;
     }
 
-    section[id] { scroll-margin-top: 72px; }
+    /* Anchor targets (sections, feature tabs, #updates) land below the fixed
+       nav. Inside a setup guide the modal covers the nav, so a step only needs
+       a little room above it. */
+    [id] { scroll-margin-top: 72px; }
+    .provider-modal [id] { scroll-margin-top: 24px; }
 
     body {
       font-family: var(--font-display);
@@ -976,6 +980,61 @@
       max-width: 500px;
     }
 
+    /* --- PERMALINKS ---
+       The "#" after a section label, a feature label, a setup guide's title
+       or one of its steps links to that spot. It shows while the heading is
+       hovered or the link has keyboard focus (faintly, always, on touch
+       screens), and a click copies the link (see the script). Steps and guide
+       titles keep it beside the heading rather than inside, so it stays out
+       of the heading's and the dialog's accessible names. */
+    .anchor-link {
+      display: inline-block;
+      min-width: 1.6em;
+      margin-left: 2px;
+      font-family: var(--font-mono);
+      font-weight: 400;
+      line-height: 1;
+      text-align: center;
+      color: var(--text-muted);
+      text-decoration: none;
+      opacity: 0;
+      transition: opacity 0.15s ease, color 0.15s ease;
+    }
+    .anchor-link::before { content: '#'; }
+    /* Steps and guide titles sit in flex rows: tuck the link back against
+       its heading, across the row's gap. */
+    .step-header > .anchor-link { margin-left: -10px; }
+    .provider-modal-head > .anchor-link { margin-left: -12px; }
+    .anchor-link:hover { color: var(--emerald); }
+    .anchor-link:focus-visible {
+      outline: 1px solid var(--emerald);
+      outline-offset: 2px;
+      border-radius: 3px;
+    }
+    .section-label:hover > .anchor-link,
+    .section-label:has(+ :hover) > .anchor-link,
+    .step-header:hover > .anchor-link,
+    .provider-modal-head:hover > .anchor-link,
+    .anchor-link:focus-visible,
+    .anchor-link.is-copied { opacity: 1; }
+    .anchor-link.is-copied { color: var(--emerald); }
+    .anchor-link.is-copied::before { content: '\2713'; }
+    @media (hover: none) {
+      .anchor-link { opacity: 0.55; }
+    }
+
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      margin: -1px;
+      padding: 0;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+      border: 0;
+    }
+
     /* --- DOWNLOAD --- */
     .download {
       padding: 100px 24px;
@@ -1748,6 +1807,8 @@
       border-radius: 14px;
       cursor: pointer;
       font-family: inherit;
+      color: inherit;
+      text-decoration: none;
       transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
     }
 
@@ -1855,7 +1916,6 @@
     .provider-modal-head {
       display: flex;
       align-items: baseline;
-      justify-content: space-between;
       gap: 16px;
       margin-bottom: 8px;
       padding-right: 40px;
@@ -1869,6 +1929,7 @@
     }
 
     .provider-modal-head .provider-modal-sub {
+      margin-left: auto;
       font-family: var(--font-mono);
       font-size: 12px;
       color: var(--text-muted);
@@ -1906,15 +1967,16 @@
     /* Links inside the setup steps were never styled — they rendered as the
        browser's default blue underline, which is glaring on this palette. Now
        that the steps live in a modal people actually open, give them the
-       site's own link treatment. */
-    .get-started-steps a {
+       site's own link treatment. The "#" permalinks beside the step headings
+       keep their own. */
+    .get-started-steps a:not(.anchor-link) {
       color: var(--emerald);
       text-decoration: none;
       border-bottom: 1px solid rgba(16, 185, 129, 0.35);
       transition: border-color 0.2s ease;
     }
 
-    .get-started-steps a:hover { border-bottom-color: var(--emerald); }
+    .get-started-steps a:not(.anchor-link):hover { border-bottom-color: var(--emerald); }
 
     @media (max-width: 768px) {
       .provider-modal { padding: 16px 8px; }
@@ -2048,7 +2110,7 @@
   <section class="positioning" id="why">
     <div class="container">
       <div class="positioning-header" data-animate>
-        <div class="section-label">Why CostGoblin</div>
+        <div class="section-label">Why CostGoblin<a class="anchor-link" href="#why" aria-label="Copy link to the Why CostGoblin section"></a></div>
         <h2 class="positioning-title">A new kind of <span class="hl">developer tool</span>:<br>cloud cost, on your laptop.</h2>
         <p class="positioning-intro">
           Cloud cost visibility shouldn't be a finance-only perk. CostGoblin is a desktop app for <span class="hl-soft">anyone curious about their AWS bill</span> — and especially the engineers, architects, and small teams who can act on what they see.
@@ -2131,41 +2193,41 @@
   <section class="showcase" id="showcase">
     <div class="container">
       <div class="showcase-header" data-animate>
-        <div class="section-label">What it does</div>
+        <div class="section-label">What it does<a class="anchor-link" href="#showcase" aria-label="Copy link to the Features section"></a></div>
         <h2 class="section-title">Cloud cost visibility<br>without the cloud</h2>
         <p class="showcase-intro">Seven views, one local DuckDB. From raw line items to AI-driven Q&amp;A — every dollar accounted for, every query in milliseconds.</p>
       </div>
       <div class="showcase-gallery" data-animate>
         <div class="showcase-tabs" role="tablist" aria-label="Feature gallery">
-          <button class="showcase-tab is-active" role="tab" aria-selected="true" data-slide="0">
+          <button id="feature-overview" class="showcase-tab is-active" role="tab" aria-selected="true" data-slide="0">
             <span class="showcase-tab-num">01</span>
             <span class="showcase-tab-label">Overview</span>
           </button>
-          <button class="showcase-tab" role="tab" aria-selected="false" data-slide="1">
+          <button id="feature-dimensions" class="showcase-tab" role="tab" aria-selected="false" data-slide="1">
             <span class="showcase-tab-num">02</span>
             <span class="showcase-tab-label">Dimensions <span class="tab-star" aria-hidden="true">★</span></span>
           </button>
-          <button class="showcase-tab" role="tab" aria-selected="false" data-slide="2">
+          <button id="feature-views" class="showcase-tab" role="tab" aria-selected="false" data-slide="2">
             <span class="showcase-tab-num">03</span>
             <span class="showcase-tab-label">Views</span>
           </button>
-          <button class="showcase-tab" role="tab" aria-selected="false" data-slide="3">
+          <button id="feature-trends" class="showcase-tab" role="tab" aria-selected="false" data-slide="3">
             <span class="showcase-tab-num">04</span>
             <span class="showcase-tab-label">Trends</span>
           </button>
-          <button class="showcase-tab" role="tab" aria-selected="false" data-slide="4">
+          <button id="feature-tags" class="showcase-tab" role="tab" aria-selected="false" data-slide="4">
             <span class="showcase-tab-num">05</span>
             <span class="showcase-tab-label">Tags</span>
           </button>
-          <button class="showcase-tab" role="tab" aria-selected="false" data-slide="5">
+          <button id="feature-optimization" class="showcase-tab" role="tab" aria-selected="false" data-slide="5">
             <span class="showcase-tab-num">06</span>
             <span class="showcase-tab-label">Optimization</span>
           </button>
-          <button class="showcase-tab" role="tab" aria-selected="false" data-slide="6">
+          <button id="feature-explorer" class="showcase-tab" role="tab" aria-selected="false" data-slide="6">
             <span class="showcase-tab-num">07</span>
             <span class="showcase-tab-label">Explorer</span>
           </button>
-          <button class="showcase-tab" role="tab" aria-selected="false" data-slide="7">
+          <button id="feature-mcp-server" class="showcase-tab" role="tab" aria-selected="false" data-slide="7">
             <span class="showcase-tab-num">08</span>
             <span class="showcase-tab-label">MCP Server</span>
           </button>
@@ -2174,7 +2236,7 @@
         <div class="showcase-stage">
           <div class="showcase-slide is-active" data-slide="0">
             <div class="showcase-text">
-              <div class="section-label">Cost Overview</div>
+              <div class="section-label">Cost Overview<a class="anchor-link" href="#feature-overview" aria-label="Copy link to the Overview feature"></a></div>
               <h3>The dashboard that opens to your answer</h3>
               <p>Cost trends, top services, biggest movers, and your most expensive dimensions — all on the landing screen. Filter by team, environment, region, or any custom tag and the whole view recomputes in milliseconds.</p>
             </div>
@@ -2186,7 +2248,7 @@
           <div class="showcase-slide" data-slide="1">
             <div class="showcase-text">
               <div class="slide-badge">Power feature</div>
-              <div class="section-label">Dimensions</div>
+              <div class="section-label">Dimensions<a class="anchor-link" href="#feature-dimensions" aria-label="Copy link to the Dimensions feature"></a></div>
               <h3>Messy tags &rarr; clean dimensions, <span class="emerald-em">instantly</span></h3>
               <p>Most cost tools force you to fix tagging upstream and wait for the next data export. CostGoblin does it at query time. Rename, alias, group, fall back — any tag, any rule. <code>prod</code>, <code>Prod</code>, <code>production</code> become one. Custom dimensions from any tag key. Every change applies <strong>instantly</strong>, across every view, with <strong>zero re-processing</strong>.</p>
             </div>
@@ -2197,7 +2259,7 @@
 
           <div class="showcase-slide" data-slide="2">
             <div class="showcase-text">
-              <div class="section-label">Views</div>
+              <div class="section-label">Views<a class="anchor-link" href="#feature-views" aria-label="Copy link to the Views feature"></a></div>
               <h3>Build your own dashboards</h3>
               <p>Compose custom views from a library of widgets — summary cards, stacked bars, pie charts, tables. Drag to reorder, resize, and group. Export and share as YAML.</p>
             </div>
@@ -2208,7 +2270,7 @@
 
           <div class="showcase-slide" data-slide="3">
             <div class="showcase-text">
-              <div class="section-label">Trends</div>
+              <div class="section-label">Trends<a class="anchor-link" href="#feature-trends" aria-label="Copy link to the Trends feature"></a></div>
               <h3>Spot what's moving, fast</h3>
               <p>Period-over-period bubble chart shows cost increases and savings at a glance. Bubble size maps to current spend. Filter by minimum dollar or percent change, drill into any entity.</p>
             </div>
@@ -2219,7 +2281,7 @@
 
           <div class="showcase-slide" data-slide="4">
             <div class="showcase-text">
-              <div class="section-label">Tags (Missing)</div>
+              <div class="section-label">Tags (Missing)<a class="anchor-link" href="#feature-tags" aria-label="Copy link to the Tags feature"></a></div>
               <h3>Find untagged spend instantly</h3>
               <p>See which resources are missing allocation tags, grouped by actionable vs. untaggable. Filter by dimension, minimum cost, or fallback owner. Copy findings to Slack or Jira in one click.</p>
             </div>
@@ -2230,7 +2292,7 @@
 
           <div class="showcase-slide" data-slide="5">
             <div class="showcase-text">
-              <div class="section-label">Cost Optimization</div>
+              <div class="section-label">Cost Optimization<a class="anchor-link" href="#feature-optimization" aria-label="Copy link to the Optimization feature"></a></div>
               <h3>Actionable savings, ranked</h3>
               <p>AWS optimization recommendations sorted by monthly savings. See effort level, expand for full resource details, and filter by action type — rightsizing, reserved instances, deletions.</p>
             </div>
@@ -2241,7 +2303,7 @@
 
           <div class="showcase-slide" data-slide="6">
             <div class="showcase-text">
-              <div class="section-label">Explorer</div>
+              <div class="section-label">Explorer<a class="anchor-link" href="#feature-explorer" aria-label="Copy link to the Explorer feature"></a></div>
               <h3>Drill into every line item</h3>
               <p>Filter, sort, and explore the raw FOCUS dataset. See daily totals at a glance, slice by any dimension, and click any cell to drill deeper. Thousands of line items queried in milliseconds.</p>
             </div>
@@ -2252,7 +2314,7 @@
 
           <div class="showcase-slide" data-slide="7">
             <div class="showcase-text">
-              <div class="section-label">MCP Server</div>
+              <div class="section-label">MCP Server<a class="anchor-link" href="#feature-mcp-server" aria-label="Copy link to the MCP Server feature"></a></div>
               <h3>Talk to your costs with AI</h3>
               <p>Connect any AI assistant via the Model Context Protocol. 10 tools let agents query costs, explore trends, and drill into details — all backed by your local DuckDB data.</p>
             </div>
@@ -2292,7 +2354,7 @@
   <!-- DOWNLOAD -->
   <section class="download" id="download">
     <div class="container">
-      <div class="section-label">Download</div>
+      <div class="section-label">Download<a class="anchor-link" href="#download" aria-label="Copy link to the Download section"></a></div>
       <div class="section-title">Get CostGoblin<span id="version-download" style="display:none"></span></div>
       <div class="download-grid">
 
@@ -2346,12 +2408,12 @@
   <!-- GET STARTED -->
   <section class="get-started" id="get-started">
     <div class="container">
-      <div class="section-label">Get started</div>
+      <div class="section-label">Get started<a class="anchor-link" href="#get-started" aria-label="Copy link to the Setup section"></a></div>
       <div class="section-title">Connect your billing data</div>
       <p class="integration-intro">CostGoblin reads FOCUS&nbsp;1.2 exports straight from your own cloud storage. Nothing leaves your machine, and no third party ever sees your bill. Pick your cloud for the setup guide.</p>
 
       <div class="integration-choice">
-        <button type="button" class="integration-card" data-open-modal="modal-aws" aria-haspopup="dialog">
+        <a href="#get-started-aws" class="integration-card" aria-haspopup="dialog">
           <svg class="integration-card-mark integration-card-mark--aws" viewBox="0 116 304 66" aria-hidden="true">
             <path fill="#FF9900" d="M273.5,143.7c-32.9,24.3-80.7,37.2-121.8,37.2c-57.6,0-109.5-21.3-148.7-56.7c-3.1-2.8-0.3-6.6,3.4-4.4c42.4,24.6,94.7,39.5,148.8,39.5c36.5,0,76.6-7.6,113.5-23.2C274.2,133.6,278.9,139.7,273.5,143.7z"/>
             <path fill="#FF9900" d="M287.2,128.1c-4.2-5.4-27.8-2.6-38.5-1.3c-3.2,0.4-3.7-2.4-0.8-4.5c18.8-13.2,49.7-9.4,53.3-5c3.6,4.5-1,35.4-18.6,50.2c-2.7,2.3-5.3,1.1-4.1-1.9C282.5,155.7,291.4,133.4,287.2,128.1z"/>
@@ -2359,9 +2421,9 @@
           <span class="integration-card-name">AWS Integration</span>
           <span class="integration-card-sub">FOCUS 1.2 Data Export &rarr; S3</span>
           <span class="integration-card-cta">Setup guide &rarr;</span>
-        </button>
+        </a>
 
-        <button type="button" class="integration-card" data-open-modal="modal-gcp" aria-haspopup="dialog">
+        <a href="#get-started-gcp" class="integration-card" aria-haspopup="dialog">
           <svg class="integration-card-mark" viewBox="0 0 34 30" aria-hidden="true">
             <path fill="#EA4335" d="M21.85,7.41l1,0,2.85-2.85.14-1.21A12.81,12.81,0,0,0,5,9.6a1.55,1.55,0,0,1,1-.06l5.7-.94s.29-.48.44-.45a7.11,7.11,0,0,1,9.73-.74Z"/>
             <path fill="#4285F4" d="M29.76,9.6a12.84,12.84,0,0,0-3.87-6.24l-4,4A7.11,7.11,0,0,1,24.5,13v.71a3.56,3.56,0,1,1,0,7.12H17.38l-.71.72v4.27l.71.71H24.5A9.26,9.26,0,0,0,29.76,9.6Z"/>
@@ -2371,7 +2433,7 @@
           <span class="integration-card-name">GCP Integration</span>
           <span class="integration-card-sub">FOCUS 1.2 BigQuery export &rarr; Cloud Storage</span>
           <span class="integration-card-cta">Setup guide &rarr;</span>
-        </button>
+        </a>
 
         <div class="integration-card integration-card--soon" aria-disabled="true">
           <svg class="integration-card-mark" viewBox="0 0 96 96" aria-hidden="true">
@@ -2402,7 +2464,7 @@
   <!-- ROADMAP & UPDATES -->
   <section class="roadmap" id="roadmap">
     <div class="container">
-      <div class="section-label">Roadmap</div>
+      <div class="section-label">Roadmap<a class="anchor-link" href="#roadmap" aria-label="Copy link to the Roadmap section"></a></div>
       <div class="section-title">What's next</div>
       <div class="roadmap-grid">
         <div class="roadmap-card in-progress" data-animate>
@@ -2429,7 +2491,7 @@
 
       <div class="roadmap-cta" id="updates" data-animate>
         <div class="roadmap-cta-text">
-          <div class="section-label">Stay in the loop</div>
+          <div class="section-label">Stay in the loop<a class="anchor-link" href="#updates" aria-label="Copy link to the newsletter signup"></a></div>
           <h3>Get a ping when these ship.</h3>
           <p>New features, releases, and cloud cost insights. Low volume, high signal.</p>
         </div>
@@ -2452,7 +2514,7 @@
   <section class="sponsors" id="sponsors">
     <div class="container">
       <div class="sponsors-header" data-animate>
-        <div class="section-label">Backed by</div>
+        <div class="section-label">Backed by<a class="anchor-link" href="#sponsors" aria-label="Copy link to the supporters section"></a></div>
         <h2 class="section-title sponsors-title">Free, open source &mdash; and supported</h2>
         <p class="sponsors-intro">CostGoblin is built in the open. These companies back the project through their open-source programs, so it stays free for everyone.</p>
       </div>
@@ -2496,19 +2558,21 @@
 
   <!-- LIGHTBOX -->
   <!-- PROVIDER SETUP MODALS -->
-  <div class="provider-modal" id="modal-aws" role="dialog" aria-modal="true" aria-labelledby="modal-aws-title">
+  <div class="provider-modal" id="get-started-aws" role="dialog" aria-modal="true" aria-labelledby="get-started-aws-title">
     <div class="provider-modal-panel">
       <button type="button" class="provider-modal-close" aria-label="Close">&times;</button>
       <div class="provider-modal-head">
-        <h3 id="modal-aws-title">Set up your AWS data exports</h3>
+        <h3 id="get-started-aws-title">Set up your AWS data exports</h3>
+        <a class="anchor-link" href="#get-started-aws" aria-label="Copy link to the AWS setup guide"></a>
         <span class="provider-modal-sub">FOCUS 1.2 &rarr; S3</span>
       </div>
       <div class="get-started-steps">
 
-        <div class="step">
+        <div class="step" id="get-started-aws-prerequisites">
           <div class="step-header">
             <span class="step-num">1</span>
             <h4>Before you start</h4>
+            <a class="anchor-link" href="#get-started-aws-prerequisites" aria-label="Copy link to the step &ldquo;Before you start&rdquo;"></a>
           </div>
           <p>Do these first, in the account that owns the billing data (usually the management account), whichever way you then create the exports:</p>
           <ul class="step-checklist">
@@ -2519,10 +2583,11 @@
           <div class="step-note">Newly activated tags only appear in data generated <strong>after</strong> activation &mdash; they are not backfilled. Activate them as early as possible.</div>
         </div>
 
-        <div class="step">
+        <div class="step" id="get-started-aws-cloudformation">
           <div class="step-header">
             <span class="step-num">2</span>
             <h4>Create the exports with CloudFormation <span class="step-badge">Recommended</span></h4>
+            <a class="anchor-link" href="#get-started-aws-cloudformation" aria-label="Copy link to the step &ldquo;Create the exports with CloudFormation&rdquo;"></a>
           </div>
           <p>One stack creates everything with the settings CostGoblin needs: the S3 bucket and its lifecycle rules, the daily FOCUS 1.2 export (plus, optionally, the hourly and Cost Optimization Hub exports), and a read-only policy for CostGoblin. The setup wizard opens it for you with your answers filled in: on the bucket step, choose <strong>Create one with CloudFormation</strong>. Without the app:</p>
           <ol class="step-checklist step-numbered">
@@ -2536,10 +2601,11 @@
 
         <div class="path-or">or, instead of step 2, by hand</div>
 
-        <div class="step">
+        <div class="step" id="get-started-aws-s3-bucket">
           <div class="step-header">
             <span class="step-num">A</span>
             <h4>Create your S3 bucket</h4>
+            <a class="anchor-link" href="#get-started-aws-s3-bucket" aria-label="Copy link to the step &ldquo;Create your S3 bucket&rdquo;"></a>
           </div>
           <p>Pick a dedicated bucket (or prefix) for all CostGoblin data. We recommend this structure so each export lands in its own namespace:</p>
           <div class="code-block">
@@ -2560,10 +2626,11 @@
           <div class="step-note">Keep each expiry at or above that tier's <strong>retentionDays</strong>. Expiry never deletes what CostGoblin has already downloaded, but a fresh install or a teammate can only fetch what the bucket still holds.</div>
         </div>
 
-        <div class="step">
+        <div class="step" id="get-started-aws-focus-exports">
           <div class="step-header">
             <span class="step-num">B</span>
             <h4>Create the FOCUS exports</h4>
+            <a class="anchor-link" href="#get-started-aws-focus-exports" aria-label="Copy link to the step &ldquo;Create the FOCUS exports&rdquo;"></a>
           </div>
           <p>From <strong>Billing and Cost Management</strong>, open <a href="https://us-east-1.console.aws.amazon.com/costmanagement/home#/bcm-data-exports" target="_blank" rel="noopener"><strong>Data Exports</strong></a> in the left navigation, then click <strong>Create export</strong>. Choose <strong>Standard data export</strong> and select <strong>FOCUS 1.2</strong> as the data table (<em>FOCUS_1_2_AWS</em>). Only the <strong>daily</strong> export is required. You can optionally create a second, <strong>hourly</strong> export &mdash; helpful to understand how costs distribute within a day (intraday drill-down and incident analysis). Configure each as follows:</p>
           <div class="step-note">Use <strong>Data Exports</strong>, not the legacy <strong>Cost &amp; Usage Reports</strong> page &mdash; and pick the <strong>FOCUS 1.2</strong> table, not CUR 2.0. A correct FOCUS 1.2 export lands as Parquet under <em>data/</em> and <em>metadata/</em> folders, partitioned by billing period.</div>
@@ -2620,10 +2687,11 @@ S3 path prefix:  <span class="code-dir">costgoblin/daily</span>  <span class="co
           <div class="step-note">CostGoblin validates an export against the columns above and rejects it if any are missing &mdash; keeping every column enabled is the simplest way to stay valid, and the extra columns cost little in Parquet.</div>
         </div>
 
-        <div class="step">
+        <div class="step" id="get-started-aws-cost-optimization-hub">
           <div class="step-header">
             <span class="step-num">C</span>
             <h4>Create the Cost Optimization Hub export</h4>
+            <a class="anchor-link" href="#get-started-aws-cost-optimization-hub" aria-label="Copy link to the step &ldquo;Create the Cost Optimization Hub export&rdquo;"></a>
           </div>
           <p>Optional, once Cost Optimization Hub is enabled (step 1). In <a href="https://us-east-1.console.aws.amazon.com/costmanagement/home#/bcm-data-exports" target="_blank" rel="noopener">Data Exports</a>, click <strong>Create export</strong> once more and pick the <strong>Cost optimization recommendations</strong> table:</p>
           <div class="code-block">
@@ -2636,10 +2704,11 @@ S3 path prefix:               <span class="code-dir">costgoblin/cost-optimizatio
           <div class="step-note">This feeds the Cost Optimization view with rightsizing, RI, and deletion recommendations.</div>
         </div>
 
-        <div class="step">
+        <div class="step" id="get-started-aws-connect">
           <div class="step-header">
             <span class="step-num">3</span>
             <h4>Connect and configure dimensions</h4>
+            <a class="anchor-link" href="#get-started-aws-connect" aria-label="Copy link to the step &ldquo;Connect and configure dimensions&rdquo;"></a>
           </div>
           <p>Either way, open CostGoblin: the setup wizard points each data source at its S3 prefix. Once the first sync completes, head to <strong>Dimensions</strong> to map your tags to cost allocation dimensions. This is where CostGoblin shines &mdash; for each dimension you can:</p>
           <ul style="margin: 12px 0 0 46px; list-style: none; display: flex; flex-direction: column; gap: 8px; font-size: 14px; color: var(--text-dim);">
@@ -2655,29 +2724,32 @@ S3 path prefix:               <span class="code-dir">costgoblin/cost-optimizatio
     </div>
   </div>
 
-  <div class="provider-modal" id="modal-gcp" role="dialog" aria-modal="true" aria-labelledby="modal-gcp-title">
+  <div class="provider-modal" id="get-started-gcp" role="dialog" aria-modal="true" aria-labelledby="get-started-gcp-title">
     <div class="provider-modal-panel">
       <button type="button" class="provider-modal-close" aria-label="Close">&times;</button>
       <div class="provider-modal-head">
-        <h3 id="modal-gcp-title">Set up your GCP billing export</h3>
+        <h3 id="get-started-gcp-title">Set up your GCP billing export</h3>
+        <a class="anchor-link" href="#get-started-gcp" aria-label="Copy link to the GCP setup guide"></a>
         <span class="provider-modal-sub">FOCUS 1.2 &rarr; Cloud Storage</span>
       </div>
 
       <div class="get-started-steps">
 
-        <div class="step">
+        <div class="step" id="get-started-gcp-focus-export">
           <div class="step-header">
             <span class="step-num">0</span>
             <h4>Enable the FOCUS export &mdash; today</h4>
+            <a class="anchor-link" href="#get-started-gcp-focus-export" aria-label="Copy link to the step &ldquo;Enable the FOCUS export&rdquo;"></a>
           </div>
           <p>In the Console: <strong>Billing</strong> &rarr; <strong>Billing export</strong> &rarr; <strong>BigQuery export</strong> &rarr; enable <strong>FOCUS usage cost</strong> (not the older FOCUS <em>view</em>, which is FOCUS 1.0). Prefer a <strong>Multi-region</strong> (EU or US) dataset.</p>
           <div class="step-callout"><strong>Do it first:</strong> the export only backfills the current and previous month, so every day you wait is history you can't get back.</div>
         </div>
 
-        <div class="step">
+        <div class="step" id="get-started-gcp-bucket">
           <div class="step-header">
             <span class="step-num">1</span>
             <h4>Create the bucket</h4>
+            <a class="anchor-link" href="#get-started-gcp-bucket" aria-label="Copy link to the step &ldquo;Create the bucket&rdquo;"></a>
           </div>
           <p>Same location as the export dataset (BigQuery &rarr; your billing dataset &rarr; <strong>Details</strong> &rarr; <strong>Data location</strong>):</p>
           <div class="code-block">
@@ -2688,10 +2760,11 @@ gcloud storage buckets create <span class="code-dir">gs://your-company-billing</
           <div class="step-note">No soft delete, versioning or retention policy &mdash; the exporter rewrites the current month on every run. To expire old months, see <a href="https://github.com/etiennechabert/cost-goblin/tree/main/scripts/gcp-focus-exporter#stop-the-bucket-growing-forever-recommended" target="_blank" rel="noopener">lifecycle rules</a>.</div>
         </div>
 
-        <div class="step">
+        <div class="step" id="get-started-gcp-exporter">
           <div class="step-header">
             <span class="step-num">2</span>
             <h4>Deploy the exporter</h4>
+            <a class="anchor-link" href="#get-started-gcp-exporter" aria-label="Copy link to the step &ldquo;Deploy the exporter&rdquo;"></a>
           </div>
           <p>A small daily job in <em>your</em> project copies changed billing periods from BigQuery into the bucket. <a href="https://shell.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https%3A%2F%2Fgithub.com%2Fetiennechabert%2Fcost-goblin&amp;cloudshell_working_dir=scripts%2Fgcp-focus-exporter" target="_blank" rel="noopener"><strong>Open in Cloud Shell</strong></a>, set the values at the top of <em>deploy.sh</em>, and run it &mdash; or locally:</p>
           <div class="code-block">
@@ -2701,10 +2774,11 @@ cd scripts/gcp-focus-exporter
           <p>It writes <em>gs://your-company-billing/focus/daily/billing_period=YYYY-MM/</em>. Prefer to see every command? The <a href="https://github.com/etiennechabert/cost-goblin/tree/main/scripts/gcp-focus-exporter" target="_blank" rel="noopener">exporter README</a> has the copy-paste version.</p>
         </div>
 
-        <div class="step">
+        <div class="step" id="get-started-gcp-read-access">
           <div class="step-header">
             <span class="step-num">3</span>
             <h4>Grant read access</h4>
+            <a class="anchor-link" href="#get-started-gcp-read-access" aria-label="Copy link to the step &ldquo;Grant read access&rdquo;"></a>
           </div>
           <p><strong>For an organisation (recommended):</strong> a read-only service account that can read only this bucket. An admin runs this once; your everyday account then only needs to impersonate it:</p>
           <div class="code-block">
@@ -2724,10 +2798,11 @@ gcloud auth application-default login
           </div>
         </div>
 
-        <div class="step">
+        <div class="step" id="get-started-gcp-connect">
           <div class="step-header">
             <span class="step-num">4</span>
             <h4>Connect CostGoblin</h4>
+            <a class="anchor-link" href="#get-started-gcp-connect" aria-label="Copy link to the step &ldquo;Connect CostGoblin&rdquo;"></a>
           </div>
           <p>In <strong>Sync</strong>, add a <strong>Google Cloud</strong> provider: enter the project, pick the bucket and the <em>focus/daily/</em> folder. The wizard reads as <em>costgoblin-reader</em> by default (<strong>Change</strong> to use another account, or read as yourself) and checks the downloads can read the export before saving.</p>
           <div class="step-note">Stuck? Each GCP provider's <strong>Signed in as</strong> panel in Data Management shows who listing and downloads run as, and what to fix. More in <a href="https://github.com/etiennechabert/cost-goblin/tree/main/scripts/gcp-focus-exporter#credentials" target="_blank" rel="noopener">Credentials</a> and <a href="https://github.com/etiennechabert/cost-goblin/tree/main/scripts/gcp-focus-exporter#troubleshooting" target="_blank" rel="noopener">Troubleshooting</a>.</div>
@@ -2741,6 +2816,9 @@ gcloud auth application-default login
     <button class="lightbox-close" aria-label="Close">&times;</button>
     <img id="lightbox-img" src="" alt="">
   </div>
+
+  <!-- Announces a permalink copy to screen readers. -->
+  <div class="visually-hidden" id="copy-status" role="status"></div>
 
   <script>
     // --- Lightbox ---
@@ -2773,35 +2851,74 @@ gcloud auth application-default login
 
     // --- Provider setup modals ---
     // The per-provider guides are long enough to bury the rest of the page,
-    // so each lives in a modal opened from its card.
+    // so each lives in a modal opened from its card. The address bar follows
+    // the open guide: its card is a link to the guide's anchor (#get-started-aws,
+    // #get-started-gcp, which the desktop app's setup wizard links to as well),
+    // so an open guide can be shared by copying the URL, and closing the guide
+    // takes its anchor out of the URL again.
     let lastModalTrigger = null;
+    // Whether the current history entry is the one a card click pushed, so that
+    // closing the guide can step back over it rather than leave it behind.
+    let guideEntryPushed = false;
 
-    function openProviderModal(id, trigger) {
-      const modal = document.getElementById(id);
-      if (!modal) return;
-      lastModalTrigger = trigger || null;
+    // A plain left click; modified ones (new tab, new window) keep the default.
+    function isPlainClick(e) {
+      return e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
+    }
+
+    // Jumps without the page's smooth scrolling, for moves made behind a modal.
+    function jumpTo(el) {
+      const root = document.documentElement;
+      root.style.scrollBehavior = 'auto';
+      el.scrollIntoView();
+      root.style.scrollBehavior = '';
+    }
+
+    // `target` is the element the URL's anchor names: the guide itself, or one
+    // of its steps, which the guide then scrolls to.
+    function openProviderModal(modal, { trigger = null, target = modal } = {}) {
+      document.querySelectorAll('.provider-modal.open').forEach((other) => {
+        if (other !== modal) other.classList.remove('open');
+      });
+      lastModalTrigger = trigger;
       modal.classList.add('open');
       document.body.style.overflow = 'hidden';
-      modal.querySelector('.provider-modal-close')?.focus();
+      modal.querySelector('.provider-modal-close')?.focus({ preventScroll: true });
+      if (target === modal) modal.scrollTop = 0;
+      else target.scrollIntoView();
     }
 
-    function closeProviderModals() {
-      let closedOne = false;
-      document.querySelectorAll('.provider-modal.open').forEach((modal) => {
-        modal.classList.remove('open');
-        closedOne = true;
-      });
-      if (!closedOne) return;
+    // `fromUrl`: the URL already moved on (Back, a link, an edited anchor), so
+    // leave it alone. Otherwise drop the guide's anchor from it.
+    function closeProviderModals({ fromUrl = false } = {}) {
+      const open = [...document.querySelectorAll('.provider-modal.open')];
+      if (open.length === 0) return;
+      open.forEach((modal) => modal.classList.remove('open'));
       document.body.style.overflow = '';
-      // Return focus to the card that opened it, so keyboard users don't get
-      // dropped back at the top of the document.
-      lastModalTrigger?.focus();
+      // Return focus to the card that opened it (or, for a guide that came from
+      // a link, to its card), so keyboard users don't get dropped back at the
+      // top of the document.
+      (lastModalTrigger ?? document.querySelector(`.integration-card[href="#${open[0].id}"]`))?.focus();
       lastModalTrigger = null;
+      if (fromUrl) return;
+      if (guideEntryPushed) {
+        guideEntryPushed = false;
+        history.back();
+      } else {
+        history.replaceState(history.state, '', '#get-started');
+      }
     }
 
-    document.querySelectorAll('[data-open-modal]').forEach((trigger) => {
-      trigger.addEventListener('click', () => {
-        openProviderModal(trigger.dataset.openModal, trigger);
+    document.querySelectorAll('.integration-card[href^="#"]').forEach((card) => {
+      card.addEventListener('click', (e) => {
+        const modal = document.getElementById(card.hash.slice(1));
+        if (!modal || !isPlainClick(e)) return;
+        e.preventDefault();
+        if (location.hash !== card.hash) {
+          history.pushState(null, '', card.hash);
+          guideEntryPushed = true;
+        }
+        openProviderModal(modal, { trigger: card });
       });
     });
 
@@ -2810,21 +2927,12 @@ gcloud auth application-default login
       modal.addEventListener('click', (e) => {
         if (e.target === modal) closeProviderModals();
       });
-      modal.querySelector('.provider-modal-close')?.addEventListener('click', closeProviderModals);
+      modal.querySelector('.provider-modal-close')?.addEventListener('click', () => closeProviderModals());
     });
 
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') closeProviderModals();
     });
-
-    // Deep links: /#get-started-aws and /#get-started-gcp open a guide
-    // directly, so the setup steps stay linkable from docs and support replies.
-    function openFromHash() {
-      if (location.hash === '#get-started-aws') openProviderModal('modal-aws', null);
-      if (location.hash === '#get-started-gcp') openProviderModal('modal-gcp', null);
-    }
-    window.addEventListener('hashchange', openFromHash);
-    openFromHash();
 
     // --- Scroll animations ---
     const observer = new IntersectionObserver((entries) => {
@@ -2843,9 +2951,9 @@ gcloud auth application-default login
     document.querySelectorAll('[data-animate]').forEach(el => observer.observe(el));
 
     // --- Showcase gallery ---
-    (function () {
+    const featureGallery = (function () {
       const gallery = document.querySelector('.showcase-gallery');
-      if (!gallery) return;
+      if (!gallery) return null;
       const tabs = [...gallery.querySelectorAll('.showcase-tab')];
       const slides = [...gallery.querySelectorAll('.showcase-slide')];
       let current = 0;
@@ -2874,20 +2982,29 @@ gcloud auth application-default login
         if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
       }
 
+      // Showing a feature someone chose (or linked to) stops the rotation, so
+      // it doesn't carry them off the slide.
+      function keep(idx) {
+        userInteracted = true;
+        stopAuto();
+        show(idx);
+      }
+
+      // A tab the reader picks goes into the URL (#feature-trends), so the
+      // slide on screen is the one a copied link opens. Replaced rather than
+      // pushed: flipping through tabs shouldn't fill the Back button.
+      function pick(idx) {
+        keep(idx);
+        history.replaceState(history.state, '', `#${tabs[current].id}`);
+      }
+
       tabs.forEach((tab, i) => {
-        tab.addEventListener('click', () => {
-          userInteracted = true;
-          stopAuto();
-          show(i);
-        });
+        tab.addEventListener('click', () => pick(i));
         tab.addEventListener('keydown', (e) => {
           if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
             e.preventDefault();
-            userInteracted = true;
-            stopAuto();
-            const next = i + (e.key === 'ArrowRight' ? 1 : -1);
-            show(next);
-            tabs[(next + tabs.length) % tabs.length].focus();
+            pick(i + (e.key === 'ArrowRight' ? 1 : -1));
+            tabs[current].focus();
           }
         });
       });
@@ -2903,7 +3020,75 @@ gcloud auth application-default login
         });
       }, { threshold: 0.3 });
       visObserver.observe(gallery);
+
+      return {
+        // A link to a feature's tab (#feature-dimensions) shows its slide.
+        select(tab) {
+          const idx = tabs.indexOf(tab);
+          if (idx !== -1) keep(idx);
+        },
+      };
     })();
+
+    // --- Anchors ---
+    // Most anchors need nothing from the script: the browser scrolls to them.
+    // These do: a guide (or one of its steps) is inside a closed modal, and a
+    // feature tab's slide is hidden until the tab is selected. The URL is the
+    // source of truth, read on load and on every change (Back and Forward, an
+    // edited anchor, a link to one).
+    function applyLocationHash() {
+      const anchor = location.hash.slice(1);
+      const target = anchor ? document.getElementById(anchor) : null;
+      const modal = target?.closest('.provider-modal');
+      if (modal) {
+        openProviderModal(modal, { target });
+        // Bring the page behind to the guide cards, so closing the guide shows
+        // where it opens from rather than wherever the page was.
+        jumpTo(document.getElementById('get-started'));
+        return;
+      }
+      closeProviderModals({ fromUrl: true });
+      const tab = target?.closest('.showcase-tab');
+      if (tab) featureGallery?.select(tab);
+    }
+
+    window.addEventListener('hashchange', () => {
+      // Any navigation leaves the entry a card click pushed.
+      guideEntryPushed = false;
+      applyLocationHash();
+    });
+    applyLocationHash();
+
+    // The "#" permalinks are plain links to their heading's anchor, so they
+    // work without the script and in a new tab. A plain click also copies the
+    // full URL, and writes the anchor without scrolling or adding a history
+    // entry: the reader is already looking at that heading. Replacing keeps
+    // the entry's state, so a guide opened from its card still closes back
+    // to where the reader was.
+    const copyStatus = document.getElementById('copy-status');
+    let copiedLink = null;
+    let copiedTimer = null;
+
+    function showCopied(link) {
+      clearTimeout(copiedTimer);
+      copiedLink?.classList.remove('is-copied');
+      copiedLink = link;
+      link.classList.add('is-copied');
+      copyStatus.textContent = 'Link copied';
+      copiedTimer = setTimeout(() => {
+        link.classList.remove('is-copied');
+        copyStatus.textContent = '';
+        copiedLink = null;
+      }, 1600);
+    }
+
+    document.addEventListener('click', (e) => {
+      const link = e.target.closest?.('a.anchor-link');
+      if (!link || !isPlainClick(e)) return;
+      e.preventDefault();
+      history.replaceState(history.state, '', link.hash);
+      navigator.clipboard?.writeText(location.href).then(() => showCopied(link), () => {});
+    });
 
     // --- Nav scroll-spy ---
     const navAnchors = [...document.querySelectorAll('.nav-links a[href^="#"]')];
