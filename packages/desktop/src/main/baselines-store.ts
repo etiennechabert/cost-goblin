@@ -23,6 +23,7 @@ import {
   effectiveBands,
   estimateBytesPerRow,
   getAncestorPath,
+  isDateString,
   logger,
   resolveDiscoveryGrain,
   runRateSeries,
@@ -1057,11 +1058,23 @@ function parseConfig(raw: Record<string, unknown>): BaselinesDiscoveryConfig {
   };
 }
 
+/** A real UTC calendar day as YYYY-MM-DD. isDateString checks the shape only
+ *  (month 01-12, day 01-31), so the round trip also rejects a day the month
+ *  lacks, like 2026-02-31, which Date.parse rolls into March. */
+function isCalendarDay(v: unknown): v is string {
+  return typeof v === 'string' && isDateString(v) && daysBefore(Date.parse(`${v}T00:00:00Z`), 0) === v;
+}
+
+/** Skips a point whose date isn't a calendar day, as it does a non-object one:
+ *  computeCurrent would throw on the invalid Date, failing list() for every
+ *  baseline. History is derived, so the next recompute rebuilds what's lost. */
 function parsePoints(raw: readonly unknown[]): readonly BaselineDailyPoint[] {
   const out: BaselineDailyPoint[] = [];
   for (const p of raw) {
     if (!isRecord(p)) continue;
-    out.push({ date: asDateString(str(p['date'])), cost: asDollars(num(p['cost'])) });
+    const date = p['date'];
+    if (!isCalendarDay(date)) continue;
+    out.push({ date: asDateString(date), cost: asDollars(num(p['cost'])) });
   }
   return out;
 }
