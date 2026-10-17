@@ -65,6 +65,27 @@ describe('trend percent change (DuckDB execution)', () => {
     db.closeSync();
   });
 
+  /** The trend query over the synthetic fixtures, with no threshold applied. */
+  async function trendRows(groupBy: string, start: string, end: string): Promise<Record<string, unknown>[]> {
+    const { sql, params } = buildTrendQuery(
+      {
+        groupBy: asDimensionId(groupBy),
+        dateRange: { start: asDateString(start), end: asDateString(end) },
+        filters: {},
+        deltaThreshold: asDollars(0),
+        percentThreshold: 0,
+      },
+      { dataDir: SYNTHETIC_DIR, dimensions, providers },
+    );
+    return runPrepared(conn, sql, params);
+  }
+
+  function expectPercentMatchesJs(rows: readonly Record<string, unknown>[]): void {
+    for (const r of rows) {
+      expect(num(r, 'percent_change')).toBe(trendPercentChange(num(r, 'current_cost'), num(r, 'previous_cost')));
+    }
+  }
+
   it('SQL and JS agree, including from a $0 or net-credit previous period', async () => {
     const cases: readonly (readonly [number, number])[] = [
       [150, 100], [25, 100], [0, 100], [29.25, 1.46], [250, 0], [-75, 0], [1.08, 0], [0, 0],
@@ -85,17 +106,7 @@ describe('trend percent change (DuckDB execution)', () => {
   it('reports an entity new this period as ±100 instead of NULL', async () => {
     // The monthly Tax charge and EC2 credit land on the 1st, so for 1–2 Feb
     // neither has any cost in the previous period (30–31 Jan).
-    const { sql, params } = buildTrendQuery(
-      {
-        groupBy: asDimensionId('charge_category'),
-        dateRange: { start: asDateString('2026-02-01'), end: asDateString('2026-02-02') },
-        filters: {},
-        deltaThreshold: asDollars(0),
-        percentThreshold: 0,
-      },
-      { dataDir: SYNTHETIC_DIR, dimensions, providers },
-    );
-    const rows = await runPrepared(conn, sql, params);
+    const rows = await trendRows('charge_category', '2026-02-01', '2026-02-02');
     const byEntity = new Map(rows.map((r): [unknown, Record<string, unknown>] => [r['entity'], r]));
 
     expect(num(byEntity.get('Tax'), 'previous_cost')).toBe(0);
@@ -105,25 +116,13 @@ describe('trend percent change (DuckDB execution)', () => {
     // No cost in either period: no change, not new.
     expect(num(byEntity.get('Purchase'), 'percent_change')).toBe(0);
 
-    for (const r of rows) {
-      expect(num(r, 'percent_change')).toBe(trendPercentChange(num(r, 'current_cost'), num(r, 'previous_cost')));
-    }
+    expectPercentMatchesJs(rows);
   });
 
   it('reports a credit that ended as an increase, signed like its delta', async () => {
     // For 2–28 Feb the previous period (6 Jan – 1 Feb) holds the February
     // credit and the current period none: net cost rose from -$75 to $0.
-    const { sql, params } = buildTrendQuery(
-      {
-        groupBy: asDimensionId('charge_category'),
-        dateRange: { start: asDateString('2026-02-02'), end: asDateString('2026-02-28') },
-        filters: {},
-        deltaThreshold: asDollars(0),
-        percentThreshold: 0,
-      },
-      { dataDir: SYNTHETIC_DIR, dimensions, providers },
-    );
-    const rows = await runPrepared(conn, sql, params);
+    const rows = await trendRows('charge_category', '2026-02-02', '2026-02-28');
     const credit = rows.find(r => r['entity'] === 'Credit');
 
     expect(num(credit, 'previous_cost')).toBe(-75);
@@ -131,26 +130,12 @@ describe('trend percent change (DuckDB execution)', () => {
     expect(num(credit, 'delta')).toBe(75);
     expect(num(credit, 'percent_change')).toBe(100);
 
-    for (const r of rows) {
-      expect(num(r, 'percent_change')).toBe(trendPercentChange(num(r, 'current_cost'), num(r, 'previous_cost')));
-    }
+    expectPercentMatchesJs(rows);
   });
 
   it('matches the JS change on every entity of a window with prior spend', async () => {
-    const { sql, params } = buildTrendQuery(
-      {
-        groupBy: asDimensionId('service'),
-        dateRange: { start: asDateString('2026-02-01'), end: asDateString('2026-02-14') },
-        filters: {},
-        deltaThreshold: asDollars(0),
-        percentThreshold: 0,
-      },
-      { dataDir: SYNTHETIC_DIR, dimensions, providers },
-    );
-    const rows = await runPrepared(conn, sql, params);
+    const rows = await trendRows('service', '2026-02-01', '2026-02-14');
     expect(rows.length).toBeGreaterThan(5);
-    for (const r of rows) {
-      expect(num(r, 'percent_change')).toBe(trendPercentChange(num(r, 'current_cost'), num(r, 'previous_cost')));
-    }
+    expectPercentMatchesJs(rows);
   });
 });
