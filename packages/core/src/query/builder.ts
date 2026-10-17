@@ -193,28 +193,50 @@ function tryExpandAccountIds(
   return `${rawField} IN (${list})`;
 }
 
-/** Build the SQL fragment for a single condition within a rule. Returns null
- *  when the condition should be skipped (empty values, unknown dimension). */
+/** Rows with no value for the dimension: NULL (a tag the resource lacks) or ''
+ *  (buildSource coalesces a missing built-in field to ''), read off the
+ *  normalized/aliased expression the app displays and filters on. For the
+ *  account, also NO_ACCOUNT_SENTINEL, which stands in for a NULL
+ *  SubAccountId; checked on the raw column, where no normalize rule can have
+ *  reshaped it. Never NULL. */
+function missingValueSql(resolved: ResolvedDimension): string {
+  const empty = `COALESCE(${resolved.fieldExpr}, '') = ''`;
+  if (resolved.rawField !== 'account_id') return empty;
+  return `(${empty} OR ${resolved.rawField} = '${NO_ACCOUNT_SENTINEL}')`;
+}
+
+/** SQL for one rule condition: true when the row's value is one of the
+ *  condition's values or, with `matchMissing`, when it has none. Never NULL:
+ *  `x IN (…)` is NULL when x is, and an exclusion's `NOT (NULL)` drops the row
+ *  instead of keeping it — every untagged row, for a rule on a tag. Returns
+ *  null when the condition should be skipped (nothing to match, unknown
+ *  dimension). */
 function buildConditionSql(
   cond: ExclusionRule['conditions'][number],
   dimensions: DimensionsConfig,
   accountReverseMap: ReadonlyMap<string, readonly string[]> | undefined,
   qb: QueryBuilder | undefined,
 ): string | null {
-  if (cond.values.length === 0) return null;
+  const matchMissing = cond.matchMissing === true;
+  if (cond.values.length === 0 && !matchMissing) return null;
   const resolved = tryResolveField(cond.dimensionId, dimensions);
   if (resolved === null) return null;
-  const expanded = tryExpandAccountIds(cond.values, resolved.rawField, accountReverseMap, qb);
-  if (expanded !== null) return expanded;
-  const normalizedValues = cond.values.map(v => normalizeRuleValue(v, resolved.dim));
-  const list = buildSqlList(normalizedValues, qb);
-  return `${resolved.fieldExpr} IN (${list})`;
+  const parts: string[] = [];
+  if (cond.values.length > 0) {
+    const membership = tryExpandAccountIds(cond.values, resolved.rawField, accountReverseMap, qb)
+      ?? `${resolved.fieldExpr} IN (${buildSqlList(cond.values.map(v => normalizeRuleValue(v, resolved.dim)), qb)})`;
+    parts.push(`COALESCE(${membership}, FALSE)`);
+  }
+  if (matchMissing) parts.push(missingValueSql(resolved));
+  const sql = parts.join(' OR ');
+  // Parenthesized: the rule ANDs its conditions, and AND binds tighter than OR.
+  return parts.length > 1 ? `(${sql})` : sql;
 }
 
 /** Build the positive match expression for a single rule (AND of conditions,
  *  OR within each condition's values). Used both for NOT-exclusion in queries
- *  and for the positive preview queries. Returns null when the rule has no
- *  valid conditions (all empty values). */
+ *  and for the positive preview queries. Never NULL (see buildConditionSql).
+ *  Returns null when the rule has no valid conditions. */
 export function buildRuleMatchExpr(
   rule: ExclusionRule,
   dimensions: DimensionsConfig,
@@ -230,60 +252,23 @@ export function buildRuleMatchExpr(
   return conditionSqls.join(' AND ');
 }
 
-/** Try to merge a single-condition rule into the merged map. Returns true if
- *  it was merged (or skipped as invalid); false if it should fall through to
- *  multi-condition handling. */
-function tryMergeSingleConditionRule(
-  rule: ExclusionRule,
-  dimensions: DimensionsConfig,
-  accountReverseMap: ReadonlyMap<string, readonly string[]> | undefined,
-  merged: Map<string, { resolved: ResolvedDimension; values: string[] }>,
-): boolean {
-  if (rule.conditions.length !== 1) return false;
-  const cond = rule.conditions[0];
-  if (cond === undefined || cond.values.length === 0) return true;
-  const resolved = tryResolveField(cond.dimensionId, dimensions);
-  if (resolved === null) return true;
-  if (resolved.rawField === 'account_id' && accountReverseMap !== undefined) return false;
-  const normalizedValues = cond.values.map(v => normalizeRuleValue(v, resolved.dim));
-  const existing = merged.get(cond.dimensionId);
-  if (existing === undefined) {
-    merged.set(cond.dimensionId, { resolved, values: [...normalizedValues] });
-  } else {
-    existing.values.push(...normalizedValues);
-  }
-  return true;
-}
-
-function buildExclusionClauses(
+/** The WHERE clauses that drop every row an enabled rule matches: one
+ *  `NOT (…)` per enabled rule that resolves to SQL. Every query path builds
+ *  its exclusions here. Live queries bind values on `qb`; the DDL builders
+ *  (DuckDB can't prepare DDL) and the Explorer's literal WHERE pass none, which
+ *  inlines them as escaped literals. */
+export function buildExclusionClauses(
   rules: readonly ExclusionRule[],
   dimensions: DimensionsConfig,
-  accountReverseMap: ReadonlyMap<string, readonly string[]> | undefined,
-  qb: QueryBuilder,
+  accountReverseMap?: ReadonlyMap<string, readonly string[]>,
+  qb?: QueryBuilder,
 ): string[] {
-  const singleConditionByDim = new Map<string, { resolved: ResolvedDimension; values: string[] }>();
-  const multiConditionRules: ExclusionRule[] = [];
-
+  const clauses: string[] = [];
   for (const rule of rules) {
     if (!rule.enabled) continue;
-    if (!tryMergeSingleConditionRule(rule, dimensions, accountReverseMap, singleConditionByDim)) {
-      multiConditionRules.push(rule);
-    }
-  }
-
-  const clauses: string[] = [];
-
-  for (const [, { resolved, values }] of singleConditionByDim) {
-    const list = buildSqlList(values, qb);
-    clauses.push(`${resolved.fieldExpr} NOT IN (${list})`);
-  }
-
-  for (const rule of multiConditionRules) {
     const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap, qb);
-    if (matchExpr === null) continue;
-    clauses.push(`NOT (${matchExpr})`);
+    if (matchExpr !== null) clauses.push(`NOT (${matchExpr})`);
   }
-
   return clauses;
 }
 
@@ -1239,15 +1224,7 @@ export function buildMaterializeBaseQuery(
   opts: QueryContextOptions,
 ): string {
   const { dataDir, dimensions, orgAccountsPath, providers, accountReverseMap, costScope } = opts;
-  const exclusionClauses: string[] = [];
-  if (costScope !== undefined) {
-    for (const rule of costScope.rules) {
-      if (!rule.enabled) continue;
-      const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
-      if (matchExpr === null) continue;
-      exclusionClauses.push(`NOT (${matchExpr})`);
-    }
-  }
+  const exclusionClauses = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap);
   const costMetric = costScope?.costMetric ?? DEFAULT_COST_METRIC;
   const branches = resolveProviderBranches(providers, computePeriodsInRange(dateRange));
   const source = buildSource({ dataDir, tier, dimensions, orgAccountsPath, providers: branches, costMetric, marketplaceAttribution: costScope?.marketplaceAttribution, includeRawTags: true, slim: true });
@@ -1311,15 +1288,7 @@ export function buildRollupPartitionQuery(
     includeRawTags: false, slim: true,
   });
 
-  const exclusionClauses: string[] = [];
-  if (costScope !== undefined) {
-    for (const rule of costScope.rules) {
-      if (!rule.enabled) continue;
-      const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
-      if (matchExpr === null) continue;
-      exclusionClauses.push(`NOT (${matchExpr})`);
-    }
-  }
+  const exclusionClauses = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap);
 
   const start = `${period}-01`;
   const end = periodUpperBound(period);
@@ -1384,15 +1353,7 @@ export function buildGrainProbeQuery(
     includeRawTags: false, slim: true,
   });
 
-  const exclusionClauses: string[] = [];
-  if (costScope !== undefined) {
-    for (const rule of costScope.rules) {
-      if (!rule.enabled) continue;
-      const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
-      if (matchExpr === null) continue;
-      exclusionClauses.push(`NOT (${matchExpr})`);
-    }
-  }
+  const exclusionClauses = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap);
 
   const start = `${period}-01`;
   const end = periodUpperBound(period);

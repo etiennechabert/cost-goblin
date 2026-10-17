@@ -1,7 +1,6 @@
 import { render, screen, waitFor, cleanup } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { afterEach, describe, it, expect, vi } from 'vitest';
-import type { CostScopeConfig } from '@costgoblin/core/browser';
+import { afterEach, describe, it, expect } from 'vitest';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostScopeView } from '../views/cost-scope.js';
@@ -32,7 +31,6 @@ describe('CostScopeView — marketplace attribution toggle', () => {
 
   it('saves with enabled=false when toggled off', async () => {
     const { api, user } = renderView();
-    const saveSpy = vi.spyOn(api, 'saveCostScope');
 
     await waitFor(() => { expect(screen.getByText('Marketplace attribution')).toBeDefined(); });
 
@@ -45,11 +43,8 @@ describe('CostScopeView — marketplace attribution toggle', () => {
     const saveBtn = await screen.findByRole('button', { name: /save/i });
     await user.click(saveBtn);
 
-    await waitFor(() => { expect(saveSpy).toHaveBeenCalled(); });
-    // The mock's saveCostScope signature drops its arg, so the spy types calls
-    // as []; the runtime arg is still passed — recover it through a cast.
-    const calls = saveSpy.mock.calls as unknown as CostScopeConfig[][];
-    const saved = calls.at(-1)?.[0];
+    await waitFor(() => { expect(api.savedCostScopes.length).toBeGreaterThan(0); });
+    const saved = api.savedCostScopes.at(-1);
     expect(saved?.marketplaceAttribution?.enabled).toBe(false);
     // Rules are preserved so re-enabling restores them.
     expect(saved?.marketplaceAttribution?.rules.length).toBeGreaterThan(0);

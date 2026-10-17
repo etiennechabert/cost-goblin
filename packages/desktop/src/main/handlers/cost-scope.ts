@@ -12,6 +12,7 @@ import {
   buildRuleMatchExpr,
   computePeriodsInRange,
   logger,
+  QueryBuilder,
   tagDimColumn,
   tagSqlColumnsById,
 } from '@costgoblin/core';
@@ -91,7 +92,7 @@ function isEnoent(err: unknown): boolean {
 }
 
 export function registerCostScopeHandlers(app: AppContext): void {
-  const { ctx, getCostScope, invalidateCostScope, getQueryDimensions, getOrgAccountsPath, getQueryProviders, runQuery } = app;
+  const { ctx, getCostScope, invalidateCostScope, getQueryDimensions, getAccountReverseMap, getOrgAccountsPath, getQueryProviders, runPreparedQuery } = app;
 
   ipcMain.handle('cost-scope:get-config', async (): Promise<CostScopeConfig> => {
     try {
@@ -115,12 +116,12 @@ export function registerCostScopeHandlers(app: AppContext): void {
     invalidateCostScope();
   });
 
-  ipcMain.handle('cost-scope:preview', async (_event, payload: unknown): Promise<CostScopePreviewResult> => {
+  ipcMain.handle('cost-scope:preview', async (_event, payload: unknown, range: unknown): Promise<CostScopePreviewResult> => {
     const dimensions = await getQueryDimensions();
     const config = validateCostScope(payload, dimensionIdSet(dimensions));
     const enabledRules = config.rules.filter(r => r.enabled);
 
-    const { windowDays, startDate: startStr, endDate: endStr } = costScopePreviewWindow(ctx.now(), config.lagDays ?? DEFAULT_LAG_DAYS);
+    const { windowDays, startDate: startStr, endDate: endStr } = costScopePreviewWindow(range, ctx.now(), config.lagDays ?? DEFAULT_LAG_DAYS);
 
     const zero: CostScopePreviewResult = {
       windowDays,
@@ -163,12 +164,21 @@ export function registerCostScopeHandlers(app: AppContext): void {
     // per-rule tally, the daily breakdown, and the sample row flag. Rules
     // whose expression is null (all conditions empty) are treated as
     // no-ops and don't appear in the SQL at all.
+    // The reverse map resolves account names (what the Account suggestions
+    // offer) to ids, as the live queries and rollups do.
+    const accountReverseMap = await getAccountReverseMap();
     const ruleExprs: { readonly rule: typeof enabledRules[number]; readonly expr: string | null }[] =
-      enabledRules.map(rule => ({ rule, expr: buildRuleMatchExpr(rule, dimensions) }));
+      enabledRules.map(rule => ({ rule, expr: buildRuleMatchExpr(rule, dimensions, accountReverseMap) }));
     const liveExprs = ruleExprs.filter(e => e.expr !== null).map(e => e.expr as string);
     const excludedPredicate = liveExprs.length > 0
       ? liveExprs.map(e => `(${e})`).join(' OR ')
       : 'FALSE';
+
+    // The period comes from the renderer: bound, never interpolated. All three
+    // queries share these two parameters and nothing else.
+    const qb = new QueryBuilder();
+    const inWindow = `usage_date BETWEEN ${qb.addParam(startStr)} AND ${qb.addParam(endStr)}`;
+    const { params } = qb.build();
 
     const tagColumns = dimensions.tags.map(t => ({
       id: tagDimColumn(t),
@@ -197,7 +207,7 @@ export function registerCostScopeHandlers(app: AppContext): void {
         CAST(COALESCE(SUM(CASE WHEN (${excludedPredicate}) THEN 1 ELSE 0 END), 0) AS DOUBLE) AS combined_excluded_rows,
         CAST(COUNT(*) AS DOUBLE) AS total_rows${ruleAggSelects.length > 0 ? `,\n          ${ruleAggSelects}` : ''}
       FROM ${source}
-      WHERE usage_date BETWEEN '${startStr}' AND '${endStr}'
+      WHERE ${inWindow}
     `.trim();
 
     // === Query 2: daily breakdown (separate because GROUP BY) ===
@@ -207,7 +217,7 @@ export function registerCostScopeHandlers(app: AppContext): void {
         CAST(COALESCE(SUM(CASE WHEN (${excludedPredicate}) THEN 0 ELSE cost END), 0) AS DOUBLE) AS kept_cost,
         CAST(COALESCE(SUM(CASE WHEN (${excludedPredicate}) THEN cost ELSE 0 END), 0) AS DOUBLE) AS excluded_cost
       FROM ${source}
-      WHERE usage_date BETWEEN '${startStr}' AND '${endStr}'
+      WHERE ${inWindow}
       GROUP BY usage_date
       ORDER BY usage_date
     `.trim();
@@ -234,7 +244,7 @@ export function registerCostScopeHandlers(app: AppContext): void {
           CAST(list_cost AS DOUBLE) AS list_cost,
           CASE WHEN (${excludedPredicate}) THEN 1 ELSE 0 END AS excluded${tagSelectSql === null ? '' : `,\n          ${tagSelectSql}`}
         FROM ${source}
-        WHERE usage_date BETWEEN '${startStr}' AND '${endStr}'
+        WHERE ${inWindow}
       ),
       ranked AS (
         SELECT *,
@@ -255,9 +265,9 @@ export function registerCostScopeHandlers(app: AppContext): void {
     // lets independent queries execute concurrently. `allSettled` so one
     // failing query doesn't drop the other two's results.
     const [aggResult, dailyResult, sampleResult] = await Promise.allSettled([
-      runQuery(aggSql),
-      runQuery(dailySql),
-      runQuery(sampleSql),
+      runPreparedQuery(aggSql, params),
+      runPreparedQuery(dailySql, params),
+      runPreparedQuery(sampleSql, params),
     ]);
 
     // Agg → totals + per-rule + combined

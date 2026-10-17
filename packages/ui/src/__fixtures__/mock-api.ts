@@ -32,6 +32,7 @@ import {
   type DimensionsConfig,
   type ViewsConfig,
   type CostScopeConfig,
+  type CostScopePreviewRange,
   type CostScopePreviewResult,
   type ExplorerFilterValue,
   type ExplorerOverviewResult,
@@ -70,6 +71,7 @@ import {
   type ExplorerPreferencesUpdate,
 } from '@costgoblin/core/browser';
 import { DEFAULT_COST_SCOPE, DEFAULT_EXPLORER_HIDDEN_COLUMNS, computeRollupEstimate, tagSqlColumn } from '@costgoblin/core/browser';
+import { daysBetween } from '../lib/dates.js';
 
 const MOCK_PEER_HOST = 'mock-peer.local';
 
@@ -552,13 +554,21 @@ export class MockCostApi implements CostApi {
   resetViewsConfig(): Promise<ViewsConfig> { return Promise.resolve(MOCK_VIEWS_CONFIG); }
   revealViewsFolder(): Promise<void> { return Promise.resolve(); }
   getCostScope(): Promise<CostScopeConfig> { return Promise.resolve(DEFAULT_COST_SCOPE); }
-  saveCostScope(): Promise<void> { return Promise.resolve(); }
-  previewCostScope(): Promise<CostScopePreviewResult> {
+  /** Every config `saveCostScope` was asked to persist, oldest first. */
+  readonly savedCostScopes: CostScopeConfig[] = [];
+  saveCostScope(config: CostScopeConfig): Promise<void> {
+    this.savedCostScopes.push(config);
+    return Promise.resolve();
+  }
+  /** The period of every preview requested, oldest first. */
+  readonly costScopePreviewRanges: CostScopePreviewRange[] = [];
+  previewCostScope(config: CostScopeConfig, range: CostScopePreviewRange): Promise<CostScopePreviewResult> {
+    this.costScopePreviewRanges.push(range);
     return Promise.resolve({
-      windowDays: 30,
-      startDate: '2026-03-20',
-      endDate: '2026-04-18',
-      perRule: [],
+      windowDays: daysBetween(range.start, range.end),
+      startDate: range.start,
+      endDate: range.end,
+      perRule: config.rules.filter(r => r.enabled).map(r => ({ ruleId: r.id, excludedCost: 0, excludedRows: 0 })),
       combined: { excludedCost: 0, excludedRows: 0 },
       unscopedTotalCost: 0,
       scopedTotalCost: 0,

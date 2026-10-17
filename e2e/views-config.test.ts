@@ -451,18 +451,35 @@ test.describe('Cost Scope', () => {
   });
 
   test('preview histogram plots every day of the fixture window', async () => {
-    // Main computes the window from the pinned clock: the 30 days ending at
-    // the 2-day lag before FIXTURE_NOW, every one of them a fixture day.
+    // The default period is the date picker's "Last 30 days", as in every
+    // view: through the 2-day lag before FIXTURE_NOW (the renderer's clock is
+    // pinned too), every one of its 31 days a fixture day.
     const bars = costScopePreviewBars(page);
-    await expect(bars).toHaveCount(30);
-    await expect(bars.first()).toHaveAttribute('title', /^2026-01-30\nkept: /);
+    await expect(bars).toHaveCount(31);
+    await expect(bars.first()).toHaveAttribute('title', /^2026-01-29\nkept: /);
     await expect(bars.last()).toHaveAttribute('title', /^2026-02-28\nkept: /);
     const card = page.getByTestId('cost-scope-preview').filter({ visible: true });
-    await expect(card.getByText('2026-01-30', { exact: true })).toBeVisible();
+    await expect(card.getByText('2026-01-29', { exact: true })).toBeVisible();
     await expect(card.getByText('2026-02-28', { exact: true })).toBeVisible();
 
     await bars.first().hover();
     await screenshot(page, 'cost-scope-histogram-hover');
+  });
+
+  test('preview period picker re-queries the picked period', async () => {
+    const card = page.getByTestId('cost-scope-preview').filter({ visible: true });
+    const bars = costScopePreviewBars(page);
+    await card.getByRole('button', { name: 'Last 30 days' }).click();
+    await page.getByRole('button', { name: 'Last 7 days', exact: true }).click();
+    await expect(bars).toHaveCount(8);
+    await expect(bars.first()).toHaveAttribute('title', /^2026-02-21\nkept: /);
+    await expect(bars.last()).toHaveAttribute('title', /^2026-02-28\nkept: /);
+    await screenshot(page, 'cost-scope-preview-period');
+
+    // Back to the default, so the tests after this one see the 30-day window.
+    await card.getByRole('button', { name: 'Last 7 days' }).click();
+    await page.getByRole('button', { name: 'Last 30 days', exact: true }).click();
+    await expect(bars).toHaveCount(31);
   });
 
   test('line-items table renders the fixture window rows', async () => {
@@ -522,6 +539,27 @@ test.describe('Cost Scope', () => {
     // Cancel to keep the saved state untouched
     await page.getByRole('button', { name: 'Cancel' }).click();
     await expect(toggle).toHaveAttribute('aria-checked', wasChecked ? 'true' : 'false');
+  });
+
+  test('a rule can exclude the rows missing a tag with Missing values', async () => {
+    await page.getByRole('button', { name: 'Add rule' }).click();
+    // The new rule renders last, so its controls are the last of their kind.
+    await page.locator('select').last().selectOption({ label: 'Team' });
+    await page.getByRole('checkbox', { name: 'Missing values' }).last().check();
+    const toggle = page.getByRole('switch').last();
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-checked', 'true');
+
+    // No values typed: the rule matches the fixture's untagged-team rows only.
+    const tally = toggle.locator('xpath=../span');
+    await expect(tally).toHaveText(/excluded · [1-9]\d* rows$/, { timeout: LOAD_TIMEOUT });
+    await expect(page.getByRole('button', { name: 'Save' })).toBeEnabled();
+    await toggle.scrollIntoViewIfNeeded();
+    await screenshot(page, 'cost-scope-missing-values');
+
+    // Cancel to keep the saved state untouched
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    await expect(page.locator('input[value="New rule"]')).toHaveCount(0);
   });
 
   test('rule name and description fields are editable', async () => {
