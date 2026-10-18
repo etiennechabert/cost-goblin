@@ -341,6 +341,88 @@ describe('Baselines — list', () => {
   });
 });
 
+describe('Baselines — empty filter', () => {
+  const SNS = row('sns', 'Amazon SNS', 'resolved', 0, 40);
+
+  it('says the filter is empty, not that there are no baselines, when every baseline is closed', async () => {
+    const api = new BaselinesApi([LAMBDA, SNS]);
+    const { user } = renderView(api);
+
+    expect(await screen.findByText('No open baselines.')).toBeDefined();
+    expect(screen.queryByText(/No baselines yet/)).toBeNull();
+    expect(screen.getByText('2 baselines')).toBeDefined();
+
+    await user.click(screen.getByRole('button', { name: 'Show all baselines' }));
+    expect(await screen.findByRole('button', { name: 'AWS Lambda' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Amazon SNS' })).toBeDefined();
+    expect(api.listCalls).toEqual([{ triage: 'open' }, {}]);
+    expect(chip('All').className).toContain('bg-accent/15');
+    expect(screen.queryByText('No open baselines.')).toBeNull();
+  });
+
+  it('says the Open filter is empty once its last baseline is dismissed', async () => {
+    const api = new BaselinesApi([CLOUDFRONT, LAMBDA]);
+    const { user } = renderView(api);
+    await user.click(await screen.findByRole('button', { name: 'Amazon CloudFront' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Amazon CloudFront' });
+
+    await user.click(within(dialog).getByRole('button', { name: /^\d\s*Dismissed$/ }));
+    await waitFor(() => { expect(api.listCalls).toHaveLength(2); });
+    await user.keyboard('{Escape}');
+    await waitFor(() => { expect(screen.queryByRole('dialog')).toBeNull(); });
+
+    expect(await screen.findByText('No open baselines.')).toBeDefined();
+    expect(screen.queryByText(/No baselines yet/)).toBeNull();
+    expect(within(chip('Open')).getByText('0')).toBeDefined();
+    expect(within(chip('Dismissed')).getByText('2')).toBeDefined();
+  });
+
+  it('names the status filter that matches nothing', async () => {
+    const api = new BaselinesApi();
+    const { user } = renderView(api);
+    await listReady();
+
+    await user.click(chip('Resolved'));
+    expect(await screen.findByText('No resolved baselines.')).toBeDefined();
+    expect(api.listCalls.at(-1)).toEqual({ triage: 'resolved' });
+
+    await user.click(screen.getByRole('button', { name: 'Show all baselines' }));
+    expect(await screen.findByRole('button', { name: 'AWS Lambda' })).toBeDefined();
+    expect(api.listCalls.at(-1)).toEqual({});
+  });
+
+  it('never flashes the no-baselines message on the way to All', async () => {
+    const api = new BaselinesApi([LAMBDA, SNS]);
+    const { user } = renderView(api);
+    const showAll = await screen.findByRole('button', { name: 'Show all baselines' });
+
+    // Keep every node the switch writes, however briefly it stays on screen:
+    // for one render the new filter meets the list loaded under the old one.
+    const records: MutationRecord[] = [];
+    const observer = new MutationObserver((batch) => { records.push(...batch); });
+    observer.observe(document.body, { subtree: true, childList: true, characterData: true });
+    await user.click(showAll);
+    records.push(...observer.takeRecords());
+    observer.disconnect();
+
+    const written = records.flatMap((r) => (r.type === 'characterData' ? [r.target] : [...r.addedNodes]));
+    expect(written.length).toBeGreaterThan(0);
+    expect(written.map((n) => n.textContent ?? '').filter((text) => text.includes('No baselines yet'))).toEqual([]);
+    expect(await screen.findByRole('button', { name: 'AWS Lambda' })).toBeDefined();
+  });
+
+  it('still explains how baselines appear, whatever the filter, while there are none', async () => {
+    const api = new BaselinesApi([]);
+    const { user } = renderView(api);
+    expect(await screen.findByText(/^No baselines yet/)).toBeDefined();
+
+    await user.click(chip('Dismissed'));
+    await waitFor(() => { expect(api.listCalls.at(-1)).toEqual({ triage: 'dismissed' }); });
+    expect(await screen.findByText(/^No baselines yet/)).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Show all baselines' })).toBeNull();
+  });
+});
+
 describe('Baselines — recompute status', () => {
   it('shows discovery as an indeterminate bar and locks recompute', async () => {
     renderView(new BaselinesApi(), RUNNING);

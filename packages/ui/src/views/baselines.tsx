@@ -45,6 +45,28 @@ function activeFilterClass(id: TriageFilter): string {
   return id === 'open' || id === 'all' ? TONE_ACTIVE.accent : TONE_ACTIVE[TRIAGE_TONE[id]];
 }
 
+const EMPTY_PANEL = 'rounded-xl border border-border bg-bg-secondary/50 p-12 text-center text-text-secondary';
+
+/** The list came back empty. With no baselines at all, say how they appear;
+ *  when the filter hides every one, name the filter and offer the way to All. */
+function EmptyList({ filter, baselineCount, onShowAll }: Readonly<{ filter: TriageFilter; baselineCount: number; onShowAll: () => void }>) {
+  // All lists every baseline, so it is only empty when there are none.
+  if (baselineCount === 0 || filter === 'all') {
+    return (
+      <div className={EMPTY_PANEL}>
+        No baselines yet. They are discovered automatically after a sync — hit <span className="text-text-primary">Recompute</span> to scan now, or pin one with <span className="text-text-primary">New baseline</span>.
+      </div>
+    );
+  }
+  const filterName = filter === 'open' ? 'open' : TRIAGE_LABEL[filter].toLowerCase();
+  return (
+    <div className={EMPTY_PANEL}>
+      No {filterName} baselines.{' '}
+      <button type="button" onClick={onShowAll} className="font-medium text-accent hover:text-accent-hover hover:underline">Show all baselines</button>
+    </div>
+  );
+}
+
 function Kpi({ label, value, accent }: Readonly<{ label: string; value: string; accent?: string | undefined }>) {
   return (
     <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-3">
@@ -133,11 +155,14 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
     prevState.current = baselineStatus?.state;
   }, [baselineStatus?.state]);
 
+  // Each list carries the filter it was fetched under. useQuery starts a reload
+  // in an effect, so for one render after a switch the new filter meets the
+  // previous list, whose empty state must still name its own filter.
   const listQuery = useQuery(
-    () => api.listBaselines(statusFilter === 'all' ? {} : { triage: statusFilter }),
+    () => api.listBaselines(statusFilter === 'all' ? {} : { triage: statusFilter }).then((list) => ({ filter: statusFilter, list })),
     [api, statusFilter, refreshKey],
   );
-  const result: BaselinesListResult | null = listQuery.status === 'success' ? listQuery.data : null;
+  const result: BaselinesListResult | null = listQuery.status === 'success' ? listQuery.data.list : null;
   // Counts are filter-independent (same tally in every response), so hold the
   // last-good set across the brief loading window on a filter switch — otherwise
   // every chip's badge blinks away and the bar reflows on each click.
@@ -223,10 +248,8 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
         </div>
       )}
 
-      {result !== null && rows.length === 0 && (
-        <div className="rounded-xl border border-border bg-bg-secondary/50 p-12 text-center text-text-secondary">
-          No baselines yet. They are discovered automatically after a sync — hit <span className="text-text-primary">Recompute</span> to scan now, or pin one with <span className="text-text-primary">New baseline</span>.
-        </div>
+      {listQuery.status === 'success' && rows.length === 0 && (
+        <EmptyList filter={listQuery.data.filter} baselineCount={listQuery.data.list.counts.all} onShowAll={() => { setStatusFilter('all'); }} />
       )}
 
       {selectedId !== null && (
