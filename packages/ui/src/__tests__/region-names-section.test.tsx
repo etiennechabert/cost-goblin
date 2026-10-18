@@ -5,6 +5,7 @@ import type { CostApi } from '@costgoblin/core/browser';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { SsmParameterSection } from '../views/data-management-ssm.js';
+import { deferred } from './deferred.js';
 
 type RegionInfo = Awaited<ReturnType<CostApi['getRegionNamesInfo']>>;
 
@@ -18,13 +19,6 @@ const CACHED: NonNullable<RegionInfo> = {
     'il-central-1': { longName: 'Israel (Tel Aviv)', country: '', continent: '' },
   },
 };
-
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (reason: unknown) => void } {
-  let resolve: (value: T) => void = () => undefined;
-  let reject: (reason: unknown) => void = () => undefined;
-  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
-  return { promise, resolve, reject };
-}
 
 /** A mock whose region-name cache answers each read in turn: the first
  *  `infos` entry on mount, the next after a sync or clear re-reads it, and

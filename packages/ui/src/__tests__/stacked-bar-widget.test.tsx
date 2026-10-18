@@ -18,6 +18,7 @@ import type { CostFocusAction, CostFocusState } from '../hooks/use-cost-focus.js
 import { PaletteProvider } from '../hooks/use-palette.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { StackedBarWidget } from '../widgets/stacked-bar-widget.js';
+import { deferred, settle } from './deferred.js';
 
 const SERVICE = asDimensionId('service');
 const REGION = asDimensionId('region');
@@ -62,20 +63,6 @@ const PREVIOUS = daily([
   ['2026-02-27', { platform: 80 }],
   ['2026-02-28', { platform: 90 }],
 ]);
-
-function deferred<T>() {
-  let resolve: (value: T) => void = () => undefined;
-  const promise = new Promise<T>((res) => { resolve = res; });
-  return { promise, resolve };
-}
-
-/** Resolve a pending query result and let React commit what it renders. */
-async function settle<T>(pending: ReturnType<typeof deferred<T>>, value: T): Promise<void> {
-  await act(async () => {
-    pending.resolve(value);
-    await pending.promise;
-  });
-}
 
 /** Serves the current period, or PREVIOUS for the previous-period range, and
  *  records every query. */

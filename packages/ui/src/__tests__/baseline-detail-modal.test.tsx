@@ -1,12 +1,22 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BaselineDetail, BaselineDriftRow, BaselineRecord, BaselineSnapshot, BaselineUpdatePatch } from '@costgoblin/core/browser';
 import { asDollars } from '@costgoblin/core/browser';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { BaselineDetailModal } from '../components/baseline-detail-modal.js';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
-import { baselineDetail, baselineRecord, baselineSpec, dailySeries, deferred, point, rejectWith, snapshot } from './baseline-fixtures.js';
+import { baselineDetail, baselineRecord, baselineSpec, dailySeries, point, snapshot } from './baseline-fixtures.js';
+import { deferred, rejectWith } from './deferred.js';
+import { setReducedMotion } from './setup.js';
+
+// Every case waits through the modal's coin-rain loader. Animated, it sets
+// state on every frame, restarting the transition useQuery commits the
+// baseline in — the stall the baselines view suite hit on CI. setup.ts
+// restores the preference after each test.
+beforeEach(() => {
+  setReducedMotion(true);
+});
 
 const ID = 'b-1';
 const NOTE_PLACEHOLDER = 'Add a note (optional)…';

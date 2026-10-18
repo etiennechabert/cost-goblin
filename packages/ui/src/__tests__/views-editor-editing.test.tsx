@@ -3,7 +3,7 @@ import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { MockInstance } from 'vitest';
 import { OVERVIEW_SEED_VIEW, SEED_VIEWS_CONFIG } from '@costgoblin/core/browser';
-import type { Dimension, ViewSpec, ViewsConfig } from '@costgoblin/core/browser';
+import type { CostApi, Dimension, ViewSpec, ViewsConfig } from '@costgoblin/core/browser';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { PaletteProvider } from '../hooks/use-palette.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
@@ -48,22 +48,16 @@ class EditorApi extends MockCostApi {
   override getViewsConfig(): Promise<ViewsConfig> {
     return Promise.resolve(this.config);
   }
-
-  /** Every config the editor persisted, oldest first. Declaring the
-   *  parameter (the base mock takes none) also types a spy's recorded calls. */
-  readonly saved: ViewsConfig[] = [];
-
-  override saveViewsConfig(config?: ViewsConfig): Promise<void> {
-    if (config !== undefined) this.saved.push(config);
-    return super.saveViewsConfig();
-  }
 }
 
-type SaveSpy = MockInstance<(config?: ViewsConfig) => Promise<void>>;
+type SaveSpy = MockInstance<CostApi['saveViewsConfig']>;
 
 function renderEditor(api: EditorApi = new EditorApi(), onConfigPersisted?: (cfg: ViewsConfig) => void) {
   const user = userEvent.setup();
-  const saveSpy = vi.spyOn(api, 'saveViewsConfig');
+  // Spied through the interface: the base mock's saveViewsConfig takes no
+  // config, so only the CostApi signature types the recorded calls.
+  const costApi: CostApi = api;
+  const saveSpy = vi.spyOn(costApi, 'saveViewsConfig');
   return {
     api,
     user,

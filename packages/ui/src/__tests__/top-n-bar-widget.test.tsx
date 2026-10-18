@@ -17,6 +17,7 @@ import type { CostFocusAction, CostFocusState } from '../hooks/use-cost-focus.js
 import { PaletteProvider } from '../hooks/use-palette.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { TopNBarWidget } from '../widgets/top-n-bar-widget.js';
+import { deferred, settle } from './deferred.js';
 
 const ACCOUNT = asDimensionId('account');
 const REGION = asDimensionId('region');
@@ -40,20 +41,6 @@ function costs(rows: readonly (readonly [string, number])[], range: DateRange): 
 
 const CURRENT = costs([['prod', 600], ['staging', 300], ['dev', 100]], RANGE);
 const PREVIOUS = costs([['prod', 500], ['staging', 400]], PREV_RANGE);
-
-function deferred<T>() {
-  let resolve: (value: T) => void = () => undefined;
-  const promise = new Promise<T>((res) => { resolve = res; });
-  return { promise, resolve };
-}
-
-/** Resolve a pending query result and let React commit what it renders. */
-async function settle<T>(pending: ReturnType<typeof deferred<T>>, value: T): Promise<void> {
-  await act(async () => {
-    pending.resolve(value);
-    await pending.promise;
-  });
-}
 
 class CostsApi extends MockCostApi {
   readonly calls: CostQueryParams[] = [];

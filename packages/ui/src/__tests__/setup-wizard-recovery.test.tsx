@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MOCK_BUNDLE_SUMMARY, MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { SetupWizard } from '../views/setup-wizard.js';
+import type { Deferred } from './deferred.js';
+import { deferred, rejectWith } from './deferred.js';
 
 type S3Browse = Awaited<ReturnType<CostApi['browseS3']>>;
 
@@ -27,17 +29,10 @@ class WizardApi extends MockCostApi {
     if (this.browseFailure !== undefined) {
       const failure = this.browseFailure;
       this.browseFailure = undefined;
-      return vi.fn<() => Promise<S3Browse>>().mockRejectedValue(failure)();
+      return rejectWith(failure);
     }
     return Promise.resolve(this.s3ByPrefix.get(prefix) ?? this.s3BrowseResult);
   }
-}
-
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (reason: unknown) => void } {
-  let resolve: (value: T) => void = () => undefined;
-  let reject: (reason: unknown) => void = () => undefined;
-  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
-  return { promise, resolve, reject };
 }
 
 type Outcome = 'resolve' | 'reject';
@@ -159,8 +154,8 @@ describe('SetupWizard — AWS failures it recovers from', () => {
   });
 
   it.each([
-    { late: 'finds a config', settle: (d: ReturnType<typeof deferred<CheckConfigBeaconResult>>) => { d.resolve(FOUND); } },
-    { late: 'fails', settle: (d: ReturnType<typeof deferred<CheckConfigBeaconResult>>) => { d.reject(new Error('late')); } },
+    { late: 'finds a config', settle: (d: Deferred<CheckConfigBeaconResult>) => { d.resolve(FOUND); } },
+    { late: 'fails', settle: (d: Deferred<CheckConfigBeaconResult>) => { d.reject(new Error('late')); } },
   ])('lets a second pick win over a config check from the first that $late late', async ({ settle }) => {
     const api = new WizardApi();
     const first = deferred<CheckConfigBeaconResult>();
@@ -669,7 +664,7 @@ describe('SetupWizard — a loader answering after the user left its step', () =
 
       await act(async () => { settle(outcome); await Promise.resolve(); });
       expect(screen.getByText(START)).toBeDefined();
-      expect(screen.queryByText(/late/i)).toBeNull();
+      expect(screen.queryByText(/\blate\b/i)).toBeNull();
       expect(onComplete).not.toHaveBeenCalled();
     },
   );

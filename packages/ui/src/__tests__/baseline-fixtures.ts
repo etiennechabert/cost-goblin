@@ -71,28 +71,3 @@ export function snapshot(date: string, current: number): BaselineSnapshot {
     status: 'over',
   };
 }
-
-export interface Deferred<T> {
-  readonly promise: Promise<T>;
-  resolve(value: T): void;
-  reject(reason: unknown): void;
-}
-
-/** A promise the test settles by hand — for loading/saving states. */
-export function deferred<T>(): Deferred<T> {
-  let settle: { resolve: (value: T) => void; reject: (reason: unknown) => void } | null = null;
-  const promise = new Promise<T>((resolve, reject) => { settle = { resolve, reject }; });
-  return {
-    promise,
-    resolve(value) { settle?.resolve(value); },
-    reject(reason) { settle?.reject(reason); },
-  };
-}
-
-/** A promise already rejected with `reason` — which, like a failed IPC call,
- *  need not be an Error. */
-export function rejectWith(reason: unknown): Promise<never> {
-  const d = deferred<never>();
-  d.reject(reason);
-  return d.promise;
-}

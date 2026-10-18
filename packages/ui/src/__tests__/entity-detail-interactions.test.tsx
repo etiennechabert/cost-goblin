@@ -28,6 +28,7 @@ import {
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { PaletteProvider } from '../hooks/use-palette.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
+import { daysAgo } from '../lib/dates.js';
 import { EntityDetail } from '../views/entity-detail.js';
 
 const DETAIL: EntityDetailResult = {
@@ -424,10 +425,10 @@ describe('EntityDetail — date range', () => {
 
     await user.click(screen.getByRole('button', { name: /Last 30 days/ }));
     await user.click(await screen.findByRole('button', { name: 'Last 90 days' }));
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Last 90 days/ })).toBeDefined();
-    });
-    const range = api.detailCalls.at(-1)?.dateRange;
+    // Ninety days ending two days back (the default lag).
+    const range = { start: daysAgo(92), end: daysAgo(2) };
+    await waitFor(() => { expect(api.detailCalls.at(-1)?.dateRange).toEqual(range); });
+    expect(screen.getByRole('button', { name: /Last 90 days/ })).toBeDefined();
     expect(api.dailyCalls.at(-1)?.dateRange).toEqual(range);
     expect(api.costCalls.at(-1)?.dateRange).toEqual(range);
   });

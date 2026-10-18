@@ -6,19 +6,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BundleSummaryCard, ImportConfigDialog, ImportConfigPanel, ShareConfigPanel } from '../components/config-sharing.js';
 import { MOCK_BUNDLE_SUMMARY, MOCK_GCP_PROVIDER, MOCK_SHARED_SOURCE, MOCK_SHARED_SOURCE_PREVIEW, MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
-
-interface Deferred<T> {
-  readonly promise: Promise<T>;
-  readonly resolve: (value: T) => void;
-  readonly reject: (reason: unknown) => void;
-}
-
-function deferred<T>(): Deferred<T> {
-  let resolve: (value: T) => void = () => undefined;
-  let reject: (reason: unknown) => void = () => undefined;
-  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
-  return { promise, resolve, reject };
-}
+import type { Deferred } from './deferred.js';
+import { deferred } from './deferred.js';
 
 type ApplyResult = Awaited<ReturnType<MockCostApi['applyConfigBundle']>>;
 

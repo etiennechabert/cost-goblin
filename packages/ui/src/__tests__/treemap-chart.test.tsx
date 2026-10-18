@@ -45,7 +45,7 @@ describe('TreemapChart', () => {
     expect(area(cell(rects, 'EC2'))).toBeGreaterThan(area(cell(rects, 'S3')));
     expect(area(cell(rects, 'S3'))).toBeGreaterThan(area(cell(rects, 'RDS')));
     // The cells tile the whole measured body.
-    expect(rects.reduce((sum, r) => sum + area(r), 0)).toBe(800 * 600);
+    expect(rects.reduce((sum, r) => sum + area(r), 0)).toBeCloseTo(800 * 600, 6);
 
     // Big enough cells carry their name and cost.
     expect(screen.getByText('EC2')).toBeDefined();

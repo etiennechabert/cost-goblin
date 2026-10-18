@@ -15,6 +15,7 @@ import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { PaletteProvider } from '../hooks/use-palette.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { LineWidget } from '../widgets/line-widget.js';
+import { deferred, settle } from './deferred.js';
 
 const SERVICE = asDimensionId('service');
 const REGION = asDimensionId('region');
@@ -61,20 +62,6 @@ const PREVIOUS = daily([
   ['2026-02-26', { platform: 50, data: 20 }],
   ['2026-02-27', { platform: 55 }],
 ]);
-
-function deferred<T>() {
-  let resolve: (value: T) => void = () => undefined;
-  const promise = new Promise<T>((res) => { resolve = res; });
-  return { promise, resolve };
-}
-
-/** Resolve a pending query result and let React commit what it renders. */
-async function settle<T>(pending: ReturnType<typeof deferred<T>>, value: T): Promise<void> {
-  await act(async () => {
-    pending.resolve(value);
-    await pending.promise;
-  });
-}
 
 class DailyApi extends MockCostApi {
   readonly calls: DailyCostsParams[] = [];

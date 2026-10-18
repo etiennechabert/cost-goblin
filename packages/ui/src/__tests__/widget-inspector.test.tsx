@@ -331,7 +331,14 @@ describe('WidgetInspector — switching widget type', () => {
   });
 
   it('groups a new chart by the first configured dimension when the old widget had none', async () => {
-    const tagFirst: readonly Dimension[] = [{ tagName: 'team', label: 'Team' }, ...DIMS];
+    // DIMS already holds the team tag, and the validator lets no two dimensions
+    // share tag_team (it disables the second on load and refuses it on save):
+    // move it to the front instead.
+    const tagFirst: readonly Dimension[] = [
+      { tagName: 'team', label: 'Team', concept: 'owner' },
+      { name: SERVICE, label: 'Service', field: 'service' },
+      { name: REGION, label: 'Region', field: 'region' },
+    ];
     const { user, lastChange } = setup({ id: 'w', type: 'summary', size: 'small' }, { dimensions: tagFirst });
 
     await user.selectOptions(typeSelect('summary'), catalogLabel('pie'));

@@ -18,7 +18,8 @@ import { asDimensionId, asDollars, asEntityRef, asTagValue, OPEN_TRIAGE_STATUSES
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { Baselines } from '../views/baselines.js';
-import { baselineDetail, baselineRecord, baselineSpec, deferred, rejectWith } from './baseline-fixtures.js';
+import { baselineDetail, baselineRecord, baselineSpec } from './baseline-fixtures.js';
+import { deferred, rejectWith } from './deferred.js';
 import { setReducedMotion } from './setup.js';
 
 // Hold the coin-rain loader still. Animated, it sets state on every frame,
@@ -279,8 +280,12 @@ describe('Baselines — list', () => {
     expect(chip('Open').className).not.toContain('bg-accent/15');
 
     await user.click(chip('Acting'));
-    await waitFor(() => { expect(screen.queryByRole('button', { name: 'RDS fleet' })).toBeNull(); });
-    expect(screen.getByRole('button', { name: 'Amazon EC2' })).toBeDefined();
+    // RDS already goes when the loader replaces the list, so wait for the
+    // acting list itself to land.
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'RDS fleet' })).toBeNull();
+      expect(screen.getByRole('button', { name: 'Amazon EC2' })).toBeDefined();
+    });
     expect(api.listCalls.at(-1)).toEqual({ triage: 'acting' });
     expect(chip('Acting').className).toContain('bg-warning/15');
 
@@ -443,7 +448,8 @@ describe('Baselines — detail', () => {
 
     await user.keyboard('{Escape}');
     await waitFor(() => { expect(screen.queryByRole('dialog')).toBeNull(); });
-    expect(within(tableRow('RDS fleet')).getByText('Tracking')).toBeDefined();
+    // The refetch only started above; its rows replace the loader when they land.
+    await waitFor(() => { expect(within(tableRow('RDS fleet')).getByText('Tracking')).toBeDefined(); });
   });
 
   it('moves to the next row after closing a baseline out', async () => {
@@ -470,8 +476,16 @@ describe('Baselines — detail', () => {
     await user.click(within(dialog).getByRole('button', { name: /^\d\s*Dismissed$/ }));
 
     await waitFor(() => { expect(api.listCalls).toHaveLength(2); });
-    await waitFor(() => { expect(screen.queryByRole('button', { name: 'Next baseline (→)' })).toBeNull(); });
-    expect(screen.getByRole('dialog', { name: 'Amazon EC2' })).toBeDefined();
+    // The list and the detail both reload after the change, and either one
+    // loading hides the position on its own. So wait for the Open list to land
+    // without EC2 (its rows sit behind the dialog, hence `hidden`) and for the
+    // detail to be back under its title, still open but with no position.
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'RDS fleet', hidden: true })).toBeDefined();
+      expect(screen.queryByRole('button', { name: 'Amazon EC2', hidden: true })).toBeNull();
+      const reloaded = screen.getByRole('dialog', { name: 'Amazon EC2' });
+      expect(within(reloaded).queryByRole('button', { name: 'Next baseline (→)' })).toBeNull();
+    });
   });
 });
 

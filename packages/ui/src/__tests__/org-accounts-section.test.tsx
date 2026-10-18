@@ -5,6 +5,7 @@ import type { CostApi, OrgAccount, OrgSyncProgress, OrgSyncResult } from '@costg
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { OrgAccountsSection } from '../views/data-management-org.js';
+import { deferred } from './deferred.js';
 
 const ACCOUNTS: readonly OrgAccount[] = [
   {
@@ -31,13 +32,6 @@ const REGIONS: RegionInfo = {
   lastError: null,
   regions: { 'eu-west-1': { longName: 'Europe (Ireland)', country: 'IE', continent: 'Europe' } },
 };
-
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (reason: unknown) => void } {
-  let resolve: (value: T) => void = () => undefined;
-  let reject: (reason: unknown) => void = () => undefined;
-  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
-  return { promise, resolve, reject };
-}
 
 /** The mock answers "never synced"; these tests need a synced org, so they
  *  address it through the CostApi interface, whose methods can be replaced. */
@@ -117,7 +111,11 @@ describe('OrgAccountsSection — before the first sync', () => {
     const api = apiWith(null);
     const pending = deferred<OrgSyncResult>();
     api.syncOrgAccounts = () => pending.promise;
+    // shouldAdvanceTime also moves the clock with real time, so a slow runner
+    // can fit a third 500 ms poll in before the sync settles: it must get a
+    // promise to chain on, not undefined.
     const poll = vi.fn<CostApi['getOrgSyncProgress']>()
+      .mockResolvedValue(null)
       .mockResolvedValueOnce(null)
       .mockRejectedValueOnce(new Error('ipc closed'));
     api.getOrgSyncProgress = poll;
@@ -125,7 +123,7 @@ describe('OrgAccountsSection — before the first sync', () => {
 
     await user.click(screen.getByRole('button', { name: 'Sync from AWS Organizations' }));
     await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
-    expect(poll).toHaveBeenCalledTimes(2);
+    expect(poll.mock.calls.length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText('accounts')).toBeDefined();
 
     await act(async () => { pending.reject('throttled'); await Promise.resolve(); });

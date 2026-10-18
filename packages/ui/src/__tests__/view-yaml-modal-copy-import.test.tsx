@@ -1,6 +1,6 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { asDimensionId } from '@costgoblin/core/browser';
 import type { ViewSpec } from '@costgoblin/core/browser';
 import { ViewYamlModal } from '../components/view-yaml-modal.js';
@@ -38,6 +38,10 @@ async function pasteAndImport(user: ReturnType<typeof userEvent.setup>, text: st
   await user.click(screen.getByRole('button', { name: 'Import' }));
 }
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe('ViewYamlModal — export', () => {
   it('exports a built-in as a custom view, keeping its icon', () => {
     render(<ViewYamlModal mode="export" view={BUILT_IN_WITH_ICON} onClose={vi.fn()} />);
@@ -50,7 +54,8 @@ describe('ViewYamlModal — export', () => {
   });
 
   it('copies the YAML and briefly confirms it', async () => {
-    const user = userEvent.setup();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: (ms) => { vi.advanceTimersByTime(ms); } });
     render(<ViewYamlModal mode="export" view={BUILT_IN_WITH_ICON} onClose={vi.fn()} />);
 
     await user.click(screen.getByRole('button', { name: 'Copy' }));
@@ -58,7 +63,8 @@ describe('ViewYamlModal — export', () => {
     expect(await navigator.clipboard.readText()).toContain('name: Cost Overview');
     expect(screen.getByRole('button', { name: 'Copied!' })).toBeDefined();
     // The confirmation reverts on its own after a moment.
-    await waitFor(() => { expect(screen.getByRole('button', { name: 'Copy' })).toBeDefined(); }, { timeout: 3000 });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_500); });
+    expect(screen.getByRole('button', { name: 'Copy' })).toBeDefined();
   });
 });
 

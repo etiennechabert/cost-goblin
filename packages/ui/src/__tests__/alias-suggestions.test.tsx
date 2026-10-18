@@ -5,6 +5,7 @@ import type { AliasSuggestion, CostApi } from '@costgoblin/core/browser';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { AliasSuggestions } from '../components/alias-suggestions.js';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
+import { deferred } from './deferred.js';
 
 /** The "Suggested Aliases" disclosure under a dimension editor: near-duplicate
  *  values the backend proposes merging. Each can be flipped (pick another value
@@ -60,13 +61,6 @@ function cardOf(canonical: string): HTMLElement {
   const card = actionButton('Accept', canonical).parentElement?.parentElement;
   if (card === null || card === undefined) throw new Error(`no card for ${canonical}`);
   return card;
-}
-
-function deferred(): { promise: Promise<void>; resolve: () => void; reject: (err: Error) => void } {
-  let resolve: () => void = () => undefined;
-  let reject: (err: Error) => void = () => undefined;
-  const promise = new Promise<void>((res, rej) => { resolve = res; reject = rej; });
-  return { promise, resolve, reject };
 }
 
 afterEach(() => {
@@ -170,7 +164,7 @@ describe('AliasSuggestions', () => {
 
   it('disables a suggestion\'s actions while its accept is in flight, and only that one\'s', async () => {
     const api = makeApi();
-    const pending = deferred();
+    const pending = deferred<undefined>();
     vi.spyOn(api, 'acceptSuggestion').mockReturnValue(pending.promise);
     const { user } = renderSuggestions(api);
     await expand(user, 2);
@@ -181,7 +175,7 @@ describe('AliasSuggestions', () => {
       expect(actionButton(action, 'staging')).toHaveProperty('disabled', false);
     }
 
-    await act(async () => { pending.resolve(); await pending.promise; });
+    await act(async () => { pending.resolve(undefined); await pending.promise; });
     await waitFor(() => { expect(screen.queryByText('prod')).toBeNull(); });
     expect(actionButton('Accept', 'staging')).toHaveProperty('disabled', false);
   });
@@ -205,7 +199,7 @@ describe('AliasSuggestions', () => {
 
   it('brings a suggestion back when its dismissal fails', async () => {
     const api = makeApi();
-    const pending = deferred();
+    const pending = deferred<undefined>();
     const dismiss = vi.spyOn(api, 'dismissSuggestion').mockReturnValue(pending.promise);
     const { user } = renderSuggestions(api);
     await expand(user, 2);

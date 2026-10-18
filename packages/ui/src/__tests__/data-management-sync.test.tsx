@@ -6,6 +6,7 @@ import type { AwsProviderConfig, CostGoblinConfig, DataInventoryResult, DataTier
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { DataManagement } from '../views/data-management.js';
+import { deferred, rejectWith } from './deferred.js';
 
 type Period = DataInventoryResult['periods'][number];
 
@@ -27,19 +28,6 @@ function inventory(periods: readonly Period[], local: readonly string[] = []): D
     lastSync: null,
     local: { periods: local, diskBytes: 4096, oldestPeriod: local[0] ?? null, newestPeriod: local.at(-1) ?? null },
   };
-}
-
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (reason: unknown) => void } {
-  let resolve: (value: T) => void = () => undefined;
-  let reject: (reason: unknown) => void = () => undefined;
-  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
-  return { promise, resolve, reject };
-}
-
-/** A rejection whose reason is not an Error, as a misbehaving bridge can
- *  produce — the views fall back to `String(reason)`. */
-function rejectWith(reason: string): Promise<never> {
-  return vi.fn<() => Promise<never>>().mockRejectedValue(reason)();
 }
 
 const AWS_FULL: AwsProviderConfig = {
@@ -90,7 +78,7 @@ class DmApi extends MockCostApi {
     const answer = this.inventories.get(`${String(providerName)}:${String(tier)}`) ?? inventory([]);
     if (answer === 'pending') return new Promise<DataInventoryResult>(() => undefined);
     if ('fail' in answer) {
-      return answer.fail instanceof Error ? Promise.reject(answer.fail) : rejectWith(String(answer.fail));
+      return rejectWith(answer.fail);
     }
     return Promise.resolve(answer);
   }
@@ -113,14 +101,18 @@ async function tierPanel(title: string): Promise<HTMLElement> {
   return panel;
 }
 
-/** Waits out an inventory re-read and returns the tier panel drawn after it.
- *  While the daily inventory reloads the page shows its loading line in place
- *  of every tier panel, so the panel found before a refresh is a detached
- *  copy once it is done. */
-async function afterInventoryRefresh(api: DmApi, readsBefore: number, title: string): Promise<HTMLElement> {
+/** Waits out an inventory re-read and returns the tier panel drawn after it,
+ *  once it lists `month` again. While the daily inventory reloads the page
+ *  shows its loading line in place of every tier panel, so the panel found
+ *  before a refresh is a detached copy once it is done. The hourly and Cost
+ *  Optimization inventories reload behind no loading line: until theirs lands
+ *  the panel shows its empty state, so the month is what says it is back. */
+async function afterInventoryRefresh(api: DmApi, readsBefore: number, title: string, month: string): Promise<HTMLElement> {
   await waitFor(() => { expect(api.inventoryReads).toBeGreaterThan(readsBefore); });
   await waitFor(() => { expect(screen.queryByText('Checking S3 for available data...')).toBeNull(); });
-  return tierPanel(title);
+  const panel = await tierPanel(title);
+  await within(panel).findByText(month);
+  return panel;
 }
 
 function monthCheckbox(panel: HTMLElement, month: string): HTMLElement {
@@ -170,7 +162,7 @@ describe('DataManagement — each tier of a provider', () => {
     let reads = api.inventoryReads;
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
     await waitFor(() => { expect(remove).toHaveBeenCalledWith('2026-01', tier, 'aws-main'); });
-    panel = await afterInventoryRefresh(api, reads, title);
+    panel = await afterInventoryRefresh(api, reads, title, 'Dec 2099');
 
     // A run the user cancels: the backend reports it syncing until cancelled.
     const first = deferred<{ filesDownloaded: number; rowsProcessed: number }>();
@@ -199,7 +191,7 @@ describe('DataManagement — each tier of a provider', () => {
     await user.click(within(panel).getByRole('button', { name: 'Download 1 (2.0KB)' }));
     reads = api.inventoryReads;
     await act(async () => { second.resolve({ filesDownloaded: 1, rowsProcessed: 12 }); await Promise.resolve(); });
-    panel = await afterInventoryRefresh(api, reads, title);
+    panel = await afterInventoryRefresh(api, reads, title, 'Dec 2099');
     expect(within(panel).getByText('Synced 1 files')).toBeDefined();
     // The downloaded selection is cleared rather than offered again.
     expect(within(panel).queryByRole('button', { name: /^Download/ })).toBeNull();

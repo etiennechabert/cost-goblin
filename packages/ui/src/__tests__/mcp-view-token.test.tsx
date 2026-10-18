@@ -4,15 +4,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { McpView } from '../views/mcp-view.js';
+import { deferred } from './deferred.js';
 
 const MASK = '•'.repeat(28);
-
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (reason: unknown) => void } {
-  let resolve: (value: T) => void = () => undefined;
-  let reject: (reason: unknown) => void = () => undefined;
-  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
-  return { promise, resolve, reject };
-}
 
 function renderView(api: MockCostApi) {
   const user = userEvent.setup();

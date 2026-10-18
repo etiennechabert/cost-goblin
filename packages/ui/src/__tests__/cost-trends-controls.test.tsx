@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RollupStatus, TrendQueryParams, TrendResult, TrendRow } from '@costgoblin/core/browser';
 import { asDollars, asEntityRef } from '@costgoblin/core/browser';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
@@ -8,6 +8,7 @@ import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostTrends } from '../views/cost-trends.js';
 import { getDefaultDateRange } from '../components/date-range-picker.js';
 import { monthsInRange } from '../lib/dates.js';
+import { setReducedMotion } from './setup.js';
 
 function row(entity: string, currentCost: number, previousCost: number): TrendRow {
   const delta = currentCost - previousCost;
@@ -65,6 +66,15 @@ function tableRows(): { entity: string; delta: string; change: string }[] {
     return { entity: cells[0] ?? '', delta: cells[3] ?? '', change: cells[4] ?? '' };
   });
 }
+
+// Hold the coin-rain loader still while the trends load. Animated, it sets
+// state on every frame, and each of those urgent updates restarts the
+// transition useQuery commits the result in; on a loaded CI runner the rows
+// then only land once React expires the transition (~5 s), the whole findBy
+// budget. setup.ts restores the preference after each test.
+beforeEach(() => {
+  setReducedMotion(true);
+});
 
 afterEach(() => {
   vi.restoreAllMocks();

@@ -17,6 +17,7 @@ import type {
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { TableWidget } from '../widgets/table-widget.js';
+import { deferred } from './deferred.js';
 
 const RANGE: DateRange = { start: asDateString('2026-03-01'), end: asDateString('2026-03-31') };
 const PREV_RANGE: DateRange = { start: asDateString('2026-01-29'), end: asDateString('2026-02-28') };
@@ -70,12 +71,6 @@ function project(rows: readonly FixtureRow[], columns: readonly string[], cost: 
     out.push({ values, cost: c, listCost: r.listCost, usageAmount: r.usageAmount, rowCount: r.rowCount });
   }
   return out;
-}
-
-function deferred<T>() {
-  let resolve: (value: T) => void = () => undefined;
-  const promise = new Promise<T>((res) => { resolve = res; });
-  return { promise, resolve };
 }
 
 type TableHandler = (params: AggregatedTableParams) => Promise<AggregatedTableResult>;

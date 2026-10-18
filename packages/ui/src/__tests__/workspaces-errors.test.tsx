@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { WorkspacesView } from '../views/workspaces.js';
+import { deferred } from './deferred.js';
 
 const THREE: WorkspacesInfo = {
   mode: 'workspace',
@@ -15,12 +16,6 @@ const THREE: WorkspacesInfo = {
     { name: 'client-beta', active: false, configured: true, sizeBytes: null, lastUsedAt: null },
   ],
 };
-
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
-  let resolve: (value: T) => void = () => undefined;
-  const promise = new Promise<T>((res) => { resolve = res; });
-  return { promise, resolve };
-}
 
 function apiWith(info: WorkspacesInfo = THREE): MockCostApi {
   const api = new MockCostApi();
