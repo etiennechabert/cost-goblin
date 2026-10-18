@@ -211,6 +211,10 @@ interface DataTableProps<TData> {
   readonly columns: readonly TableColumn<TData>[];
   readonly sorting?: SortingState | undefined;
   readonly onSortingChange?: ((state: SortingState) => void) | undefined;
+  /** Receives the rows in the order the table shows them (after its sort)
+   *  whenever its data or sort changes, for an owner that steps through them
+   *  in the same order. Pass a stable function: a new one reports again. */
+  readonly onRowOrderChange?: ((rows: readonly TData[]) => void) | undefined;
   readonly onCellClick?: ((row: TData, columnId: string, value: unknown) => void) | undefined;
   readonly renderExpandedRow?: ((row: TData) => React.ReactNode) | undefined;
   readonly loading?: boolean | undefined;
@@ -236,6 +240,7 @@ export function DataTable<TData extends RowData>({
   columns,
   sorting,
   onSortingChange,
+  onRowOrderChange,
   onCellClick,
   renderExpandedRow,
   loading = false,
@@ -279,6 +284,11 @@ export function DataTable<TData extends RowData>({
 
   const table = useTable(tableOptions);
   const rows = table.getRowModel().rows;
+
+  // The row model is memoized on the data and the sort, so this reports only
+  // when one of them changes, not on every render — and maps the rows only
+  // when someone listens.
+  useEffect(() => { onRowOrderChange?.(rows.map(row => row.original)); }, [rows, onRowOrderChange]);
 
   const virtualizer = useVirtualizer({
     count: rows.length,

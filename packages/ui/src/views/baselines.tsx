@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { SortingState } from '@tanstack/react-table';
 import type { BaselineRecord, BaselineRecomputeStatus, BaselineTriageStatus, BaselinesListResult, DimensionsConfig } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue } from '@costgoblin/core/browser';
@@ -14,6 +14,12 @@ import { BaselineDetailModal } from '../components/baseline-detail-modal.js';
 import { Dialog, DialogContent, DialogTitle, DialogClose } from '../components/ui/dialog.js';
 
 type TriageFilter = BaselineTriageStatus | 'open' | 'all';
+
+/** Loading the new baselines that a triage session walks through. */
+type TriageStart =
+  | { readonly status: 'idle' }
+  | { readonly status: 'loading' }
+  | { readonly status: 'error'; readonly message: string };
 
 const STATUS_FILTERS: readonly { id: TriageFilter; label: string }[] = [
   { id: 'open', label: 'Open' },
@@ -56,6 +62,10 @@ function Kpi({ label, value, accent }: Readonly<{ label: string; value: string; 
 
 function runningLabel(status: Extract<BaselineRecomputeStatus, { state: 'running' }>): string {
   return status.phase === 'discovering' ? 'Discovering baselines…' : `Computing ${String(status.done)} / ${String(status.total)}`;
+}
+
+function sameOrder(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((id, i) => id === b[i]);
 }
 
 function buildColumns(onOpen: (id: string) => void): readonly TableColumn<BaselineRecord>[] {
@@ -107,14 +117,27 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
   const [showNew, setShowNew] = useState(false);
   const [triageQueue, setTriageQueue] = useState<readonly string[] | null>(null);
   const [triageIdx, setTriageIdx] = useState(0);
+  const [triageStart, setTriageStart] = useState<TriageStart>({ status: 'idle' });
   const [showRecompute, setShowRecompute] = useState(false);
+  // Baseline ids in the order the table shows them, as it reports them.
+  const [tableOrder, setTableOrder] = useState<readonly string[]>([]);
+  const onRowOrderChange = useCallback((sorted: readonly BaselineRecord[]) => {
+    const ids = sorted.map((r) => r.spec.id);
+    setTableOrder((prev) => (sameOrder(prev, ids) ? prev : ids));
+  }, []);
 
   async function startTriage(): Promise<void> {
-    const res = await api.listBaselines({ triage: 'new' });
-    const ids = res.items.map((r) => r.spec.id);
-    if (ids.length === 0) return;
-    setTriageQueue(ids);
-    setTriageIdx(0);
+    setTriageStart({ status: 'loading' });
+    try {
+      const res = await api.listBaselines({ triage: 'new' });
+      setTriageStart({ status: 'idle' });
+      const ids = res.items.map((r) => r.spec.id);
+      if (ids.length === 0) return;
+      setTriageQueue(ids);
+      setTriageIdx(0);
+    } catch (err: unknown) {
+      setTriageStart({ status: 'error', message: err instanceof Error ? err.message : String(err) });
+    }
   }
   function endTriage(): void {
     setTriageQueue(null);
@@ -145,7 +168,12 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
   if (result !== null) lastCounts.current = result.counts;
   const counts = result?.counts ?? lastCounts.current;
   const rows = result?.items ?? [];
-  const orderedIds = rows.map((r) => r.spec.id);
+  // The detail's next/previous and its "n / total" follow the table's sort, not
+  // the order the API listed the rows in. Kept to the rows listed now: the
+  // reported order trails a refetch by a render, and outlives the table when
+  // the list empties.
+  const listedIds = new Set(rows.map((r) => r.spec.id));
+  const orderedIds = tableOrder.filter((id) => listedIds.has(id));
   const selIdx = selectedId !== null ? orderedIds.indexOf(selectedId) : -1;
 
   const columns = useMemo<readonly TableColumn<BaselineRecord>[]>(() => buildColumns(setSelectedId), []);
@@ -158,7 +186,7 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
           {counts !== null && <p className="text-xs text-text-muted mt-1 tabular-nums">{String(counts.all)} baselines</p>}
         </div>
         <div className="flex items-center gap-2">
-          <button type="button" onClick={() => { void startTriage(); }} className="rounded-md border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/20">Triage new</button>
+          <button type="button" disabled={triageStart.status === 'loading'} onClick={() => { void startTriage(); }} className="rounded-md border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/20 disabled:opacity-60">Triage new</button>
           <button type="button" onClick={() => { setShowNew(true); }} className="rounded-md border border-border px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary">New baseline</button>
           <button type="button" disabled={running} onClick={() => { setShowRecompute(true); }}
             className="rounded-md bg-accent/15 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/25 disabled:opacity-60">
@@ -209,6 +237,9 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
         })}
       </div>
 
+      {triageStart.status === 'error' && (
+        <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3 text-sm text-negative break-words">Couldn't start triage: {triageStart.message}</div>
+      )}
       {baselineStatus?.state === 'error' && (
         <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3 text-sm text-negative break-words">Recompute failed: {baselineStatus.message}</div>
       )}
@@ -219,7 +250,8 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
 
       {rows.length > 0 && (
         <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-hidden p-4">
-          <DataTable<BaselineRecord> data={[...rows]} columns={columns} sorting={sorting} onSortingChange={setSorting} height={600} csvFilename="baselines" />
+          <DataTable<BaselineRecord> data={rows} columns={columns} sorting={sorting} onSortingChange={setSorting}
+            onRowOrderChange={onRowOrderChange} height={600} csvFilename="baselines" />
         </div>
       )}
 
