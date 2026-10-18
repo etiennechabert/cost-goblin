@@ -4,11 +4,12 @@ import type { DuckDBConnection } from '@duckdb/node-api';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildExclusionClauses, buildRollupPartitionQuery, buildRuleMatchExpr, buildSource, sqlStringLiteral } from '../query/builder.js';
+import { buildEntityDetailQuery, buildExclusionClauses, buildFilterClauses, buildRollupPartitionQuery, buildRuleMatchExpr, buildSource, sqlStringLiteral } from '../query/builder.js';
 import { QueryBuilder } from '../query/parameterized.js';
-import { asDimensionId, asProviderName, tagDimColumn } from '../types/branded.js';
+import { asDateString, asDimensionId, asEntityRef, asProviderName, asTagValue, tagDimColumn } from '../types/branded.js';
 import type { DimensionsConfig, TagDimension } from '../types/config.js';
 import type { ExclusionCondition, ExclusionRule } from '../types/cost-scope.js';
+import type { FilterMap } from '../types/query.js';
 
 /**
  * Exclusion rules against rows that have no value for the rule's dimension,
@@ -17,7 +18,9 @@ import type { ExclusionCondition, ExclusionRule } from '../types/cost-scope.js';
  * Scope preview counted those rows as kept; `matchMissing` is the explicit
  * way to exclude them. Each rule is checked on the three paths that apply
  * exclusions: a live query's bound WHERE, a rollup partition's literal WHERE,
- * and the preview's CASE WHEN.
+ * and the preview's CASE WHEN. A dashboard filter on '' (a click on a
+ * widget's group of rows with no value) is checked on the live source and a
+ * rollup.
  */
 
 const PROVIDER = asProviderName('aws');
@@ -104,14 +107,31 @@ describe('exclusion rules and missing values (DuckDB execution)', () => {
     return Number(r?.['total']);
   }
 
-  /** What a rollup partition stores: the same rules as escaped literals. */
-  async function rollupTotal(rules: readonly ExclusionRule[]): Promise<number> {
+  /** A rollup partition built with these rules, as a source to read. */
+  async function rollupPartition(rules: readonly ExclusionRule[]): Promise<string> {
     const outPath = join(dataDir, `rollup-${String(Math.random()).slice(2)}.parquet`).replaceAll('\\', '/');
     await conn.run(buildRollupPartitionQuery('2026-01', 'daily', outPath, {
       dataDir, dimensions, providers: [{ name: PROVIDER, availablePeriods: ['2026-01'] }], costScope: { costMetric: 'effective', rules },
     }));
-    const [r] = await runPrepared(conn, `SELECT COALESCE(SUM(cost), 0)::DOUBLE AS total FROM read_parquet(${sqlStringLiteral(outPath)})`, []);
+    return `read_parquet(${sqlStringLiteral(outPath)})`;
+  }
+
+  /** What a rollup partition stores: the same rules as escaped literals. */
+  async function rollupTotal(rules: readonly ExclusionRule[]): Promise<number> {
+    const [r] = await runPrepared(conn, `SELECT COALESCE(SUM(cost), 0)::DOUBLE AS total FROM ${await rollupPartition(rules)}`, []);
     return Number(r?.['total']);
+  }
+
+  /** What a dashboard filter keeps, read off the raw source and off a rollup. */
+  async function filteredTotals(filters: FilterMap): Promise<{ live: number; rollup: number }> {
+    const qb = new QueryBuilder();
+    const where = buildFilterClauses(filters, dimensions, undefined, qb).join(' AND ');
+    const { params } = qb.build();
+    const total = async (from: string): Promise<number> => {
+      const [r] = await runPrepared(conn, `SELECT COALESCE(SUM(cost), 0)::DOUBLE AS total FROM ${from} WHERE ${where}`, params);
+      return Number(r?.['total']);
+    };
+    return { live: await total(source()), rollup: await total(await rollupPartition([])) };
   }
 
   /** What the Cost Scope preview reports as kept. */
@@ -165,5 +185,38 @@ describe('exclusion rules and missing values (DuckDB execution)', () => {
     const kept = TOTAL - ROW_COST.sandbox - ROW_COST.noAccount;
     expect(await liveTotal(rules)).toBe(kept);
     expect(await rollupTotal(rules)).toBe(kept);
+  });
+
+  // A widget shows the line items with no value as one group named '', so a
+  // click on it filters on ''. The filter keeps that whole group.
+  const filterCases: { readonly name: string; readonly filters: FilterMap; readonly kept: number }[] = [
+    { name: "'' keeps the untagged rows and the empty-tagged ones", filters: { [TEAM_ID]: [asTagValue('')] }, kept: ROW_COST.untagged + ROW_COST.emptyTag },
+    {
+      name: "a value and '' keep both",
+      filters: { [TEAM_ID]: [asTagValue('sandbox'), asTagValue('')] },
+      kept: ROW_COST.sandbox + ROW_COST.untagged + ROW_COST.emptyTag,
+    },
+    { name: 'a value alone keeps only its rows', filters: { [TEAM_ID]: [asTagValue('sandbox')] }, kept: ROW_COST.sandbox },
+    { name: "'' on a built-in field keeps its empty rows", filters: { [asDimensionId('region')]: [asTagValue('')] }, kept: ROW_COST.noRegion },
+    { name: "'' on the account keeps the charges with no account", filters: { [asDimensionId('account')]: [asTagValue('')] }, kept: ROW_COST.noAccount },
+  ];
+
+  for (const c of filterCases) {
+    it(`filter: ${c.name} — live query and rollup agree`, async () => {
+      expect(await filteredTotals(c.filters)).toEqual({ live: c.kept, rollup: c.kept });
+    });
+  }
+
+  it("details the group with no value as the filter on '' keeps it", async () => {
+    const detailTotal = async (entity: string): Promise<number> => {
+      const { sql, params } = buildEntityDetailQuery(
+        { entity: asEntityRef(entity), dimension: TEAM_ID, dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') }, filters: {} },
+        { dataDir, dimensions, providers: [{ name: PROVIDER, availablePeriods: ['2026-01'] }] },
+      );
+      const [r] = await runPrepared(conn, `SELECT COALESCE(SUM(cost), 0)::DOUBLE AS total FROM (${sql})`, params);
+      return Number(r?.['total']);
+    };
+    expect(await detailTotal('')).toBe(ROW_COST.untagged + ROW_COST.emptyTag);
+    expect(await detailTotal('sandbox')).toBe(ROW_COST.sandbox);
   });
 });

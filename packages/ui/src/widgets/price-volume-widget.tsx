@@ -9,6 +9,7 @@ import type { WidgetCommonProps } from './widget.js';
 import { dimensionLabelFor, topNFor } from './widget.js';
 import { usePairedGroups } from '../hooks/use-aggregated-groups.js';
 import type { AggGroupPair } from '../hooks/use-aggregated-groups.js';
+import { filtersEmptyGroup } from '../lib/agg-column.js';
 import { decomposePriceVolume } from '../lib/price-volume.js';
 import type { PriceVolumeDecomp } from '../lib/price-volume.js';
 
@@ -103,7 +104,7 @@ export function PriceVolumeWidget({ spec, dateRange, previousDateRange, granular
       rows={shown}
       title={title}
       subtitle={subtitle}
-      onRowClick={(row) => { onSetFilter(effectiveGroupBy, asTagValue(row.name)); }}
+      onRowClick={(row) => { if (row.name !== '' || filtersEmptyGroup(effectiveGroupBy)) onSetFilter(effectiveGroupBy, asTagValue(row.name)); }}
     />
   );
 }
