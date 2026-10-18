@@ -410,7 +410,7 @@ describe('App shell — settings', () => {
     await user.click(screen.getByRole('button', { name: 'Manual only' }));
 
     await waitFor(() => { expect(screen.getByRole('button', { name: 'Automatic' }).getAttribute('aria-pressed')).toBe('true'); });
-    expect(reread.mock.calls.length).toBe(readsBefore + 1);
+    expect(reread).toHaveBeenCalledTimes(readsBefore + 1);
   });
 
   it('opens the release notes from the General tab', async () => {

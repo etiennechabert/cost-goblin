@@ -458,7 +458,7 @@ describe('createAppContext: rollup lifecycle', () => {
     h.app.warmupBase();
     expect(await h.app.awaitWarmup(10_000)).toBe(true);
     expect(h.app.rollupStore.getStatus()).toEqual({ state: 'ready', periods: 2 });
-    expect(h.db.statements.length).toBe(builds);
+    expect(h.db.statements).toHaveLength(builds);
   });
 
   it('settles and logs when the sync state cannot be read', async () => {
