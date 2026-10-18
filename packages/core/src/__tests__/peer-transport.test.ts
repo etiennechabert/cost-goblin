@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, onTestFinished, vi } from 'vitest';
 import { Server as HttpsServer } from 'node:https';
 import { connect as netConnect, createServer as createNetServer, type Socket } from 'node:net';
 import { connect as tlsConnect } from 'node:tls';
@@ -427,6 +427,7 @@ describe('sharing listener lifetime and bounds', () => {
     // with EMFILE. The started server is reached through a call-through spy.
     const listen = vi.spyOn(HttpsServer.prototype, 'listen');
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    onTestFinished(() => { listen.mockRestore(); warn.mockRestore(); });
     const server = await startTestServer({});
     try {
       const [listening] = listen.mock.contexts.filter((s): s is HttpsServer => s instanceof HttpsServer && s.listening);
@@ -435,8 +436,6 @@ describe('sharing listener lifetime and bounds', () => {
       expect(warn).toHaveBeenCalledWith('Data sharing listener error', { message: 'accept EMFILE' });
       await expect(fetchManifest({ host: '127.0.0.1', port: server.port, psk: PSK })).resolves.toContain('Test Publisher');
     } finally {
-      listen.mockRestore();
-      warn.mockRestore();
       await server.close();
     }
   });
