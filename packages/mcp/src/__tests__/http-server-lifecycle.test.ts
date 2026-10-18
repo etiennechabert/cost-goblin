@@ -21,11 +21,14 @@ const control = vi.hoisted(() => {
     handleFailure: unknown;
     /** Rejected by transport.close(), after the transport has closed. */
     closeFailure: { reason: unknown } | undefined;
+    /** Every transport.close() call's promise, so a test can wait for one
+     *  the server does not await to settle. */
+    closes: Promise<void>[];
     /** Error code the ::1 listen fails with. */
     ipv6ListenError: string | undefined;
     /** When set, listen() binds nothing: it records the call and reports success. */
     fakeListens: { port: number; host: string }[] | undefined;
-  } = { registerFailure: undefined, handleFailure: undefined, closeFailure: undefined, ipv6ListenError: undefined, fakeListens: undefined };
+  } = { registerFailure: undefined, handleFailure: undefined, closeFailure: undefined, closes: [], ipv6ListenError: undefined, fakeListens: undefined };
   return state;
 });
 
@@ -54,10 +57,14 @@ vi.mock('@modelcontextprotocol/sdk/server/streamableHttp.js', async (importOrigi
       await super.handleRequest(req, res, parsedBody);
     }
 
-    override async close(): Promise<void> {
-      await super.close();
-      const failure = control.closeFailure;
-      if (failure !== undefined) throw failure.reason;
+    override close(): Promise<void> {
+      const closing = (async () => {
+        await super.close();
+        const failure = control.closeFailure;
+        if (failure !== undefined) throw failure.reason;
+      })();
+      control.closes.push(closing);
+      return closing;
     }
   }
   return { ...actual, StreamableHTTPServerTransport: ControlledTransport };
@@ -207,6 +214,7 @@ afterEach(() => {
   control.registerFailure = undefined;
   control.handleFailure = undefined;
   control.closeFailure = undefined;
+  control.closes = [];
   control.ipv6ListenError = undefined;
   control.fakeListens = undefined;
   logs.length = 0;
@@ -368,6 +376,11 @@ describe('transport and connect failures', () => {
     control.closeFailure = { reason: new Error('close failed') };
     const res = await post(port, 'initialize');
     expect(res.status).toBe(500);
+    // The server does not await that close, so let it settle first: the
+    // server's own catch is attached before ours, so once allSettled resolves
+    // anything that catch logs is already in the list.
+    expect(control.closes).toHaveLength(1);
+    await Promise.allSettled(control.closes);
     // The close failure is swallowed: only the connect error is logged.
     expect(messages('warn')).toEqual(['mcp: connect error — registry broken']);
   });

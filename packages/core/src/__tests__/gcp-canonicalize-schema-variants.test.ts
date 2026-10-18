@@ -274,7 +274,7 @@ describe('canonicalizeGcpPeriod against unusual driver answers', () => {
     // `instanceof Error` here, so only its string form carries the text.
     const foreign: unknown = runInNewContext('new Error("IO Error: No files found that match the pattern")');
     if (!isErrorShaped(foreign)) throw new Error('the vm context did not produce an error object');
-    expect(foreign instanceof Error).toBe(false);
+    expect(foreign).not.toBeInstanceOf(Error);
 
     const local = new ScriptedConnection({ source: () => Promise.reject(new Error('IO Error: Invalid Parquet file')) });
     const remote = new ScriptedConnection({ source: () => Promise.reject(foreign) });
