@@ -115,9 +115,11 @@ describe('SummaryWidget', () => {
       const api = new SummaryApi();
       renderSummary(summary(), api, true);
 
-      expect(await screen.findByText('vs Previous Period')).not.toBeNull();
+      // The card shows "vs Previous Period —" as soon as the current period
+      // lands; the percent follows with the previous period's own query.
+      expect(await screen.findByText('▲25.0%')).not.toBeNull();
+      expect(screen.getByText('vs Previous Period')).not.toBeNull();
       expect(screen.getByText('Total Cost')).not.toBeNull();
-      expect(screen.getByText('▲25.0%')).not.toBeNull();
     });
   });
 
