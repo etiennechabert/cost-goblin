@@ -128,6 +128,8 @@ type QueryState<T> =
 
 ## Testing Approach
 
+In Vitest, a `vi.fn(impl)` from a `vi.mock` factory is reset with `mockReset()` in `afterEach`: since Vitest 3, `vi.restoreAllMocks()` only restores `vi.spyOn` spies, so an override or an unused `…Once` leaks into the next test.
+
 ### Layer 1: Core Logic (Vitest)
 Pure functions: config loader, tag normalizer, alias resolver, org tree traversal, cost math.
 No I/O, no DuckDB. Tests run in milliseconds.
