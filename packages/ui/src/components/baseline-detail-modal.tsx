@@ -144,15 +144,20 @@ function HistoryChart({ history, ma, lower, upper, maxCost }: Readonly<{
   );
 }
 
-function StatCard({ label, perDay, accent }: Readonly<{ label: string; perDay: number; accent?: 'amber' | 'green' | undefined }>) {
+/** A run-rate in $/day over its 30-day $/mo. With `upperPerDay` it shows the
+ *  range from `perDay` up to it — a band's two edges. */
+function StatCard({ label, perDay, upperPerDay, accent }: Readonly<{ label: string; perDay: number; upperPerDay?: number | undefined; accent?: 'amber' | 'green' | undefined }>) {
   let color = 'text-text-primary';
   if (accent === 'amber' && perDay > 0) color = 'text-warning';
   else if (accent === 'green' && perDay > 0) color = 'text-positive';
+  const amount = (days: number): string => upperPerDay === undefined
+    ? formatDollars(perDay * days)
+    : `${formatDollars(perDay * days)} – ${formatDollars(upperPerDay * days)}`;
   return (
     <div className="rounded-lg border border-border bg-bg-tertiary/30 px-3 py-2">
       <p className="text-[10px] uppercase tracking-wider text-text-muted">{label}</p>
-      <p className={`text-sm font-medium tabular-nums ${color}`}>{formatDollars(perDay)}<span className="text-text-muted text-xs">/day</span></p>
-      <p className="text-xs text-text-muted tabular-nums">{formatDollars(perDay * 30)}/mo</p>
+      <p className={`text-sm font-medium tabular-nums ${color}`}>{amount(1)}<span className="text-text-muted text-xs">/day</span></p>
+      <p className="text-xs text-text-muted tabular-nums">{amount(30)}/mo</p>
     </div>
   );
 }
@@ -241,6 +246,15 @@ export function BaselineDetailModal({ id, onClose, onChanged, onNext, onPrev, po
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="max-w-4xl">
         {detailQuery.status === 'loading' && <CoinRainLoader height={300} count={6} />}
+        {detailQuery.status === 'error' && (
+          <div className="flex flex-col items-start gap-3">
+            <p className="w-full rounded-lg border border-negative bg-negative-muted px-4 py-3 text-sm text-negative break-words">
+              Couldn't load this baseline: {detailQuery.error.message}
+            </p>
+            <button type="button" onClick={() => { setRefresh((n) => n + 1); }}
+              className="rounded-md border border-border px-3 py-1 text-xs text-text-secondary hover:text-text-primary">Retry</button>
+          </div>
+        )}
         {detail === null && detailQuery.status === 'success' && (
           <p className="text-sm text-text-muted">Baseline not found.</p>
         )}
@@ -268,13 +282,17 @@ function Body({ detail, onChanged, onNext, onPrev, position, triageMode }: Reado
   const [mode, setMode] = useState<'absolute' | 'percentile'>(record.spec.manualBand?.mode ?? 'absolute');
   const [lower, setLower] = useState<number>(record.spec.manualBand?.lower ?? (mode === 'percentile' ? 10 : autoLower));
   const [upper, setUpper] = useState<number>(record.spec.manualBand?.upper ?? (mode === 'percentile' ? 90 : autoUpper));
+  // The band as the editor opened on it, then as last saved. The band only
+  // counts as edited while it differs: switching modes and back to the same
+  // band leaves nothing to save.
+  const [savedBand, setSavedBand] = useState(() => ({ mode, lower, upper }));
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [triage, setTriage] = useState<BaselineTriageStatus>(record.triageStatus);
-  const [bandDirty, setBandDirty] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
 
+  const bandDirty = mode !== savedBand.mode || lower !== savedBand.lower || upper !== savedBand.upper;
   const dirty = bandDirty || note.length > 0;
 
   const maxCost = Math.max(...costs, autoUpper, 1);
@@ -309,7 +327,7 @@ function Body({ detail, onChanged, onNext, onPrev, position, triageMode }: Reado
     try {
       await api.updateBaseline(record.spec.id, patch);
       setNote('');
-      setBandDirty(false);
+      setSavedBand({ mode, lower, upper });
       onChanged();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
@@ -438,7 +456,7 @@ function Body({ detail, onChanged, onNext, onPrev, position, triageMode }: Reado
 
       <div className="grid grid-cols-4 gap-2">
         <StatCard label="Current" perDay={current} />
-        <StatCard label="Band low / high" perDay={effLower} />
+        <StatCard label="Band low / high" perDay={effLower} upperPerDay={effUpper} />
         <StatCard label="Potential" perDay={potential} accent="amber" />
         <StatCard label="Realized" perDay={realized} accent="green" />
       </div>
@@ -472,7 +490,15 @@ function Body({ detail, onChanged, onNext, onPrev, position, triageMode }: Reado
           <p className="text-xs font-medium text-text-secondary">Band override</p>
           <div className="flex gap-1">
             {(['absolute', 'percentile'] as const).map((m) => (
-              <button key={m} type="button" onClick={() => { setMode(m); setLower(m === 'percentile' ? 10 : Math.min(autoLower, autoUpper)); setUpper(m === 'percentile' ? 90 : Math.max(autoLower, autoUpper)); setBandDirty(true); }}
+              <button key={m} type="button" aria-pressed={mode === m}
+                onClick={() => {
+                  // Re-picking the active mode keeps the band: resetting it would
+                  // throw away the edit or saved override for the mode's defaults.
+                  if (m === mode) return;
+                  setMode(m);
+                  setLower(m === 'percentile' ? 10 : Math.min(autoLower, autoUpper));
+                  setUpper(m === 'percentile' ? 90 : Math.max(autoLower, autoUpper));
+                }}
                 className={`rounded-md px-2 py-0.5 text-[11px] ${mode === m ? 'bg-accent/15 text-accent' : 'text-text-muted hover:text-text-primary'}`}>
                 {m === 'absolute' ? 'Absolute $' : 'Percentile'}
               </button>
@@ -488,7 +514,6 @@ function Body({ detail, onChanged, onNext, onPrev, position, triageMode }: Reado
             const [lo, hi] = v;
             if (lo !== undefined) { setLower(lo); }
             if (hi !== undefined) { setUpper(hi); }
-            setBandDirty(true);
           }}
         />
         <div className="flex items-center justify-between text-xs tabular-nums text-text-muted">

@@ -26,7 +26,11 @@ function names(): string[] {
   return rows.map(r => r.querySelector('td')?.textContent ?? '');
 }
 
-function Harness({ initial, onChange }: Readonly<{ initial: SortingState; onChange: (s: SortingState) => void }>) {
+function Harness({ initial, onChange, onRowOrderChange }: Readonly<{
+  initial: SortingState;
+  onChange: (s: SortingState) => void;
+  onRowOrderChange?: (rows: readonly R[]) => void;
+}>) {
   const [sorting, setSorting] = useState<SortingState>(initial);
   return (
     <DataTable<R>
@@ -34,8 +38,13 @@ function Harness({ initial, onChange }: Readonly<{ initial: SortingState; onChan
       columns={COLS}
       sorting={sorting}
       onSortingChange={(s) => { onChange(s); setSorting(s); }}
+      onRowOrderChange={onRowOrderChange}
     />
   );
+}
+
+function namesOf(rows: readonly R[] | undefined): string[] {
+  return (rows ?? []).map(r => r.name);
 }
 
 // Pins the sort behaviour of the TanStack Table v9 feature set in
@@ -96,5 +105,36 @@ describe('DataTable sorting', () => {
   it('manual mode (no onSortingChange) keeps input order even with sorting state', () => {
     render(<DataTable<R> data={DATA} columns={COLS} sorting={[{ id: 'cost', desc: true }]} />);
     expect(names()).toEqual(['beta', 'Alpha', 'gamma']);
+  });
+});
+
+describe('DataTable row order', () => {
+  it('reports the rows in the order it shows them, and again after each re-sort', async () => {
+    const onRowOrderChange = vi.fn<(rows: readonly R[]) => void>();
+    render(<Harness initial={[{ id: 'cost', desc: true }]} onChange={vi.fn()} onRowOrderChange={onRowOrderChange} />);
+    expect(onRowOrderChange).toHaveBeenCalledTimes(1);
+    expect(namesOf(onRowOrderChange.mock.lastCall?.[0])).toEqual(['Alpha', 'beta', 'gamma']);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /^Name/ }));
+    await user.click(screen.getByRole('button', { name: /^Name/ }));
+    expect(onRowOrderChange).toHaveBeenCalledTimes(3);
+    expect(namesOf(onRowOrderChange.mock.lastCall?.[0])).toEqual(['gamma', 'beta', 'Alpha']);
+    expect(names()).toEqual(['gamma', 'beta', 'Alpha']);
+  });
+
+  it('does not report again when a re-render leaves the rows and sort alone', () => {
+    const onRowOrderChange = vi.fn<(rows: readonly R[]) => void>();
+    const view = render(<Harness initial={[]} onChange={vi.fn()} onRowOrderChange={onRowOrderChange} />);
+    // A new onChange makes a new sorting handler, as an unrelated parent render would.
+    view.rerender(<Harness initial={[]} onChange={vi.fn()} onRowOrderChange={onRowOrderChange} />);
+    expect(onRowOrderChange).toHaveBeenCalledTimes(1);
+    expect(namesOf(onRowOrderChange.mock.lastCall?.[0])).toEqual(['beta', 'Alpha', 'gamma']);
+  });
+
+  it('reports the input order when it does not own the sort', () => {
+    const onRowOrderChange = vi.fn<(rows: readonly R[]) => void>();
+    render(<DataTable<R> data={DATA} columns={COLS} sorting={[{ id: 'cost', desc: true }]} onRowOrderChange={onRowOrderChange} />);
+    expect(onRowOrderChange).toHaveBeenCalledWith(DATA);
   });
 });
