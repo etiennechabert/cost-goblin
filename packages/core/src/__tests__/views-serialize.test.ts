@@ -21,7 +21,7 @@ const region = asDimensionId('region');
 // Values differ from each field's default, so one that reloads as the
 // default can't pass by accident.
 const EVERY_FIELD: EveryField = {
-  summary: { id: 'summary', type: 'summary', size: 'small', title: 'Spend', metric: 'delta' },
+  summary: { id: 'summary', type: 'summary', size: 'small', title: 'Spend', metric: 'topEntity', groupBy: region },
   pie: { id: 'pie', type: 'pie', size: 'medium', title: 'Share', groupBy: service, showLegend: false },
   stackedBar: { id: 'stackedBar', type: 'stackedBar', size: 'large', title: 'Daily', groupBy: account },
   line: { id: 'line', type: 'line', size: 'large', title: 'Trend', groupBy: service, topN: 4 },

@@ -8,6 +8,7 @@ import type {
   EntityRef,
   FilterMap,
   Granularity,
+  SummaryMetric,
   TagValue,
   WidgetSize,
   WidgetSpec,
@@ -70,6 +71,19 @@ export function widgetFlexBasis(size: WidgetSize): string {
  *  filter changes. Tiny objects, JSON.stringify is cheap enough. */
 export function filtersKey(filters: FilterMap): string {
   return JSON.stringify(filters);
+}
+
+const SUMMARY_DEFAULT_GROUP_BY = asDimensionId('service');
+
+/** Whether a summary metric ranks or counts the values of a dimension. */
+export function summaryUsesGroupBy(metric: SummaryMetric | undefined): boolean {
+  return metric === 'topEntity' || metric === 'entityCount';
+}
+
+/** The dimension a summary's `topEntity` / `entityCount` reads: its own
+ *  `groupBy`, else `service`, which every provider's data carries. */
+export function summaryGroupBy(groupBy: DimensionId | undefined): DimensionId {
+  return groupBy ?? SUMMARY_DEFAULT_GROUP_BY;
 }
 
 /** Resolve a DimensionId to a user-facing label, falling back to the id. */

@@ -67,7 +67,7 @@ function parseWidgetBase(raw: Record<string, unknown>, ctx: string): WidgetBase 
   };
 }
 
-function validateSummaryWidget(raw: Record<string, unknown>, ctx: string, base: WidgetBase): WidgetSpec {
+function validateSummaryWidget(raw: Record<string, unknown>, ctx: string, base: WidgetBase, liveDimensionIds?: ReadonlySet<string>): WidgetSpec {
   let metric: SummaryMetric | undefined;
   if (raw['metric'] !== undefined) {
     assertString(raw['metric'], `${ctx}.metric`);
@@ -78,7 +78,18 @@ function validateSummaryWidget(raw: Record<string, unknown>, ctx: string, base: 
     }
     metric = raw['metric'];
   }
-  return { type: 'summary', ...base, ...(metric === undefined ? {} : { metric }) };
+  // Summaries ignored `groupBy` before topEntity / entityCount read it, so a
+  // file on disk may carry any value there: drop a non-string one rather than
+  // refuse the whole file. The inspector only ever writes a dimension id.
+  const rawGroupBy = raw['groupBy'];
+  const groupBy = typeof rawGroupBy === 'string'
+    ? asDimensionId(migrateLegacyDimensionId(rawGroupBy, liveDimensionIds))
+    : undefined;
+  return {
+    type: 'summary', ...base,
+    ...(metric === undefined ? {} : { metric }),
+    ...(groupBy === undefined ? {} : { groupBy }),
+  };
 }
 
 function parseBubbleLogScale(raw: Record<string, unknown>, ctx: string): number | 'linear' | undefined {
@@ -165,7 +176,7 @@ function validateWidget(raw: unknown, ctx: string, liveDimensionIds?: ReadonlySe
 
   switch (type) {
     case 'summary':
-      return validateSummaryWidget(raw, ctx, base);
+      return validateSummaryWidget(raw, ctx, base, liveDimensionIds);
     case 'pie':
     case 'stackedBar':
     case 'bubble':

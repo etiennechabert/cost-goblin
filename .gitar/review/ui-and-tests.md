@@ -17,7 +17,7 @@ Covers `packages/ui/`, `packages/desktop/src/renderer/` and the test suites, inc
 
 - Fetch through `useQuery` (`packages/ui/src/hooks/use-query.ts`). Its dependencies are explicit primitive keys: an object literal refetches every render, a missing key fetches stale values, and no lint catches either. `urgent: true` is only for small results that gate a page. A hand-rolled fetch needs latest-request-wins and must free its widget slot.
 - "Last N days" comes only from `lastNDaysRange`. A window that follows an editable lag is stored as trailing-or-fixed and re-derived. Never infer "trailing" from an end date. Calendar Dates are local midnight, so use `parseDay`/`formatDay`, never `toISOString`.
-- Money is formatted with `formatDollars`, `signedDollars` and `formatPercent` (`packages/ui/src/components/format.ts`); don't add another private formatter. Money cells keep `.tabular-nums`, which the e2e waits rely on. CSV string cells go through the formula guard.
+- Money is formatted with `formatDollars`, `signedDollars` and `formatPercent` (`packages/ui/src/components/format.ts`); don't add another private formatter. Money cells keep `.tabular-nums`. CSV string cells go through the formula guard. Show an empty (NULL) entity as `(none)`; don't count it.
 - Chart colors come from `getColor` with `usePalette`, so the colorblind palette applies.
 - Preference saves send only the fields the view owns. They never echo values read from disk or defaults back, especially after a failed load, and a clean mount writes nothing. A missing file means defaults; an explicit `[]` is the user's choice.
 - The UI imports from `@costgoblin/core/browser` only, and additions there must be leaf modules with no Node built-ins. `packages/ui` reaches the app through `useCostApi()`, never `window`.
@@ -34,9 +34,9 @@ Covers `packages/ui/`, `packages/desktop/src/renderer/` and the test suites, inc
 - One app per file, tests in order: restore what a test changes, and put destructive tests last. The clock is pinned (fixture data covers January and February 2026), and launches copy the fixtures, so never point a launch at the committed directories.
 - Wait on conditions. `isVisible()` doesn't wait, an `if (await x.isVisible())` that gates the assertion makes the test vacuous, and `waitForTimeout` only proves a bounded absence.
 - Locate by role and name. Make no network calls: stub main-process handlers instead.
-- A Playwright click doesn't prove a control in the header band is clickable, because it bypasses OS drag regions. Assert the region model as `e2e/clickability.test.ts` does.
+- A Playwright click bypasses OS drag regions, so it doesn't prove a header-band control is clickable. Assert the region model as `e2e/clickability.test.ts` does.
 - The settle helpers in `e2e/helpers.ts` key on `data-widget-id`, `data-widget-state`, the loader's `<output>` and `.tabular-nums`. Renaming any of them makes the waits pass vacuously.
-- Register a new suite in three places: the root `e2e` script, the `test-e2e` matrix and the coverage shard list in `.github/workflows/ci.yml`.
+- Register a new suite in: the root `e2e` script, the `test-e2e` matrix and the coverage shard list in `.github/workflows/ci.yml`.
 
 ## Intentional, don't flag
 

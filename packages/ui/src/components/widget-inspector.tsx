@@ -1,7 +1,8 @@
 import { useMemo } from 'react';
-import { asDimensionId, OVERVIEW_SEED_VIEW, type Dimension, type WidgetSize, type WidgetSpec, type WidgetType } from '@costgoblin/core/browser';
+import { asDimensionId, OVERVIEW_SEED_VIEW, type Dimension, type DimensionId, type SummaryMetric, type WidgetSize, type WidgetSpec, type WidgetType } from '@costgoblin/core/browser';
 import { getDimensionId, getDimensionLabel, isTagDimension } from '../lib/dimensions.js';
 import { WIDGET_CATALOG } from '../widgets/registry.js';
+import { summaryGroupBy, summaryUsesGroupBy } from '../widgets/widget.js';
 import { buildAllColumns } from './data-table.js';
 
 interface WidgetInspectorProps {
@@ -15,6 +16,13 @@ interface WidgetInspectorProps {
 
 const SEED_TABLE = OVERVIEW_SEED_VIEW.rows.flatMap(r => r.widgets).find(w => w.type === 'table');
 const SEED_TABLE_ENABLED = SEED_TABLE?.type === 'table' ? (SEED_TABLE.enabledColumns ?? []) : ['cost', 'resource_id', 'description'];
+
+const SUMMARY_METRICS: readonly { value: SummaryMetric; label: string }[] = [
+  { value: 'total', label: 'Total' },
+  { value: 'delta', label: 'Change vs previous period' },
+  { value: 'topEntity', label: 'Top entity' },
+  { value: 'entityCount', label: 'Entity count' },
+];
 
 const SIZES: readonly { value: WidgetSize; label: string }[] = [
   { value: 'small', label: 'S' },
@@ -39,7 +47,11 @@ function stripTitle(w: WidgetSpec): WidgetSpec {
   };
   switch (w.type) {
     case 'summary':
-      return { ...common, type: w.type, ...(w.metric === undefined ? {} : { metric: w.metric }) };
+      return {
+        ...common, type: w.type,
+        ...(w.metric === undefined ? {} : { metric: w.metric }),
+        ...(w.groupBy === undefined ? {} : { groupBy: w.groupBy }),
+      };
     case 'pie':
       return { ...common, type: w.type, groupBy: w.groupBy, ...(w.showLegend === false ? { showLegend: false } : {}) };
     case 'stackedBar':
@@ -71,7 +83,8 @@ function stripTitle(w: WidgetSpec): WidgetSpec {
 
 function defaultSpecForType(type: WidgetType, prev: WidgetSpec, fallbackDim: string): WidgetSpec {
   const base = { id: prev.id, size: prev.size, ...(prev.title === undefined ? {} : { title: prev.title }) };
-  const existingGroupBy = 'groupBy' in prev ? prev.groupBy : asDimensionId(fallbackDim);
+  // A summary's groupBy is optional, so it can be present but unset.
+  const existingGroupBy = ('groupBy' in prev ? prev.groupBy : undefined) ?? asDimensionId(fallbackDim);
   switch (type) {
     case 'summary':
       return { ...base, type };
@@ -138,6 +151,16 @@ export function WidgetInspector({
     onChange({ ...widget, groupBy: asDimensionId(value) });
   }
 
+  function setSummaryMetric(value: string) {
+    if (widget.type !== 'summary') return;
+    const metric = SUMMARY_METRICS.find(m => m.value === value)?.value;
+    if (metric === undefined) return;
+    // Only topEntity / entityCount read a groupBy; drop it for the others so
+    // views.yaml doesn't carry a setting nothing uses.
+    const { groupBy, ...rest } = widget;
+    onChange(summaryUsesGroupBy(metric) && groupBy !== undefined ? { ...rest, metric, groupBy } : { ...rest, metric });
+  }
+
   function setTopN(value: number) {
     if (widget.type === 'line' || widget.type === 'topNBar' || widget.type === 'heatmap' || widget.type === 'baseline' || widget.type === 'waterfall' || widget.type === 'priceVolume') {
       onChange({ ...widget, topN: value });
@@ -191,21 +214,31 @@ export function WidgetInspector({
         </div>
       </div>
 
-      {catalog?.needsGroupBy === true && 'groupBy' in widget && (
+      {widget.type === 'summary' && (
         <label className="flex items-center gap-2">
-          <span className="text-text-muted shrink-0 w-14">Group by</span>
+          <span className="text-text-muted shrink-0 w-14">Metric</span>
           <select
-            value={widget.groupBy}
-            onChange={(e) => { setGroupBy(e.target.value); }}
+            value={widget.metric ?? 'total'}
+            onChange={(e) => { setSummaryMetric(e.target.value); }}
             className="flex-1 bg-transparent border border-border rounded px-2 py-1 text-text-primary"
           >
-            {dimensions.map(d => (
-              <option key={getDimensionId(d)} value={getDimensionId(d)}>
-                {getDimensionLabel(d)}
-              </option>
+            {SUMMARY_METRICS.map(m => (
+              <option key={m.value} value={m.value}>{m.label}</option>
             ))}
           </select>
         </label>
+      )}
+
+      {widget.type === 'summary' && summaryUsesGroupBy(widget.metric) && (
+        <GroupBySelect
+          value={summaryGroupBy(widget.groupBy)}
+          dimensions={dimensions}
+          onChange={(value) => { onChange({ ...widget, groupBy: asDimensionId(value) }); }}
+        />
+      )}
+
+      {catalog?.needsGroupBy === true && 'groupBy' in widget && widget.groupBy !== undefined && (
+        <GroupBySelect value={widget.groupBy} dimensions={dimensions} onChange={setGroupBy} />
       )}
 
       <label className="flex items-center gap-2">
@@ -358,6 +391,39 @@ export function WidgetInspector({
         />
       )}
     </div>
+  );
+}
+
+function GroupBySelect({
+  value,
+  dimensions,
+  onChange,
+}: Readonly<{
+  value: DimensionId;
+  dimensions: readonly Dimension[];
+  onChange: (value: string) => void;
+}>) {
+  // A value outside the list (a disabled dimension, or a summary's implicit
+  // `service`) still gets an option: without one the select would show the
+  // first dimension while the spec reads another, and picking it would fire
+  // no change.
+  const listed = dimensions.some(d => getDimensionId(d) === value);
+  return (
+    <label className="flex items-center gap-2">
+      <span className="text-text-muted shrink-0 w-14">Group by</span>
+      <select
+        value={value}
+        onChange={(e) => { onChange(e.target.value); }}
+        className="flex-1 bg-transparent border border-border rounded px-2 py-1 text-text-primary"
+      >
+        {!listed && <option value={value}>{value}</option>}
+        {dimensions.map(d => (
+          <option key={getDimensionId(d)} value={getDimensionId(d)}>
+            {getDimensionLabel(d)}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 

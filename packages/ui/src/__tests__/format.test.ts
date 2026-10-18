@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatBytes, formatRelativeTime } from '../components/format.js';
+import { formatBytes, formatDateRange, formatRelativeTime } from '../components/format.js';
 
 describe('formatBytes', () => {
   it('formats within each unit with sensible precision', () => {
@@ -44,5 +44,11 @@ describe('formatRelativeTime', () => {
 
   it('returns an empty string for an unparseable value', () => {
     expect(formatRelativeTime('not-a-date', now)).toBe('');
+  });
+});
+
+describe('formatDateRange', () => {
+  it('joins the first and last day with an en dash', () => {
+    expect(formatDateRange({ start: '2026-01-29', end: '2026-02-28' })).toBe('Jan 29, 2026 – Feb 28, 2026');
   });
 });

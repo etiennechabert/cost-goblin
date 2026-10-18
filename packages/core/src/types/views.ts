@@ -13,7 +13,11 @@ interface WidgetBase {
 export type WidgetSpec =
   | (WidgetBase & {
       readonly type: 'summary';
+      /** Defaults to `'total'`. */
       readonly metric?: SummaryMetric | undefined;
+      /** The dimension `topEntity` and `entityCount` rank and count.
+       *  Defaults to `service`; `total` and `delta` ignore it. */
+      readonly groupBy?: DimensionId | undefined;
     })
   | (WidgetBase & {
       readonly type: 'pie';

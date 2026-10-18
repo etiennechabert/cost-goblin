@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { validateViews } from '../config/views-validator.js';
+import { widgetToYaml } from '../config/views-serialize.js';
 import { ConfigValidationError } from '../config/validator.js';
 
 describe('validateViews', () => {
@@ -82,6 +83,44 @@ describe('validateViews', () => {
     const widgets = cfg.views[0]?.rows[0]?.widgets ?? [];
     expect(widgets[0]).toMatchObject({ groupBy: 'tag_team' });
     expect(widgets[1]).toMatchObject({ enabledColumns: ['cost', 'tag_environment'] });
+  });
+
+  describe('summary widget', () => {
+    function summaryWidget(raw: Record<string, unknown>) {
+      const cfg = validateViews({
+        views: [{ id: 'v', name: 'V', rows: [{ widgets: [{ id: 's', type: 'summary', size: 'small', ...raw }] }] }],
+      });
+      return cfg.views[0]?.rows[0]?.widgets[0];
+    }
+
+    it('keeps an optional groupBy, migrating CUR-era ids', () => {
+      expect(summaryWidget({ metric: 'topEntity', groupBy: 'account' })).toEqual({
+        id: 's', type: 'summary', size: 'small', metric: 'topEntity', groupBy: 'account',
+      });
+      expect(summaryWidget({ metric: 'entityCount', groupBy: 'service_family' })).toMatchObject({ groupBy: 'service_category' });
+    });
+
+    it('loads a summary without metric or groupBy unchanged', () => {
+      const w = summaryWidget({});
+      expect(w).toEqual({ id: 's', type: 'summary', size: 'small' });
+    });
+
+    it('drops a non-string groupBy, which summaries never read before, instead of refusing the file', () => {
+      expect(summaryWidget({ metric: 'topEntity', groupBy: 3 })).toEqual({ id: 's', type: 'summary', size: 'small', metric: 'topEntity' });
+    });
+
+    it('rejects an unknown metric', () => {
+      expect(() => summaryWidget({ metric: 'median' })).toThrow(ConfigValidationError);
+    });
+
+    it('round-trips metric and groupBy through the serializer, omitting what is absent', () => {
+      const withBoth = summaryWidget({ metric: 'entityCount', groupBy: 'region' });
+      const bare = summaryWidget({ metric: 'delta' });
+      if (withBoth === undefined || bare === undefined) throw new Error('widgets missing');
+      expect(widgetToYaml(withBoth)).toEqual({ id: 's', type: 'summary', size: 'small', metric: 'entityCount', groupBy: 'region' });
+      expect(widgetToYaml(bare)).toEqual({ id: 's', type: 'summary', size: 'small', metric: 'delta' });
+      expect(summaryWidget(widgetToYaml(withBoth))).toEqual(withBoth);
+    });
   });
 
   it('rejects an unknown widget type', () => {

@@ -42,7 +42,7 @@ export interface WidgetCatalogEntry {
 }
 
 export const WIDGET_CATALOG: readonly WidgetCatalogEntry[] = [
-  { type: 'summary',    label: 'Summary',          description: 'Total cost vs previous period.', needsGroupBy: false },
+  { type: 'summary',    label: 'Summary',          description: 'Total, change vs previous period, top entity or entity count.', needsGroupBy: false },
   { type: 'pie',        label: 'Pie',              description: 'Donut breakdown by dimension.', needsGroupBy: true },
   { type: 'stackedBar', label: 'Stacked bar',      description: 'Daily / weekly cost over time, stacked.', needsGroupBy: true },
   { type: 'line',       label: 'Line',             description: 'Multi-series cost trend.', needsGroupBy: true },
