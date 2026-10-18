@@ -1,11 +1,24 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { daysBetween, daysAgo, getThisMonth, getLastMonth, getCurrentQuarter, getLastQuarter, getYTD } from '../lib/dates.js';
+import { daysBetween, daysAgo, daysInRange, getThisMonth, getLastMonth, getCurrentQuarter, getLastQuarter, getYTD } from '../lib/dates.js';
 
 describe('daysBetween', () => {
   it('calculates inclusive days between dates', () => {
     expect(daysBetween('2024-01-01', '2024-01-01')).toBe(1);
     expect(daysBetween('2024-01-01', '2024-01-31')).toBe(31);
     expect(daysBetween('2024-01-01', '2024-12-31')).toBe(366); // 2024 is leap year
+  });
+});
+
+describe('daysInRange', () => {
+  it('lists every day of the range, both ends included, across month ends', () => {
+    expect(daysInRange('2024-02-27', '2024-03-02')).toEqual(['2024-02-27', '2024-02-28', '2024-02-29', '2024-03-01', '2024-03-02']);
+    expect(daysInRange('2024-01-01', '2024-01-01')).toEqual(['2024-01-01']);
+  });
+
+  it('lists nothing for a reversed or unparseable range', () => {
+    expect(daysInRange('2024-01-02', '2024-01-01')).toEqual([]);
+    expect(daysInRange('', '2024-01-01')).toEqual([]);
+    expect(daysInRange('2024-01-01', 'soon')).toEqual([]);
   });
 });
 

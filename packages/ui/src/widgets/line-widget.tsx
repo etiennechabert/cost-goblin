@@ -10,8 +10,10 @@ import type { DailyCostDay, DailyCostsResult, DimensionId } from '@costgoblin/co
 import type { WidgetCommonProps } from './widget.js';
 import { dimensionLabelFor, filtersKey, hasSufficientDailyCoverage, previousDayLookup } from './widget.js';
 import { GroupByTitle } from '../components/group-by-title.js';
+import { daysInRange } from '../lib/dates.js';
 
-function buildSeries(data: DailyCostsResult | null, topN: number): LineSeries[] {
+/** One point per date in `dates`, zero on a date with no row. */
+function buildSeries(data: DailyCostsResult | null, dates: readonly string[], topN: number): LineSeries[] {
   if (data === null) return [];
   const totals = new Map<string, number>();
   for (const day of data.days) {
@@ -24,12 +26,10 @@ function buildSeries(data: DailyCostsResult | null, topN: number): LineSeries[] 
     .slice(0, topN)
     .map(([k]) => k);
 
+  const byDate = new Map<string, DailyCostDay>(data.days.map(d => [d.date, d]));
   return top.map(name => ({
     name,
-    points: data.days.map(d => ({
-      date: d.date,
-      cost: d.breakdown[name] ?? 0,
-    })),
+    points: dates.map(date => ({ date, cost: byDate.get(date)?.breakdown[name] ?? 0 })),
   }));
 }
 
@@ -41,8 +41,7 @@ function buildPreviousSeries(
   currentDates: readonly string[],
 ): LineSeries[] {
   if (previousOf === null || currentSeries.length === 0) return [];
-  const names = new Set(currentSeries.map(s => s.name));
-  return [...names].map(name => ({
+  return currentSeries.map(({ name }) => ({
     name,
     points: currentDates.map(date => ({ date, cost: previousOf(date)?.breakdown[name] ?? 0 })),
   }));
@@ -81,14 +80,22 @@ export function LineWidget({
     [compareEnabled, effectiveGroupBy, previousDateRange.start, previousDateRange.end, previousDateRange.startHour, previousDateRange.endHour, fk, granularity, api, origin],
   );
 
-  const series = useMemo(
-    () => buildSeries(dailyResult, topN),
-    [dailyResult, topN],
+  // Daily: every day of the range, as the stacked bar's bars, so a day with
+  // no rows plots as zero and the previous period's spend on it still shows.
+  const fillDays = granularity === 'daily' && dateRange.startHour === undefined;
+  const currentDates = useMemo(
+    () => {
+      if (dailyResult === null) return [];
+      const returned = dailyResult.days.map(d => d.date);
+      if (!fillDays) return returned;
+      return [...new Set([...returned, ...daysInRange(dateRange.start, dateRange.end)])].sort((a, b) => a.localeCompare(b));
+    },
+    [dailyResult, fillDays, dateRange.start, dateRange.end],
   );
 
-  const currentDates = useMemo(
-    () => (dailyResult === null ? [] : dailyResult.days.map(d => d.date)),
-    [dailyResult],
+  const series = useMemo(
+    () => buildSeries(dailyResult, currentDates, topN),
+    [dailyResult, currentDates, topN],
   );
 
   const prevHasCoverage = prevQuery.status === 'success' && prevQuery.data !== null && hasSufficientDailyCoverage(prevQuery.data, previousDateRange);

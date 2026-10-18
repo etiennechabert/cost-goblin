@@ -9,22 +9,16 @@ import type { DailyCostsResult, DateRange, DateString, DimensionId, Granularity 
 import type { WidgetCommonProps } from './widget.js';
 import { dimensionLabelFor, filtersKey, hasSufficientDailyCoverage, previousDayLookup } from './widget.js';
 import { GroupByTitle } from '../components/group-by-title.js';
+import { daysInRange } from '../lib/dates.js';
 import { computeBucketedHourRange, computeBucketedRange } from '../lib/drag-select.js';
 
 const MAX_BARS = 170;
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 function fillDateRange(bars: BarDay[], start: string, end: string): BarDay[] {
   const existing = new Set(bars.map(b => b.date));
   const result = [...bars];
-  const current = new Date(start + 'T00:00:00Z');
-  const last = new Date(end + 'T00:00:00Z');
-  while (current <= last) {
-    const dateStr = current.toISOString().slice(0, 10);
-    if (!existing.has(dateStr)) {
-      result.push({ date: dateStr, total: 0, breakdown: {} });
-    }
-    current.setTime(current.getTime() + DAY_MS);
+  for (const date of daysInRange(start, end)) {
+    if (!existing.has(date)) result.push({ date, total: 0, breakdown: {} });
   }
   return result.sort((a, b) => a.date.localeCompare(b.date));
 }

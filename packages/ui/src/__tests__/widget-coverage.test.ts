@@ -95,6 +95,12 @@ describe('previousDayLookup', () => {
     expect(lookup('2026-03-31')?.total).toBe(2);
   });
 
+  it('finds nothing for a date that doesn\'t parse, rather than throwing', () => {
+    const lookup = previousDayLookup(daysOn([['2026-02-25', 12]]), previous, current);
+    expect(lookup('')).toBeUndefined();
+    expect(lookup('not a date')).toBeUndefined();
+  });
+
   it('matches hourly rows hour for hour', () => {
     const lookup = previousDayLookup(daysOn([['2026-02-25 05:00', 3]]), previous, current);
     expect(lookup('2026-03-07 05:00')?.total).toBe(3);

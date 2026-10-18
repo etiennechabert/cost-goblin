@@ -140,5 +140,8 @@ export function previousDayLookup(
 ): (date: string) => DailyCostDay | undefined {
   const byDate = new Map<string, DailyCostDay>(previous.days.map(d => [d.date, d]));
   const shift = dateKeyMs(currentRange.startHour ?? currentRange.start) - dateKeyMs(previousRange.startHour ?? previousRange.start);
-  return date => byDate.get(dateKeyAt(dateKeyMs(date) - shift, date.length > 10));
+  return date => {
+    const ms = dateKeyMs(date) - shift;
+    return Number.isNaN(ms) ? undefined : byDate.get(dateKeyAt(ms, date.length > 10));
+  };
 }

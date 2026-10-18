@@ -146,6 +146,12 @@ function pathsByColor(paths: readonly Element[]): Map<string | null, string | nu
   return new Map(paths.map(p => [p.getAttribute('stroke'), p.getAttribute('d')]));
 }
 
+/** The y of each point a line path runs through: where it starts, and where
+ *  each curve segment ends. */
+function pointYs(d: string | null | undefined): number[] {
+  return (d ?? '').split(/[MCL]/).filter(seg => seg !== '').map(seg => Number(seg.split(',').at(-1)));
+}
+
 /** Hourly rows for every hour of the given days. */
 function hourly(days: readonly string[], breakdown: Breakdown): (readonly [string, Breakdown])[] {
   return days.flatMap(day => Array.from({ length: 24 }, (_, h): readonly [string, Breakdown] =>
@@ -198,20 +204,37 @@ describe('LineWidget — previous period coverage', () => {
 
 describe('LineWidget — previous period alignment', () => {
   it('lines each previous day up with the current day at the same offset', async () => {
-    // The current period's spend, at the same offsets (days 1, 4 and 8),
-    // plus a day 6 the current period has no row for.
+    // The current period's spend, at the same offsets: days 1, 4 and 8.
     const previous = daily([
       ['2026-02-25', { prod: 10 }],
       ['2026-02-28', { prod: 20, staging: 5 }],
-      ['2026-03-02', { prod: 99 }],
       ['2026-03-04', { prod: 30 }],
     ], 10);
     const api = new DailyApi(CURRENT, previous);
     const { container } = renderLine(api);
 
     await waitFor(() => { expect(ghostLines(container)).toHaveLength(2); });
-    // Each ghost line traces its series exactly: day 6 has no current day.
     expect(pathsByColor(ghostLines(container))).toEqual(pathsByColor(lines(container)));
+  });
+
+  it('plots every day of the range, so previous spend on a day with no current rows shows', async () => {
+    // Day 6 only: the current period has no row on Mar 12.
+    const previous = daily([['2026-03-02', { prod: 40, staging: 1 }]], 10);
+    const api = new DailyApi(CURRENT, previous);
+    const { container } = renderLine(api);
+
+    await waitFor(() => { expect(ghostLines(container)).toHaveLength(2); });
+    const [prodLine] = lines(container);
+    const prodGhost = ghostLines(container).find(g => g.getAttribute('stroke') === prodLine?.getAttribute('stroke'));
+    const current = pointYs(prodLine?.getAttribute('d'));
+    const ghost = pointYs(prodGhost?.getAttribute('d'));
+    // Ten points each; zero sits lowest, and Mar 12 is zero now but not before.
+    expect(current).toHaveLength(10);
+    expect(ghost).toHaveLength(10);
+    const zero = Math.max(...current);
+    expect(current[6]).toBe(zero);
+    expect(ghost[6]).toBeLessThan(zero);
+    expect([...ghost.slice(0, 6), ...ghost.slice(7)]).toEqual(Array.from({ length: 9 }, () => zero));
   });
 });
 
