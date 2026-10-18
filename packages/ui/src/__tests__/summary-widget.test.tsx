@@ -221,7 +221,7 @@ describe('SummaryWidget', () => {
       const api = new SummaryApi({ current: [['', 700], ['platform', 200]] });
       renderSummary(summary({ metric: 'topEntity', groupBy: asDimensionId('tag_team') }), api);
 
-      expect(await screen.findByText('(no value)')).not.toBeNull();
+      expect(await screen.findByText('(none)')).not.toBeNull();
       expect(screen.getByText('$700.00')).not.toBeNull();
     });
 

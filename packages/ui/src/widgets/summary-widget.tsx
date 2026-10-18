@@ -13,8 +13,8 @@ import { dimensionLabelFor, filtersKey, hasSufficientCoverage, summaryGroupBy, s
 const PLACEHOLDER = '—';
 
 /** How an entity with no value for the dimension (an untagged row's NULL,
- *  which arrives as '') is named. */
-const NO_VALUE = '(no value)';
+ *  which arrives as '') is named, as on the Tags view. */
+const NO_VALUE = '(none)';
 
 /** Under half a cent, a period's total is float residue from charges and
  *  credits netting out, not spend: no ratio is taken against it. */
