@@ -21,7 +21,7 @@ function adaptAppContext(app: AppContext, mcpDb: DuckDBClient): McpContext {
     getConfig: () => app.getConfig(),
     getDimensions: () => app.getDimensions(),
     getQueryDimensions: () => app.getQueryDimensions(),
-    getCostScope: () => app.getCostScope(),
+    getCostScope: () => app.getQueryCostScope(),
     getAccountMap: () => app.getAccountMap(),
     getAccountReverseMap: () => app.getAccountReverseMap(),
     getOrgAccountsPath: () => app.getOrgAccountsPath(),

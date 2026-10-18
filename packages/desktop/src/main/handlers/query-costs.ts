@@ -43,14 +43,14 @@ function toDailyCostDay([date, breakdown]: readonly [string, Record<string, numb
 }
 
 export function registerCostHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getOrgTreeConfig, getCostScope, getQueryProviders, runPreparedQuery, rollupStore } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getOrgTreeConfig, getQueryCostScope, getQueryProviders, runPreparedQuery, rollupStore } = app;
 
   ipcMain.handle('query:costs', (_event, params: CostQueryParams): Promise<CostResult> => originStore.run(params.origin ?? null, async () => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
     const accountReverseMap = await getAccountReverseMap();
     const orgPath = await getOrgAccountsPath();
-    const costScope = await getCostScope().catch(() => undefined);
+    const costScope = await getQueryCostScope();
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
     const providers = await getQueryProviders(tier);
     const empty = providersEmptyForRange(providers, params.dateRange);
@@ -90,7 +90,7 @@ export function registerCostHandlers(app: AppContext): void {
     const dimensions = await getDimensions();
     const accountReverseMap = await getAccountReverseMap();
     const orgPath = await getOrgAccountsPath();
-    const costScope = await getCostScope().catch(() => undefined);
+    const costScope = await getQueryCostScope();
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
     const providers = await getQueryProviders(tier);
     const empty = providersEmptyForRange(providers, params.dateRange);
@@ -147,7 +147,7 @@ export function registerCostHandlers(app: AppContext): void {
     const accountMap = await getAccountMap();
     const accountReverseMap = await getAccountReverseMap();
     const orgPath = await getOrgAccountsPath();
-    const costScope = await getCostScope().catch(() => undefined);
+    const costScope = await getQueryCostScope();
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
     const providers = await getQueryProviders(tier);
     const empty = providersEmptyForRange(providers, params.dateRange);

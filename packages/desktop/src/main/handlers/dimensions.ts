@@ -53,7 +53,7 @@ function filterUncoveredSuggestions(
 }
 
 export function registerDimensionsHandlers(app: AppContext): void {
-  const { ctx, getConfig, getDimensions, getQueryDimensions, getCostScope, getFirstProviderName, getQueryProviders, getOrgAccountsPath, getAccountReverseMap, getRegionMap, signatureForDimensions, invalidateDimensions, rollupStore, runQuery } = app;
+  const { ctx, getConfig, getDimensions, getQueryDimensions, getQueryCostScope, getFirstProviderName, getQueryProviders, getOrgAccountsPath, getAccountReverseMap, getRegionMap, signatureForDimensions, invalidateDimensions, rollupStore, runQuery } = app;
 
   ipcMain.handle('dimensions:discover-tags', async (): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }> => {
     const config = await getConfig();
@@ -167,7 +167,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
     // re-attribution (Bedrock etc.), instead of raw x_ServiceCode. `field`
     // is already a buildSource output alias (validated against ALLOWED above).
     const period = latest.replace(/^daily-/, '');
-    const costScope = await getCostScope().catch(() => undefined);
+    const costScope = await getQueryCostScope();
     const orgAccountsPath = await getOrgAccountsPath();
     // Probe ONLY the provider whose latest month was just listed — handing
     // the same period to every provider's branch would emit zero-match globs
@@ -178,7 +178,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
       orgAccountsPath,
       providers: [{ name: firstProvider.name, periods: [period] }],
       costMetric: 'billed',
-      marketplaceAttribution: costScope?.marketplaceAttribution,
+      marketplaceAttribution: costScope.marketplaceAttribution,
     });
 
     const distinctSql = `SELECT COUNT(DISTINCT ${field}) AS n FROM ${source} WHERE ${field} IS NOT NULL AND ${field} != ''`;
@@ -257,7 +257,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
     const grainColumns = rollupGrainColumns(dims);
     const grainDims = rollupGrainDimensions(dims);
 
-    const costScope = await getCostScope().catch(() => undefined);
+    const costScope = await getQueryCostScope();
     const orgAccountsPath = await getOrgAccountsPath();
     const accountReverseMap = await getAccountReverseMap();
     // Probe the first provider only — its latest month was listed above, and

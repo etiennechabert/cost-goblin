@@ -88,7 +88,7 @@ function mergeAccountRows(
 }
 
 export function registerFilterHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getCostScope, getQueryProviders, runPreparedQuery, rollupStore } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getQueryCostScope, getQueryProviders, runPreparedQuery, rollupStore } = app;
 
   ipcMain.handle('query:filter-values', (_event, dimensionId: string, filterEntries: Record<string, readonly string[]>, dateRange?: { start: string; end: string }, opts?: { bypassCostScope?: boolean }, origin?: string): Promise<{ value: string; label: string; count: number }[]> => originStore.run(origin ?? null, async () => {
     const dimensions = await getDimensions();
@@ -96,7 +96,7 @@ export function registerFilterHandlers(app: AppContext): void {
     const accountReverseMap = await getAccountReverseMap();
     const costScope = opts?.bypassCostScope === true
       ? undefined
-      : await getCostScope().catch(() => undefined);
+      : await getQueryCostScope();
 
     const qb = new QueryBuilder();
     // Throws SecurityError for ids that match neither a built-in nor a tag
