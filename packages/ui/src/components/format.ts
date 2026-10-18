@@ -63,6 +63,16 @@ export function formatRelativeTime(value: string | Date, now: number = Date.now(
   });
 }
 
+/** "Sep 15" for a YYYY-MM-DD day, built from the calendar date like formatDate
+ *  so no timezone can shift it. */
+export function formatShortDate(date: string): string {
+  const [year, month, day] = date.split('-').map(Number);
+  if (year === undefined || month === undefined || day === undefined) {
+    return date;
+  }
+  return new Date(year, month - 1, day).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
 export function formatDate(date: string): string {
   const [year, month, day] = date.split('-').map(Number);
   if (year === undefined || month === undefined || day === undefined) {

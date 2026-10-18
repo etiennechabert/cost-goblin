@@ -1,13 +1,32 @@
 import type { ReactNode } from 'react';
 import { useContainerWidth } from '../lib/use-container-width.js';
 import { formatDollars } from './format.js';
-import type { ParetoModel } from '../lib/concentration.js';
+import { useChartTooltip, type ChartTooltipContent } from './chart-tooltip.js';
+import type { ParetoModel, ParetoPoint } from '../lib/concentration.js';
 
 const PLOT_H = 240;
 const PAD_TOP = 18;
 const PAD_BOTTOM = 26;
 const PAD_LEFT = 52;
 const PAD_RIGHT = 44;
+
+function share(fraction: number): string {
+  return `${(fraction * 100).toFixed(1)}%`;
+}
+
+function pointTooltip(p: ParetoPoint, model: ParetoModel, key: string): ChartTooltipContent {
+  const groups = model.distinctTotal > 0 ? model.distinctTotal : model.points.length;
+  return {
+    key,
+    title: p.name,
+    rows: [
+      { label: 'Cost', value: formatDollars(p.cost) },
+      { label: 'Share of spend', value: share(model.total > 0 ? p.cost / model.total : 0) },
+      { label: `Top ${String(p.rank)} together`, value: share(p.cumPct) },
+      { label: 'Rank', value: `${String(p.rank)} of ${String(groups)}` },
+    ],
+  };
+}
 
 interface ParetoChartProps {
   readonly model: ParetoModel;
@@ -38,6 +57,7 @@ function ParetoSvg({
   readonly width: number;
   readonly onBarClick?: ((name: string) => void) | undefined;
 }) {
+  const tooltip = useChartTooltip();
   const { points } = model;
   const innerW = Math.max(width - PAD_LEFT - PAD_RIGHT, 40);
   const plotH = PLOT_H - PAD_TOP - PAD_BOTTOM;
@@ -57,51 +77,72 @@ function ParetoSvg({
   const giniLabel = `Gini ${model.gini.toFixed(2)}`;
 
   return (
-    <svg width={width} height={PLOT_H}>
-      {/* axes */}
-      <line x1={PAD_LEFT} x2={PAD_LEFT} y1={PAD_TOP} y2={baseline} stroke="var(--color-border)" strokeWidth={1} />
-      <line x1={PAD_LEFT} x2={width - PAD_RIGHT} y1={baseline} y2={baseline} stroke="var(--color-border)" strokeWidth={1} />
-      <text x={PAD_LEFT - 6} y={PAD_TOP + 4} textAnchor="end" fontSize={10} fill="var(--color-text-muted)">{formatDollars(maxCost)}</text>
-      <text x={width - PAD_RIGHT + 6} y={PAD_TOP + 4} textAnchor="start" fontSize={10} fill="var(--color-text-muted)">100%</text>
-      <text x={width - PAD_RIGHT + 6} y={baseline + 3} textAnchor="start" fontSize={10} fill="var(--color-text-muted)">0%</text>
+    <div className="relative">
+      <svg width={width} height={PLOT_H}>
+        {/* axes */}
+        <line x1={PAD_LEFT} x2={PAD_LEFT} y1={PAD_TOP} y2={baseline} stroke="var(--color-border)" strokeWidth={1} />
+        <line x1={PAD_LEFT} x2={width - PAD_RIGHT} y1={baseline} y2={baseline} stroke="var(--color-border)" strokeWidth={1} />
+        <text x={PAD_LEFT - 6} y={PAD_TOP + 4} textAnchor="end" fontSize={10} fill="var(--color-text-muted)">{formatDollars(maxCost)}</text>
+        <text x={width - PAD_RIGHT + 6} y={PAD_TOP + 4} textAnchor="start" fontSize={10} fill="var(--color-text-muted)">100%</text>
+        <text x={width - PAD_RIGHT + 6} y={baseline + 3} textAnchor="start" fontSize={10} fill="var(--color-text-muted)">0%</text>
 
-      {/* 80% reference */}
-      <line x1={PAD_LEFT} x2={width - PAD_RIGHT} y1={yCum(0.8)} y2={yCum(0.8)} stroke="var(--color-warning)" strokeWidth={1} strokeDasharray="4 4" opacity={0.7} />
-      <text x={width - PAD_RIGHT + 6} y={yCum(0.8) + 3} textAnchor="start" fontSize={10} fill="var(--color-warning)">80%</text>
+        {/* 80% reference */}
+        <line x1={PAD_LEFT} x2={width - PAD_RIGHT} y1={yCum(0.8)} y2={yCum(0.8)} stroke="var(--color-warning)" strokeWidth={1} strokeDasharray="4 4" opacity={0.7} />
+        <text x={width - PAD_RIGHT + 6} y={yCum(0.8) + 3} textAnchor="start" fontSize={10} fill="var(--color-warning)">80%</text>
 
-      {/* bars */}
-      {points.map((p, i) => {
-        const h = Math.max(baseline - yBar(p.cost), 0.5);
-        return (
-          <rect
-            key={`${p.name}-${String(i)}`}
-            x={xOf(i) + (slot - barW) / 2}
-            y={yBar(p.cost)}
-            width={barW}
-            height={h}
-            fill="var(--color-text-secondary)"
-            opacity={0.45}
-            style={{ cursor: onBarClick === undefined ? 'default' : 'pointer' }}
-            onClick={() => { onBarClick?.(p.name); }}
-          >
-            <title>{`${p.name}: ${formatDollars(p.cost)} (${(p.cumPct * 100).toFixed(0)}% cumulative)`}</title>
-          </rect>
-        );
-      })}
+        {/* bars */}
+        {points.map((p, i) => {
+          const h = Math.max(baseline - yBar(p.cost), 0.5);
+          const hovered = tooltip.active?.key === `${p.name}-${String(i)}`;
+          return (
+            <rect
+              key={`${p.name}-${String(i)}`}
+              x={xOf(i) + (slot - barW) / 2}
+              y={yBar(p.cost)}
+              width={barW}
+              height={h}
+              fill="var(--color-text-secondary)"
+              opacity={hovered ? 0.8 : 0.45}
+            />
+          );
+        })}
 
-      {/* cutoff marker */}
-      {cutoffX !== null && (
-        <line x1={cutoffX} x2={cutoffX} y1={PAD_TOP} y2={baseline} stroke="var(--color-accent)" strokeWidth={1.4} strokeDasharray="3 3" opacity={0.8} />
-      )}
+        {/* cutoff marker */}
+        {cutoffX !== null && (
+          <line x1={cutoffX} x2={cutoffX} y1={PAD_TOP} y2={baseline} stroke="var(--color-accent)" strokeWidth={1.4} strokeDasharray="3 3" opacity={0.8} />
+        )}
 
-      {/* cumulative curve */}
-      <path d={cumPath} fill="none" stroke="var(--color-accent)" strokeWidth={2} />
+        {/* cumulative curve */}
+        <path d={cumPath} fill="none" stroke="var(--color-accent)" strokeWidth={2} />
 
-      {/* gini badge */}
-      <g transform={`translate(${String(width - PAD_RIGHT - 64)}, ${String(PAD_TOP)})`}>
-        <rect x={0} y={0} width={64} height={18} rx={6} fill="var(--color-accent-muted)" />
-        <text x={32} y={13} textAnchor="middle" fontSize={11} fill="var(--color-accent)">{giniLabel}</text>
-      </g>
-    </svg>
+        {/* gini badge */}
+        <g transform={`translate(${String(width - PAD_RIGHT - 64)}, ${String(PAD_TOP)})`}>
+          <rect x={0} y={0} width={64} height={18} rx={6} fill="var(--color-accent-muted)" />
+          <text x={32} y={13} textAnchor="middle" fontSize={11} fill="var(--color-accent)">{giniLabel}</text>
+        </g>
+
+        {/* Hit areas last, above the curve and badge: the whole column, so the
+            long tail's sub-pixel bars can still be hovered and clicked. */}
+        {points.map((p, i) => {
+          const key = `${p.name}-${String(i)}`;
+          return (
+            <rect
+              key={`hit-${key}`}
+              x={xOf(i)}
+              y={PAD_TOP}
+              width={slot}
+              height={baseline - PAD_TOP}
+              fill="transparent"
+              data-point={p.name}
+              style={{ cursor: onBarClick === undefined ? 'default' : 'pointer' }}
+              onMouseMove={(e) => { tooltip.show(e, pointTooltip(p, model, key)); }}
+              onMouseLeave={tooltip.hide}
+              onClick={() => { onBarClick?.(p.name); }}
+            />
+          );
+        })}
+      </svg>
+      {tooltip.element}
+    </div>
   );
 }

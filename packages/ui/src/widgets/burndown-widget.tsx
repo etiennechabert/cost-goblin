@@ -87,6 +87,7 @@ export function BurndownWidget({ spec, dateRange, previousDateRange, globalFilte
       totalDays={totalDays}
       projected={projected}
       budget={budget}
+      periodStart={dateRange.start}
       title={title}
       subtitle={subtitle}
     />
