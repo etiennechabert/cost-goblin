@@ -124,13 +124,24 @@ interface PeriodTop {
   readonly capped: boolean;
 }
 
-/** The groups in `rows` that `other`'s top rows leave out, to fetch from
- *  `other`'s period. None when `other` wasn't capped: it then holds every
- *  group of its period, so one it leaves out has no cost there. */
-function leftOut(rows: readonly AggGroupRow[], other: PeriodTop): string[] {
-  if (!other.capped) return [];
-  const listed = new Set(other.rows.map(r => r.name));
-  return [...new Set(rows.map(r => r.name))].filter(name => !listed.has(name));
+/** The names to ask `period` for by key: the other period's top `rows` that
+ *  its own top rows leave out, and '' when they hold it. A tag's untagged
+ *  (NULL) group and its empty-value group both read as '', so top rows can
+ *  hold one and cut the other, and a keyed request returns both. None when
+ *  `period` wasn't capped: its top rows then hold every group it has. */
+function namesToFetch(rows: readonly AggGroupRow[], period: PeriodTop): string[] {
+  if (!period.capped) return [];
+  const listed = new Set(period.rows.map(r => r.name));
+  const names = new Set(rows.map(r => r.name).filter(name => !listed.has(name)));
+  if (listed.has('')) names.add('');
+  return [...names];
+}
+
+/** A period's rows: its top rows, with the keyed rows in place of any name
+ *  fetched by key. */
+function periodRows(period: PeriodTop, fetchedNames: readonly string[], fetched: readonly AggGroupRow[]): AggGroupRow[] {
+  const refetched = new Set(fetchedNames);
+  return [...period.rows.filter(r => !refetched.has(r.name)), ...fetched];
 }
 
 /** Rows by name. Groups that read the same add up: a tag's untagged (NULL)
@@ -163,8 +174,8 @@ function pairByName(current: readonly AggGroupRow[], previous: readonly AggGroup
 /** Fetch each period's top groups for a dimension, as `useAggregatedGroups`
  *  does, ranked by size so a credit competes with spend for the row limit.
  *  A group in one period's top rows that the other period's capped top rows
- *  leave out is then fetched from that period by key, so every group pairs
- *  with its real cost in both. */
+ *  leave out is then fetched from that period by key (see `namesToFetch`),
+ *  so every group pairs with its real cost in both. */
 export function usePairedGroups({
   groupBy,
   dateRange,
@@ -185,7 +196,7 @@ export function usePairedGroups({
   return useQuery<PairedGroups | null>(
     async () => {
       if (columnKey === undefined) return null;
-      const fetchGroups = (range: DateRange, queryOrigin: string, rowKeys?: AggregatedTableParams['rowKeys']) =>
+      const fetchGroups = (range: DateRange, queryOrigin: string, limit: number, rowKeys?: AggregatedTableParams['rowKeys']) =>
         api.queryAggregatedTable({
           filters: explorerFilters,
           dateRange: range,
@@ -193,26 +204,30 @@ export function usePairedGroups({
           applyCostScope: true,
           groupByColumns: [columnKey],
           sort: { column: 'abs_cost', direction: 'desc' },
-          rowLimit,
+          rowLimit: limit,
           ...(rowKeys === undefined ? {} : { rowKeys }),
           origin: queryOrigin,
         });
       const fetchTop = async (range: DateRange, queryOrigin: string): Promise<PeriodTop> => {
-        const result = await fetchGroups(range, queryOrigin);
+        const result = await fetchGroups(range, queryOrigin, rowLimit);
         return { rows: normalize(result, columnKey), capped: result.totalRows > result.rows.length };
       };
       const fetchByName = async (range: DateRange, queryOrigin: string, names: readonly string[]): Promise<AggGroupRow[]> => {
         if (names.length === 0) return [];
-        return normalize(await fetchGroups(range, queryOrigin, names.map(name => ({ [columnKey]: name }))), columnKey);
+        // Room for every group the names match: one each, two for ''.
+        const result = await fetchGroups(range, queryOrigin, names.length + 1, names.map(name => ({ [columnKey]: name })));
+        return normalize(result, columnKey);
       };
 
       const [current, previous] = await Promise.all([fetchTop(dateRange, origin), fetchTop(previousDateRange, `${origin}/prev`)]);
-      const [currentRest, previousRest] = await Promise.all([
-        fetchByName(dateRange, `${origin}/pairs`, leftOut(previous.rows, current)),
-        fetchByName(previousDateRange, `${origin}/prev/pairs`, leftOut(current.rows, previous)),
+      const currentNames = namesToFetch(previous.rows, current);
+      const previousNames = namesToFetch(current.rows, previous);
+      const [currentFetched, previousFetched] = await Promise.all([
+        fetchByName(dateRange, `${origin}/pairs`, currentNames),
+        fetchByName(previousDateRange, `${origin}/prev/pairs`, previousNames),
       ]);
       return {
-        pairs: pairByName([...current.rows, ...currentRest], [...previous.rows, ...previousRest]),
+        pairs: pairByName(periodRows(current, currentNames, currentFetched), periodRows(previous, previousNames, previousFetched)),
         capped: current.capped || previous.capped,
       };
     },

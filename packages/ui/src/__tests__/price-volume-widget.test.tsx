@@ -17,6 +17,11 @@ function service(name: string, usage: number, rate: number): AggregatedTableRow 
   return { values: { service: name }, cost: usage * rate, listCost: usage * rate, usageAmount: usage, rowCount: 1 };
 }
 
+/** A team tag's group that used `usage` units at $10 each. */
+function team(value: string, usage: number): AggregatedTableRow {
+  return { values: { tag_team: value }, cost: usage * 10, listCost: usage * 10, usageAmount: usage, rowCount: 1 };
+}
+
 /** A credit: a negative cost with no usage. */
 function credit(name: string, cost: number): AggregatedTableRow {
   return { values: { service: name }, cost, listCost: 0, usageAmount: 0, rowCount: 1 };
@@ -183,13 +188,9 @@ describe('PriceVolumeWidget pairing', () => {
   });
 
   it('adds up the groups that read as the same value', async () => {
-    // An untagged NULL group and an empty-value group both read as '', and
-    // a keyed '' request returns both.
-    const team = (value: string, usage: number): AggregatedTableRow => (
-      { values: { tag_team: value }, cost: usage * 10, listCost: usage * 10, usageAmount: usage, rowCount: 1 }
-    );
-    // Both are in the current top rows; the previous period is asked for
-    // '' and answers with both.
+    // An untagged NULL group and an empty-value group both read as ''. Both
+    // are in the current top rows; the previous period is asked for '' and
+    // answers with both.
     const api = new PeriodGroupsApi(
       [team('platform', 50), team('', 10), team('', 5)],
       [team('platform', 50), team('data', 40), team('ops', 30), team('', 8), team('', 4)],
@@ -199,6 +200,21 @@ describe('PriceVolumeWidget pairing', () => {
 
     // 15 units against 12, not each side's last row (5 against 4).
     await expectBar('— Volume +$30.00');
+    expect(api.keyedRequests(PREVIOUS)).toEqual([[{ tag_team: '' }]]);
+  });
+
+  it('asks a capped period for \'\' again when its top rows hold only one of those groups', async () => {
+    // February's top 3 rows hold the 10-unit '' group but cut the 5-unit one.
+    const api = new PeriodGroupsApi(
+      [team('platform', 50), team('', 10), team('data', 9), team('', 5)],
+      [team('platform', 50), team('data', 40), team('ops', 30), team('', 12)],
+      3,
+    );
+    renderWidget(api, { id: 'pv-team', type: 'priceVolume', size: 'large', groupBy: asDimensionId('tag_team') });
+
+    // 15 units against 12, not the 10 the top rows hold.
+    await expectBar('— Volume +$30.00');
+    expect(api.keyedRequests(CURRENT)).toEqual([[{ tag_team: 'ops' }, { tag_team: '' }]]);
     expect(api.keyedRequests(PREVIOUS)).toEqual([[{ tag_team: '' }]]);
   });
 
