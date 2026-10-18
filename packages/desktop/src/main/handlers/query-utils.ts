@@ -213,7 +213,7 @@ export function mergeTrendRowsByEntity(rows: readonly TrendRow[]): TrendRow[] {
   })).sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
 }
 
-export function buildCostResult(rows: RawRow[], dateRange: DateRange): CostResult {
+export function buildCostResult(rows: RawRow[], dateRange: DateRange, coveredDays: number): CostResult {
   const entityMap = new Map<string, { totalCost: number; serviceCosts: Record<string, number> }>();
   const serviceTotals = new Map<string, number>();
 
@@ -260,6 +260,7 @@ export function buildCostResult(rows: RawRow[], dateRange: DateRange): CostResul
     totalCost: asDollars(totalCost),
     topServices,
     dateRange,
+    coveredDays,
   };
 }
 

@@ -26,6 +26,8 @@ export type { QueryContextOptions, BuildSourceOptions, ProviderSourceSpec, Provi
 
 export { costExprFor } from './cost-metric.js';
 
+export { coveredDaysInRange } from './coverage.js';
+
 export { isNewTrend, meetsTrendThresholds, previousTrendPeriod, trendPercentChange } from './trend-change.js';
 export type { TrendChange } from './trend-change.js';
 

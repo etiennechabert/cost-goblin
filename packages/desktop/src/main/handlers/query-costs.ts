@@ -3,6 +3,7 @@ import {
   buildCostQuery,
   buildDailyCostsQuery,
   buildEntityDetailQuery,
+  coveredDaysInRange,
   logger,
   asEntityRef,
   asDollars,
@@ -53,8 +54,11 @@ export function registerCostHandlers(app: AppContext): void {
     const costScope = await getCostScope().catch(() => undefined);
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
     const providers = await getQueryProviders(tier);
+    // From the months on disk, not the rows returned: a filter that matches
+    // nothing on a synced day is zero spend, not missing data.
+    const coveredDays = coveredDaysInRange(params.dateRange, providers);
     const empty = providersEmptyForRange(providers, params.dateRange);
-    if (empty) return { rows: [], totalCost: asDollars(0), topServices: [], dateRange: params.dateRange };
+    if (empty) return { rows: [], totalCost: asDollars(0), topServices: [], dateRange: params.dateRange, coveredDays };
     const matSource = resolveRollupSource(rollupStore, providers, params.dateRange, tier, [
       // Filters are applied in the WHERE too — a filtered dimension missing
       // from the rollup grain (e.g. the injected `provider`) must gate to raw.
@@ -67,7 +71,7 @@ export function registerCostHandlers(app: AppContext): void {
     logger.info('query:costs', { groupBy: params.groupBy, materialized: isMat });
 
     const rows = await runPreparedQuery(sql, queryParams, isMat);
-    let result = buildCostResult(rows, params.dateRange);
+    let result = buildCostResult(rows, params.dateRange, coveredDays);
 
     if (params.groupBy === 'account' || params.groupBy === 'account_id') {
       result = {
