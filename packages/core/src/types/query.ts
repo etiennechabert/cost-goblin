@@ -41,7 +41,14 @@ export interface CostResult {
   readonly rows: readonly CostRow[];
   readonly totalCost: Dollars;
   readonly topServices: readonly string[];
+  /** The range the query asked for, echoed back. */
   readonly dateRange: DateRange;
+  /** How many days of `dateRange` fall in a billing month the queried
+   *  providers have synced (`coveredDaysInRange`). It counts data, not
+   *  spend: a synced day with nothing matching the filters still counts.
+   *  Absent from a producer that can't tell, which leaves `dateRange` as
+   *  the covered span. */
+  readonly coveredDays?: number;
 }
 
 export interface TrendQueryParams {

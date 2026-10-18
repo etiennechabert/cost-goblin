@@ -94,10 +94,12 @@ export function dimensionLabelFor(dimensions: readonly Dimension[], id: Dimensio
 
 const COVERAGE_THRESHOLD = 0.8;
 
-/** Returns true if a CostResult covers at least 80% of the requested date range. */
+/** Returns true if a CostResult's synced data covers at least 80% of the
+ *  requested date range. The main process reports the covered days; a result
+ *  without them counts its `dateRange` as covered. */
 export function hasSufficientCoverage(result: CostResult, requested: DateRange): boolean {
   const requestedDays = daysBetween(requested.start, requested.end);
-  const actualDays = daysBetween(result.dateRange.start, result.dateRange.end);
+  const actualDays = result.coveredDays ?? daysBetween(result.dateRange.start, result.dateRange.end);
   return actualDays >= requestedDays * COVERAGE_THRESHOLD;
 }
 

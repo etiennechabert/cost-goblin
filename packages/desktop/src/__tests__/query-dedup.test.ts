@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { QUERY_CANCELLED_MESSAGE } from '@costgoblin/core';
 import type { DuckDBClient, RawRow } from '../main/duckdb-client.js';
-import { createAppContext, type AppContext, type IpcContext } from '../main/handlers/context.js';
+import { createAppContext, type AppContext } from '../main/handlers/context.js';
+import { pinnedIpcContext } from './helpers/ipc-context.js';
 
 /** The main process collapses identical in-flight queries into one DuckDB
  *  round-trip (`dedup` in handlers/context.ts). A failed or cancelled query
@@ -56,35 +57,6 @@ function query(db: ScriptedDb, index: number): PendingQuery {
   return pendingQuery;
 }
 
-/** A context over an empty workspace: no config, so nothing beyond the
- *  queries the test runs ever reaches the DB. */
-function ipcContext(root: string, db: DuckDBClient): IpcContext {
-  const paths = {
-    dataDir: join(root, 'data'),
-    configBase: join(root, 'config'),
-    stateDir: join(root, 'state'),
-    tempDir: join(root, 'tmp'),
-  };
-  return {
-    db,
-    syncClient: {
-      syncPeriods: () => Promise.reject(new Error('syncs are not part of this test')),
-      cancelSync: () => undefined,
-      terminate: () => Promise.resolve(),
-    },
-    configPath: join(paths.configBase, 'costgoblin.yaml'),
-    dimensionsPath: join(paths.configBase, 'dimensions.yaml'),
-    orgTreePath: join(paths.configBase, 'org-tree.yaml'),
-    viewsPath: join(paths.configBase, 'views.yaml'),
-    costScopePath: join(paths.configBase, 'cost-scope.yaml'),
-    dataDir: paths.dataDir,
-    stateDir: paths.stateDir,
-    workspaceEnv: { mode: 'pinned', ...paths },
-    duckdbWorkerPath: join(root, 'duckdb-worker.cjs'),
-    now: () => Date.parse('2026-03-01T12:00:00Z'),
-  };
-}
-
 /** Node reports an unhandled rejection once the microtask queue drains, so let
  *  a full macrotask pass before checking that none was reported. */
 function nextMacrotask(): Promise<void> {
@@ -113,7 +85,9 @@ describe.each(ENTRY_POINTS)('AppContext.$name in-flight dedup', ({ call }) => {
     process.on('unhandledRejection', recordUnhandled);
     root = await mkdtemp(join(tmpdir(), 'cg-dedup-'));
     db = createScriptedDb();
-    app = createAppContext(ipcContext(root, db));
+    // No config in the workspace, so nothing beyond the queries the test runs
+    // ever reaches the DB.
+    app = createAppContext(pinnedIpcContext(root, db));
   });
 
   afterEach(async () => {

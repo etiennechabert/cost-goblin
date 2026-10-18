@@ -1,9 +1,10 @@
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
 import type { CostQueryParams, CostResult, DateRange, Dimension, DimensionId, SummaryMetric, WidgetSpec } from '@costgoblin/core/browser';
 import { asDateString, asDimensionId, asDollars, asEntityRef } from '@costgoblin/core/browser';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
+import { daysBetween } from '../lib/dates.js';
 import { SummaryWidget } from '../widgets/summary-widget.js';
 
 const CURRENT: DateRange = { start: asDateString('2026-02-01'), end: asDateString('2026-02-28') };
@@ -25,12 +26,15 @@ const CURRENT_ROWS: Readonly<Record<string, Rows>> = {
   region: [['eu-west-1', 810], ['us-east-1', 90]],
 };
 
-function costResult(rows: Rows, dateRange: DateRange): CostResult {
+/** A result as `query:costs` returns it: the asked range echoed, with the
+ *  days of it that synced data covers. */
+function costResult(rows: Rows, dateRange: DateRange, coveredDays = daysBetween(dateRange.start, dateRange.end)): CostResult {
   return {
     rows: rows.map(([entity, cost]) => ({ entity: asEntityRef(entity), totalCost: asDollars(cost), serviceCosts: {} })),
     totalCost: asDollars(rows.reduce((s, [, cost]) => s + cost, 0)),
     topServices: [],
     dateRange,
+    coveredDays,
   };
 }
 
@@ -39,8 +43,8 @@ interface SummaryApiOptions {
   readonly current?: Rows;
   /** Previous-period rows; $720 split over two accounts by default. */
   readonly previous?: Rows;
-  /** The span the previous period's data covers; the whole period by default. */
-  readonly previousCovered?: DateRange;
+  /** Days of the previous period that synced data covers; all 28 by default. */
+  readonly previousCoveredDays?: number;
   /** Fails every query, or only the previous period's. */
   readonly fail?: Error;
   readonly failPrevious?: Error;
@@ -51,6 +55,8 @@ interface SummaryApiOptions {
  *  them as optional to stay override-compatible. */
 class SummaryApi extends MockCostApi {
   readonly calls: CostQueryParams[] = [];
+  /** The latest previous-period answer, for a test to wait on. */
+  previousAnswer: Promise<CostResult> | null = null;
 
   constructor(private readonly options: SummaryApiOptions = {}) {
     super();
@@ -63,7 +69,8 @@ class SummaryApi extends MockCostApi {
     if (params.dateRange.start === PREVIOUS.start) {
       if (this.options.failPrevious !== undefined) return Promise.reject(this.options.failPrevious);
       const rows = this.options.previous ?? [['prod', 400], ['staging', 320]];
-      return Promise.resolve(costResult(rows, this.options.previousCovered ?? PREVIOUS));
+      this.previousAnswer = Promise.resolve(costResult(rows, PREVIOUS, this.options.previousCoveredDays));
+      return this.previousAnswer;
     }
     return Promise.resolve(costResult(this.options.current ?? CURRENT_ROWS[params.groupBy] ?? [], CURRENT));
   }
@@ -121,6 +128,20 @@ describe('SummaryWidget', () => {
       expect(screen.getByText('vs Previous Period')).not.toBeNull();
       expect(screen.getByText('Total Cost')).not.toBeNull();
     });
+
+    it('compares with nothing when the previous period has too little data', async () => {
+      // 7 of 28 days synced: $900 vs $100 would read as ▲800%.
+      const api = new SummaryApi({ previous: [['prod', 100]], previousCoveredDays: 7 });
+      renderSummary(summary({ metric: 'total' }), api, true);
+
+      expect(await screen.findByText('$900.00')).not.toBeNull();
+      await waitFor(() => { expect(api.previousAnswer).not.toBeNull(); });
+      // Let the previous period's result commit before asserting it shows nothing.
+      await act(async () => { await api.previousAnswer; });
+      expect(screen.getByText('vs Previous Period')).not.toBeNull();
+      expect(screen.queryByText(/%/)).toBeNull();
+      expect(screen.queryByText('Previous: $100.00')).toBeNull();
+    });
   });
 
   describe("metric 'delta'", () => {
@@ -149,15 +170,35 @@ describe('SummaryWidget', () => {
     });
 
     it('shows no change when the previous period has too little data', async () => {
-      const api = new SummaryApi({
-        previous: [['prod', 100]],
-        previousCovered: { start: asDateString('2026-01-25'), end: asDateString('2026-01-31') },
-      });
+      // Only 7 of the period's 28 days are synced, so its $100 is no total
+      // to compare against: +$800 (+800%) would be a data gap, not spend.
+      const api = new SummaryApi({ previous: [['prod', 100]], previousCoveredDays: 7 });
       renderSummary(summary({ metric: 'delta' }), api);
 
       expect(await screen.findByText('Not enough data for the previous period')).not.toBeNull();
       expect(screen.getByText('—')).not.toBeNull();
       expect(screen.queryByText(/%$/)).toBeNull();
+      expect(screen.queryByText('Previous: $100.00')).toBeNull();
+    });
+
+    it('shows no change when the previous period was never synced', async () => {
+      // Before the first synced month: no rows and $0, over the asked range.
+      // The whole $900 is not new spend.
+      const api = new SummaryApi({ previous: [], previousCoveredDays: 0 });
+      renderSummary(summary({ metric: 'delta' }), api);
+
+      expect(await screen.findByText('Not enough data for the previous period')).not.toBeNull();
+      expect(screen.queryByText('+$900.00')).toBeNull();
+      expect(screen.queryByText('No spend in the previous period')).toBeNull();
+    });
+
+    it('compares against a previous period with enough synced days', async () => {
+      // 23 of 28 days clears the 80% bar (22.4).
+      const api = new SummaryApi({ previousCoveredDays: 23 });
+      renderSummary(summary({ metric: 'delta' }), api);
+
+      expect(await screen.findByText('+$180.00')).not.toBeNull();
+      expect(screen.queryByText('Not enough data for the previous period')).toBeNull();
     });
 
     it('takes no ratio against a previous total that is only float residue', async () => {
@@ -187,6 +228,7 @@ describe('SummaryWidget', () => {
     });
 
     it('shows the dollar change but no percent when the previous period had no spend', async () => {
+      // Every day synced, nothing spent: zero spend, not missing data.
       const api = new SummaryApi({ previous: [] });
       renderSummary(summary({ metric: 'delta' }), api);
 
