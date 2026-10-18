@@ -15,6 +15,12 @@ import { Dialog, DialogContent, DialogTitle, DialogClose } from '../components/u
 
 type TriageFilter = BaselineTriageStatus | 'open' | 'all';
 
+/** Loading the new baselines that a triage session walks through. */
+type TriageStart =
+  | { readonly status: 'idle' }
+  | { readonly status: 'loading' }
+  | { readonly status: 'error'; readonly message: string };
+
 const STATUS_FILTERS: readonly { id: TriageFilter; label: string }[] = [
   { id: 'open', label: 'Open' },
   { id: 'all', label: 'All' },
@@ -111,8 +117,7 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
   const [showNew, setShowNew] = useState(false);
   const [triageQueue, setTriageQueue] = useState<readonly string[] | null>(null);
   const [triageIdx, setTriageIdx] = useState(0);
-  const [startingTriage, setStartingTriage] = useState(false);
-  const [triageError, setTriageError] = useState<string | null>(null);
+  const [triageStart, setTriageStart] = useState<TriageStart>({ status: 'idle' });
   const [showRecompute, setShowRecompute] = useState(false);
   // Baseline ids in the order the table shows them, as it reports them.
   const [tableOrder, setTableOrder] = useState<readonly string[]>([]);
@@ -122,18 +127,16 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
   }, []);
 
   async function startTriage(): Promise<void> {
-    setStartingTriage(true);
-    setTriageError(null);
+    setTriageStart({ status: 'loading' });
     try {
       const res = await api.listBaselines({ triage: 'new' });
+      setTriageStart({ status: 'idle' });
       const ids = res.items.map((r) => r.spec.id);
       if (ids.length === 0) return;
       setTriageQueue(ids);
       setTriageIdx(0);
     } catch (err: unknown) {
-      setTriageError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setStartingTriage(false);
+      setTriageStart({ status: 'error', message: err instanceof Error ? err.message : String(err) });
     }
   }
   function endTriage(): void {
@@ -183,7 +186,7 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
           {counts !== null && <p className="text-xs text-text-muted mt-1 tabular-nums">{String(counts.all)} baselines</p>}
         </div>
         <div className="flex items-center gap-2">
-          <button type="button" disabled={startingTriage} onClick={() => { void startTriage(); }} className="rounded-md border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/20 disabled:opacity-60">Triage new</button>
+          <button type="button" disabled={triageStart.status === 'loading'} onClick={() => { void startTriage(); }} className="rounded-md border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/20 disabled:opacity-60">Triage new</button>
           <button type="button" onClick={() => { setShowNew(true); }} className="rounded-md border border-border px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary">New baseline</button>
           <button type="button" disabled={running} onClick={() => { setShowRecompute(true); }}
             className="rounded-md bg-accent/15 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/25 disabled:opacity-60">
@@ -234,8 +237,8 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
         })}
       </div>
 
-      {triageError !== null && (
-        <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3 text-sm text-negative break-words">Couldn't start triage: {triageError}</div>
+      {triageStart.status === 'error' && (
+        <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3 text-sm text-negative break-words">Couldn't start triage: {triageStart.message}</div>
       )}
       {baselineStatus?.state === 'error' && (
         <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3 text-sm text-negative break-words">Recompute failed: {baselineStatus.message}</div>

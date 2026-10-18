@@ -286,9 +286,9 @@ export function DataTable<TData extends RowData>({
   const rows = table.getRowModel().rows;
 
   // The row model is memoized on the data and the sort, so this reports only
-  // when one of them changes, not on every render.
-  const orderedData = useMemo(() => rows.map(row => row.original), [rows]);
-  useEffect(() => { onRowOrderChange?.(orderedData); }, [orderedData, onRowOrderChange]);
+  // when one of them changes, not on every render — and maps the rows only
+  // when someone listens.
+  useEffect(() => { onRowOrderChange?.(rows.map(row => row.original)); }, [rows, onRowOrderChange]);
 
   const virtualizer = useVirtualizer({
     count: rows.length,

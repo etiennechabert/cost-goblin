@@ -248,8 +248,9 @@ export function BaselineDetailModal({ id, onClose, onChanged, onNext, onPrev, po
         {detailQuery.status === 'loading' && <CoinRainLoader height={300} count={6} />}
         {detailQuery.status === 'error' && (
           <div className="flex flex-col items-start gap-3">
+            <DialogTitle className="text-base">Couldn't load this baseline</DialogTitle>
             <p className="w-full rounded-lg border border-negative bg-negative-muted px-4 py-3 text-sm text-negative break-words">
-              Couldn't load this baseline: {detailQuery.error.message}
+              {detailQuery.error.message}
             </p>
             <button type="button" onClick={() => { setRefresh((n) => n + 1); }}
               className="rounded-md border border-border px-3 py-1 text-xs text-text-secondary hover:text-text-primary">Retry</button>

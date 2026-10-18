@@ -1,11 +1,19 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BaselineDetail, BaselineRecord, BaselineUpdatePatch } from '@costgoblin/core/browser';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { BaselineDetailModal } from '../components/baseline-detail-modal.js';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { baselineDetail, baselineRecord, baselineSpec, deferred, rejectWith } from './baseline-fixtures.js';
+import { setReducedMotion } from './setup.js';
+
+// Hold the coin-rain loader still: animated, its per-frame state updates keep
+// restarting the transition useQuery commits a result in, which on a slow
+// runner can push the detail past the findBy budget. setup.ts restores it.
+beforeEach(() => {
+  setReducedMotion(true);
+});
 
 const ID = 'b-1';
 const NOTE_PLACEHOLDER = 'Add a note (optional)…';
@@ -16,7 +24,7 @@ class DetailApi extends MockCostApi {
   readonly detail: BaselineDetail | null;
   readonly loads: (() => Promise<BaselineDetail | null>)[] = [];
   readonly getCalls: (string | undefined)[] = [];
-  readonly patches: (BaselineUpdatePatch | undefined)[] = [];
+  readonly updates: { readonly id: string | undefined; readonly patch: BaselineUpdatePatch | undefined }[] = [];
 
   constructor(detail: BaselineDetail | null) {
     super();
@@ -28,9 +36,13 @@ class DetailApi extends MockCostApi {
     return this.loads.shift()?.() ?? Promise.resolve(this.detail);
   }
 
-  override updateBaseline(_id?: string, patch?: BaselineUpdatePatch): Promise<BaselineRecord | null> {
-    this.patches.push(patch);
+  override updateBaseline(id?: string, patch?: BaselineUpdatePatch): Promise<BaselineRecord | null> {
+    this.updates.push({ id, patch });
     return Promise.resolve(null);
+  }
+
+  patches(): (BaselineUpdatePatch | undefined)[] {
+    return this.updates.map((u) => u.patch);
   }
 }
 
@@ -76,7 +88,7 @@ function saveButton(): HTMLElement {
 async function saveNote(user: ReturnType<typeof userEvent.setup>, api: DetailApi, text: string): Promise<void> {
   await user.type(screen.getByPlaceholderText(NOTE_PLACEHOLDER), text);
   await user.click(saveButton());
-  await waitFor(() => { expect(api.patches).toHaveLength(1); });
+  await waitFor(() => { expect(api.updates).toHaveLength(1); });
 }
 
 describe('BaselineDetailModal — load failure', () => {
@@ -85,14 +97,15 @@ describe('BaselineDetailModal — load failure', () => {
     api.loads.push(() => rejectWith(new Error('Database is locked')));
     const { user } = renderModal(api);
 
-    expect(await screen.findByText("Couldn't load this baseline: Database is locked")).toBeDefined();
+    const dialog = await screen.findByRole('dialog', { name: "Couldn't load this baseline" });
+    expect(within(dialog).getByText('Database is locked')).toBeDefined();
     expect(screen.queryByRole('img', { name: 'Daily cost history' })).toBeNull();
 
     const retry = deferred<BaselineDetail | null>();
     api.loads.push(() => retry.promise);
     await user.click(screen.getByRole('button', { name: 'Retry' }));
     expect(within(await screen.findByRole('status')).getByText('Loading')).toBeDefined();
-    expect(screen.queryByText(/^Couldn't load this baseline/)).toBeNull();
+    expect(screen.queryByText("Couldn't load this baseline")).toBeNull();
 
     retry.resolve(baselineDetail(baselineRecord()));
     await bodyReady();
@@ -105,11 +118,12 @@ describe('BaselineDetailModal — load failure', () => {
     api.loads.push(() => rejectWith(new Error('Database is locked')), () => rejectWith('IPC channel closed'));
     const { user } = renderModal(api);
 
-    await screen.findByText("Couldn't load this baseline: Database is locked");
+    await screen.findByText('Database is locked');
     await user.click(screen.getByRole('button', { name: 'Retry' }));
     // A rejection that is not an Error is shown as-is.
-    expect(await screen.findByText("Couldn't load this baseline: IPC channel closed")).toBeDefined();
-    expect(screen.queryByText(/Database is locked/)).toBeNull();
+    expect(await screen.findByText('IPC channel closed')).toBeDefined();
+    expect(screen.getByRole('dialog', { name: "Couldn't load this baseline" })).toBeDefined();
+    expect(screen.queryByText('Database is locked')).toBeNull();
 
     await user.click(screen.getByRole('button', { name: 'Retry' }));
     await bodyReady();
@@ -166,7 +180,7 @@ describe('BaselineDetailModal — band mode', () => {
     expect(saveButton()).toHaveProperty('disabled', true);
 
     await saveNote(user, api, 'Checked with the DB team');
-    expect(api.patches).toEqual([{ note: { text: 'Checked with the DB team' } }]);
+    expect(api.updates).toEqual([{ id: ID, patch: { note: { text: 'Checked with the DB team' } } }]);
   });
 
   it('re-picking Percentile keeps a saved percentile override', async () => {
@@ -182,7 +196,7 @@ describe('BaselineDetailModal — band mode', () => {
     expect(saveButton()).toHaveProperty('disabled', true);
 
     await saveNote(user, api, 'Seasonal');
-    expect(api.patches).toEqual([{ note: { text: 'Seasonal' } }]);
+    expect(api.patches()).toEqual([{ note: { text: 'Seasonal' } }]);
   });
 
   it('re-picking Absolute $ keeps a saved dollar override', async () => {
@@ -208,8 +222,8 @@ describe('BaselineDetailModal — band mode', () => {
     expect(saveButton()).toHaveProperty('disabled', false);
 
     await user.click(saveButton());
-    await waitFor(() => { expect(api.patches).toHaveLength(1); });
-    expect(api.patches).toEqual([{ manualBand: { mode: 'absolute', lower: 10.25, upper: 20 } }]);
+    await waitFor(() => { expect(api.updates).toHaveLength(1); });
+    expect(api.patches()).toEqual([{ manualBand: { mode: 'absolute', lower: 10.25, upper: 20 } }]);
   });
 
   it('saves a switch to the other mode', async () => {
@@ -220,8 +234,8 @@ describe('BaselineDetailModal — band mode', () => {
     await user.click(modeButton('Percentile'));
     expect(saveButton()).toHaveProperty('disabled', false);
     await user.click(saveButton());
-    await waitFor(() => { expect(api.patches).toHaveLength(1); });
-    expect(api.patches).toEqual([{ manualBand: { mode: 'percentile', lower: 10, upper: 90 } }]);
+    await waitFor(() => { expect(api.updates).toHaveLength(1); });
+    expect(api.updates).toEqual([{ id: ID, patch: { manualBand: { mode: 'percentile', lower: 10, upper: 90 } } }]);
   });
 
   it('switching modes and back to the automated band leaves nothing to save', async () => {
@@ -236,7 +250,7 @@ describe('BaselineDetailModal — band mode', () => {
     expect(saveButton()).toHaveProperty('disabled', true);
 
     await saveNote(user, api, 'Looked fine');
-    expect(api.patches).toEqual([{ note: { text: 'Looked fine' } }]);
+    expect(api.patches()).toEqual([{ note: { text: 'Looked fine' } }]);
   });
 
   it('nudging an edge and back leaves nothing to save', async () => {
