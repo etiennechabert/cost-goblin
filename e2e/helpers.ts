@@ -14,6 +14,16 @@ export const ROOT = join(import.meta.dirname, '..');
 const DESKTOP_DIR = join(ROOT, 'packages', 'desktop');
 export const SCREENSHOT_DIR = join(tmpdir(), 'costgoblin-e2e');
 export const V8_DIR = join(tmpdir(), 'costgoblin-e2e-v8');
+/** Where every launch's main process writes its V8 coverage. launchElectron
+ *  sets NODE_V8_COVERAGE to it, so Node measures the main bundle from its
+ *  first line and writes `coverage-<pid>-<time>-<thread>.json` as the app
+ *  exits — no attach step, so none of attachCoverage's ordering applies.
+ *  closeApp also flushes a dump just before quitting (flushMainCoverage), so
+ *  a launch it has to SIGKILL keeps its coverage. A subdirectory, so the
+ *  dumps can't be mistaken for the renderer shards `coverage-<shard>.json`
+ *  beside it; globalSetup empties both. collect-coverage.ts converts them
+ *  next to the renderer shards. */
+export const MAIN_V8_DIR = join(V8_DIR, 'main');
 /** Debug screenshots from {@link screenshot} are opt-in. Nothing reads them:
  *  CI doesn't upload SCREENSHOT_DIR, and the homepage images come from
  *  homepage-screenshots.ts, which takes its own. Taking them on every run
@@ -108,7 +118,13 @@ export async function launchElectron(options: {
     // Empty dirs (gcloud's config dir): the CLI finds no account in them. The
     // credential FILES the sandbox points at are deliberately never created.
     for (const dir of cloudSandboxDirs(sandboxDir)) mkdirSync(dir, { recursive: true });
-    const env = { ...cloudSandboxEnv(options.inherited ?? process.env, sandboxDir), ...options.env };
+    const env = {
+      ...cloudSandboxEnv(options.inherited ?? process.env, sandboxDir),
+      // Main-process coverage: Node records it from the bundle's first line
+      // and writes the dump as the app exits — see MAIN_V8_DIR.
+      NODE_V8_COVERAGE: MAIN_V8_DIR,
+      ...options.env,
+    };
     const violations = cloudSandboxViolations(env, sandboxDir);
     if (violations.length > 0) {
       throw new Error(`launchElectron: refusing to start the app with cloud credentials reachable:\n${violations.join('\n')}`);
@@ -201,17 +217,56 @@ export async function launchApp(overrides?: {
   });
 }
 
+/** Write the main process's coverage so far into MAIN_V8_DIR, before the
+ *  quit that might wedge. Node writes the NODE_V8_COVERAGE dump only as the
+ *  process exits, so a launch closeApp has to SIGKILL would otherwise lose
+ *  all of its main-process coverage — and a verification shard, which
+ *  harvests no renderer coverage, would upload nothing and fail CI's
+ *  fail-closed merge on a quit flake. `takeCoverage` writes a dump now and
+ *  restarts the counters, so the exit dump holds only the quit itself; the
+ *  collector merges the two. Best-effort: a failure costs coverage, never the
+ *  suite. */
+async function flushMainCoverage(app: ElectronApplication): Promise<void> {
+  // A test that quit the app itself already got its exit dump. Playwright
+  // throws from process() once it has seen the app close, so that counts too.
+  let exited: boolean;
+  try {
+    const child = app.process();
+    exited = child.exitCode !== null || child.signalCode !== null;
+  } catch {
+    exited = true;
+  }
+  if (exited) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      app.evaluate(() => {
+        process.getBuiltinModule('node:v8').takeCoverage();
+      }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => { reject(new Error('timed out after 5s')); }, 5_000);
+      }),
+    ]);
+  } catch (err) {
+    console.warn(`[coverage] could not flush main-process coverage before closing: ${String(err)}`);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 /** Close, but never let a stalled Electron exit fail a suite. Under system
  *  load the process occasionally wedges on quit behind boot-time DuckDB work
  *  (a known flake); after 15s give up and SIGKILL. Per-launch state is a
- *  throwaway temp dir, so a hard kill loses nothing. Never call a bare
- *  app.close() instead, so the guard covers the DuckDB-heavy shards too, and
- *  so the per-launch fixture copy is removed rather than leaked into $TMPDIR.
+ *  throwaway temp dir, and the main-process coverage was flushed before the
+ *  quit, so a hard kill loses nothing. Never call a bare app.close()
+ *  instead, so the guard covers the DuckDB-heavy shards too, and so the
+ *  per-launch fixture copy is removed rather than leaked into $TMPDIR.
  *  Covered suites get this for free via {@link finishCoverage}. */
 export async function closeApp(app: ElectronApplication | undefined): Promise<void> {
   // Tolerate undefined: a suite whose beforeAll threw before assigning still
   // runs afterAll, and a TypeError from teardown would replace the real error.
   if (app === undefined) return;
+  await flushMainCoverage(app);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const closed = await Promise.race([
     app.close().then(() => true, () => true),

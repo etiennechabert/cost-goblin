@@ -1,6 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, onTestFinished, vi } from 'vitest';
+import { Server as HttpsServer } from 'node:https';
 import { connect as netConnect, createServer as createNetServer, type Socket } from 'node:net';
 import { connect as tlsConnect } from 'node:tls';
+import { logger } from '../logger/logger.js';
 import { generateIdentityKeyPair, type IdentityKeyPair } from '../peer/identity.js';
 import {
   parseSignedManifest,
@@ -417,6 +419,24 @@ describe('sharing listener lifetime and bounds', () => {
       expect(await tryHandshake(rightIdentity.port, SHARING_PSK_IDENTITY, PSK)).toBe('connected');
     } finally {
       await rightIdentity.close();
+    }
+  });
+
+  it('(h) logs an error the listening server emits, and keeps serving', async () => {
+    // A listening server still emits 'error', e.g. for an accept that fails
+    // with EMFILE. The started server is reached through a call-through spy.
+    const listen = vi.spyOn(HttpsServer.prototype, 'listen');
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    onTestFinished(() => { listen.mockRestore(); warn.mockRestore(); });
+    const server = await startTestServer({});
+    try {
+      const [listening] = listen.mock.contexts.filter((s): s is HttpsServer => s instanceof HttpsServer && s.listening);
+      if (listening === undefined) throw new Error('the sharing server never listened');
+      listening.emit('error', Object.assign(new Error('accept EMFILE'), { code: 'EMFILE', syscall: 'accept' }));
+      expect(warn).toHaveBeenCalledWith('Data sharing listener error', { message: 'accept EMFILE' });
+      await expect(fetchManifest({ host: '127.0.0.1', port: server.port, psk: PSK })).resolves.toContain('Test Publisher');
+    } finally {
+      await server.close();
     }
   });
 });

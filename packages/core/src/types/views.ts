@@ -96,6 +96,8 @@ export interface ViewRow {
 export interface ViewSpec {
   readonly id: string;
   readonly name: string;
+  /** One line under the dashboard's title saying what it answers. */
+  readonly description?: string | undefined;
   readonly icon?: string | undefined;
   /** Built-in seed view. The user can duplicate/clone but not delete. */
   readonly builtIn?: boolean | undefined;

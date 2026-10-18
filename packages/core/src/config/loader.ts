@@ -33,7 +33,8 @@ export async function loadOrgTree(path: string): Promise<OrgTreeConfig> {
 export async function loadViews(path: string, liveDimensionIds?: ReadonlySet<string>): Promise<ViewsConfig> {
   const content = await readFile(path, 'utf-8');
   const raw: unknown = parse(content);
-  return validateViews(raw, liveDimensionIds);
+  // A views.yaml written before topN had to be a positive integer still loads.
+  return validateViews(raw, liveDimensionIds, { invalidTopN: 'drop' });
 }
 
 export async function loadCostScope(path: string, liveDimensionIds?: ReadonlySet<string>): Promise<CostScopeConfig> {

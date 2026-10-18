@@ -1,5 +1,5 @@
 import { useDeferredValue, useEffect, useRef, useState } from 'react';
-import { asDimensionId, SEED_VIEWS_CONFIG } from '@costgoblin/core/browser';
+import { asDimensionId, SEED_VIEWS_CONFIG, withMissingSeedViews } from '@costgoblin/core/browser';
 import type {
   Dimension,
   ViewSpec,
@@ -160,6 +160,10 @@ export function ViewsEditor({ onConfigPersisted, onConfigLoaded }: ViewsEditorPr
     updateSelectedView(v => ({ ...v, name }));
   }
 
+  function setViewDescription(description: string): void {
+    updateSelectedView(v => ({ ...v, description: description.trim() === '' ? undefined : description }));
+  }
+
   function addRow(): void {
     updateSelectedView(v => ({
       ...v,
@@ -241,21 +245,12 @@ export function ViewsEditor({ onConfigPersisted, onConfigLoaded }: ViewsEditorPr
   async function handleReset(): Promise<void> {
     if (!editable) return;
     if (!globalThis.confirm('Reset built-in views to defaults? Your custom views will be kept (delete them manually to fully reset).')) return;
-    // Client-side merge: built-ins from seed replace any current same-id built-in,
+    // Client-side merge: built-ins from seed replace any current same-id view,
     // custom (non-builtIn) views in the editor are preserved in place. Missing
-    // built-ins are prepended.
+    // built-ins are inserted where the seed order puts them.
     const seedById = new Map(SEED_VIEWS_CONFIG.views.map(v => [v.id, v]));
-    const seenSeedIds = new Set<string>();
-    const replaced: ViewSpec[] = state.config.views.map(v => {
-      const seed = seedById.get(v.id);
-      if (seed?.builtIn === true) {
-        seenSeedIds.add(v.id);
-        return seed;
-      }
-      return v;
-    });
-    const missing = SEED_VIEWS_CONFIG.views.filter(v => v.builtIn === true && !seenSeedIds.has(v.id));
-    const newConfig: ViewsConfig = { views: [...missing, ...replaced] };
+    const replaced: ViewSpec[] = state.config.views.map(v => seedById.get(v.id) ?? v);
+    const newConfig: ViewsConfig = { views: withMissingSeedViews(replaced) };
 
     setSaving(true);
     setError(null);
@@ -412,6 +407,14 @@ export function ViewsEditor({ onConfigPersisted, onConfigLoaded }: ViewsEditorPr
                 />
                 <span className="text-xs text-text-muted">{WIDGET_CATALOG.length} widget types available</span>
               </div>
+              <input
+                type="text"
+                value={selectedView.description ?? ''}
+                onChange={(e) => { setViewDescription(e.target.value); }}
+                placeholder="Description (optional): the question this dashboard answers"
+                aria-label="View description"
+                className="bg-transparent border border-border rounded px-3 py-1.5 text-sm text-text-secondary placeholder:text-text-muted"
+              />
 
               {selectedView.rows.map((row, rowIdx) => (
                 <div key={row.widgets[0]?.id ?? `row-${String(rowIdx)}`} className="rounded-lg border border-border bg-bg-secondary/30 p-3 flex flex-col gap-2">

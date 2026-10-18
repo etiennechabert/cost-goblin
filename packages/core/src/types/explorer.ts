@@ -10,7 +10,8 @@ export type ExplorerSortDirection = 'asc' | 'desc';
 
 /** Column id is either a built-in dimension column (e.g. `cost`, `service`,
  *  `usage_date`) or a tag column (e.g. `tag_team`). The handler maps it to
- *  the underlying SQL expression. */
+ *  the underlying SQL expression. The aggregated table also sorts by
+ *  `abs_cost`, the size of a group's cost, so a credit ranks with spend. */
 export interface ExplorerSort {
   readonly column: string;
   readonly direction: ExplorerSortDirection;

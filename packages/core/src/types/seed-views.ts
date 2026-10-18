@@ -36,191 +36,44 @@ export const OVERVIEW_SEED_VIEW: ViewSpec = {
   ],
 };
 
-/** One ready-made dashboard per widget type, so every widget has a default home
- *  the user can open, study, and clone. All group-bys use built-in dimensions
- *  (service / account / region / service_category) so the dashboards populate on
- *  any dataset regardless of which tag dimensions are configured. Marked
- *  built-in (see SEED_VIEWS_CONFIG) so the editor's "Reset built-ins" restores
- *  them — that reset only re-adds seed views flagged builtIn, leaving the
- *  user's own dashboards untouched. */
-const WIDGET_SHOWCASE_VIEWS: readonly Omit<ViewSpec, 'builtIn'>[] = [
+/** Built-in dashboards beyond the overview, each answering one question by
+ *  combining the widgets that answer it. Group-bys stick to account, region and
+ *  service: the dimensions every provider populates (GCP has no
+ *  service_category). With the overview, the set uses every widget type except
+ *  baseline, which reads the Baselines page rather than the dashboard's filters
+ *  and range. Marked built-in (see SEED_VIEWS_CONFIG) so the editor's "Reset
+ *  built-ins" restores them; that reset only re-adds seed views flagged
+ *  builtIn, leaving the user's own dashboards untouched. Ids must not reuse a
+ *  retired seed id (RETIRED_SEED_VIEW_IDS in config/retired-seed-views.ts). */
+const QUESTION_VIEWS: readonly Omit<ViewSpec, 'builtIn'>[] = [
   {
-    id: 'trend-lines',
-    name: 'Trend lines',
+    id: 'what-changed',
+    name: 'What changed',
+    description: 'Why spend moved since the previous period: the drivers, usage vs price, and when it happened',
     rows: [
       {
         widgets: [
-          { id: 'trends-summary', type: 'summary', size: 'small', metric: 'total' },
-          { id: 'trends-line-service', type: 'line', size: 'large', groupBy: asDimensionId('service'), topN: 6 },
+          { id: 'changed-summary', type: 'summary', size: 'small', metric: 'total' },
+          { id: 'changed-drivers-service', type: 'waterfall', size: 'large', groupBy: asDimensionId('service'), topN: 8 },
         ],
       },
       {
         widgets: [
-          { id: 'trends-line-account', type: 'line', size: 'medium', groupBy: asDimensionId('account'), topN: 6 },
-          { id: 'trends-line-region', type: 'line', size: 'medium', groupBy: asDimensionId('region'), topN: 6 },
+          { id: 'changed-price-volume-service', type: 'priceVolume', size: 'medium', groupBy: asDimensionId('service'), topN: 6 },
+          { id: 'changed-movers-account', type: 'bubble', size: 'medium', groupBy: asDimensionId('account') },
+        ],
+      },
+      {
+        widgets: [
+          { id: 'changed-daily-service', type: 'heatmap', size: 'full', groupBy: asDimensionId('service'), topN: 10 },
         ],
       },
     ],
   },
   {
-    id: 'stacked',
-    name: 'Stacked over time',
-    rows: [
-      {
-        widgets: [
-          { id: 'stacked-summary', type: 'summary', size: 'small', metric: 'total' },
-          { id: 'stacked-service', type: 'stackedBar', size: 'large', groupBy: asDimensionId('service') },
-        ],
-      },
-      {
-        widgets: [
-          { id: 'stacked-account', type: 'stackedBar', size: 'full', groupBy: asDimensionId('account') },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'top-n',
-    name: 'Top N',
-    rows: [
-      {
-        widgets: [
-          { id: 'topn-summary', type: 'summary', size: 'small', metric: 'total' },
-          { id: 'topn-service', type: 'topNBar', size: 'large', groupBy: asDimensionId('service'), topN: 12 },
-        ],
-      },
-      {
-        widgets: [
-          { id: 'topn-account', type: 'topNBar', size: 'medium', groupBy: asDimensionId('account'), topN: 12 },
-          { id: 'topn-family', type: 'topNBar', size: 'medium', groupBy: asDimensionId('service_category'), topN: 12 },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'distribution',
-    name: 'Distribution',
-    rows: [
-      {
-        widgets: [
-          { id: 'dist-account', type: 'pie', size: 'medium', groupBy: asDimensionId('account') },
-          { id: 'dist-region', type: 'pie', size: 'medium', groupBy: asDimensionId('region') },
-        ],
-      },
-      {
-        widgets: [
-          { id: 'dist-service', type: 'pie', size: 'medium', groupBy: asDimensionId('service') },
-          { id: 'dist-family', type: 'pie', size: 'medium', groupBy: asDimensionId('service_category') },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'treemap',
-    name: 'Treemap',
-    rows: [
-      {
-        widgets: [
-          { id: 'treemap-summary', type: 'summary', size: 'small', metric: 'total' },
-          { id: 'treemap-service', type: 'treemap', size: 'large', groupBy: asDimensionId('service') },
-        ],
-      },
-      {
-        widgets: [
-          { id: 'treemap-account', type: 'treemap', size: 'full', groupBy: asDimensionId('account') },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'heatmap',
-    name: 'Heatmap',
-    rows: [
-      {
-        widgets: [
-          { id: 'heatmap-summary', type: 'summary', size: 'small', metric: 'total' },
-          { id: 'heatmap-service', type: 'heatmap', size: 'large', groupBy: asDimensionId('service'), topN: 10 },
-        ],
-      },
-      {
-        widgets: [
-          { id: 'heatmap-account', type: 'heatmap', size: 'full', groupBy: asDimensionId('account'), topN: 10 },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'movers',
-    name: 'Movers',
-    rows: [
-      {
-        widgets: [
-          { id: 'movers-summary', type: 'summary', size: 'small', metric: 'delta' },
-          { id: 'movers-service', type: 'bubble', size: 'large', groupBy: asDimensionId('service') },
-        ],
-      },
-      {
-        widgets: [
-          { id: 'movers-account', type: 'bubble', size: 'full', groupBy: asDimensionId('account') },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'line-items',
-    name: 'Line items',
-    rows: [
-      {
-        widgets: [
-          { id: 'items-total', type: 'summary', size: 'small', metric: 'total' },
-          { id: 'items-delta', type: 'summary', size: 'small', metric: 'delta' },
-          { id: 'items-count', type: 'summary', size: 'small', metric: 'entityCount' },
-        ],
-      },
-      {
-        widgets: [
-          { id: 'items-table', type: 'table', size: 'full', enabledColumns: ['cost', 'service', 'account_name', 'resource_id', 'description'] },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'drivers',
-    name: 'Cost drivers',
-    rows: [
-      {
-        widgets: [
-          { id: 'drivers-summary', type: 'summary', size: 'small', metric: 'delta' },
-          { id: 'drivers-service', type: 'waterfall', size: 'large', groupBy: asDimensionId('service'), topN: 8 },
-        ],
-      },
-      {
-        widgets: [
-          { id: 'drivers-account', type: 'waterfall', size: 'full', groupBy: asDimensionId('account'), topN: 8 },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'price-volume',
-    name: 'Price vs volume',
-    rows: [
-      {
-        widgets: [
-          { id: 'pv-summary', type: 'summary', size: 'small', metric: 'delta' },
-          { id: 'pv-service', type: 'priceVolume', size: 'large', groupBy: asDimensionId('service'), topN: 6 },
-        ],
-      },
-      {
-        widgets: [
-          { id: 'pv-family', type: 'priceVolume', size: 'full', groupBy: asDimensionId('service_category'), topN: 8 },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'pacing',
-    name: 'Budget pacing',
+    id: 'spend-pacing',
+    name: 'Spend pacing',
+    description: 'Cumulative spend against the previous period and the daily run rate behind it. Pick This month to project where the month lands',
     rows: [
       {
         widgets: [
@@ -230,24 +83,37 @@ const WIDGET_SHOWCASE_VIEWS: readonly Omit<ViewSpec, 'builtIn'>[] = [
       },
       {
         widgets: [
-          { id: 'pacing-line', type: 'line', size: 'full', groupBy: asDimensionId('service'), topN: 6 },
+          { id: 'pacing-run-rate-service', type: 'line', size: 'full', groupBy: asDimensionId('service'), topN: 6 },
+        ],
+      },
+      {
+        widgets: [
+          { id: 'pacing-run-rate-account', type: 'stackedBar', size: 'full', groupBy: asDimensionId('account') },
         ],
       },
     ],
   },
   {
-    id: 'concentration',
-    name: 'Concentration',
+    id: 'where-the-money-goes',
+    name: 'Where the money goes',
+    description: 'Which few services, accounts and regions make up most of the bill',
     rows: [
       {
         widgets: [
-          { id: 'conc-summary', type: 'summary', size: 'small', metric: 'total' },
-          { id: 'conc-service', type: 'pareto', size: 'large', groupBy: asDimensionId('service') },
+          { id: 'money-summary', type: 'summary', size: 'small', metric: 'total' },
+          { id: 'money-treemap-service', type: 'treemap', size: 'large', groupBy: asDimensionId('service') },
         ],
       },
       {
         widgets: [
-          { id: 'conc-account', type: 'pareto', size: 'full', groupBy: asDimensionId('account') },
+          { id: 'money-concentration-service', type: 'pareto', size: 'medium', groupBy: asDimensionId('service') },
+          { id: 'money-concentration-account', type: 'pareto', size: 'medium', groupBy: asDimensionId('account') },
+        ],
+      },
+      {
+        widgets: [
+          { id: 'money-top-accounts', type: 'topNBar', size: 'medium', groupBy: asDimensionId('account'), topN: 12 },
+          { id: 'money-top-regions', type: 'topNBar', size: 'medium', groupBy: asDimensionId('region'), topN: 12 },
         ],
       },
     ],
@@ -255,5 +121,23 @@ const WIDGET_SHOWCASE_VIEWS: readonly Omit<ViewSpec, 'builtIn'>[] = [
 ];
 
 export const SEED_VIEWS_CONFIG: ViewsConfig = {
-  views: [OVERVIEW_SEED_VIEW, ...WIDGET_SHOWCASE_VIEWS.map(v => ({ ...v, builtIn: true }))],
+  views: [OVERVIEW_SEED_VIEW, ...QUESTION_VIEWS.map(v => ({ ...v, builtIn: true }))],
 };
+
+/** The given views plus every seed view they lack (matched by id), each
+ *  inserted where the seed order puts it: right after the nearest earlier seed
+ *  view present, or first. Every seed view is built-in. */
+export function withMissingSeedViews(views: readonly ViewSpec[]): ViewSpec[] {
+  const out = [...views];
+  let insertAt = 0;
+  for (const seed of SEED_VIEWS_CONFIG.views) {
+    const existing = out.findIndex(v => v.id === seed.id);
+    if (existing >= 0) {
+      insertAt = existing + 1;
+      continue;
+    }
+    out.splice(insertAt, 0, seed);
+    insertAt += 1;
+  }
+  return out;
+}

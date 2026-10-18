@@ -81,7 +81,32 @@ export function auditCoverageReport(report: CoverageReport): CoverageVerdict {
   return { status: 'ok', sourceFiles: report.size, zeroFunction };
 }
 
-/** The diagnostic CI prints for a rejected report. */
+/**
+ * The diagnostic CI prints for a rejected main-process report (see
+ * `./main-process.ts`). Same verdicts as the renderer's, different causes:
+ * the main process cannot lose an attach race, so neither failure is the
+ * suite's ordering.
+ */
+export function describeMainCoverageFailure(failure: CoverageFailure): string {
+  switch (failure.status) {
+    case 'empty':
+      return (
+        'The main process wrote V8 coverage dumps, but no main-bundle entry in them could be converted — ' +
+        'the coverage pipeline is broken. Check that the bundle still lives under packages/desktop/out/main/ ' +
+        '(isMainBundleUrl), that the build emits its .map (electron-vite build --sourcemap), and that the ' +
+        'dumps are newer than the bundle.'
+      );
+    case 'fabricated':
+      return (
+        `${String(failure.zeroFunction.files)} files of the main-process report reported no functions at all and ` +
+        `were credited ${(failure.zeroFunction.hitShare * 100).toFixed(1)}% of its covered lines — the report is ` +
+        'fabricated, not measured. NODE_V8_COVERAGE records from the first line of the bundle, so this is not an ' +
+        'attach race: suspect a dump taken from a different build of the bundle than the one on disk.'
+      );
+  }
+}
+
+/** The diagnostic CI prints for a rejected renderer report. */
 export function describeCoverageFailure(failure: CoverageFailure): string {
   switch (failure.status) {
     case 'empty':

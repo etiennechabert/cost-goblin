@@ -11,7 +11,7 @@ import { buildPareto } from '../lib/concentration.js';
 
 const ROW_LIMIT = 1000;
 
-export function ParetoWidget({ spec, dateRange, previousDateRange, granularity, globalFilters, dimensions, onSetFilter }: WidgetCommonProps) {
+export function ParetoWidget({ spec, dateRange, granularity, globalFilters, dimensions, onSetFilter }: WidgetCommonProps) {
   const [groupByOverride, setGroupByOverride] = useState<DimensionId | undefined>(undefined);
   const specGroupBy = spec.type === 'pareto' ? spec.groupBy : undefined;
   const effectiveGroupBy = groupByOverride ?? specGroupBy;
@@ -19,8 +19,6 @@ export function ParetoWidget({ spec, dateRange, previousDateRange, granularity, 
   const { status, error, rows, distinctTotal } = useAggregatedGroups({
     groupBy: effectiveGroupBy,
     dateRange,
-    previousDateRange,
-    comparePrev: false,
     granularity,
     globalFilters,
     rowLimit: ROW_LIMIT,

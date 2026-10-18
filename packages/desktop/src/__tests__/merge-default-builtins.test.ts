@@ -56,3 +56,31 @@ describe('mergeDefaultBuiltIns provider awareness', () => {
     expect(names(merged)).toContain('service_category');
   });
 });
+
+describe('mergeDefaultBuiltIns backfills', () => {
+  it('renames a stale default label, keeps user labels and descriptions, and carries the order', () => {
+    const dims: DimensionsConfig = {
+      builtIn: [
+        { name: asDimensionId('service'), label: 'AWS Service', field: 'service' },
+        { name: asDimensionId('account'), label: 'My Accounts', field: 'account_id', description: 'Mine.' },
+        { name: asDimensionId('custom_meter'), label: 'Custom', field: 'operation' },
+      ],
+      tags: [],
+      order: ['builtin:service', 'builtin:account'],
+    };
+    const merged = mergeDefaultBuiltIns(dims, []);
+    const byName = new Map(merged.builtIn.map(d => [String(d.name), d]));
+    expect(byName.get('service')?.label).toBe('Service');
+    expect(byName.get('service')?.description).toMatch(/FOCUS ServiceName/);
+    expect(byName.get('account')).toMatchObject({ label: 'My Accounts', description: 'Mine.' });
+    // No default to borrow a description from.
+    expect(byName.get('custom_meter')?.description).toBeUndefined();
+    expect(merged.order).toEqual(['builtin:service', 'builtin:account']);
+  });
+
+  it('returns the loaded config itself when nothing is missing or stale', () => {
+    const complete = mergeDefaultBuiltIns(GCP_WIZARD_DIMS, []);
+    expect(mergeDefaultBuiltIns(complete, [])).toBe(complete);
+    expect(complete.order).toBeUndefined();
+  });
+});
