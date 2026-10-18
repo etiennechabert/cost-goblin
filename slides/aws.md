@@ -153,7 +153,7 @@ kicker: Before we start
 
 - **CostGoblin**, from [costgoblin.com](https://costgoblin.com/#download)
 - An **AWS CLI profile** in `~/.aws/config`, SSO or keys
-- Optional: the **AWS CLI**, for SSO sign-in
+- The **AWS CLI**: CostGoblin downloads through it
 
 </div>
 </div>
@@ -161,6 +161,7 @@ kicker: Before we start
 <!--
 - Management account: Data Exports there cover every member account.
 - A member account's export only covers that account.
+- The AWS CLI is required: every sync downloads with `aws s3 sync`, and SSO sign-in runs `aws sso login`.
 -->
 
 ---
@@ -692,6 +693,7 @@ kicker: When something's off
 <!--
 - A failed stack keeps its bucket (and the service role, if it got that far): delete both before retrying.
 - Third FOCUS export refused: two per account, reuse one.
+- "AWS CLI not found" on Sync: install the AWS CLI, the sync downloads through it.
 -->
 
 ---

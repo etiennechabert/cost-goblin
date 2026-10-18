@@ -34,9 +34,12 @@ defineProps<{ badge?: string; provider?: 'aws' | 'gcp'; pipeline?: string }>()
   padding-bottom: 38px;
 }
 
+/* Behind the text: a positioned pseudo-element otherwise paints over the
+   (unpositioned) text column it overlaps. */
 .cover::before {
   content: '';
   position: absolute;
+  z-index: -1;
   top: 8%;
   right: -4%;
   width: 62%;

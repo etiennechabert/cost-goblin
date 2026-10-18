@@ -16,6 +16,8 @@ const src = computed(() => Object.entries(shots).find(([path]) => path.endsWith(
       <span /><span /><span />
     </div>
     <img v-if="src" :src="src" alt="">
+    <!-- A typo in `name` shows here, not as a blank frame nobody notices. -->
+    <p v-else class="cg-shot-missing">No docs/screenshots/{{ name }}.png</p>
   </figure>
 </template>
 
@@ -50,5 +52,14 @@ const src = computed(() => Object.entries(shots).find(([path]) => path.endsWith(
   display: block;
   width: 100%;
   height: auto;
+}
+
+.cg-shot-missing {
+  margin: 0;
+  padding: 48px 16px;
+  font-family: var(--cg-font-mono);
+  font-size: 12px;
+  text-align: center;
+  color: var(--cg-red);
 }
 </style>

@@ -524,6 +524,7 @@ gcloud iam service-accounts add-iam-policy-binding $SA --project=$PROJECT_ID \
 
 <!--
 - Run by an admin, once. Your everyday account then only needs Token Creator on the reader.
+- Right after the create, a binding can fail with "does not exist" while IAM catches up: wait a few seconds and re-run it.
 - Skip bucketViewer if the reader shouldn't see other bucket names: you'll type the bucket name instead.
 -->
 
@@ -618,11 +619,11 @@ kicker: When something's off
 | If you see | Fix |
 |---|---|
 | costgoblin-reader can't list the buckets in … | Type the bucket name, then <Ui>Browse</Ui> |
-| Can't read as costgoblin-reader | Grant yourself Token Creator on it |
+| Can't read as costgoblin-reader | Create it, or grant Token Creator on it |
 | No Google Cloud projects found | **Project not listed? Enter its ID** |
 | IAM Credentials API disabled | Enable `iamcredentials.googleapis.com` |
 | An empty bucket, and no error | Folders must read `billing_period=`, lowercase |
-| A month reads too high | Delete that month's folder, export again |
+| A month reads too high | Delete its watermark row, run the job again |
 
 </div>
 
@@ -632,8 +633,10 @@ kicker: When something's off
 
 <!--
 - Bucket list denied is normal for a least-privilege reader: Browse needs only object list.
-- The IAM Credentials API is billed to your ADC quota project, the one application-default login prints.
+- The IAM Credentials API is billed to your ADC quota project, the one application-default login prints: enable it there, not necessarily in the reader's project.
+- "Can't read as" covers both causes: the reader doesn't exist in that project, or you lack Token Creator on it.
 - Location errors: dataset, watermark dataset, bucket and job must share one location.
+- Too high: the job only re-exports a month whose watermark moved, so deleting the folder alone leaves it missing. Delete the row instead (bq query --use_legacy_sql=false "DELETE FROM costgoblin_exporter.export_state WHERE billing_period = 'YYYY-MM-01'"), then run the job: it clears the folder before rewriting it.
 -->
 
 ---

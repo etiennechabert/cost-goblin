@@ -323,10 +323,6 @@ html.dark {
   gap: 8px;
 }
 
-.cg-mono {
-  font-family: var(--cg-font-mono);
-}
-
 .cg-muted {
   color: var(--cg-text-muted);
 }

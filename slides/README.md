@@ -68,7 +68,7 @@ The goblin art and app screenshots are read in place from `docs/` and `packages/
 | `<Screenshot name="cost-overview" />` | A website screenshot (`docs/screenshots/<name>.png`) in a window frame |
 | `<ProviderMark provider="aws" />` | The AWS or Google Cloud mark |
 
-Classes for Markdown: `cg-card` (and `cg-card--accent`), `cg-checklist` around a list, `cg-muted`, `cg-small`, and `cg-icon` on an icon. Icons are [Lucide](https://lucide.dev), the app's icon set, as `i-lucide-<name>`. `*word*` in a title turns it emerald.
+Classes for Markdown: `cg-card` (and `cg-card--accent`), `cg-checklist` around a list, `cg-muted`, `cg-small`, `cg-icon` on an icon, and `cg-flow--tight` on a `<Flow>` of five boxes. Icons are [Lucide](https://lucide.dev), the app's icon set, as `i-lucide-<name>`. `*word*` in a title turns it emerald.
 
 ### Keep them accurate
 
