@@ -16,6 +16,7 @@ import {
   buildTrendResult,
   columnForDimension,
   filterOrgTree,
+  isAccountGroupBy,
   mergeTrendRowsByEntity,
   providersEmptyForRange,
   resolveEntityName,
@@ -55,7 +56,7 @@ export function registerTrendHandlers(app: AppContext): void {
 
     const rows = await runPreparedQuery(sql, queryParams, isMat);
     const result = buildTrendResult(rows, params.deltaThreshold, params.percentThreshold);
-    if (params.groupBy === 'account' || params.groupBy === 'account_id') {
+    if (isAccountGroupBy(params.groupBy)) {
       return {
         ...result,
         increases: mergeTrendRowsByEntity(result.increases.map(r => ({ ...r, entity: asEntityRef(resolveEntityName(r.entity, accountMap)) }))),

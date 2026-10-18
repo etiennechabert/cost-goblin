@@ -2,7 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { registerExplorerHandlers } from '../main/handlers/explorer.js';
-import { at, createHarness, list, num, str, type Harness, type HarnessOptions } from './helpers/ipc-harness.js';
+import { FIXTURE_COMPANY_VALUES, at, createHarness, list, num, str, type Harness, type HarnessOptions } from './helpers/ipc-harness.js';
 
 /** The Explorer's IPC channels over a real in-process DuckDB and a copy of
  *  the synthetic tree: hourly drill-down, row clamping, the ungrouped
@@ -18,9 +18,6 @@ const ONE_DAY = { start: '2026-02-10', end: '2026-02-10' };
 const HOURLY_DAY = { start: '2026-02-25', end: '2026-02-25' };
 const NO_DATA = { start: '2025-03-01', end: '2025-03-31' };
 const EC2 = 'Amazon Elastic Compute Cloud';
-/** Every owner value under "Company", the one top-level node of the fixture
- *  org tree (packages/core/src/__fixtures__/config/org-tree.yaml). */
-const COMPANY_VALUES = ['core-banking', 'payments', 'identity', 'platform', 'analytics', 'ml-platform', 'SRE', 'sre-emea', 'sre-us'];
 
 const harnesses: Harness[] = [];
 
@@ -97,7 +94,7 @@ describe('explorer:query-overview', () => {
     const byNode = await h.ipc.invoke('explorer:query-overview', { filters: { tag_team: ['Company'] }, dateRange: FEBRUARY, applyCostScope: true });
     expect(h.db.statements.at(-1)).toContain('rollup.parquet');
     expect(num(at(byNode, 'totalCost'))).toBeGreaterThan(0);
-    expect(byNode).toEqual(await h.ipc.invoke('explorer:query-overview', { filters: { tag_team: COMPANY_VALUES }, dateRange: FEBRUARY, applyCostScope: true }));
+    expect(byNode).toEqual(await h.ipc.invoke('explorer:query-overview', { filters: { tag_team: FIXTURE_COMPANY_VALUES }, dateRange: FEBRUARY, applyCostScope: true }));
   });
 
   // Answering without it would show unscoped totals as if they were scoped.
@@ -178,11 +175,11 @@ describe('explorer:query-aggregated-table', () => {
     });
     const byNode = await byTeams(['Company']);
     expect(list(at(byNode, 'rows')).length).toBeGreaterThan(0);
-    expect(byNode).toEqual(await byTeams(COMPANY_VALUES));
+    expect(byNode).toEqual(await byTeams(FIXTURE_COMPANY_VALUES));
     const overview = (teams: readonly string[]): Promise<unknown> => h.ipc.invoke('explorer:query-overview', {
       filters: { tag_team: teams }, dateRange: FEBRUARY, applyCostScope: true,
     });
-    expect(await overview(['Company'])).toEqual(await overview(COMPANY_VALUES));
+    expect(await overview(['Company'])).toEqual(await overview(FIXTURE_COMPANY_VALUES));
   });
 });
 

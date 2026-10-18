@@ -137,6 +137,12 @@ export function isAccountGroupBy(groupBy: string): boolean {
   return groupBy === 'account' || groupBy === 'account_id';
 }
 
+/** The configured org tree, or undefined when it has no nodes. */
+export async function configuredOrgTree(getOrgTreeConfig: () => Promise<OrgTreeConfig>): Promise<readonly OrgNode[] | undefined> {
+  const { tree } = await getOrgTreeConfig();
+  return tree.length > 0 ? tree : undefined;
+}
+
 /** The org tree that resolves the node names a query's owner-dimension filter
  *  may hold (QueryContextOptions.orgTree), or undefined when no filter has a
  *  value on that dimension or no tree is configured. The tree is read only
@@ -147,10 +153,8 @@ export async function filterOrgTree(
   dimensions: DimensionsConfig,
   getOrgTreeConfig: () => Promise<OrgTreeConfig>,
 ): Promise<readonly OrgNode[] | undefined> {
-  const filtersOwner = dimensions.tags.some(t => t.concept === 'owner' && (filters[tagDimColumn(t)] ?? []).some(v => v !== ''));
-  if (!filtersOwner) return undefined;
-  const { tree } = await getOrgTreeConfig();
-  return tree.length > 0 ? tree : undefined;
+  const filtersOwner = Object.entries(filters).some(([id, values]) => isOwnerGroupBy(id, dimensions) && (values ?? []).some(v => v !== ''));
+  return filtersOwner ? configuredOrgTree(getOrgTreeConfig) : undefined;
 }
 
 export function resolveEntityName(entity: string, accountMap: Map<string, string>): string {
@@ -627,8 +631,10 @@ export function applyOrgTreeRollup(result: CostResult, tree: readonly OrgNode[])
 /** Each owner value the tree rolls up, mapped to the top-level node whose row
  *  applyOrgTreeRollup counts it in: every value getDescendantTagValues lists
  *  under that node (a virtual node's descendants, a real node's own value and
- *  its descendants'). Values outside the tree are left out; a value listed
- *  under two top-level nodes goes to the first. Renaming each value this way
+ *  its descendants'). Values outside the tree are left out (one spelled like
+ *  a virtual node keeps its name, so it sums into that node's series, as a
+ *  filter on the name keeps it: expandOrgNodeValues); a value listed under
+ *  two top-level nodes goes to the first. Renaming each value this way
  *  and summing, as the daily series do, keeps a node whose total is zero or
  *  negative, where applyOrgTreeRollup drops it: on a day with a credit, the
  *  day's bars still add up to its total. */

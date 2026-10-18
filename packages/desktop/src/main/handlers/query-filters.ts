@@ -13,6 +13,7 @@ import type { AppContext } from './context.js';
 import {
   columnForDimension,
   filterOrgTree,
+  isAccountGroupBy,
   resolveRollupSource,
   toNum,
   toStr,
@@ -109,8 +110,7 @@ export function registerFilterHandlers(app: AppContext): void {
 
     const params = qb.build().params;
     const rows = await runPreparedQuery(sql, params, matSource !== undefined);
-    const isAccountDim = dimensionId === 'account' || dimensionId === 'account_id';
-    if (isAccountDim) return mergeAccountRows(rows, accountMap);
+    if (isAccountGroupBy(dimensionId)) return mergeAccountRows(rows, accountMap);
 
     return rows.map(r => {
       const rawVal = toStr(r['val']);

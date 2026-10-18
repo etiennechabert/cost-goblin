@@ -26,6 +26,7 @@ import {
   buildDailyCostsResult,
   buildEntityDetailResult,
   columnForDimension,
+  configuredOrgTree,
   filterOrgTree,
   isAccountGroupBy,
   isOwnerGroupBy,
@@ -48,8 +49,7 @@ export function registerCostHandlers(app: AppContext): void {
     dimensions: DimensionsConfig,
   ): Promise<readonly OrgNode[] | undefined> {
     if (!isOwnerGroupBy(params.groupBy, dimensions) || params.orgNodeValues !== undefined) return undefined;
-    const { tree } = await getOrgTreeConfig();
-    return tree.length > 0 ? tree : undefined;
+    return configuredOrgTree(getOrgTreeConfig);
   }
 
   /** The name a daily series takes, matching query:costs' row for the same

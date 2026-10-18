@@ -33,7 +33,7 @@ import type {
 } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
 import { type AppContext, prefsPath } from './context.js';
-import { buildAccountReverseMap, columnForDimension, filterOrgTree, resolveRollupSource, tagSelectItems, tagValuesById, toNum, toStr } from './query-utils.js';
+import { buildAccountReverseMap, columnForDimension, filterOrgTree, isAccountGroupBy, resolveRollupSource, tagSelectItems, tagValuesById, toNum, toStr } from './query-utils.js';
 import { parseRowKeys, queryAggregatedRows } from './aggregated-table.js';
 import type { RunSql } from './aggregated-table.js';
 import { appendRowFilters, explorerGroupBy, explorerOrderBy } from './explorer-columns.js';
@@ -445,8 +445,7 @@ export function registerExplorerHandlers(app: AppContext): void {
     `.trim();
 
     const rows = await runQuery(sql);
-    const isAccountDim = dimId === 'account' || dimId === 'account_id';
-    if (isAccountDim) {
+    if (isAccountGroupBy(dimId)) {
       const merged = new Map<string, { cost: number; rows: number }>();
       for (const r of rows) {
         const rawVal = toStr(r['val']);

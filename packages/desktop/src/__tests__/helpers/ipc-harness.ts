@@ -40,6 +40,13 @@ export const SYNTHETIC_DIR = join(CORE_FIXTURES, 'synthetic');
 export const FIXTURE_AWS_PROVIDER = 'aws-main';
 export const FIXTURE_GCP_PROVIDER = 'gcp-main';
 
+/** Every owner value under "Company", the one top-level node of the fixture
+ *  org tree (org-tree.yaml in FIXTURE_CONFIG_DIR). The synthetic tree tags
+ *  payments, identity and platform among them. */
+export const FIXTURE_COMPANY_VALUES: readonly string[] = [
+  'core-banking', 'payments', 'identity', 'platform', 'analytics', 'ml-platform', 'SRE', 'sre-emea', 'sre-us',
+];
+
 /** The day after the synthetic fixture window (Jan–Feb 2026), like e2e's. */
 export const FIXTURE_NOW_MS = Date.parse('2026-03-01T12:00:00Z');
 

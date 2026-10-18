@@ -159,7 +159,7 @@ describe('query builders on DuckDB', () => {
         buildCostQuery({ groupBy: asDimensionId('account'), dateRange: JAN, filters: filters({ [team]: filterValues }) }, o);
 
       const q = byNode(['Eng'], owned);
-      expect(q.params.slice(0, 2)).toEqual(['core', 'data']);
+      expect(q.params.slice(0, 3)).toEqual(['Eng', 'core', 'data']);
       expect(totalsByEntity(await runPrepared(conn, q.sql, q.params))).toEqual({ '111': 1, '222': 2, '333': 4 });
       const withNone = byNode(['Eng', ''], owned);
       expect(totalsByEntity(await runPrepared(conn, withNone.sql, withNone.params))).toEqual({ '111': 1, '222': 2, '333': 4 });

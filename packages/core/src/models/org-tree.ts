@@ -50,17 +50,18 @@ export function getAncestorPath(tree: readonly OrgNode[], name: string): readonl
   return walk(tree, []) ?? [asEntityRef(name)];
 }
 
-/** The owner values that filter values stand for under the tree: a node's
- *  name stands for every value the node rolls up (getDescendantTagValues), as
- *  its rolled-up row shows them; any other value, and a node that rolls up
- *  nothing (a virtual node with no children), stands for itself. Values
- *  appear once each, in first-seen order. */
+/** The owner values that filter values stand for under the tree: every value
+ *  stands for itself, and a node's name also for every value the node rolls
+ *  up (getDescendantTagValues), as its rolled-up row shows them. A value
+ *  spelled like a virtual node isn't one of its descendants, but a series
+ *  named after the node sums it in, so filtering on the name keeps it too.
+ *  Values appear once each, in first-seen order. */
 export function expandOrgNodeValues(tree: readonly OrgNode[], values: readonly string[]): string[] {
   const expanded = new Set<string>();
   for (const value of values) {
+    expanded.add(value);
     const node = findNode(tree, value);
-    const members = node === undefined ? [] : getDescendantTagValues(node);
-    for (const member of members.length > 0 ? members : [value]) expanded.add(member);
+    if (node !== undefined) for (const member of getDescendantTagValues(node)) expanded.add(member);
   }
   return [...expanded];
 }

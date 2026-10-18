@@ -2,7 +2,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { registerQueryHandlers } from '../main/handlers/query.js';
-import { at, createHarness, isRecord, list, num, str, type Harness, type HarnessOptions } from './helpers/ipc-harness.js';
+import { FIXTURE_COMPANY_VALUES, at, createHarness, isRecord, list, num, str, type Harness, type HarnessOptions } from './helpers/ipc-harness.js';
 
 /** The dashboard query channels — costs, daily costs, entity detail, trends,
  *  filter values, missing tags and savings — run end to end against a real
@@ -28,12 +28,7 @@ const ORG = JSON.stringify({
   ],
 });
 
-/** Every owner value under "Company", the one top-level node of the fixture
- *  org tree (packages/core/src/__fixtures__/config/org-tree.yaml). The
- *  synthetic tree tags payments, identity and platform among them. */
-const COMPANY_VALUES: ReadonlySet<string> = new Set([
-  'core-banking', 'payments', 'identity', 'platform', 'analytics', 'ml-platform', 'SRE', 'sre-emea', 'sre-us',
-]);
+const COMPANY_VALUES: ReadonlySet<string> = new Set(FIXTURE_COMPANY_VALUES);
 
 const harnesses: Harness[] = [];
 
@@ -235,7 +230,7 @@ describe('query:daily-costs', () => {
 describe('a filter on an org-tree node', () => {
   // What a click on the "Company" slice or segment sets, and what it stands for.
   const BY_NODE = { tag_team: ['Company'] };
-  const BY_VALUES = { tag_team: [...COMPANY_VALUES] };
+  const BY_VALUES = { tag_team: FIXTURE_COMPANY_VALUES };
 
   it('keeps the node\'s spend in the widgets that show it, under its name', async () => {
     const h = await queryApp();

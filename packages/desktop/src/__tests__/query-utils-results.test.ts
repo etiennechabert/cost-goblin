@@ -8,6 +8,7 @@ import {
   asDollars,
   asEntityRef,
   asProviderName,
+  expandOrgNodeValues,
 } from '@costgoblin/core';
 import type { CostResult, CostRow, DimensionsConfig, OrgNode, TrendRow } from '@costgoblin/core';
 import {
@@ -553,6 +554,16 @@ describe('rollupNodeByValue', () => {
     const nodeByValue = rollupNodeByValue(tree);
     const renamed = mergeCostRowsByEntity(rows.map(r => ({ ...r, entity: asEntityRef(nodeByValue.get(r.entity) ?? r.entity) })));
     expect(totalsByEntity(costResult(renamed))).toEqual(totalsByEntity(applyOrgTreeRollup(costResult(rows), tree)));
+  });
+
+  it('sums a value spelled like a virtual node into its series, which a filter on that name keeps too', () => {
+    const nodeByValue = rollupNodeByValue(tree);
+    const result = buildDailyCostsResult([
+      { date: '2026-01-01', group_name: 'team-a', cost: 4 },
+      { date: '2026-01-01', group_name: 'platform', cost: 3 },
+    ], group => nodeByValue.get(group) ?? group);
+    expect(result.days.map(d => d.breakdown)).toEqual([{ platform: 7 }]);
+    expect(expandOrgNodeValues(tree, ['platform'])).toEqual(['platform', 'team-a', 'team-b']);
   });
 
   it('keeps the credit of a node whose values net below zero on a day in that day\'s total', () => {
