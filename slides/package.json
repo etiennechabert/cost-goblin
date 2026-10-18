@@ -1,0 +1,26 @@
+{
+  "name": "costgoblin-slides",
+  "private": true,
+  "type": "module",
+  "description": "Slidev decks for the CostGoblin AWS and GCP onboarding videos",
+  "license": "AGPL-3.0-only",
+  "scripts": {
+    "aws": "slidev aws.md --open",
+    "gcp": "slidev gcp.md --port 3031 --open",
+    "build": "slidev build aws.md --out dist/aws && slidev build gcp.md --out dist/gcp"
+  },
+  "engines": {
+    "node": ">=24",
+    "npm": ">=11.16.0"
+  },
+  "devDependencies": {
+    "@fontsource-variable/outfit": "^5.3.0",
+    "@fontsource/dm-mono": "^5.3.0",
+    "@iconify-json/lucide": "^1.2.142",
+    "@slidev/cli": "^53.0.0",
+    "vue": "^3.5.43"
+  },
+  "allowScripts": {
+    "fsevents": false
+  }
+}

@@ -1,0 +1,454 @@
+/* CostGoblin brand for Slidev. Tokens, type and component shapes follow the
+   website (docs/index.html): near-black ground, emerald accent, gold for
+   warnings, Outfit for text and DM Mono for labels. Sizes are canvas pixels
+   (980 x 552), which Slidev scales to the screen: 17px reads as ~33px in a
+   1080p recording. */
+
+:root,
+html.dark {
+  --cg-bg: #050505;
+  --cg-bg-raised: #0a0a0a;
+  --cg-bg-card: #0d0f0d;
+  --cg-border: #1a1f1a;
+  --cg-border-strong: #263326;
+  --cg-text: #e2e8e2;
+  --cg-text-dim: #8fa08f;
+  --cg-text-muted: #758575;
+  --cg-emerald: #10b981;
+  --cg-mint: #34d399;
+  --cg-emerald-dim: #065f46;
+  --cg-emerald-glow: rgba(16, 185, 129, 0.15);
+  --cg-gold: #d4a843;
+  --cg-red: #f87171;
+  --cg-font-display: 'Outfit Variable', 'Outfit', ui-sans-serif, system-ui, sans-serif;
+  --cg-font-mono: 'DM Mono', ui-monospace, 'SFMono-Regular', monospace;
+
+  --slidev-theme-primary: var(--cg-emerald);
+  --slidev-slide-container-background: var(--cg-bg);
+  --slidev-transition-duration: 0.35s;
+  --slidev-code-background: var(--cg-bg-raised);
+  --slidev-code-foreground: var(--cg-text-dim);
+  --slidev-code-font-family: var(--cg-font-mono);
+  --slidev-code-font-size: 12.5px;
+  --slidev-code-line-height: 1.7;
+  --slidev-code-padding: 14px 18px;
+  --slidev-code-radius: 10px;
+  --slidev-code-margin: 10px 0;
+  --slidev-code-tab-divider: var(--cg-border);
+  --slidev-code-tab-text-color: var(--cg-text-muted);
+  --slidev-code-tab-active-text-color: var(--cg-text);
+}
+
+/* --- Ground: the website's faint emerald grid and a glow from the top right.
+   No noise texture: it would only turn into compression artefacts on video. */
+.slidev-page {
+  background-color: var(--cg-bg);
+  background-image:
+    radial-gradient(60% 55% at 88% -5%, rgba(16, 185, 129, 0.1), transparent 70%),
+    linear-gradient(rgba(16, 185, 129, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(16, 185, 129, 0.045) 1px, transparent 1px);
+  background-size: 100% 100%, 32px 32px, 32px 32px;
+  background-position: 0 0, -1px -1px, -1px -1px;
+}
+
+/* --- Base type --- */
+/* With no theme, Slidev's base layout styles never load: the full height is
+   ours to set, so layouts can centre their content. */
+.slidev-layout {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  padding: 38px 56px 58px;
+  font-family: var(--cg-font-display);
+  font-size: 17px;
+  line-height: 1.55;
+  color: var(--cg-text);
+}
+
+.slidev-layout h1 {
+  margin: 0 0 12px;
+  font-size: 34px;
+  font-weight: 650;
+  line-height: 1.12;
+  letter-spacing: -0.025em;
+  color: var(--cg-text);
+}
+
+/* `# Connect *AWS*` highlights a word the way the website's hero does. */
+.slidev-layout h1 em,
+.slidev-layout h2 em {
+  font-style: normal;
+  background: linear-gradient(135deg, var(--cg-emerald), var(--cg-mint));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.slidev-layout h1 + p {
+  margin-top: -2px;
+  font-size: 18px;
+  font-weight: 300;
+  color: var(--cg-text-dim);
+  opacity: 1;
+}
+
+.slidev-layout h2 {
+  margin: 0 0 8px;
+  font-size: 23px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.slidev-layout h3 {
+  margin: 0 0 6px;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--cg-text);
+}
+
+.slidev-layout p {
+  margin: 10px 0;
+  line-height: 1.6;
+  color: var(--cg-text-dim);
+}
+
+.slidev-layout b,
+.slidev-layout strong {
+  font-weight: 600;
+  color: var(--cg-text);
+}
+
+.slidev-layout a {
+  color: var(--cg-emerald);
+  text-decoration: none;
+  border-bottom: 1px dashed rgba(16, 185, 129, 0.5);
+}
+
+/* --- Lists: emerald markers; ordered lists get the website's step circles --- */
+.slidev-layout ul,
+.slidev-layout ol {
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.slidev-layout li {
+  position: relative;
+  margin: 0 0 7px;
+  padding: 0 0 0 24px;
+  line-height: 1.5;
+  color: var(--cg-text-dim);
+}
+
+.slidev-layout ul > li::before {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 0.6em;
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--cg-emerald);
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.45);
+}
+
+/* `list-item` is the browser's own list counter, so `4.` in Markdown (an
+   <ol start="4">, e.g. a list continued in a second column) starts at 4. */
+.slidev-layout ol > li {
+  min-height: 26px;
+  padding-left: 38px;
+}
+
+.slidev-layout ol > li::before {
+  content: counter(list-item);
+  position: absolute;
+  left: 0;
+  top: -1px;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  border-radius: 50%;
+  background: rgba(16, 185, 129, 0.1);
+  font-family: var(--cg-font-mono);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--cg-emerald);
+}
+
+.slidev-layout li > ul,
+.slidev-layout li > ol {
+  margin: 4px 0 0;
+}
+
+.slidev-layout li li {
+  margin-bottom: 3px;
+  font-size: 0.92em;
+}
+
+/* A list of done or to-do items: `<div class="cg-checklist">` around it. */
+.cg-checklist ul > li::before {
+  left: 0;
+  top: 0.2em;
+  width: 16px;
+  height: 16px;
+  border-radius: 0;
+  background: var(--cg-emerald);
+  box-shadow: none;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+/* --- Code --- */
+.slidev-layout :not(pre) > code {
+  padding: 1px 6px;
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  border-radius: 5px;
+  background: rgba(16, 185, 129, 0.08);
+  font-family: var(--cg-font-mono);
+  font-size: 0.82em;
+  color: var(--cg-mint);
+  overflow-wrap: break-word;
+}
+
+.slidev-layout .slidev-code {
+  border: 1px solid var(--cg-border);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+
+.slidev-layout .slidev-code-block-title {
+  border: 1px solid var(--cg-border);
+  border-bottom: 0;
+  font-family: var(--cg-font-mono);
+}
+
+/* --- Tables: the website's settings cards --- */
+.slidev-layout table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14.5px;
+}
+
+.slidev-layout tr {
+  border: 0;
+}
+
+.slidev-layout th {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--cg-border-strong);
+  font-family: var(--cg-font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-align: left;
+  text-transform: uppercase;
+  color: var(--cg-text-muted);
+}
+
+.slidev-layout td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--cg-border);
+  vertical-align: top;
+  color: var(--cg-text-dim);
+}
+
+.slidev-layout td:first-child {
+  color: var(--cg-text);
+}
+
+.slidev-layout kbd {
+  padding: 1px 6px;
+  border: 1px solid var(--cg-border-strong);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--cg-bg-card);
+  font-family: var(--cg-font-mono);
+  font-size: 0.78em;
+  color: var(--cg-text);
+}
+
+/* --- Shared building blocks --- */
+
+/* A grid cell sizes to its column, not to its longest code line. */
+.slidev-layout .grid > * {
+  min-width: 0;
+}
+
+.cg-kicker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  font-family: var(--cg-font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--cg-emerald);
+}
+
+.cg-kicker::before {
+  content: '';
+  width: 18px;
+  height: 1px;
+  background: var(--cg-emerald);
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
+}
+
+.cg-card {
+  padding: 16px 18px;
+  border: 1px solid var(--cg-border);
+  border-radius: 14px;
+  background: var(--cg-bg-card);
+}
+
+.cg-card > :first-child {
+  margin-top: 0;
+}
+
+.cg-card > :last-child {
+  margin-bottom: 0;
+}
+
+.cg-card--accent {
+  border-color: rgba(16, 185, 129, 0.45);
+  box-shadow: 0 0 28px var(--cg-emerald-glow);
+}
+
+.cg-card h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cg-mono {
+  font-family: var(--cg-font-mono);
+}
+
+.cg-muted {
+  color: var(--cg-text-muted);
+}
+
+.cg-small {
+  font-size: 13.5px;
+}
+
+.cg-icon {
+  flex-shrink: 0;
+  font-size: 1.1em;
+  color: var(--cg-emerald);
+}
+
+/* --- Data-flow diagrams (Flow, Zone, FlowNode) --- */
+.cg-flow,
+.cg-zone-body {
+  --cg-flow-gap: 30px;
+  display: flex;
+  align-items: stretch;
+  gap: var(--cg-flow-gap);
+}
+
+.cg-flow {
+  --cg-flow-gap: 36px;
+}
+
+.cg-flow > *,
+.cg-zone-body > * {
+  position: relative;
+}
+
+/* The arrow sits in the gap before every item but the first. */
+.cg-flow > * + *::before,
+.cg-zone-body > * + *::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: calc(-1 * var(--cg-flow-gap));
+  width: var(--cg-flow-gap);
+  height: 18px;
+  transform: translateY(-50%);
+  background: var(--cg-emerald);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12h14'/%3E%3Cpath d='m12 5 7 7-7 7'/%3E%3C/svg%3E") center / 18px 18px no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12h14'/%3E%3Cpath d='m12 5 7 7-7 7'/%3E%3C/svg%3E") center / 18px 18px no-repeat;
+}
+
+.cg-zone {
+  position: relative;
+  padding: 26px 16px 16px;
+  border: 1px dashed var(--cg-border-strong);
+  border-radius: 16px;
+  background: rgba(13, 15, 13, 0.6);
+}
+
+.cg-zone--accent {
+  border-color: rgba(16, 185, 129, 0.5);
+  background: rgba(16, 185, 129, 0.04);
+  box-shadow: 0 0 36px rgba(16, 185, 129, 0.08);
+}
+
+.cg-zone-label {
+  position: absolute;
+  top: 8px;
+  left: 16px;
+  font-family: var(--cg-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--cg-text-muted);
+}
+
+.cg-zone--accent .cg-zone-label {
+  color: var(--cg-emerald);
+}
+
+.cg-node {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  width: 132px;
+  padding: 12px 13px;
+  border: 1px solid var(--cg-border);
+  border-radius: 12px;
+  background: var(--cg-bg-card);
+}
+
+.cg-node--accent {
+  border-color: rgba(16, 185, 129, 0.45);
+  box-shadow: 0 0 24px var(--cg-emerald-glow);
+}
+
+.cg-node-icon {
+  margin-bottom: 4px;
+  font-size: 20px;
+  color: var(--cg-emerald);
+}
+
+.cg-node-title {
+  font-size: 14.5px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--cg-text);
+}
+
+.cg-node-sub {
+  font-family: var(--cg-font-mono);
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--cg-text-muted);
+}
+
+/* Five boxes in one row (the GCP pipeline): narrower boxes, shorter arrows. */
+.cg-flow--tight {
+  --cg-flow-gap: 28px;
+}
+
+.cg-flow--tight .cg-zone-body {
+  --cg-flow-gap: 22px;
+}
+
+.cg-flow--tight .cg-node {
+  width: 118px;
+}

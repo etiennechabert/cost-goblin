@@ -21,6 +21,7 @@ costgoblin/
   workers/signup/           # Cloudflare Worker behind costgoblin.com's launch-notification form (own lockfile)
   scripts/                  # ci/ policy tests, build/ packaging, aws-exports/ template, gcp-focus-exporter/ (own lockfile)
   docs/                     # costgoblin.com website (incl. the GDPR privacy.html) and design docs
+  slides/                   # Slidev decks for the AWS and GCP onboarding videos (own lockfile and .npmrc)
   .gitar/                   # Gitar AI-review config: review guidance, rules, risk and auto-apply policy
 ```
 
@@ -199,7 +200,7 @@ Three npm-native guards live in `.npmrc` (no extra tooling). **They require npm 
 
 `.github/dependabot.yml` carries a matching 7-day `cooldown`. That gates the PRs Dependabot opens; `min-release-age` gates resolution done here. Neither delays **security** updates — Dependabot security PRs ignore cooldown by design, so `audit-ci` always gets its patch immediately.
 
-> ⚠️ **Scope:** `.npmrc` covers the **root workspace only**. npm reads it from the nearest `package.json` directory, so `workers/signup` and `scripts/gcp-focus-exporter` get *neither* guard. Both have committed lockfiles installed via `npm ci` (the exporter's Dockerfile adds `--ignore-scripts`; its dep tree carries no install scripts), and both are covered by Dependabot — but nothing in either directory enforces `strict-allow-scripts` or `min-release-age`, so their lockfiles' `resolved`+`integrity` pins (checked by the `lockfile integrity` CI job) are the supply-chain guard there.
+> ⚠️ **Scope:** `.npmrc` covers the **root workspace only**. npm reads it from the nearest `package.json` directory, so `workers/signup` and `scripts/gcp-focus-exporter` get *neither* guard. Both have committed lockfiles installed via `npm ci` (the exporter's Dockerfile adds `--ignore-scripts`; its dep tree carries no install scripts), and both are covered by Dependabot — but nothing in either directory enforces `strict-allow-scripts` or `min-release-age`, so their lockfiles' `resolved`+`integrity` pins (checked by the `lockfile integrity` CI job) are the supply-chain guard there. `slides/` is the exception: its own `.npmrc` repeats the three guards, its `allowScripts` holds the one entry its tree needs (a name-only deny for macOS's `fsevents`, whose registry metadata claims an install script its tarball doesn't have), and the same CI job checks its lockfile. It has no Dependabot entry (nothing in CI builds the decks, so a version bump couldn't be verified); Dependabot's security updates still reach it.
 
 **When `npm ci` fails with `ESTRICTALLOWSCRIPTS`:** a dependency introduced a new install script. Do NOT reach for `--dangerously-allow-all-scripts`. Read the script, and if it's legitimate:
 
