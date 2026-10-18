@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { DEFAULT_WORKSPACE_NAME, isStringRecord, isValidWorkspaceName, parseJsonObject, parseWorkspaceName } from '@costgoblin/core';
-import type { WorkspaceName } from '@costgoblin/core';
+import { DEFAULT_WORKSPACE_NAME, isChartPalette, isStringRecord, isValidWorkspaceName, parseJsonObject, parseWorkspaceName } from '@costgoblin/core';
+import type { ChartPalette, WorkspaceName } from '@costgoblin/core';
 
 /**
  * Workspace-aware path resolution for the main process (issue #518).
@@ -35,7 +35,7 @@ export interface AppStateFile {
   lastWorkspace?: string;
   lastUsed?: Record<string, string>; // name -> ISO timestamp
   theme?: 'dark' | 'light';
-  palette?: 'standard' | 'colorblind';
+  palette?: ChartPalette;
   /** A directory rename to perform on the next launch, before any file inside
    *  the workspace is opened. Renaming the ACTIVE workspace in-process fails on
    *  Windows (DuckDB holds its temp_directory and mmapped Parquet handles
@@ -104,7 +104,7 @@ export function readAppStateSync(appStatePath: string): AppStateFile {
   const theme = parsed['theme'];
   if (theme === 'dark' || theme === 'light') state.theme = theme;
   const palette = parsed['palette'];
-  if (palette === 'standard' || palette === 'colorblind') state.palette = palette;
+  if (isChartPalette(palette)) state.palette = palette;
   const pendingRename = parsed['pendingRename'];
   if (isStringRecord(pendingRename)) {
     const from = pendingRename['from'];
@@ -151,7 +151,7 @@ function moveGuardedSync(source: string, dest: string): boolean {
   return true;
 }
 
-function readThemePaletteSync(uiPreferencesPath: string): { theme?: 'dark' | 'light'; palette?: 'standard' | 'colorblind' } {
+function readThemePaletteSync(uiPreferencesPath: string): { theme?: 'dark' | 'light'; palette?: ChartPalette } {
   let raw: string;
   try {
     raw = readFileSync(uiPreferencesPath, 'utf-8');
@@ -160,11 +160,11 @@ function readThemePaletteSync(uiPreferencesPath: string): { theme?: 'dark' | 'li
   }
   const parsed = parseJsonObject(raw);
   if (parsed === null) return {};
-  const out: { theme?: 'dark' | 'light'; palette?: 'standard' | 'colorblind' } = {};
+  const out: { theme?: 'dark' | 'light'; palette?: ChartPalette } = {};
   const theme = parsed['theme'];
   if (theme === 'dark' || theme === 'light') out.theme = theme;
   const palette = parsed['palette'];
-  if (palette === 'standard' || palette === 'colorblind') out.palette = palette;
+  if (isChartPalette(palette)) out.palette = palette;
   return out;
 }
 
@@ -177,7 +177,7 @@ function readThemePaletteSync(uiPreferencesPath: string): { theme?: 'dark' | 'li
 export function migrateLegacyLayoutSync(userDataPath: string): {
   migrated: boolean;
   theme?: 'dark' | 'light';
-  palette?: 'standard' | 'colorblind';
+  palette?: ChartPalette;
 } {
   const workspaceRoot = join(userDataPath, 'workspaces', DEFAULT_WORKSPACE_NAME);
   const stateDir = join(workspaceRoot, 'state');
@@ -192,7 +192,7 @@ export function migrateLegacyLayoutSync(userDataPath: string): {
 
   // Theme + palette become machine-level in workspace mode — lift them from the
   // (possibly previously) migrated ui-preferences file, tolerantly.
-  const result: { migrated: boolean; theme?: 'dark' | 'light'; palette?: 'standard' | 'colorblind' } = { migrated };
+  const result: { migrated: boolean; theme?: 'dark' | 'light'; palette?: ChartPalette } = { migrated };
   const prefs = readThemePaletteSync(join(stateDir, 'ui-preferences.json'));
   if (prefs.theme !== undefined) result.theme = prefs.theme;
   if (prefs.palette !== undefined) result.palette = prefs.palette;
@@ -273,7 +273,7 @@ export function resolveWorkspaceEnv(userDataPath: string, env: NodeJS.ProcessEnv
     name = parseWorkspaceName(last);
   }
 
-  let migration: { theme?: 'dark' | 'light'; palette?: 'standard' | 'colorblind' } = {};
+  let migration: { theme?: 'dark' | 'light'; palette?: ChartPalette } = {};
   if (name === null) {
     const existing = listWorkspaceNamesSync(workspacesRoot);
     // app-state.json is written only after a fully successful resolution, so

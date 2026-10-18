@@ -6,6 +6,7 @@ import type { Dimension } from '@costgoblin/core/browser';
 import { PieChart } from '../components/pie-chart.js';
 import type { PieSlice } from '../components/pie-chart.js';
 import { PaletteProvider } from '../hooks/use-palette.js';
+import { PALETTE_STANDARD, assignSeriesColors } from '../lib/palette.js';
 
 const SLICES: readonly PieSlice[] = [
   { name: 'EC2', cost: 500, percentage: 50 },
@@ -157,6 +158,37 @@ describe('PieChart — slices', () => {
     fireEvent.click(other);
     fireEvent.keyDown(other, { key: 'Enter' });
     expect(onSliceClick).not.toHaveBeenCalled();
+  });
+
+  it('keeps a real Other and the folded remainder apart on hover', async () => {
+    const onSliceHover = vi.fn<(name: string | null) => void>();
+    const data = [{ name: 'Other', cost: 500, percentage: 50 }, ...SLICES.slice(1)];
+    const { container } = renderPie(<PieChart data={data} title="t" maxSlices={2} onSliceHover={onSliceHover} />);
+    const groups = await slices(container, 3);
+    const [real, , folded] = [slice(groups, 0), slice(groups, 1), slice(groups, 2)];
+
+    // The remainder is no entity: it lights only itself and reports no hover.
+    fireEvent.mouseEnter(folded);
+    expect(onSliceHover).toHaveBeenLastCalledWith(null);
+    expect(slicePath(folded).getAttribute('opacity')).toBe('1');
+    expect(slicePath(real).getAttribute('opacity')).toBe('0.3');
+
+    fireEvent.mouseEnter(real);
+    expect(onSliceHover).toHaveBeenLastCalledWith('Other');
+    expect(slicePath(folded).getAttribute('opacity')).toBe('0.3');
+  });
+
+  it('treats an entity named Other like any other series', async () => {
+    // FOCUS has a real "Other" service category; only the folded remainder is gray.
+    const onSliceClick = vi.fn<(name: string) => void>();
+    const data = [{ name: 'Other', cost: 500, percentage: 50 }, ...SLICES.slice(1)];
+    const { container } = renderPie(<PieChart data={data} title="t" onSliceClick={onSliceClick} />);
+    const real = slice(await slices(container, 4), 0);
+
+    expect(slicePath(real).getAttribute('fill')).toBe(assignSeriesColors(data, PALETTE_STANDARD)('Other'));
+    expect(real.getAttribute('role')).toBe('button');
+    fireEvent.click(real);
+    expect(onSliceClick.mock.calls).toEqual([['Other']]);
   });
 
   it('is not focusable without a click handler', async () => {

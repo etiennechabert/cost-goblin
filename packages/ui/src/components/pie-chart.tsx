@@ -1,13 +1,13 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { Group } from '@visx/group';
 import { Pie } from '@visx/shape';
-import { getColor } from '../lib/palette.js';
+import { OTHER_COLOR } from '../lib/palette.js';
 import { CollapsedChart } from './collapsed-chart.js';
 import { useContainerWidth } from '../lib/use-container-width.js';
 import { formatDollars } from './format.js';
 import type { Dimension } from '@costgoblin/core/browser';
 import { getDimensionId, getDimensionLabel } from '../lib/dimensions.js';
-import { usePalette } from '../hooks/use-palette.js';
+import { useSeriesColors } from '../hooks/use-palette.js';
 
 export interface PieSlice {
   readonly name: string;
@@ -34,13 +34,27 @@ interface PieChartProps {
 
 const OTHER_KEY = 'Other';
 
-function aggregateOther(data: readonly PieSlice[], maxSlices: number): PieSlice[] {
-  if (data.length <= maxSlices) return [...data];
-  const top = data.slice(0, maxSlices);
+/** A drawn slice. `folded` marks the remainder aggregateOther adds, so a real
+ *  entity that happens to be named "Other" is colored and clickable. */
+interface DisplaySlice extends PieSlice {
+  readonly folded: boolean;
+}
+
+// Keys and hover state for the folded remainder. No billing value starts with
+// a NUL, so a real "Other" keeps its own row and its own hover.
+const FOLDED_ID = '\u0000other';
+
+function sliceId(slice: DisplaySlice): string {
+  return slice.folded ? FOLDED_ID : slice.name;
+}
+
+function aggregateOther(data: readonly PieSlice[], maxSlices: number): DisplaySlice[] {
+  const top = data.slice(0, maxSlices).map(d => ({ ...d, folded: false }));
+  if (data.length <= maxSlices) return top;
   const rest = data.slice(maxSlices);
   const otherCost = rest.reduce((s, d) => s + d.cost, 0);
   const otherPct = rest.reduce((s, d) => s + d.percentage, 0);
-  return [...top, { name: OTHER_KEY, cost: otherCost, percentage: otherPct }];
+  return [...top, { name: OTHER_KEY, cost: otherCost, percentage: otherPct, folded: true }];
 }
 
 
@@ -67,7 +81,6 @@ function PieChartInner({
   width,
   height,
 }: Omit<PieChartProps, 'collapsed'> & { width: number; height: number }) {
-  const { palette } = usePalette();
   const [localHovered, setLocalHovered] = useState<string | null>(null);
   const hoveredName = externalHoveredName ?? localHovered;
   const legendRefs = useRef(new Map<string, HTMLElement>());
@@ -78,13 +91,17 @@ function PieChartInner({
     }
   }, [hoveredName]);
 
-  const displayData = aggregateOther(data, maxSlices);
+  const displayData = useMemo(() => aggregateOther(data, maxSlices), [data, maxSlices]);
+  const ranked = useMemo(() => displayData.filter(d => !d.folded), [displayData]);
+  const seriesColor = useSeriesColors(ranked);
+  const colorOf = (slice: DisplaySlice): string => (slice.folded ? OTHER_COLOR : seriesColor(slice.name));
   const pieSize = showLegend ? Math.min(width * 0.38, height - 60) : Math.min(width - 32, height - 60);
   const radius = pieSize / 2;
 
-  const handleMouseEnter = useCallback((name: string) => {
-    setLocalHovered(name);
-    onSliceHover?.(name);
+  // The folded remainder is no entity, so it highlights nothing elsewhere.
+  const handleMouseEnter = useCallback((slice: DisplaySlice) => {
+    setLocalHovered(sliceId(slice));
+    onSliceHover?.(slice.folded ? null : slice.name);
   }, [onSliceHover]);
 
   const handleMouseLeave = useCallback(() => {
@@ -138,7 +155,7 @@ function PieChartInner({
         <div className={showLegend ? 'shrink-0' : 'flex-1 flex justify-center'} style={showLegend ? { width: pieSize + 32 } : undefined}>
           <svg width={pieSize + 32} height={pieSize + 16}>
             <Group top={radius + 8} left={radius + 16}>
-              <Pie<PieSlice>
+              <Pie<DisplaySlice>
                 data={displayData}
                 pieValue={(d) => d.cost}
                 outerRadius={radius}
@@ -146,23 +163,24 @@ function PieChartInner({
                 padAngle={0.015}
               >
                 {(pie) =>
-                  pie.arcs.map((arc, i) => {
+                  pie.arcs.map((arc) => {
                     const sliceName = arc.data.name;
-                    const color = sliceName === OTHER_KEY ? '#374151' : getColor(i, palette);
-                    const isHovered = hoveredName === sliceName;
+                    const interactive = !arc.data.folded && onSliceClick !== undefined;
+                    const color = colorOf(arc.data);
+                    const isHovered = hoveredName === sliceId(arc.data);
                     const isDimmed = hoveredName !== null && !isHovered;
                     const path = pie.path(arc) ?? '';
 
                     return (
                       <g
-                        key={sliceName}
-                        onMouseEnter={() => { handleMouseEnter(sliceName); }}
+                        key={sliceId(arc.data)}
+                        onMouseEnter={() => { handleMouseEnter(arc.data); }}
                         onMouseLeave={handleMouseLeave}
-                        onClick={() => { if (sliceName !== OTHER_KEY) onSliceClick?.(sliceName); }}
-                        onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && sliceName !== OTHER_KEY) onSliceClick?.(sliceName); }}
-                        role={sliceName !== OTHER_KEY && onSliceClick !== undefined ? 'button' : undefined}
-                        tabIndex={sliceName !== OTHER_KEY && onSliceClick !== undefined ? 0 : undefined}
-                        style={{ cursor: sliceName !== OTHER_KEY && onSliceClick !== undefined ? 'pointer' : 'default' }}
+                        onClick={() => { if (interactive) onSliceClick(sliceName); }}
+                        onKeyDown={(e) => { if (interactive && (e.key === 'Enter' || e.key === ' ')) onSliceClick(sliceName); }}
+                        role={interactive ? 'button' : undefined}
+                        tabIndex={interactive ? 0 : undefined}
+                        style={{ cursor: interactive ? 'pointer' : 'default' }}
                       >
                         <path
                           d={path}
@@ -186,7 +204,7 @@ function PieChartInner({
 
         {/* Hover label for no-legend mode */}
         {!showLegend && hoveredName !== null && (() => {
-          const d = displayData.find(s => s.name === hoveredName);
+          const d = displayData.find(s => sliceId(s) === hoveredName);
           if (d === undefined) return null;
           const prev = previousCosts?.get(d.name);
           const pctDelta = prev !== undefined && prev > 0 ? ((d.cost - prev) / prev) * 100 : undefined;
@@ -205,20 +223,21 @@ function PieChartInner({
 
         {/* Legend — HTML for proper text truncation */}
         {showLegend && <div className="flex-1 min-w-0 overflow-y-auto flex flex-col gap-0.5 py-1">
-          {displayData.map((d, i) => {
-            const color = d.name === OTHER_KEY ? '#374151' : getColor(i, palette);
-            const isHovered = hoveredName === d.name;
+          {displayData.map((d) => {
+            const color = colorOf(d);
+            const id = sliceId(d);
+            const isHovered = hoveredName === id;
             const isDimmed = hoveredName !== null && !isHovered;
 
-            const isInteractive = d.name !== OTHER_KEY && onSliceClick !== undefined;
+            const isInteractive = !d.folded && onSliceClick !== undefined;
             const itemClassName = [
               'rounded text-[11px] transition-colors w-full text-left',
               isInteractive ? 'cursor-pointer' : '',
               isHovered ? 'bg-accent-muted/50 px-1.5 py-1' : 'flex items-center gap-1.5 px-1.5 py-0.5',
             ].join(' ');
-            const itemRef = (el: HTMLElement | null) => { if (el === null) { legendRefs.current.delete(d.name); } else { legendRefs.current.set(d.name, el); } };
+            const itemRef = (el: HTMLElement | null) => { if (el === null) { legendRefs.current.delete(id); } else { legendRefs.current.set(id, el); } };
             const itemProps = {
-              onMouseEnter: () => { handleMouseEnter(d.name); },
+              onMouseEnter: () => { handleMouseEnter(d); },
               onMouseLeave: handleMouseLeave,
             };
 
@@ -267,7 +286,7 @@ function PieChartInner({
             if (isInteractive) {
               return (
                 <button
-                  key={d.name}
+                  key={id}
                   type="button"
                   ref={itemRef}
                   {...itemProps}
@@ -281,7 +300,7 @@ function PieChartInner({
 
             return (
               <div
-                key={d.name}
+                key={id}
                 ref={itemRef}
                 {...itemProps}
                 className={itemClassName}

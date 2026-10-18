@@ -70,9 +70,16 @@ export interface SavingsPreferences {
   readonly hiddenActionTypes: readonly string[];
 }
 
+/** The chart palettes a user can pick (ui-preferences.json `palette`). */
+export type ChartPalette = 'standard' | 'vivid' | 'colorblind';
+
+export function isChartPalette(value: unknown): value is ChartPalette {
+  return value === 'standard' || value === 'vivid' || value === 'colorblind';
+}
+
 export interface UIPreferences {
   readonly theme: 'dark' | 'light';
-  readonly palette: 'standard' | 'colorblind';
+  readonly palette: ChartPalette;
   readonly defaultViewId?: string | undefined;
   readonly performance?: PerformanceSettings | undefined;
 }

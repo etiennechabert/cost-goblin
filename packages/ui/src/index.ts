@@ -79,8 +79,8 @@ export { WorkspacesView } from './views/workspaces.js';
 
 export { getDimensionId, isTagDimension, isEnvironmentDimension, isOwnerDimension, isProductDimension } from './lib/dimensions.js';
 
-export { PALETTE_STANDARD, PALETTE_COLORBLIND, getActivePalette } from './lib/palette.js';
-export type { PaletteType } from './lib/palette.js';
+export { PALETTE_STANDARD, PALETTE_STANDARD_LIGHT, PALETTE_VIVID, PALETTE_VIVID_LIGHT, PALETTE_COLORBLIND, PALETTE_COLORBLIND_LIGHT, getActivePalette } from './lib/palette.js';
+export type { PaletteTheme, PaletteType } from './lib/palette.js';
 export { PaletteProvider, usePalette } from './hooks/use-palette.js';
 
 export { CommandPalette } from './components/command-palette.js';

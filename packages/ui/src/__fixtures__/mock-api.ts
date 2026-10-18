@@ -69,6 +69,7 @@ import {
   type WorkspacesInfo,
   type ExplorerPreferences,
   type ExplorerPreferencesUpdate,
+  type UIPreferences,
 } from '@costgoblin/core/browser';
 import { DEFAULT_COST_SCOPE, DEFAULT_EXPLORER_HIDDEN_COLUMNS, computeRollupEstimate, tagSqlColumn } from '@costgoblin/core/browser';
 import { daysBetween } from '../lib/dates.js';
@@ -491,7 +492,7 @@ export class MockCostApi implements CostApi {
   updateAwsProfile(): Promise<void> { return Promise.resolve(); }
   getSavingsPreferences(): Promise<{ hiddenActionTypes: readonly string[] }> { return Promise.resolve({ hiddenActionTypes: [] }); }
   saveSavingsPreferences(): Promise<void> { return Promise.resolve(); }
-  getUIPreferences(): Promise<{ theme: 'dark' | 'light'; palette: 'standard' | 'colorblind' }> { return Promise.resolve({ theme: 'dark', palette: 'standard' }); }
+  getUIPreferences(): Promise<UIPreferences> { return Promise.resolve({ theme: 'dark', palette: 'standard' }); }
   saveUIPreferences(): Promise<void> { return Promise.resolve(); }
   syncOrgAccounts(): Promise<{ accounts: readonly never[]; orgId: string; syncedAt: string }> { return Promise.resolve({ accounts: [], orgId: 'mock', syncedAt: new Date().toISOString() }); }
   getOrgSyncResult(): Promise<null> { return Promise.resolve(null); }
