@@ -25,9 +25,9 @@ Covers `packages/ui/`, `packages/desktop/src/renderer/` and the test suites, inc
 ## Unit tests
 
 - Render inside `CostApiProvider` with `MockCostApi`, adding `PaletteProvider` for charts. Vary behavior by overriding mock methods, not with `vi.mock`. A mock for a new `CostApi` method takes typed parameters and records its calls: a zero-argument mock hides dropped arguments.
-- Wait with `findBy` or `waitFor` after a query, and for chart marks rather than titles. Fake only `Date` (`vi.useFakeTimers({ toFake: ['Date'] })`). An assertion that nothing happened must wait past the debounce.
+- Wait with `findBy` or `waitFor` after a query, and for chart marks rather than titles. Fake only `Date` (`toFake: ['Date']`), or pass `shouldAdvanceTime: true` so `waitFor` still runs. An assertion that nothing happened must wait past the debounce.
 - `queryBy…` followed by `toBeDefined()` always passes; use `.not.toBeNull()`. A regression test should fail with the fix reverted.
-- A `.test.tsx` under `packages/desktop` never runs. Move the logic into a plain `.ts` module or cover it in e2e. A new modal goes into `packages/ui/src/__tests__/modal-stacking.test.tsx`.
+- A `.test.tsx` under `packages/desktop` runs in the jsdom `desktop-renderer` project, which fakes the preload bridges. A new modal goes into `packages/ui/src/__tests__/modal-stacking.test.tsx`.
 
 ## E2E
 

@@ -226,8 +226,9 @@ export function SyncStatusButton({
           <div className="mb-2 rounded-md border border-negative/50 bg-negative-muted px-2.5 py-1.5 text-xs text-negative break-words" role="alert">
             {error}
             {/* `onRetry` is the same re-check the header's refresh icon runs —
-                it clears `syncError` on success, so a finished sign-in makes
-                this whole panel disappear without leaving the popover. */}
+                it clears the check's error on success, so a finished sign-in
+                makes this panel disappear without leaving the popover (unless
+                the sync itself reports an error of its own). */}
             {ssoProfile !== null && (
               <SsoLoginButton profile={ssoProfile} onRetry={handleRecheck} />
             )}
