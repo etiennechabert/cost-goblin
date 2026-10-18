@@ -30,13 +30,14 @@ import type {
   DimensionsConfig,
   ProviderSourceSpec,
   AggregatedTableParams,
-  AggregatedTableRow,
   AggregatedTableResult,
 } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
 import { type AppContext, prefsPath } from './context.js';
 import { buildAccountReverseMap, columnForDimension, resolveRollupSource, tagSelectItems, tagValuesById, toNum, toStr } from './query-utils.js';
-import { aggregatedOrderBy, appendRowFilters, explorerGroupBy, explorerOrderBy, groupBySelectList, groupByValues } from './explorer-columns.js';
+import { parseRowKeys, queryAggregatedRows } from './aggregated-table.js';
+import type { RunSql } from './aggregated-table.js';
+import { appendRowFilters, explorerGroupBy, explorerOrderBy } from './explorer-columns.js';
 import { readExplorerPreferences, writeExplorerPreferences } from './explorer-prefs.js';
 import { resolveScopeMetric } from './explorer-scope.js';
 import { resolveExplorerDateRange } from './query-windows.js';
@@ -239,7 +240,7 @@ function readOverviewDaily(result: PromiseSettledResult<RawRow[]>): readonly Exp
 }
 
 export function registerExplorerHandlers(app: AppContext): void {
-  const { ctx, runQuery, rollupStore, getAccountReverseMap, getQueryDimensions } = app;
+  const { ctx, runQuery, runPreparedQuery, rollupStore, getAccountReverseMap, getQueryDimensions } = app;
 
   const explorerPrefsPath = () => prefsPath(ctx.stateDir, 'explorer-preferences');
 
@@ -411,71 +412,25 @@ export function registerExplorerHandlers(app: AppContext): void {
     return { sampleRows, tagColumns: qc.tagColumns };
   }));
 
+  // Without keys the queries take no parameters, so they keep the plain path.
+  const runAggregatedSql: RunSql = (sql, bound) => bound.length === 0 ? runQuery(sql) : runPreparedQuery(sql, bound);
+
   ipcMain.handle('explorer:query-aggregated-table', (_event, payload: unknown): Promise<AggregatedTableResult> => originStore.run((payload as AggregatedTableParams).origin ?? null, async () => {
     const params = payload as AggregatedTableParams;
+    const rowKeys = parseRowKeys(params.rowKeys, MAX_ROW_LIMIT);
     const qc = await prepareQueryContext(app, params);
-    const rowLimit = clampRowLimit(params.rowLimit);
 
     if (qc.empty) return { rows: [], totalRows: 0, tagColumns: qc.tagColumns };
 
-    const whereStr = appendRowFilters(qc.whereStr, params.rowFilters, qc.tagSqlColumns);
-
-    const groupBy = explorerGroupBy(params.groupByColumns, qc.tagSqlColumns);
-
-    if (groupBy.length === 0) {
-      const sql = `
-        SELECT
-          CAST(SUM(cost) AS DOUBLE) AS cost,
-          CAST(SUM(list_cost) AS DOUBLE) AS list_cost,
-          CAST(SUM(usage_amount) AS DOUBLE) AS usage_amount,
-          CAST(COUNT(*) AS DOUBLE) AS row_count
-        FROM ${qc.source}
-        ${whereStr}
-      `.trim();
-      const rows = await runQuery(sql);
-      const r = rows[0];
-      if (r === undefined) return { rows: [], totalRows: 0, tagColumns: qc.tagColumns };
-      return {
-        rows: [{ values: {}, cost: toNum(r['cost']), listCost: toNum(r['list_cost']), usageAmount: toNum(r['usage_amount']), rowCount: toNum(r['row_count']) }],
-        totalRows: 1,
-        tagColumns: qc.tagColumns,
-      };
-    }
-
-    const groupByList = groupBy.map(g => g.column).join(', ');
-    const orderBy = aggregatedOrderBy(params.sort, groupBy);
-
-    const countSql = `
-      SELECT CAST(COUNT(*) AS DOUBLE) AS n FROM (
-        SELECT 1 FROM ${qc.source} ${whereStr}
-        GROUP BY ${groupByList}
-      ) AS _cnt
-    `.trim();
-    const dataSql = `
-      SELECT
-        ${groupBySelectList(groupBy)},
-        CAST(SUM(cost) AS DOUBLE) AS cost,
-        CAST(SUM(list_cost) AS DOUBLE) AS list_cost,
-        CAST(SUM(usage_amount) AS DOUBLE) AS usage_amount,
-        CAST(COUNT(*) AS DOUBLE) AS row_count
-      FROM ${qc.source}
-      ${whereStr}
-      GROUP BY ${groupByList}
-      ORDER BY ${orderBy}
-      LIMIT ${String(rowLimit)}
-    `.trim();
-
-    const [countResult, dataResult] = await Promise.all([runQuery(countSql), runQuery(dataSql)]);
-    const totalRows = countResult[0] === undefined ? 0 : toNum(countResult[0]['n']);
-    const resultRows: AggregatedTableRow[] = dataResult.map(r => ({
-      values: groupByValues(r, groupBy),
-      cost: toNum(r['cost']),
-      listCost: toNum(r['list_cost']),
-      usageAmount: toNum(r['usage_amount']),
-      rowCount: toNum(r['row_count']),
-    }));
-
-    return { rows: resultRows, totalRows, tagColumns: qc.tagColumns };
+    const { rows, totalRows } = await queryAggregatedRows(runAggregatedSql, {
+      source: qc.source,
+      where: appendRowFilters(qc.whereStr, params.rowFilters, qc.tagSqlColumns),
+      groupBy: explorerGroupBy(params.groupByColumns, qc.tagSqlColumns),
+      sort: params.sort,
+      rowLimit: clampRowLimit(params.rowLimit),
+      rowKeys,
+    });
+    return { rows, totalRows, tagColumns: qc.tagColumns };
   }));
 
   ipcMain.handle('explorer:filter-values', (_event, payload: unknown): Promise<ExplorerFilterValue[]> => originStore.run((payload as ExplorerFilterValuesParams).origin ?? null, async () => {

@@ -62,10 +62,12 @@ export function appendRowFilters(
     const colExpr = col === 'usage_date' ? `usage_date::VARCHAR` : col;
     extra.push(`${colExpr} = '${escaped}'`);
   }
-  if (extra.length === 0) return baseWhere;
-  const joined = extra.join(' AND ');
-  if (baseWhere.length === 0) return `WHERE ${joined}`;
-  return `${baseWhere} AND ${joined}`;
+  return extra.length === 0 ? baseWhere : andWhere(baseWhere, extra.join(' AND '));
+}
+
+/** `where` with `condition` ANDed on, where `where` is a WHERE clause or ''. */
+export function andWhere(where: string, condition: string): string {
+  return where.length === 0 ? `WHERE ${condition}` : `${where} AND ${condition}`;
 }
 
 /** An aggregated-table group-by column: the renderer's id and the SQL column behind it. */
