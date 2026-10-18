@@ -7,7 +7,7 @@ Covers `packages/ui/`, `packages/desktop/src/renderer/` and the test suites, inc
 - Modals use the ModalShell family (`ConfirmModal`, `TitledModal`, `ViewYamlModal`, `WizardModal`, in `packages/ui/src/components/ui/modal-shell.tsx`) or `DialogContent`. A native `<dialog>`, a hand-rolled `fixed inset-0` overlay or raw Radix content skips layer registration, `NO_DRAG` and focus return, and no test catches it.
 - A ModalShell is open while mounted: render it conditionally, and pass `dismissable={false}` while an operation runs.
 - Name dialogs by their title (`ModalShellTitle`, `DialogTitle`) or `ariaLabel`. An icon-only button needs `aria-label`, because `title` doesn't name it. Never wrap dialog content in `aria-hidden`.
-- Set initial focus through `initialFocusRef`. An effect that focuses on prop changes steals focus on every sync poll.
+- Set initial focus via `initialFocusRef`: an effect that focuses on prop changes steals focus on every sync poll. Content-keyed rows sort only after focus leaves the list: a re-key unmounts the focused element.
 - A modal opened without a user gesture waits while another layer is open (`isAnotherModalLayerOpen`; see `decideUpdateAutoOpen`). Document or window listeners that act must bail while a modal is open.
 - Overlays sit at exactly `z-50`, with nothing higher, and no transform or filter on a ModalShell's ancestors.
 - The frameless window's header band is an OS drag region, which wins over z-order. Anything painted over it needs `NO_DRAG` (`packages/ui/src/lib/utils.ts`) on its portaled root, and a control overlapping a drag element comes later in the DOM. The header has to fit a 900×600 window.
