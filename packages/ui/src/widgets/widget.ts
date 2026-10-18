@@ -103,8 +103,12 @@ export function hasSufficientCoverage(result: CostResult, requested: DateRange):
   return actualDays >= requestedDays * COVERAGE_THRESHOLD;
 }
 
-/** Returns true if a DailyCostsResult covers at least 80% of the requested date range. */
+/** Returns true if a DailyCostsResult's synced data covers at least 80% of
+ *  the requested date range. The main process reports the covered days, since
+ *  `days` leaves out the days with no spend; a result without them counts
+ *  `days`. */
 export function hasSufficientDailyCoverage(result: DailyCostsResult, requested: DateRange): boolean {
   const requestedDays = daysBetween(requested.start, requested.end);
-  return result.days.length >= requestedDays * COVERAGE_THRESHOLD;
+  const actualDays = result.coveredDays ?? result.days.length;
+  return actualDays >= requestedDays * COVERAGE_THRESHOLD;
 }
