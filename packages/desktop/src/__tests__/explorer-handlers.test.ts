@@ -18,6 +18,9 @@ const ONE_DAY = { start: '2026-02-10', end: '2026-02-10' };
 const HOURLY_DAY = { start: '2026-02-25', end: '2026-02-25' };
 const NO_DATA = { start: '2025-03-01', end: '2025-03-31' };
 const EC2 = 'Amazon Elastic Compute Cloud';
+/** Every owner value under "Company", the one top-level node of the fixture
+ *  org tree (packages/core/src/__fixtures__/config/org-tree.yaml). */
+const COMPANY_VALUES = ['core-banking', 'payments', 'identity', 'platform', 'analytics', 'ml-platform', 'SRE', 'sre-emea', 'sre-us'];
 
 const harnesses: Harness[] = [];
 
@@ -89,6 +92,12 @@ describe('explorer:query-overview', () => {
     const unfiltered = await h.ipc.invoke('explorer:query-overview', { filters: {}, dateRange: FEBRUARY, applyCostScope: true });
     expect(h.db.statements.at(-1)).toContain('rollup.parquet');
     expect(list(at(unfiltered, 'dailyTotals'))).toHaveLength(28);
+
+    // An org-tree node a dashboard filter names keeps the values under it here too.
+    const byNode = await h.ipc.invoke('explorer:query-overview', { filters: { tag_team: ['Company'] }, dateRange: FEBRUARY, applyCostScope: true });
+    expect(h.db.statements.at(-1)).toContain('rollup.parquet');
+    expect(num(at(byNode, 'totalCost'))).toBeGreaterThan(0);
+    expect(byNode).toEqual(await h.ipc.invoke('explorer:query-overview', { filters: { tag_team: COMPANY_VALUES }, dateRange: FEBRUARY, applyCostScope: true }));
   });
 
   // Answering without it would show unscoped totals as if they were scoped.
@@ -158,6 +167,22 @@ describe('explorer:query-aggregated-table', () => {
   it('is empty without data in range', async () => {
     const h = await explorerApp();
     expect(await h.ipc.invoke('explorer:query-aggregated-table', { filters: {}, dateRange: NO_DATA, groupByColumns: [], rowLimit: 10 })).toMatchObject({ rows: [], totalRows: 0 });
+  });
+
+  // The dashboard table widget gets the filter a click on a rolled-up
+  // "Company" slice sets, and keeps what the other widgets keep for it.
+  it('keeps every value under the org-tree node a dashboard filter names', async () => {
+    const h = await explorerApp();
+    const byTeams = (teams: readonly string[]): Promise<unknown> => h.ipc.invoke('explorer:query-aggregated-table', {
+      filters: { tag_team: teams }, dateRange: FEBRUARY, groupByColumns: ['tag_team'], rowLimit: 1000,
+    });
+    const byNode = await byTeams(['Company']);
+    expect(list(at(byNode, 'rows')).length).toBeGreaterThan(0);
+    expect(byNode).toEqual(await byTeams(COMPANY_VALUES));
+    const overview = (teams: readonly string[]): Promise<unknown> => h.ipc.invoke('explorer:query-overview', {
+      filters: { tag_team: teams }, dateRange: FEBRUARY, applyCostScope: true,
+    });
+    expect(await overview(['Company'])).toEqual(await overview(COMPANY_VALUES));
   });
 });
 

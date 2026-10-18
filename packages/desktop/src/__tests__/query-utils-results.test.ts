@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   asDateString,
   asDimensionId,
@@ -18,6 +18,7 @@ import {
   buildEntityDetailResult,
   buildMissingTagsResult,
   buildTrendResult,
+  filterOrgTree,
   isAccountGroupBy,
   isOwnerGroupBy,
   mergeCostRowsByEntity,
@@ -136,6 +137,29 @@ describe('isAccountGroupBy', () => {
     expect(isAccountGroupBy('account_id')).toBe(true);
     expect(isAccountGroupBy('account_name')).toBe(false);
     expect(isAccountGroupBy('tag_team')).toBe(false);
+  });
+});
+
+describe('filterOrgTree', () => {
+  const dims: DimensionsConfig = {
+    builtIn: [{ name: asDimensionId('service'), label: 'Service', field: 'service' }],
+    tags: [{ tagName: 'team', label: 'Team', concept: 'owner' }],
+  };
+  const tree: OrgNode[] = [{ name: 'eng', children: [{ name: 'web' }] }];
+
+  it('reads the tree only when a filter has a value on the owner dimension', async () => {
+    const read = vi.fn(() => Promise.resolve({ tree }));
+    expect(await filterOrgTree({ service: ['EC2'] }, dims, read)).toBeUndefined();
+    expect(await filterOrgTree({ tag_team: [] }, dims, read)).toBeUndefined();
+    expect(await filterOrgTree({ tag_team: [''] }, dims, read)).toBeUndefined();
+    expect(read).not.toHaveBeenCalled();
+    expect(await filterOrgTree({ tag_team: ['', 'eng'] }, dims, read)).toBe(tree);
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  it('is undefined for a tree with no nodes, and fails with a tree that does not load', async () => {
+    expect(await filterOrgTree({ tag_team: ['eng'] }, dims, () => Promise.resolve({ tree: [] }))).toBeUndefined();
+    await expect(filterOrgTree({ tag_team: ['eng'] }, dims, () => Promise.reject(new Error('bad org-tree.yaml')))).rejects.toThrow('bad org-tree.yaml');
   });
 });
 

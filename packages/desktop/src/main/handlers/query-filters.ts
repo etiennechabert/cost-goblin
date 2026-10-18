@@ -12,6 +12,7 @@ import {
 import type { AppContext } from './context.js';
 import {
   columnForDimension,
+  filterOrgTree,
   resolveRollupSource,
   toNum,
   toStr,
@@ -34,7 +35,7 @@ function mergeAccountRows(
 }
 
 export function registerFilterHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getQueryCostScope, getQueryProviders, runPreparedQuery, rollupStore } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getOrgTreeConfig, getQueryCostScope, getQueryProviders, runPreparedQuery, rollupStore } = app;
 
   ipcMain.handle('query:filter-values', (_event, dimensionId: string, filterEntries: Record<string, readonly string[]>, dateRange?: { start: string; end: string }, opts?: { bypassCostScope?: boolean }, origin?: string): Promise<{ value: string; label: string; count: number }[]> => originStore.run(origin ?? null, async () => {
     const dimensions = await getDimensions();
@@ -58,7 +59,8 @@ export function registerFilterHandlers(app: AppContext): void {
           columnForDimension(dimensions, dimensionId), 'cost',
         ]);
 
-    const filterClauses = buildFilterClauses(toFilterMap(filterEntries), dimensions, accountReverseMap, qb);
+    const orgTree = await filterOrgTree(filterEntries, dimensions, getOrgTreeConfig);
+    const filterClauses = buildFilterClauses(toFilterMap(filterEntries), dimensions, accountReverseMap, qb, orgTree);
     // Exclusions are baked into the rollup; only apply them on the raw path.
     const exclusionClauses = matSource === undefined && costScope !== undefined
       ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap, qb)

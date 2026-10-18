@@ -30,6 +30,7 @@ import type {
   DailyCost,
   DistributionSlice,
   OrgNode,
+  OrgTreeConfig,
   ProviderName,
   ProviderSourceSpec,
 } from '@costgoblin/core';
@@ -134,6 +135,22 @@ export function isOwnerGroupBy(groupBy: string, dimensions: DimensionsConfig): b
  *  by display name (resolveEntityName). */
 export function isAccountGroupBy(groupBy: string): boolean {
   return groupBy === 'account' || groupBy === 'account_id';
+}
+
+/** The org tree that resolves the node names a query's owner-dimension filter
+ *  may hold (QueryContextOptions.orgTree), or undefined when no filter has a
+ *  value on that dimension or no tree is configured. The tree is read only
+ *  when a filter needs it, so a broken org-tree.yaml fails the queries whose
+ *  rows it would change rather than every dashboard query. */
+export async function filterOrgTree(
+  filters: Readonly<Partial<Record<string, readonly string[]>>>,
+  dimensions: DimensionsConfig,
+  getOrgTreeConfig: () => Promise<OrgTreeConfig>,
+): Promise<readonly OrgNode[] | undefined> {
+  const filtersOwner = dimensions.tags.some(t => t.concept === 'owner' && (filters[tagDimColumn(t)] ?? []).some(v => v !== ''));
+  if (!filtersOwner) return undefined;
+  const { tree } = await getOrgTreeConfig();
+  return tree.length > 0 ? tree : undefined;
 }
 
 export function resolveEntityName(entity: string, accountMap: Map<string, string>): string {

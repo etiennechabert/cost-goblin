@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { DuckDBInstance } from '@duckdb/node-api';
 import type { DuckDBConnection } from '@duckdb/node-api';
 import { asDimensionId, tagDimColumn, tagSqlColumn } from '@costgoblin/core';
-import type { DimensionsConfig, ExplorerFilterMap, TagDimension } from '@costgoblin/core';
+import type { DimensionsConfig, ExplorerFilterMap, OrgNode, TagDimension } from '@costgoblin/core';
 import { buildExplorerFilterPredicate } from '../main/handlers/explorer-filters.js';
 import { fetchRows } from './helpers/duckdb-rows.js';
 
@@ -37,8 +37,8 @@ describe('buildExplorerFilterPredicate against DuckDB', () => {
     db.closeSync();
   });
 
-  async function kept(filters: ExplorerFilterMap): Promise<number> {
-    const predicate = buildExplorerFilterPredicate(filters, dimensions, new Map());
+  async function kept(filters: ExplorerFilterMap, dims: DimensionsConfig = dimensions, orgTree?: readonly OrgNode[]): Promise<number> {
+    const predicate = buildExplorerFilterPredicate(filters, dims, new Map(), orgTree);
     const where = predicate === null ? '' : `WHERE ${predicate}`;
     const [r] = await fetchRows(conn, `SELECT COALESCE(SUM(cost), 0)::DOUBLE AS total FROM line_items ${where}`);
     return Number(r?.['total']);
@@ -53,6 +53,16 @@ describe('buildExplorerFilterPredicate against DuckDB', () => {
   it('keeps only the matching line items for a value, across filters', async () => {
     expect(await kept({ [TEAM_ID]: ['web'] })).toBe(9);
     expect(await kept({ [TEAM_ID]: ['web'], region: ['eu-west-1'] })).toBe(1);
+  });
+
+  it('keeps every value under the org-tree node a filter on the owner dimension names', async () => {
+    const owned: DimensionsConfig = { ...dimensions, tags: [{ ...TEAM, concept: 'owner' }] };
+    const tree: OrgNode[] = [{ name: 'Eng', virtual: true, children: [{ name: 'web' }] }];
+    expect(await kept({ [TEAM_ID]: ['Eng'] }, owned, tree)).toBe(9);
+    expect(await kept({ [TEAM_ID]: ['Eng', ''] }, owned, tree)).toBe(15);
+    // Without the tree, or on a tag that isn't the owner, the name is a value like any other.
+    expect(await kept({ [TEAM_ID]: ['Eng'] }, owned)).toBe(0);
+    expect(await kept({ [TEAM_ID]: ['Eng'] }, dimensions, tree)).toBe(0);
   });
 
   it('adds nothing without a filter value', () => {

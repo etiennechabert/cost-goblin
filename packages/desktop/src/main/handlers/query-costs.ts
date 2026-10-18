@@ -26,6 +26,7 @@ import {
   buildDailyCostsResult,
   buildEntityDetailResult,
   columnForDimension,
+  filterOrgTree,
   isAccountGroupBy,
   isOwnerGroupBy,
   mergeCostRowsByEntity,
@@ -84,7 +85,8 @@ export function registerCostHandlers(app: AppContext): void {
       columnForDimension(dimensions, params.groupBy), 'service', 'cost',
     ]);
     const isMat = matSource !== undefined;
-    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, providers, accountReverseMap, costScope, materializedSource: matSource };
+    const orgTree = await filterOrgTree(params.filters, dimensions, getOrgTreeConfig);
+    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, providers, accountReverseMap, orgTree, costScope, materializedSource: matSource };
     const { sql, params: queryParams } = buildCostQuery(params, qcOpts);
     logger.info('query:costs', { groupBy: params.groupBy, materialized: isMat });
 
@@ -118,7 +120,8 @@ export function registerCostHandlers(app: AppContext): void {
       columnForDimension(dimensions, params.groupBy), 'cost',
     ]);
     const isMat = matSource !== undefined;
-    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, providers, accountReverseMap, costScope, materializedSource: matSource };
+    const orgTree = await filterOrgTree(params.filters, dimensions, getOrgTreeConfig);
+    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, providers, accountReverseMap, orgTree, costScope, materializedSource: matSource };
     const { sql, params: queryParams } = buildDailyCostsQuery(params, qcOpts);
     logger.info('query:daily-costs', { groupBy: params.groupBy, materialized: isMat });
 
@@ -152,7 +155,11 @@ export function registerCostHandlers(app: AppContext): void {
       columnForDimension(dimensions, params.dimension), 'service', 'account_id', 'account_name', 'cost',
     ]);
     const isMat = matSource !== undefined;
-    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, providers, accountReverseMap, costScope, materializedSource: matSource };
+    // The entity filters on its own value too (buildEntityDetailQuery): an
+    // org-tree node's detail covers the values under it.
+    const orgTree = await filterOrgTree(params.filters, dimensions, getOrgTreeConfig)
+      ?? await filterOrgTree({ [params.dimension]: [params.entity] }, dimensions, getOrgTreeConfig);
+    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, providers, accountReverseMap, orgTree, costScope, materializedSource: matSource };
     const { sql, params: queryParams } = buildEntityDetailQuery(params, qcOpts);
     logger.info('query:entity-detail', { entity: params.entity, materialized: isMat });
 

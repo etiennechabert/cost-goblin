@@ -1,4 +1,4 @@
-import type { BuiltInDimension, DimensionsConfig, TagDimension } from '../types/config.js';
+import type { BuiltInDimension, DimensionsConfig, OrgNode, TagDimension } from '../types/config.js';
 import type { CostQueryParams, DailyCostsParams, DateRange, FilterMap, TrendQueryParams, MissingTagsParams, EntityDetailParams } from '../types/query.js';
 import { DEFAULT_PLACEHOLDER_PATTERNS } from '../types/query.js';
 import type { DimensionId, ProviderName } from '../types/branded.js';
@@ -6,6 +6,7 @@ import { tagDimColumn, tagSqlColumn } from '../types/branded.js';
 import { OU_PATH_SOURCE_KEY } from '../types/config.js';
 import type { CostMetric, CostScopeConfig, ExclusionRule, MarketplaceAttributionConfig, MarketplaceAttributionRule } from '../types/cost-scope.js';
 import { DEFAULT_COST_METRIC } from '../types/cost-scope.js';
+import { expandOrgNodeValues } from '../models/org-tree.js';
 import { buildAliasSqlCase, normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
 import { costExprFor, isUsageOnlyMetric, USAGE_ONLY_METRIC_CHARGE_CATEGORIES } from './cost-metric.js';
 import { QueryBuilder, type ParameterizedQuery } from './parameterized.js';
@@ -150,17 +151,24 @@ function buildValueMatchClause(
   return `${resolved.fieldExpr} IN (${list})`;
 }
 
+function isOwnerDimension(dim: BuiltInDimension | TagDimension | null): boolean {
+  return dim !== null && 'concept' in dim && dim.concept === 'owner';
+}
+
 /** The rows a filter's values keep. '' is the value of the group of rows with
  *  none, so it keeps all of them (missingValueSql): a tag the resource lacks
- *  is NULL, which `= ''` would drop. */
+ *  is NULL, which `= ''` would drop. On the owner dimension, an org-tree
+ *  node's name keeps every value the node rolls up. */
 function buildSingleFilterClause(
   resolved: ResolvedDimension,
   values: readonly string[],
   accountReverseMap: ReadonlyMap<string, readonly string[]> | undefined,
   qb: QueryBuilder,
+  orgTree?: readonly OrgNode[],
 ): string {
-  const present = values.filter(v => v !== '');
-  if (present.length === values.length) return buildValueMatchClause(resolved, values, accountReverseMap, qb);
+  const named = values.filter(v => v !== '');
+  const present = orgTree !== undefined && isOwnerDimension(resolved.dim) ? expandOrgNodeValues(orgTree, named) : named;
+  if (named.length === values.length) return buildValueMatchClause(resolved, present, accountReverseMap, qb);
   const missing = missingValueSql(resolved);
   if (present.length === 0) return missing;
   return `(${buildValueMatchClause(resolved, present, accountReverseMap, qb)} OR ${missing})`;
@@ -168,19 +176,21 @@ function buildSingleFilterClause(
 
 /** One parameterized WHERE clause per non-empty filter entry. Dimension ids
  *  resolve through `resolveField` (unknown ids throw SecurityError), account
- *  display names expand to their ids via `accountReverseMap`, every value is
- *  bound on `qb`, and '' keeps the rows with no value (NULL or ''). */
+ *  display names expand to their ids via `accountReverseMap`, org-tree node
+ *  names on the owner dimension to the values under them via `orgTree`, every
+ *  value is bound on `qb`, and '' keeps the rows with no value (NULL or ''). */
 export function buildFilterClauses(
   filters: FilterMap,
   dimensions: DimensionsConfig,
   accountReverseMap: ReadonlyMap<string, readonly string[]> | undefined,
   qb: QueryBuilder,
+  orgTree?: readonly OrgNode[],
 ): string[] {
   const clauses: string[] = [];
   for (const [dimId, values] of Object.entries(filters)) {
     if (values === undefined || values.length === 0) continue;
     const resolved = resolveField(dimId as DimensionId, dimensions);
-    clauses.push(buildSingleFilterClause(resolved, values, accountReverseMap, qb));
+    clauses.push(buildSingleFilterClause(resolved, values, accountReverseMap, qb, orgTree));
   }
   return clauses;
 }
@@ -684,6 +694,12 @@ export interface QueryContextOptions {
    *  carries its own on-disk months. */
   readonly providers: readonly ProviderSourceSpec[];
   readonly accountReverseMap?: ReadonlyMap<string, readonly string[]> | undefined;
+  /** The org tree the owner dimension rolls up through. A filter on that
+   *  dimension naming one of its nodes keeps every value the node rolls up,
+   *  as a filter on an account display name keeps every id behind it
+   *  (accountReverseMap): the name a rolled-up row shows filters to the rows
+   *  behind it. */
+  readonly orgTree?: readonly OrgNode[] | undefined;
   readonly costScope?: CostScopeConfig | undefined;
   readonly materializedSource?: string | undefined;
 }
@@ -694,9 +710,9 @@ function setupQuery(
   opts: QueryContextOptions,
   extraSourceOpts?: Partial<BuildSourceOptions>,
 ): CommonQuerySetup {
-  const { dataDir, dimensions, orgAccountsPath, providers, accountReverseMap, costScope, materializedSource } = opts;
+  const { dataDir, dimensions, orgAccountsPath, providers, accountReverseMap, orgTree, costScope, materializedSource } = opts;
   const qb = new QueryBuilder();
-  const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap, qb);
+  const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap, qb, orgTree);
   const costMetric = costScope?.costMetric ?? DEFAULT_COST_METRIC;
 
   // The materialized base table is built at daily tier and lacks usage_hour,
@@ -777,11 +793,11 @@ export function buildTrendQuery(
   params: TrendQueryParams,
   opts: QueryContextOptions,
 ): ParameterizedQuery {
-  const { dataDir, dimensions, orgAccountsPath, providers, accountReverseMap, costScope, materializedSource } = opts;
+  const { dataDir, dimensions, orgAccountsPath, providers, accountReverseMap, orgTree, costScope, materializedSource } = opts;
   assertFiniteNumber(Number(params.deltaThreshold), 'deltaThreshold');
   const qb = new QueryBuilder();
   const groupByResolved = resolveField(params.groupBy, dimensions);
-  const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap, qb);
+  const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap, qb, orgTree);
   const costMetric = costScope?.costMetric ?? DEFAULT_COST_METRIC;
 
   const startDate = params.dateRange.start;
@@ -1178,9 +1194,10 @@ export function buildEntityDetailQuery(
   const dimResolved = resolveField(params.dimension, opts.dimensions);
 
   // The entity is a filter on its own value: a display name shared by several
-  // accounts ("sre default") matches every underlying id, and '' (the group
-  // with no value) every row with none.
-  const entityClause = buildSingleFilterClause(dimResolved, [String(params.entity)], opts.accountReverseMap, qb);
+  // accounts ("sre default") matches every underlying id, an org-tree node
+  // every value it rolls up, and '' (the group with no value) every row with
+  // none.
+  const entityClause = buildSingleFilterClause(dimResolved, [String(params.entity)], opts.accountReverseMap, qb, opts.orgTree);
 
   const whereConditions = [
     buildDateRangeWhere(qb, params.dateRange),

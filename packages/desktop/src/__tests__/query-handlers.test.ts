@@ -232,6 +232,57 @@ describe('query:daily-costs', () => {
   });
 });
 
+describe('a filter on an org-tree node', () => {
+  // What a click on the "Company" slice or segment sets, and what it stands for.
+  const BY_NODE = { tag_team: ['Company'] };
+  const BY_VALUES = { tag_team: [...COMPANY_VALUES] };
+
+  it('keeps the node\'s spend in the widgets that show it, under its name', async () => {
+    const h = await queryApp();
+    const company = seriesTotals(await h.ipc.invoke('query:daily-costs', { groupBy: 'tag_team', dateRange: FEBRUARY, filters: {} })).get('Company') ?? Number.NaN;
+    expect(company).toBeGreaterThan(0);
+
+    const bars = await h.ipc.invoke('query:daily-costs', { groupBy: 'tag_team', dateRange: FEBRUARY, filters: BY_NODE });
+    expect(groups(bars)).toEqual(['Company']);
+    expect(num(at(bars, 'totalCost'))).toBeCloseTo(company, 4);
+    const pie = await h.ipc.invoke('query:costs', { groupBy: 'tag_team', dateRange: FEBRUARY, filters: BY_NODE });
+    expect(entities(pie)).toEqual(['Company']);
+    expect(num(at(pie, 'totalCost'))).toBeCloseTo(company, 4);
+    const detail = await h.ipc.invoke('query:entity-detail', { entity: 'Company', dimension: 'tag_team', dateRange: FEBRUARY, filters: {} });
+    expect(num(at(detail, 'totalCost'))).toBeCloseTo(company, 4);
+  });
+
+  it('keeps every value under the node in each other query', async () => {
+    const h = await queryApp();
+    const same = async (channel: string, argsFor: (filters: Record<string, readonly string[]>) => readonly unknown[]): Promise<void> => {
+      const byNode = await h.ipc.invoke(channel, ...argsFor(BY_NODE));
+      expect(byNode).toEqual(await h.ipc.invoke(channel, ...argsFor(BY_VALUES)));
+    };
+    await same('query:costs', filters => [{ groupBy: 'service', dateRange: FEBRUARY, filters }]);
+    await same('query:daily-costs', filters => [{ groupBy: 'region', dateRange: FEBRUARY, filters }]);
+    await same('query:trends', filters => [{ groupBy: 'tag_team', dateRange: FEBRUARY, filters, deltaThreshold: 0, percentThreshold: 0 }]);
+    await same('query:filter-values', filters => ['service', filters, FEBRUARY]);
+    await same('query:entity-detail', filters => [{ entity: EC2, dimension: 'service', dateRange: FEBRUARY, filters }]);
+
+    const trends = await h.ipc.invoke('query:trends', { groupBy: 'tag_team', dateRange: FEBRUARY, filters: BY_NODE, deltaThreshold: 0, percentThreshold: 0 });
+    const teams = [...entities(trends, 'increases'), ...entities(trends, 'savings')];
+    expect(teams.length).toBeGreaterThan(0);
+    expect(teams.every(t => COMPANY_VALUES.has(t))).toBe(true);
+  });
+
+  it('reads the org tree only for a query that groups or filters by the owner dimension', async () => {
+    const h = await queryApp();
+    await writeFile(h.ws.orgTreePath, 'tree: [unclosed\n');
+    h.app.state.orgTree = null;
+    // '' (the rows with no team) names no node.
+    const byService = await h.ipc.invoke('query:daily-costs', { groupBy: 'service', dateRange: FEBRUARY, filters: { region: ['eu-central-1'], tag_team: [''] } });
+    expect(groups(byService)).toContain(EC2);
+    // A tree that fails to load fails the queries it changes; it never reads as no tree.
+    await expect(h.ipc.invoke('query:costs', { groupBy: 'service', dateRange: FEBRUARY, filters: BY_NODE })).rejects.toThrow();
+    await expect(h.ipc.invoke('query:daily-costs', { groupBy: 'tag_team', dateRange: FEBRUARY, filters: {} })).rejects.toThrow();
+  });
+});
+
 describe('query:entity-detail', () => {
   it('details one entity with account names resolved', async () => {
     const h = await queryApp();

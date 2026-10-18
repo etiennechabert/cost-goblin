@@ -544,6 +544,7 @@ tree:
 - A virtual node's cost = sum of all descendant real nodes' costs.
 - Tag values not in the tree show as "unassigned."
 - If no tree is defined, costs display flat by tag value.
+- Grouped by the owner dimension, the period totals (pie, treemap, top-N bar) and the daily series (stacked bar, line) both show the top-level nodes. A filter on a node (a click on its slice, bar segment or line) keeps every value the node rolls up, the way a filter on an account's display name keeps every account id behind it.
 
 ### Per-User Preferences (JSON)
 
