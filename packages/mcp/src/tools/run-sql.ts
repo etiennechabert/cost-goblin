@@ -210,7 +210,7 @@ async function buildCostsCte(ctx: McpContext, dateRange: { start: string; end: s
     .filter(b => b.periods.length > 0);
   if (branches.length === 0) return null;
   // Mirror the dashboards: the active Cost Scope's metric backs `cost`.
-  const scopeMetric = await ctx.getCostScope().then(cs => cs.costMetric).catch(() => 'effective' as const);
+  const scopeMetric = (await ctx.getCostScope()).costMetric;
   const source = buildSource({
     dataDir: ctx.dataDir,
     tier: 'daily',

@@ -316,6 +316,7 @@ curl -s "https://sonarcloud.io/api/hotspots/search?projectKey=etiennechabert_cos
 - **Tag normalization at query time** — aliases applied via SQL, not during sync. Changing aliases takes effect immediately.
 - **FOCUS 1.2 is the core schema** — the AWS source is the FOCUS 1.2 Data Export (Parquet); providers are receivers that deliver FOCUS Parquet into per-month `raw/{tier}-{YYYY-MM}/` dirs. Queries read the downloaded Parquet as-is (no repartitioning); per-month dirs give file-level date filter pushdown.
 - **No SQLite** — all state is YAML (user config) or JSON (app state). DuckDB is the only database.
+- **Only a missing config file is "absent"** — a YAML config that exists but doesn't load (a YAML or validation error, EACCES) is reported, never written over with defaults, and nothing runs as if it were absent: queries fail rather than run without cost-scope.yaml, and bundles fail naming the file. Never `.catch(() => undefined)` a config load.
 - **CostApi interface is the boundary** — UI codes against the interface, never calls DuckDB directly. Enables mock testing and future web mode.
 - **Dark mode default, light mode available** — two chart color palettes (standard + Okabe-Ito colorblind-safe), togglable.
 

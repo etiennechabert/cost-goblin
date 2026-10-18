@@ -317,6 +317,25 @@ describe('data-sharing: consumer preview', () => {
     expect(num(at(after, 'bytesPerSecond'))).toBeGreaterThan(0);
   });
 
+  // A peer pulls data, not just config: a broken views.yaml on the publisher
+  // must not take the whole snapshot down with it.
+  it('still serves a publisher whose views.yaml does not load, leaving the views out', async () => {
+    const pub = await publisher();
+    const views = await readFile(pub.ws.viewsPath, 'utf-8');
+    const broken = views.replace(/size: \w+/, 'size: jumbo');
+    expect(broken).not.toBe(views);
+    await writeFile(pub.ws.viewsPath, broken);
+    const key = await enable(pub);
+    const con = await app('none', 'none');
+
+    const result = await con.ipc.invoke('data-sharing:preview-source', key);
+
+    expect(at(result, 'status')).toBe('ok');
+    expect(at(result, 'preview', 'hasConfig')).toBe(true);
+    expect(list(at(result, 'preview', 'configSummary', 'sections'))).not.toContain('views');
+    expect(list(at(result, 'preview', 'tiers')).map(t => at(t, 'tier'))).toEqual(['daily', 'hourly', 'cost-optimization']);
+  });
+
   it('rejects malformed keys before touching the network', async () => {
     const con = await app('none', 'none');
     expect(await con.ipc.invoke('data-sharing:preview-source', 42)).toEqual({ status: 'error', message: 'Invalid sharing key' });

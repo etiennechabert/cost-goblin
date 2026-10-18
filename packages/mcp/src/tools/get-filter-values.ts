@@ -49,7 +49,7 @@ export async function getFilterValues(
   const accountMap = await ctx.getAccountMap();
   const orgPath = await ctx.getOrgAccountsPath();
   // Mirror the dashboards: the active Cost Scope's metric backs `cost`.
-  const scopeMetric = await ctx.getCostScope().then(cs => cs.costMetric).catch(() => 'effective' as const);
+  const scopeMetric = (await ctx.getCostScope()).costMetric;
 
   // lookupDimension above already rejected unknown ids with a friendly error;
   // resolveField still throws SecurityError as defense in depth so the id can

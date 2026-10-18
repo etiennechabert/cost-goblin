@@ -21,6 +21,7 @@ import type { DateRange } from '../components/date-range-picker.js';
 import { formatDollars } from '../components/format.js';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card.js';
 import { Button } from '../components/ui/button.js';
+import { CostScopeLoadError } from '../components/cost-scope-load-error.js';
 
 type MetricTone = 'recommended' | 'specific' | 'rarely';
 
@@ -654,10 +655,28 @@ function describeDraftError(draft: CostScopeConfig): string | null {
   return null;
 }
 
-export function CostScopeView(): React.JSX.Element {
+/** Reading cost-scope.yaml. The editor starts from the defaults, so it shows
+ *  nothing, previews nothing and saves nothing until the file has loaded:
+ *  saving the defaults plus an edit would replace every rule in the file. */
+type LoadState =
+  | { readonly status: 'loading' }
+  | { readonly status: 'loaded' }
+  | { readonly status: 'failed'; readonly message: string };
+
+interface CostScopeViewProps {
+  /** Called with each config the view loads, so the host also picks up a
+   *  cost-scope.yaml that only loaded on a Retry here. */
+  readonly onConfigLoaded?: ((cfg: CostScopeConfig) => void) | undefined;
+}
+
+export function CostScopeView({ onConfigLoaded }: CostScopeViewProps = {}): React.JSX.Element {
   const api = useCostApi();
   const [draft, setDraft] = useState(DEFAULT_COST_SCOPE);
   const [saved, setSaved] = useState(DEFAULT_COST_SCOPE);
+  const [load, setLoad] = useState<LoadState>({ status: 'loading' });
+  // Bumped by Retry to read cost-scope.yaml again.
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const editable = load.status === 'loaded';
   const [dimensions, setDimensions] = useState<Dimension[]>([]);
   const [preview, setPreview] = useState<PreviewState>({ result: null, loading: false });
   const [saving, setSaving] = useState(false);
@@ -671,16 +690,34 @@ export function CostScopeView(): React.JSX.Element {
   const { start: rangeStart, end: rangeEnd } = previewRange(previewWindow, lagDays);
   const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
   const draftError = describeDraftError(draft);
-  const canSave = dirty && draftError === null && !saving;
+  const canSave = editable && dirty && draftError === null && !saving;
   useUnsavedChanges(dirty, 'Cost Scope');
 
   useEffect(() => {
+    let cancelled = false;
     api.getCostScope().then(cfg => {
+      if (cancelled) return;
       setDraft(cfg);
       setSaved(cfg);
-    }).catch(() => undefined);
+      setLoad({ status: 'loaded' });
+      onConfigLoaded?.(cfg);
+    }).catch((err: unknown) => {
+      if (cancelled) return;
+      setLoad({ status: 'failed', message: err instanceof Error ? err.message : String(err) });
+    });
+    return () => { cancelled = true; };
+    // onConfigLoaded is left out on purpose: a host passing a fresh callback
+    // each render must not reread cost-scope.yaml each render.
+  }, [api, loadAttempt]);
+
+  useEffect(() => {
     api.getDimensions().then(setDimensions).catch(() => undefined);
   }, [api]);
+
+  function retryLoad(): void {
+    setLoad({ status: 'loading' });
+    setLoadAttempt(n => n + 1);
+  }
 
   // Pre-fetch filter-value suggestions once per enabled dim so every
   // ConditionRow's datalist shares a single IPC round-trip. Without this,
@@ -701,9 +738,10 @@ export function CostScopeView(): React.JSX.Element {
       const entries = await Promise.all(enabled.map(fetchDimValues));
       if (!cancelled) setSuggestionsByDim(new Map(entries));
     }
-    if (dimensions.length > 0) run().catch(() => undefined);
+    // Only the rule editor uses them, and it shows once the file has loaded.
+    if (editable && dimensions.length > 0) run().catch(() => undefined);
     return () => { cancelled = true; };
-  }, [api, dimensions]);
+  }, [api, dimensions, editable]);
 
   const refreshPreview = useCallback((config: CostScopeConfig, range: CostScopePreviewRange) => {
     // Only the latest request may land: a year-long preview answers after
@@ -718,6 +756,8 @@ export function CostScopeView(): React.JSX.Element {
 
   useEffect(() => {
     clearTimeout(debounceRef.current);
+    // Until cost-scope.yaml loads, the draft is the defaults, not the user's.
+    if (!editable) return;
     // Skip preview for drafts the main-process validator would reject — those
     // IPC calls always fail and would blank the preview, making the user
     // think the numbers dropped to zero while they were mid-edit.
@@ -728,7 +768,7 @@ export function CostScopeView(): React.JSX.Element {
     }
     debounceRef.current = setTimeout(() => { refreshPreview(draft, { start: rangeStart, end: rangeEnd }); }, 300);
     return () => { clearTimeout(debounceRef.current); };
-  }, [draft, rangeStart, rangeEnd, refreshPreview]);
+  }, [draft, rangeStart, rangeEnd, refreshPreview, editable]);
 
   function updateDraft(next: CostScopeConfig) {
     setDraft(next);
@@ -791,6 +831,7 @@ export function CostScopeView(): React.JSX.Element {
   }
 
   async function handleSave() {
+    if (!editable) return;
     setSaving(true);
     setSaveError(null);
     try {
@@ -851,7 +892,7 @@ export function CostScopeView(): React.JSX.Element {
             >
               Reveal YAML
             </button>
-            {dirty && (
+            {editable && dirty && (
               <>
                 <Button variant="outline" size="sm" onClick={handleCancel} disabled={saving}>Cancel</Button>
                 <Button
@@ -864,7 +905,7 @@ export function CostScopeView(): React.JSX.Element {
                 </Button>
               </>
             )}
-            {!dirty && <span className="text-xs text-text-muted">Saved</span>}
+            {editable && !dirty && <span className="text-xs text-text-muted">Saved</span>}
           </div>
           {(saveError !== null || draftError !== null) && (
             <span className="text-xs text-negative max-w-sm text-right">
@@ -874,6 +915,9 @@ export function CostScopeView(): React.JSX.Element {
         </div>
       </div>
 
+      {load.status === 'failed' && <CostScopeLoadError message={load.message} onRetry={retryLoad} />}
+
+      {editable && (<>
       {/* Two-column grid on wide screens: config on the left (metric + rules),
           sticky Preview floating on the right so the user always sees the
           effect of a toggle without scrolling. On narrow screens the grid
@@ -1024,6 +1068,7 @@ export function CostScopeView(): React.JSX.Element {
           horizontal budget. Separate card lets the sticky preview above
           stay compact. */}
       <LineItemsCard preview={preview} loading={preview.loading} hasEnabledRules={enabledRules.length > 0} />
+      </>)}
     </div>
   );
 }

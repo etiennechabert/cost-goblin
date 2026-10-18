@@ -390,12 +390,19 @@ export interface CostApi {
    *  month, so it needs data on disk — returns an empty estimate otherwise. */
   estimateRollupGrain(candidate: DimensionsConfig): Promise<RollupGrainEstimate>;
   /** User-defined dashboard views. Read-modify-write through `saveViewsConfig`.
-   *  `resetViewsConfig` overwrites the file with the seed (Cost Overview) view. */
+   *  `resetViewsConfig` overwrites the file with the seed (Cost Overview) view.
+   *  `getViewsConfig` writes the seed views only when views.yaml doesn't
+   *  exist; one that fails to parse or validate is left as it is and the call
+   *  rejects with why. */
   getViewsConfig(): Promise<ViewsConfig>;
   saveViewsConfig(config: ViewsConfig): Promise<void>;
   resetViewsConfig(): Promise<ViewsConfig>;
   /** Reveal `views.yaml` in the OS file manager (Finder / Explorer). */
   revealViewsFolder(): Promise<void>;
+  /** Writes the defaults only when cost-scope.yaml doesn't exist; one that
+   *  fails to parse or validate is left as it is and the call rejects with
+   *  why. Every cost query rejects the same way until it loads, rather than
+   *  run without the user's metric and exclusion rules. */
   getCostScope(): Promise<CostScopeConfig>;
   saveCostScope(config: CostScopeConfig): Promise<void>;
   /** Exclusion tallies, daily histogram and sample line items of `config`

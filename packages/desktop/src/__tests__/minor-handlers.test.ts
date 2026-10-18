@@ -116,6 +116,19 @@ describe('views channels', () => {
     expect(await h.ipc.invoke('views:get-config')).not.toBe(SEED_VIEWS_CONFIG);
   });
 
+  it('leaves a views.yaml that fails to load as it is and reports why', async () => {
+    const h = await harness();
+    registerViewsHandlers(h.app);
+    const original = await readFile(h.ws.viewsPath, 'utf-8');
+    const broken = original.replace(/size: \w+/, 'size: jumbo');
+    expect(broken).not.toBe(original);
+    await writeFile(h.ws.viewsPath, broken);
+
+    await expect(h.ipc.invoke('views:get-config')).rejects.toThrow(/size must be one of: small, medium, large, full \(got jumbo\)/);
+
+    expect(await readFile(h.ws.viewsPath, 'utf-8')).toBe(broken);
+  });
+
   it('validates and saves a views config, and resets to the defaults', async () => {
     const h = await harness();
     registerViewsHandlers(h.app);

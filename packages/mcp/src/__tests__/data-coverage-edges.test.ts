@@ -133,10 +133,9 @@ describe('computeDataCoverage', () => {
 });
 
 describe('buildQueryContextOpts', () => {
-  it('builds the query options from the context, without a Cost Scope it cannot read', async () => {
+  it('builds the query options from the context', async () => {
     const sources: string[] = [];
     const ctx = ctxWith(janFeb, {
-      getCostScope: () => Promise.reject(new Error('cost-scope.yaml unreadable')),
       materializedBase: {
         getSource: (range, tier) => {
           sources.push(`${range.start}..${range.end}@${tier}`);
@@ -146,12 +145,19 @@ describe('buildQueryContextOpts', () => {
     });
     const { opts, empty } = await buildQueryContextOpts(ctx, JAN);
     expect(empty).toBe(false);
-    expect(opts.costScope).toBeUndefined();
+    expect(opts.costScope).toBe(COST_SCOPE);
     expect(opts.materializedSource).toBe('cost_base');
     expect(opts.orgAccountsPath).toBe('/state/org-accounts.json');
     expect(opts.providers).toEqual([{ name: 'aws', availablePeriods: ['2026-01', '2026-02'] }]);
     expect(opts.accountReverseMap?.get('Prod')).toEqual(['111']);
     expect(sources).toEqual(['2026-01-01..2026-01-31@daily']);
+  });
+
+  // An answer without the user's metric and exclusion rules would read as
+  // the real cost.
+  it('fails when the Cost Scope does not load, rather than answering unscoped', async () => {
+    const ctx = ctxWith(janFeb, { getCostScope: () => Promise.reject(new Error("Couldn't load cost-scope.yaml: rules must be an array")) });
+    await expect(buildQueryContextOpts(ctx, JAN)).rejects.toThrow("Couldn't load cost-scope.yaml");
   });
 
   it('reads the hourly tier when asked and is empty when that tier has no month in range', async () => {

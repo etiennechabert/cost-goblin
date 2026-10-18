@@ -202,11 +202,11 @@ describe('dimensions:discover-column-values', () => {
     expect(continents).toEqual(expect.arrayContaining(['EU', 'NA', 'us-east-1', 'ap-southeast-1']));
   });
 
-  it('previews through the cost scope it can load, and without one when it cannot', async () => {
+  // Without it the preview would run on the defaults, not the user's scope.
+  it('refuses to preview through a cost-scope.yaml that does not load, naming it', async () => {
     const h = await dimsApp();
     await writeFile(h.ws.costScopePath, 'rules: 42\n');
-    const preview = await h.ipc.invoke('dimensions:discover-column-values', 'service');
-    expect(values(preview).length).toBeGreaterThan(0);
+    await expect(h.ipc.invoke('dimensions:discover-column-values', 'service')).rejects.toThrow("Couldn't load cost-scope.yaml");
   });
 });
 
@@ -224,11 +224,10 @@ describe('dimensions:estimate-rollup-grain', () => {
     expect(list(at(estimate, 'dims')).length).toBeGreaterThan(0);
   });
 
-  it('still estimates when the cost scope cannot be loaded', async () => {
+  it('refuses to estimate through a cost-scope.yaml that does not load, naming it', async () => {
     const h = await dimsApp();
     await writeFile(h.ws.costScopePath, 'rules: 42\n');
-    const estimate = await h.ipc.invoke('dimensions:estimate-rollup-grain', await h.app.getDimensions());
-    expect(at(estimate, 'probePeriod')).toBe('2026-02');
+    await expect(h.ipc.invoke('dimensions:estimate-rollup-grain', await h.app.getDimensions())).rejects.toThrow("Couldn't load cost-scope.yaml");
   });
 
   it('knows when the built rollup already is the candidate grain', async () => {

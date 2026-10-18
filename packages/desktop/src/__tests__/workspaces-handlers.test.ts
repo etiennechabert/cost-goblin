@@ -136,7 +136,7 @@ describe('workspaces:create', () => {
 
   it('applies a bundle into the new workspace with the chosen profile', async () => {
     const w = await workspaceApp();
-    const content = serializeConfigBundle(await buildCurrentBundle(w.h.app));
+    const content = serializeConfigBundle(await buildCurrentBundle(w.h.app, { brokenViews: 'fail' }));
     await w.h.ipc.invoke('workspaces:create', 'imported', { kind: 'bundle', content, awsProfile: 'team-sso' }, false);
     expect(await readFile(join(w.root, 'imported', 'config', 'costgoblin.yaml'), 'utf-8')).toContain('credentialsProfile: team-sso');
   });

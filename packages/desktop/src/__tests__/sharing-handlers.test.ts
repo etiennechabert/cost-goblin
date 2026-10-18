@@ -73,7 +73,7 @@ async function sharingApp(config: FixtureConfigSet = 'single'): Promise<Harness>
 }
 
 async function bundleText(h: Harness): Promise<string> {
-  return serializeConfigBundle(await buildCurrentBundle(h.app));
+  return serializeConfigBundle(await buildCurrentBundle(h.app, { brokenViews: 'fail' }));
 }
 
 function body(text: string | undefined): { Body?: { transformToString: () => Promise<string> } } {
@@ -111,6 +111,22 @@ describe('sharing:export-bundle', () => {
     const h = await sharingApp('none');
     const result = await h.ipc.invoke('sharing:export-bundle');
     expect(at(result, 'status')).toBe('error');
+    expect(dialog.showSaveDialog).not.toHaveBeenCalled();
+  });
+
+  // Leaving the section out would export a bundle silently missing the
+  // dashboards: views.yaml is left broken on disk until the user fixes it.
+  it('fails, naming views.yaml, when it does not load, before asking where to save', async () => {
+    const h = await sharingApp();
+    const views = await readFile(h.ws.viewsPath, 'utf-8');
+    const broken = views.replace(/size: \w+/, 'size: jumbo');
+    expect(broken).not.toBe(views);
+    await writeFile(h.ws.viewsPath, broken);
+
+    const result = await h.ipc.invoke('sharing:export-bundle');
+
+    expect(at(result, 'status')).toBe('error');
+    expect(str(at(result, 'message'))).toMatch(/^Couldn't load views\.yaml for the configuration bundle: .*size must be one of/);
     expect(dialog.showSaveDialog).not.toHaveBeenCalled();
   });
 });
