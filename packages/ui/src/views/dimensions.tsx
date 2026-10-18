@@ -814,13 +814,20 @@ function nonBlankLines(text: string): string[] {
   return text.split('\n').filter(l => l.trim().length > 0);
 }
 
-/** The rule rows while one of them is typed in: that rule shows exactly what
+/** The rule rows while the rules are being typed in: each shows exactly what
  *  was typed, and the rows keep the order and keys they had, so a rule being
- *  renamed neither moves nor remounts under the caret. */
+ *  renamed neither moves nor remounts under the caret (or under the pointer,
+ *  on its way to the rule's remove button). */
 interface PinnedAliasRows {
-  readonly index: number;
   readonly lines: readonly string[];
   readonly keys: readonly string[];
+}
+
+/** Where `line` lands once `rows` are shown tidied, or null if it's dropped. */
+function sortedRowIndex(rows: readonly string[], line: string | undefined): number | null {
+  if (line === undefined) return null;
+  const to = nonBlankLines(sortAliasText(rows.join('\n'))).indexOf(sortAliasText(line));
+  return to >= 0 ? to : null;
 }
 
 /** React keys for the rule rows: the rule's name, numbered when two rows share
@@ -843,10 +850,12 @@ function AliasRulesEditor({ value, savedValue, activeLine, onChange, onLineFocus
   onLineFocus: (lineIdx: number | null) => void;
 }>): React.JSX.Element {
   const newLineRef = useRef<HTMLInputElement>(null);
-  // The rows show `value` tidied by sortAliasText, except while a rule is typed
-  // in: tidying it on every keystroke ate the ", " before the next alias
-  // ("pay, PAY" came out "payPAY") and moved a rule being renamed. A pin that
-  // no longer matches `value` was overtaken by a change made elsewhere.
+  // The rows show `value` tidied by sortAliasText, except while the rules are
+  // typed in: tidying on every keystroke ate the ", " before the next alias
+  // ("pay, PAY" came out "payPAY") and moved a rule being renamed. They stay
+  // pinned until focus leaves the rules or Enter ends the edit, so nothing
+  // re-sorts while the user moves between rules. A pin that no longer matches
+  // `value` was overtaken by a change made elsewhere.
   const [pin, setPin] = useState<PinnedAliasRows | null>(null);
   const pinned = pin !== null && pin.lines.join('\n') === value ? pin : null;
   const sorted = nonBlankLines(sortAliasText(value));
@@ -855,16 +864,23 @@ function AliasRulesEditor({ value, savedValue, activeLine, onChange, onLineFocus
   const savedLines = new Set(nonBlankLines(sortAliasText(savedValue)));
 
   /** Lets the rows sort again, moving the highlight (the rule a clicked preview
-   *  value is added to) along with the rule just typed in. */
+   *  value is added to) along with its rule. */
   function finishEdit(): void {
     setPin(null);
-    if (pinned === null || activeLine !== pinned.index) return;
-    const to = sorted.indexOf(sortAliasText(pinned.lines[pinned.index] ?? ''));
-    onLineFocus(to >= 0 ? to : null);
+    if (pinned !== null && activeLine !== null) onLineFocus(sortedRowIndex(pinned.lines, pinned.lines[activeLine]));
   }
 
   return (
-    <div className="rounded border border-border bg-bg-primary overflow-hidden">
+    <div
+      className="rounded border border-border bg-bg-primary overflow-hidden"
+      onBlur={e => {
+        if (e.relatedTarget !== null && e.currentTarget.contains(e.relatedTarget)) return;
+        // Switching apps (to copy an alias, say) blurs the focused input but
+        // leaves it the focused element: the edit isn't over yet.
+        if (e.target.ownerDocument.activeElement === e.target) return;
+        finishEdit();
+      }}
+    >
       {lines.map((line, i) => {
         const isNew = !savedLines.has(line);
         const isActive = activeLine === i;
@@ -880,14 +896,10 @@ function AliasRulesEditor({ value, savedValue, activeLine, onChange, onLineFocus
               type="text"
               value={line}
               onFocus={() => { onLineFocus(i); }}
-              onBlur={e => {
-                // Switching apps (to copy an alias, say) blurs the input but
-                // leaves it the focused element: the edit isn't over yet.
-                if (e.currentTarget.ownerDocument.activeElement !== e.currentTarget) finishEdit();
-              }}
               onKeyDown={e => {
                 if (e.key === 'Enter') {
                   e.preventDefault();
+                  setPin(null);
                   onLineFocus(null);
                   newLineRef.current?.focus();
                 }
@@ -895,7 +907,7 @@ function AliasRulesEditor({ value, savedValue, activeLine, onChange, onLineFocus
               onChange={e => {
                 const newLines = [...lines];
                 newLines[i] = e.target.value;
-                setPin({ index: i, lines: newLines, keys });
+                setPin({ lines: newLines, keys });
                 onChange(newLines.join('\n'));
               }}
               className="flex-1 bg-transparent text-text-primary outline-none"
@@ -903,7 +915,10 @@ function AliasRulesEditor({ value, savedValue, activeLine, onChange, onLineFocus
             <button
               type="button"
               onClick={() => {
-                onChange(lines.filter((_, j) => j !== i).join('\n'));
+                const rest = lines.filter((_, j) => j !== i);
+                setPin(null);
+                onChange(rest.join('\n'));
+                if (activeLine !== null) onLineFocus(activeLine === i ? null : sortedRowIndex(rest, lines[activeLine]));
               }}
               className="text-text-muted hover:text-negative text-xs px-1 opacity-0 hover:opacity-100 transition-opacity"
               aria-label="Remove rule"

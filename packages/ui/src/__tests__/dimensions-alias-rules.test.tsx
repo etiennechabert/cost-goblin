@@ -1,4 +1,4 @@
-import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, fireEvent, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { asDimensionId } from '@costgoblin/core/browser';
@@ -11,25 +11,22 @@ import { DimensionsView } from '../views/dimensions.js';
  *  empty aliases) on every keystroke ate the ", " before the next alias could
  *  be typed, so typing ", PAY" after "payments: pay" gave "payments: payPAY",
  *  and renaming a rule remounted its input under the caret. A rule takes typed
- *  text the way it takes pasted text, and is tidied once the edit is done. */
+ *  text the way it takes pasted text, and the rules are tidied once focus
+ *  leaves them: nothing re-sorts while the user moves between rules. */
 
 // Unsorted on purpose: the editor shows the rules sorted, so a rule that is
 // only focused and left must not write that sorted text back as an edit.
-const TEAM: TagDimension = {
-  tagName: 'team',
-  label: 'Team',
-  aliases: { search: ['srch'], payments: ['pay'] },
-};
+const TEAM_ALIASES = { search: ['srch'], payments: ['pay'] };
 
 type User = ReturnType<typeof userEvent.setup>;
 
-function renderView() {
+function renderView(aliases: Readonly<Record<string, readonly string[]>> = TEAM_ALIASES) {
   // Typed as the interface so the spy carries saveDimensionsConfig's real
   // parameters (the mock's own override declares none).
   const api: CostApi = new MockCostApi();
   vi.spyOn(api, 'getDimensionsConfig').mockResolvedValue({
     builtIn: [{ name: asDimensionId('resource_id'), label: 'Resource', field: 'resource_id' }],
-    tags: [TEAM],
+    tags: [{ tagName: 'team', label: 'Team', aliases }],
   });
   // The value preview under the rules shows one badge per sample value.
   vi.spyOn(api, 'discoverTagKeys').mockResolvedValue({
@@ -49,14 +46,27 @@ function renderView() {
 /** Opens the Team editor and returns the input of the rule showing `text`. */
 async function openRule(user: User, text: string): Promise<HTMLInputElement> {
   await user.click(await screen.findByRole('button', { name: /tag:team/ }));
-  const rule = await screen.findByDisplayValue(text);
-  if (!(rule instanceof HTMLInputElement)) throw new Error(`"${text}" is not an input`);
-  return rule;
+  return ruleInput(await screen.findByDisplayValue(text));
+}
+
+function ruleInput(el: HTMLElement): HTMLInputElement {
+  if (!(el instanceof HTMLInputElement)) throw new Error('not an input');
+  return el;
+}
+
+/** Selects the rule's name and types `name` over it. */
+async function rename(user: User, rule: HTMLInputElement, name: string): Promise<void> {
+  await user.type(rule, name, { initialSelectionStart: 0, initialSelectionEnd: rule.value.indexOf(':') });
+}
+
+/** Moves focus out of the rules, to the editor's label field. */
+async function leaveRules(user: User): Promise<void> {
+  await user.click(screen.getByPlaceholderText('e.g. Team'));
 }
 
 /** The rules' text (a name, then ':'), in the order the editor shows them. */
 function shownRules(): string[] {
-  return screen.getAllByDisplayValue(/^[^:\s][^:]*:/).map(el => (el instanceof HTMLInputElement ? el.value : ''));
+  return screen.getAllByDisplayValue(/^[^:\s][^:]*:/).map(el => ruleInput(el).value);
 }
 
 /** Saves the open editor, applies the draft, and returns the aliases persisted. */
@@ -88,7 +98,7 @@ describe('Tag editor — alias rules', () => {
     await enter(user, rule);
     expect(rule.value).toBe('payments: pay, PAY');
 
-    await user.tab();
+    await leaveRules(user);
     expect(shownRules()).toEqual(['payments: pay, PAY', 'search: srch']);
     expect(await savedAliases(user, saveSpy)).toEqual({ payments: ['pay', 'PAY'], search: ['srch'] });
   });
@@ -106,7 +116,7 @@ describe('Tag editor — alias rules', () => {
     expect(rule.value).toBe('payments: pay, PAY');
   });
 
-  it('tidies a rule once the edit is done', async () => {
+  it('tidies a rule when Enter ends the edit', async () => {
     const { user } = renderView();
     const rule = await openRule(user, 'payments: pay');
     await user.type(rule, ', ab, ');
@@ -116,37 +126,80 @@ describe('Tag editor — alias rules', () => {
     expect(shownRules()).toEqual(['payments: ab, pay', 'search: srch']);
   });
 
-  it('keeps a renamed rule in its row while it is typed, then sorts it', async () => {
+  it('keeps a renamed rule in its row until focus leaves the rules, then sorts it', async () => {
     const { saveSpy, user } = renderView();
     const rule = await openRule(user, 'payments: pay');
-    await user.type(rule, 'zeta', { initialSelectionStart: 0, initialSelectionEnd: 'payments'.length });
+    await rename(user, rule, 'zeta');
     expect(rule.value).toBe('zeta: pay');
     expect(document.activeElement).toBe(rule);
     expect(shownRules()).toEqual(['zeta: pay', 'search: srch']);
 
+    // Tab reaches the rule's own remove button: still in the rules, still its row.
     await user.tab();
+    expect(document.activeElement).toBe(within(rowOf(rule)).getByRole('button', { name: 'Remove rule' }));
+    expect(shownRules()).toEqual(['zeta: pay', 'search: srch']);
+
+    await leaveRules(user);
     expect(shownRules()).toEqual(['search: srch', 'zeta: pay']);
     expect(await savedAliases(user, saveSpy)).toEqual({ zeta: ['pay'], search: ['srch'] });
   });
 
-  it('adds a clicked preview value to the rule just edited, wherever it sorted to', async () => {
+  it('removes a rule with one click right after renaming it', async () => {
+    const { saveSpy, user } = renderView();
+    const rule = await openRule(user, 'payments: pay');
+    await rename(user, rule, 'zeta');
+    await user.click(within(rowOf(rule)).getByRole('button', { name: 'Remove rule' }));
+
+    expect(shownRules()).toEqual(['search: srch']);
+    expect(await savedAliases(user, saveSpy)).toEqual({ search: ['srch'] });
+  });
+
+  it('adds a clicked preview value to the rule just renamed, wherever it sorts to', async () => {
     const { user } = renderView();
     const rule = await openRule(user, 'payments: pay');
-    await user.type(rule, 'zeta', { initialSelectionStart: 0, initialSelectionEnd: 'payments'.length });
-    await user.tab();
+    await rename(user, rule, 'zeta');
 
     await user.click(await screen.findByRole('button', { name: 'platform' }));
     expect(shownRules()).toEqual(['search: srch', 'zeta: pay, platform']);
+  });
+
+  it('adds a clicked preview value to the rule focused after another was renamed', async () => {
+    const { user } = renderView();
+    const rule = await openRule(user, 'payments: pay');
+    await rename(user, rule, 'zeta');
+    await user.click(screen.getByDisplayValue('search: srch'));
+
+    await user.click(await screen.findByRole('button', { name: 'platform' }));
+    expect(shownRules()).toEqual(['search: platform, srch', 'zeta: pay']);
+  });
+
+  it('keeps the highlight on its rule when another rule is removed', async () => {
+    const { user } = renderView({ alpha: ['a'], search: ['srch'], tango: ['t'] });
+    const rule = await openRule(user, 'alpha: a');
+    await rename(user, rule, 'zulu');
+    // The rows are still as they were (zulu first); removing tango sorts the rest.
+    await user.click(within(rowOf(screen.getByDisplayValue('tango: t'))).getByRole('button', { name: 'Remove rule' }));
+    expect(shownRules()).toEqual(['search: srch', 'zulu: a']);
+
+    await user.click(await screen.findByRole('button', { name: 'platform' }));
+    expect(shownRules()).toEqual(['search: srch', 'zulu: a, platform']);
   });
 
   it('does not count focusing a rule and leaving it as an edit', async () => {
     const { user } = renderView();
     const rule = await openRule(user, 'search: srch');
     await user.click(rule);
-    await user.tab();
+    await leaveRules(user);
 
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByRole('dialog', { name: 'Discard unsaved changes?', hidden: true })).toBeNull();
     expect(screen.queryByDisplayValue('search: srch')).toBeNull();
   });
 });
+
+/** The row holding a rule's input and its remove button. */
+function rowOf(el: HTMLElement): HTMLElement {
+  const row = el.parentElement;
+  if (row === null) throw new Error('rule input has no row');
+  return row;
+}
