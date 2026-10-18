@@ -78,9 +78,13 @@ function validateSummaryWidget(raw: Record<string, unknown>, ctx: string, base: 
     }
     metric = raw['metric'];
   }
-  const groupBy = raw['groupBy'] === undefined
-    ? undefined
-    : (assertString(raw['groupBy'], `${ctx}.groupBy`), asDimensionId(migrateLegacyDimensionId(raw['groupBy'], liveDimensionIds)));
+  // Summaries ignored `groupBy` before topEntity / entityCount read it, so a
+  // file on disk may carry any value there: drop a non-string one rather than
+  // refuse the whole file. The inspector only ever writes a dimension id.
+  const rawGroupBy = raw['groupBy'];
+  const groupBy = typeof rawGroupBy === 'string'
+    ? asDimensionId(migrateLegacyDimensionId(rawGroupBy, liveDimensionIds))
+    : undefined;
   return {
     type: 'summary', ...base,
     ...(metric === undefined ? {} : { metric }),

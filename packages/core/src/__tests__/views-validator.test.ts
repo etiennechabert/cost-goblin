@@ -105,8 +105,11 @@ describe('validateViews', () => {
       expect(w).toEqual({ id: 's', type: 'summary', size: 'small' });
     });
 
-    it('rejects a non-string groupBy and an unknown metric', () => {
-      expect(() => summaryWidget({ groupBy: 3 })).toThrow(ConfigValidationError);
+    it('drops a non-string groupBy, which summaries never read before, instead of refusing the file', () => {
+      expect(summaryWidget({ metric: 'topEntity', groupBy: 3 })).toEqual({ id: 's', type: 'summary', size: 'small', metric: 'topEntity' });
+    });
+
+    it('rejects an unknown metric', () => {
       expect(() => summaryWidget({ metric: 'median' })).toThrow(ConfigValidationError);
     });
 
