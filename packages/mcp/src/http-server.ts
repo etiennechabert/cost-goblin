@@ -213,6 +213,12 @@ export async function createMcpHttpServer(ctx: McpContext, options: McpHttpServe
       server.once('error', onError);
       server.listen(resolvedPort, host, () => {
         server.off('error', onError);
+        // A listening server still emits 'error', e.g. for an accept that fails
+        // with EMFILE once the process is out of file descriptors. Unhandled,
+        // that would throw in the host process; the server keeps listening.
+        server.on('error', (err: Error) => {
+          logger.warn(`mcp: ${host} listener error — ${err.message}`);
+        });
         resolve();
       });
     });
