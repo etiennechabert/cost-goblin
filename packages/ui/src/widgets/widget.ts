@@ -76,9 +76,10 @@ export function isTopNWidget(spec: WidgetSpec): spec is TopNWidgetSpec {
   return Object.hasOwn(DEFAULT_TOP_N, spec.type);
 }
 
-/** The widget's own Top N, else its type's default. */
-export function topNOf(spec: TopNWidgetSpec): number {
-  return spec.topN ?? DEFAULT_TOP_N[spec.type];
+/** The Top N a widget of `type` draws for `spec`: the spec's own, else the
+ *  type's default. */
+export function topNFor(spec: WidgetSpec, type: TopNWidgetType): number {
+  return (isTopNWidget(spec) && spec.type === type ? spec.topN : undefined) ?? DEFAULT_TOP_N[type];
 }
 
 const SIZE_TO_FRACTION: Readonly<Record<WidgetSize, number>> = {

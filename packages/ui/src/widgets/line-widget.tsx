@@ -8,7 +8,7 @@ import type { LineSeries } from '../components/line-chart.js';
 import { asTagValue } from '@costgoblin/core/browser';
 import type { DailyCostsResult, DimensionId } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
-import { DEFAULT_TOP_N, dimensionLabelFor, filtersKey, hasSufficientDailyCoverage, topNOf } from './widget.js';
+import { dimensionLabelFor, filtersKey, hasSufficientDailyCoverage, topNFor } from './widget.js';
 import { GroupByTitle } from '../components/group-by-title.js';
 
 function buildSeries(data: DailyCostsResult | null, topN: number): LineSeries[] {
@@ -65,7 +65,7 @@ export function LineWidget({
   const [groupByOverride, setGroupByOverride] = useState<DimensionId | undefined>(undefined);
   const specGroupBy = spec.type === 'line' ? spec.groupBy : undefined;
   const effectiveGroupBy = groupByOverride ?? specGroupBy;
-  const topN = spec.type === 'line' ? topNOf(spec) : DEFAULT_TOP_N.line;
+  const topN = topNFor(spec, 'line');
   const fk = filtersKey(globalFilters);
 
   const origin = `widget:line:${String(effectiveGroupBy ?? '')}`;

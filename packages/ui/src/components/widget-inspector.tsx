@@ -2,7 +2,8 @@ import { useMemo } from 'react';
 import { asDimensionId, OVERVIEW_SEED_VIEW, type Dimension, type WidgetSize, type WidgetSpec, type WidgetType } from '@costgoblin/core/browser';
 import { getDimensionId, getDimensionLabel, isTagDimension } from '../lib/dimensions.js';
 import { WIDGET_CATALOG } from '../widgets/registry.js';
-import { DEFAULT_TOP_N, isTopNWidget, topNOf } from '../widgets/widget.js';
+import { DEFAULT_TOP_N, isTopNWidget, topNFor } from '../widgets/widget.js';
+import type { TopNWidgetType } from '../widgets/widget.js';
 import { buildAllColumns } from './data-table.js';
 
 interface WidgetInspectorProps {
@@ -70,6 +71,12 @@ function stripTitle(w: WidgetSpec): WidgetSpec {
   }
 }
 
+/** A Top N the widget was given carries over to its new type; otherwise the
+ *  new type starts at its own default. */
+function carriedTopN(prev: WidgetSpec, type: TopNWidgetType): number {
+  return (isTopNWidget(prev) ? prev.topN : undefined) ?? DEFAULT_TOP_N[type];
+}
+
 function defaultSpecForType(type: WidgetType, prev: WidgetSpec, fallbackDim: string): WidgetSpec {
   const base = { id: prev.id, size: prev.size, ...(prev.title === undefined ? {} : { title: prev.title }) };
   const existingGroupBy = 'groupBy' in prev ? prev.groupBy : asDimensionId(fallbackDim);
@@ -91,7 +98,7 @@ function defaultSpecForType(type: WidgetType, prev: WidgetSpec, fallbackDim: str
     case 'heatmap':
     case 'waterfall':
     case 'priceVolume':
-      return { ...base, type, groupBy: existingGroupBy, topN: 'topN' in prev && prev.topN !== undefined ? prev.topN : DEFAULT_TOP_N[type] };
+      return { ...base, type, groupBy: existingGroupBy, topN: carriedTopN(prev, type) };
     case 'burndown':
       return { ...base, type };
     case 'table':
@@ -101,7 +108,7 @@ function defaultSpecForType(type: WidgetType, prev: WidgetSpec, fallbackDim: str
         enabledColumns: [...SEED_TABLE_ENABLED],
       };
     case 'baseline':
-      return { ...base, type, topN: 'topN' in prev && prev.topN !== undefined ? prev.topN : DEFAULT_TOP_N[type] };
+      return { ...base, type, topN: carriedTopN(prev, type) };
   }
 }
 
@@ -322,7 +329,7 @@ export function WidgetInspector({
             type="number"
             min={1}
             max={100}
-            value={topNOf(widget)}
+            value={topNFor(widget, widget.type)}
             onChange={(e) => {
               const v = Number.parseInt(e.target.value, 10);
               if (Number.isFinite(v) && v > 0) setTopN(v);

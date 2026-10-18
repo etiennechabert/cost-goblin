@@ -6,7 +6,7 @@ import { signedDollars } from '../components/format.js';
 import { asEntityRef, asTagValue } from '@costgoblin/core/browser';
 import type { DimensionId } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
-import { DEFAULT_TOP_N, dimensionLabelFor, topNOf } from './widget.js';
+import { dimensionLabelFor, topNFor } from './widget.js';
 import { useAggregatedGroups } from '../hooks/use-aggregated-groups.js';
 import { decomposePriceVolume } from '../lib/price-volume.js';
 import type { PriceVolumeDecomp } from '../lib/price-volume.js';
@@ -23,7 +23,7 @@ export function PriceVolumeWidget({ spec, dateRange, previousDateRange, granular
   const [groupByOverride, setGroupByOverride] = useState<DimensionId | undefined>(undefined);
   const specGroupBy = spec.type === 'priceVolume' ? spec.groupBy : undefined;
   const effectiveGroupBy = groupByOverride ?? specGroupBy;
-  const topN = spec.type === 'priceVolume' ? topNOf(spec) : DEFAULT_TOP_N.priceVolume;
+  const topN = topNFor(spec, 'priceVolume');
 
   // Always compares — the decomposition is inherently period-over-period.
   const { status, error, rows, prevByName } = useAggregatedGroups({

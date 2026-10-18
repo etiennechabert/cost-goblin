@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { describe, expect, it } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { asDateString, asDimensionId, asDollars, asEntityRef } from '@costgoblin/core/browser';
 import type {
@@ -27,7 +27,7 @@ import { PriceVolumeWidget } from '../widgets/price-volume-widget.js';
 import { WIDGET_CATALOG } from '../widgets/registry.js';
 import { TopNBarWidget } from '../widgets/top-n-bar-widget.js';
 import { WaterfallWidget } from '../widgets/waterfall-widget.js';
-import { DEFAULT_TOP_N } from '../widgets/widget.js';
+import { DEFAULT_TOP_N, topNFor } from '../widgets/widget.js';
 import type { TopNWidgetType, WidgetComponent } from '../widgets/widget.js';
 
 const SERVICE = asDimensionId('service');
@@ -95,6 +95,46 @@ describe('Top N defaults', () => {
     expect(next?.type).toBe(type);
     expect(next !== undefined && 'topN' in next ? next.topN : undefined).toBe(shown);
     expect(topNField().value).toBe(String(shown));
+  });
+
+  it('carries a Top N that was set over to another ranked type, not a default', async () => {
+    const changes: WidgetSpec[] = [];
+    const user = userEvent.setup();
+    render(<Inspector initial={{ id: 'w', type: 'line', size: 'large', groupBy: SERVICE, topN: 4 }} onChange={(next) => { changes.push(next); }} />);
+
+    await user.selectOptions(screen.getByDisplayValue(catalogLabel('line')), catalogLabel('heatmap'));
+    expect(changes.at(-1)).toStrictEqual({ id: 'w', size: 'large', type: 'heatmap', groupBy: SERVICE, topN: 4 });
+
+    await user.selectOptions(screen.getByDisplayValue(catalogLabel('heatmap')), catalogLabel('baseline'));
+    expect(changes.at(-1)).toStrictEqual({ id: 'w', size: 'large', type: 'baseline', topN: 4 });
+  });
+
+  it('starts from the new type’s default when the old widget had none', async () => {
+    const changes: WidgetSpec[] = [];
+    const user = userEvent.setup();
+    render(<Inspector initial={{ id: 'w', type: 'line', size: 'large', groupBy: SERVICE }} onChange={(next) => { changes.push(next); }} />);
+
+    await user.selectOptions(screen.getByDisplayValue(catalogLabel('line')), catalogLabel('heatmap'));
+
+    expect(changes.at(-1)).toStrictEqual({ id: 'w', size: 'large', type: 'heatmap', groupBy: SERVICE, topN: DEFAULT_TOP_N.heatmap });
+  });
+
+  it('sets the Top N typed, over the default it showed', () => {
+    const changes: WidgetSpec[] = [];
+    render(<Inspector initial={{ id: 'w', type: 'waterfall', size: 'large', groupBy: SERVICE }} onChange={(next) => { changes.push(next); }} />);
+
+    fireEvent.change(topNField(), { target: { value: '3' } });
+
+    expect(changes).toStrictEqual([{ id: 'w', type: 'waterfall', size: 'large', groupBy: SERVICE, topN: 3 }]);
+    expect(topNField().value).toBe('3');
+  });
+
+  it('reads a spec’s own Top N, else its type’s default', () => {
+    expect(topNFor({ id: 'w', type: 'line', size: 'large', groupBy: SERVICE, topN: 3 }, 'line')).toBe(3);
+    expect(topNFor({ id: 'w', type: 'line', size: 'large', groupBy: SERVICE }, 'line')).toBe(DEFAULT_TOP_N.line);
+    // A spec of another type, ranked or not, gets the asked type's default.
+    expect(topNFor({ id: 'w', type: 'heatmap', size: 'large', groupBy: SERVICE, topN: 3 }, 'line')).toBe(DEFAULT_TOP_N.line);
+    expect(topNFor({ id: 'w', type: 'pie', size: 'large', groupBy: SERVICE }, 'line')).toBe(DEFAULT_TOP_N.line);
   });
 });
 

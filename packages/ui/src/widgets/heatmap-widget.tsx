@@ -5,7 +5,7 @@ import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import type { HeatmapCell } from '../components/heatmap-chart.js';
 import { asTagValue, type DailyCostsResult, type DimensionId } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
-import { DEFAULT_TOP_N, dimensionLabelFor, topNOf } from './widget.js';
+import { dimensionLabelFor, topNFor } from './widget.js';
 import { GroupByTitle } from '../components/group-by-title.js';
 
 interface BuiltCells {
@@ -50,7 +50,7 @@ export function HeatmapWidget({
   const [groupByOverride, setGroupByOverride] = useState<DimensionId | undefined>(undefined);
   const specGroupBy = spec.type === 'heatmap' ? spec.groupBy : undefined;
   const effectiveGroupBy = groupByOverride ?? specGroupBy;
-  const topN = spec.type === 'heatmap' ? topNOf(spec) : DEFAULT_TOP_N.heatmap;
+  const topN = topNFor(spec, 'heatmap');
 
   const { query, activeGroupBy, dailyResult } = useDailyWidgetQuery({
     specGroupBy: effectiveGroupBy,
