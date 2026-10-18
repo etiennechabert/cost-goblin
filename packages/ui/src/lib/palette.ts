@@ -1,22 +1,32 @@
 // A series wears the color its name hashes to, so the same entity (a service,
 // a team) keeps one color across every widget, whatever each widget's ranking.
 // Hashing means any two palette colors can end up side by side, so every PAIR
-// must stay distinguishable, not just neighbouring slots: both palettes keep
-// every pair at OKLab ΔE >= 15 (palette.test.ts). That floor is what sizes
-// them. Past ~10 colors on the dark surface, some pair always falls under it.
+// must stay distinguishable, not just neighbouring slots (palette.test.ts).
+// Distance is OKLab ΔE ×100; 15 is the usual floor for telling two marks
+// apart. Twenty colors is about as many as a dark surface fits: these keep
+// every pair at ΔE >= 14.5 while staying visible on the light theme too.
+// Past 20, pairs fall under 14 whatever the colors.
 export const PALETTE_STANDARD: readonly string[] = [
-  '#10b981', '#6366f1', '#fdba74', '#c026d3', '#d97706',
-  '#0ea5e9', '#e11d48', '#c4b5fd', '#a3e635', '#f472b6',
+  '#195fd9', '#137f1f', '#f8a4ae', '#7923fe', '#fb86fc',
+  '#2ab301', '#c16c99', '#1ddbfa', '#fc19c4', '#2bb69d',
+  '#af1497', '#a3abf0', '#f1113e', '#1a95d8', '#fa7926',
+  '#9471ed', '#f1bc25', '#a74a04', '#c715ff', '#a0932d',
 ];
 
-// Okabe-Ito without its black, which is invisible on the dark card (1.1:1).
-// Every pair also stays at ΔE >= 7.6 under protanopia and deuteranopia.
+// Red-green color blindness flattens hue, so these twelve are told apart
+// mostly by lightness and the blue-yellow axis: every pair stays at ΔE >= 8.7
+// under protanopia and deuteranopia, and >= 16 for everyone else.
 export const PALETTE_COLORBLIND: readonly string[] = [
-  '#0072B2', '#E69F00', '#009E73', '#CC79A7', '#56B4E9', '#D55E00', '#F0E442',
+  '#3a49fc', '#0db98e', '#d52f4a', '#96c0fe', '#357518', '#48fbf6',
+  '#be6db7', '#6ae72c', '#2291f8', '#e4e495', '#a019c1', '#cf9d22',
 ];
 
 /** The pie's folded remainder, and the fallback when a palette is empty. */
 export const OTHER_COLOR = '#374151';
+
+/** Series ranked past the palette. Every palette color keeps clear of it, so
+ *  a minor series never passes for a top one. */
+export const MINOR_COLOR = '#6b7280';
 
 export type PaletteType = 'standard' | 'colorblind';
 
@@ -28,10 +38,6 @@ export interface SeriesCost {
 
 /** A series' color, by name. */
 export type SeriesColors = (name: string) => string;
-
-// Opacity of a series ranked past the palette: its own hue, dimmed, so the
-// long tail stays colored but reads as minor on either theme's surface.
-const MINOR_ALPHA = 0.5;
 
 /** 32-bit FNV-1a of the name, then murmur3's fmix32 finalizer. FNV-1a's low
  *  bits depend only on the low bits of each character, so without the mix a
@@ -50,11 +56,6 @@ export function hashSeriesName(name: string): number {
   return h >>> 0;
 }
 
-function dim(hex: string): string {
-  const [r, g, b] = [1, 3, 5].map(i => Number.parseInt(hex.slice(i, i + 2), 16));
-  return `rgba(${String(r)}, ${String(g)}, ${String(b)}, ${String(MINOR_ALPHA)})`;
-}
-
 function byCostThenName(a: SeriesCost, b: SeriesCost): number {
   if (a.cost !== b.cost) return b.cost - a.cost;
   if (a.name < b.name) return -1;
@@ -64,7 +65,7 @@ function byCostThenName(a: SeriesCost, b: SeriesCost): number {
 /** Colors a chart's series. Each name prefers the slot it hashes to; when a
  *  costlier series already holds that slot, it takes the next free one, so a
  *  chart's top `palette.length` series always get distinct colors. Series
- *  ranked past that keep their hashed hue, dimmed.
+ *  ranked past that are drawn in MINOR_COLOR.
  *
  *  The result depends only on the names and their costs, never on the order
  *  a chart lists them in, and a series' color depends only on the series that
@@ -73,14 +74,13 @@ function byCostThenName(a: SeriesCost, b: SeriesCost): number {
 export function assignSeriesColors(series: readonly SeriesCost[], palette: readonly string[]): SeriesColors {
   const size = palette.length;
   if (size === 0) return () => OTHER_COLOR;
-  const hashed = (name: string): string => palette[hashSeriesName(name) % size] ?? OTHER_COLOR;
 
   const colors = new Map<string, string>();
   const taken = new Set<number>();
   for (const { name } of [...series].sort(byCostThenName)) {
     if (colors.has(name)) continue;
     if (taken.size === size) {
-      colors.set(name, dim(hashed(name)));
+      colors.set(name, MINOR_COLOR);
       continue;
     }
     let slot = hashSeriesName(name) % size;
@@ -88,7 +88,7 @@ export function assignSeriesColors(series: readonly SeriesCost[], palette: reado
     taken.add(slot);
     colors.set(name, palette[slot] ?? OTHER_COLOR);
   }
-  return (name) => colors.get(name) ?? dim(hashed(name));
+  return (name) => colors.get(name) ?? MINOR_COLOR;
 }
 
 /** A fixed role color, for marks that are not series (price-volume's volume

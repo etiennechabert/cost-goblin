@@ -726,7 +726,7 @@ See [Interaction Model](#interaction-model) below.
 
 #### Feature: Dark Mode + Color Palette (MVP)
 
-Dark mode default, light available. Two chart palettes: standard and Okabe-Ito (colorblind-safe). Toggled in the title bar; persisted in `preferences.json` (v1 — currently `localStorage`).
+Dark mode default, light available. Two chart palettes: standard and colorblind-safe. Toggled in the title bar; persisted in `preferences.json` (v1 — currently `localStorage`).
 
 #### Feature: Dimensions Editor (MVP)
 
@@ -946,7 +946,7 @@ As concepts are configured, these widgets activate.
 - **Progressive disclosure**: overview → drill-down → entity detail. Never dump everything at once.
 - **Instant feedback**: queries should feel fast (sub-second cached, 1–3 seconds uncached on a 7GB dataset).
 - **Dark mode default**, light mode available.
-- **Colorblind-friendly**: two palettes (standard + Okabe-Ito), togglable, persisted in preferences.
+- **Colorblind-friendly**: two palettes (standard + colorblind-safe), togglable, persisted in preferences.
 
 ### Frontend Stack
 
@@ -974,17 +974,19 @@ As concepts are configured, these widgets activate.
 **Chart palettes:**
 ```typescript
 const PALETTE_STANDARD = [
-  '#10b981', '#6366f1', '#fdba74', '#c026d3', '#d97706',
-  '#0ea5e9', '#e11d48', '#c4b5fd', '#a3e635', '#f472b6',
+  '#195fd9', '#137f1f', '#f8a4ae', '#7923fe', '#fb86fc',
+  '#2ab301', '#c16c99', '#1ddbfa', '#fc19c4', '#2bb69d',
+  '#af1497', '#a3abf0', '#f1113e', '#1a95d8', '#fa7926',
+  '#9471ed', '#f1bc25', '#a74a04', '#c715ff', '#a0932d',
 ];
 
-const PALETTE_COLORBLIND = [  // Okabe-Ito, without its black
-  '#0072B2', '#E69F00', '#009E73', '#CC79A7',
-  '#56B4E9', '#D55E00', '#F0E442',
+const PALETTE_COLORBLIND = [  // apart under protanopia and deuteranopia
+  '#3a49fc', '#0db98e', '#d52f4a', '#96c0fe', '#357518', '#48fbf6',
+  '#be6db7', '#6ae72c', '#2291f8', '#e4e495', '#a019c1', '#cf9d22',
 ];
 ```
 
-**Series colors follow the entity, not its rank.** A series takes the palette slot its name hashes to; when a costlier series in the same chart holds that slot, it takes the next free one. A chart's top series therefore get distinct colors, and since a series' color depends only on the series that outrank it, every widget over the same range and filters paints a shared series alike. Series ranked past the palette keep their hue at half opacity; the pie's folded "Other" is neutral gray. Hashing can put any two colors side by side, so every pair stays at OKLab ΔE ≥ 15 (`palette.test.ts`), which is what caps the standard palette at 10 colors.
+**Series colors follow the entity, not its rank.** A series takes the palette slot its name hashes to; when a costlier series in the same chart holds that slot, it takes the next free one. A chart's top series therefore get distinct colors, and since a series' color depends only on the series that outrank it, every widget over the same range and filters paints a shared series alike. Series ranked past the palette are drawn in a neutral gray, and the pie's folded "Other" in a darker one. Hashing can put any two colors side by side, so every pair has to stay distinguishable (`palette.test.ts`, OKLab ΔE ×100): ≥ 14.5 for the 20 standard colors (about the most a dark surface fits while staying visible on the light theme), and ≥ 16 for the 12 colorblind ones, which also stay ≥ 8.7 apart under protanopia and deuteranopia.
 
 ---
 

@@ -9,14 +9,14 @@ import type { BarDay } from '../components/stacked-bar-chart.js';
 import { TopNBarChart } from '../components/top-n-bar-chart.js';
 import { TreemapChart } from '../components/treemap-chart.js';
 import { PaletteProvider } from '../hooks/use-palette.js';
-import { PALETTE_COLORBLIND, PALETTE_STANDARD, hashSeriesName } from '../lib/palette.js';
+import { MINOR_COLOR, PALETTE_COLORBLIND, PALETTE_STANDARD, hashSeriesName } from '../lib/palette.js';
 import type { PaletteType } from '../lib/palette.js';
 
-// One range's spend, as each widget receives it. EC2 and CloudFront hash to
-// the same slot, so the ranking decides which keeps it.
+// One range's spend, as each widget receives it. EC2 and SNS hash to the same
+// standard slot, so the ranking decides which keeps it.
 const COSTS = [
   { name: 'EC2', cost: 500 },
-  { name: 'CloudFront', cost: 300 },
+  { name: 'SNS', cost: 300 },
   { name: 'S3', cost: 200 },
   { name: 'Lambda', cost: 100 },
 ];
@@ -24,13 +24,13 @@ const NAMES = COSTS.map(c => c.name);
 
 const SLICES: readonly PieSlice[] = COSTS.map(c => ({ ...c, percentage: (c.cost / 1100) * 100 }));
 
-// The daily breakdown meets CloudFront first, and CloudFront tops day one.
+// The daily breakdown meets SNS first, and SNS tops day one.
 const DAYS: readonly BarDay[] = [
-  { date: '2026-03-01', total: 260, breakdown: { CloudFront: 200, S3: 50, Lambda: 10 } },
-  { date: '2026-03-02', total: 840, breakdown: { Lambda: 90, EC2: 500, S3: 150, CloudFront: 100 } },
+  { date: '2026-03-01', total: 260, breakdown: { SNS: 200, S3: 50, Lambda: 10 } },
+  { date: '2026-03-02', total: 840, breakdown: { Lambda: 90, EC2: 500, S3: 150, SNS: 100 } },
 ];
 
-const LINES: readonly LineSeries[] = ['Lambda', 'S3', 'CloudFront', 'EC2'].map(name => ({
+const LINES: readonly LineSeries[] = ['Lambda', 'S3', 'SNS', 'EC2'].map(name => ({
   name,
   points: DAYS.map(d => ({ date: d.date, cost: d.breakdown[name] ?? 0 })),
 }));
@@ -59,15 +59,32 @@ async function pieColors(palette: PaletteType, slices: readonly PieSlice[] = SLI
   return new Map(slices.map(s => [s.name, normalized(swatch(root, s.name, 'span.inline-block').style.backgroundColor)]));
 }
 
+function lastBar(root: HTMLElement): Element {
+  const bar = [...root.querySelectorAll('.group.relative')].at(-1);
+  if (bar === undefined) throw new Error('no bars');
+  return bar;
+}
+
+/** Read off the last bar's tooltip, which lists up to twelve series. */
 function stackedBarColors(palette: PaletteType, days: readonly BarDay[] = DAYS): Map<string, string> {
   const root = renderIn(palette, <StackedBarChart days={days} />);
-  const lastBar = [...root.querySelectorAll('.group.relative')].at(-1);
-  if (lastBar === undefined) throw new Error('no bars');
-  fireEvent.mouseEnter(lastBar);
+  fireEvent.mouseEnter(lastBar(root));
   const tip = within(root).getByText(/^Total:/).closest('.min-w-\\[280px\\]');
   if (!(tip instanceof HTMLElement)) throw new Error('no tooltip');
   const names = Object.keys(days.at(-1)?.breakdown ?? {});
   return new Map(names.map(name => [name, normalized(swatch(tip, name, 'span.rounded-full').style.backgroundColor)]));
+}
+
+/** Read off the last bar's segments, which stack costliest first. */
+function stackedSegmentColors(palette: PaletteType, day: BarDay): Map<string, string> {
+  const root = renderIn(palette, <StackedBarChart days={[day]} />);
+  const segments = [...(lastBar(root).firstElementChild?.children ?? [])];
+  const names = Object.entries(day.breakdown).sort((a, b) => b[1] - a[1]).map(([name]) => name);
+  return new Map(names.map((name, i) => {
+    const seg = segments[i];
+    if (!(seg instanceof HTMLElement)) throw new Error(`no segment for ${name}`);
+    return [name, normalized(seg.style.backgroundColor)];
+  }));
 }
 
 async function lineColors(palette: PaletteType): Promise<Map<string, string>> {
@@ -108,26 +125,27 @@ describe('series colors across widgets', () => {
     expect(await topNColors(palette)).toEqual(pie);
     expect(await treemapColors(palette)).toEqual(pie);
 
-    // EC2, the costliest, keeps the slot its name hashes to (CloudFront's
-    // too, on the standard palette); the four series get four colors.
+    // EC2, the costliest, keeps the slot its name hashes to (SNS's too, on
+    // the standard palette); the four series get four colors.
     expect(pie.get('EC2')).toBe(normalized(colors[hashSeriesName('EC2') % colors.length]));
     expect(new Set(pie.values()).size).toBe(NAMES.length);
   });
 
-  it('dims the series past the palette alike in the pie and the stacked bar', async () => {
-    // Twelve services: the two cheapest rank past the ten standard colors.
-    const services = Array.from({ length: 12 }, (_, i) => ({ name: `svc-${String(i)}`, cost: 1200 - i * 100 }));
+  it('grays the series past the palette alike in the pie and the stacked bar', async () => {
+    // The two cheapest services rank past the standard palette.
+    const size = PALETTE_STANDARD.length;
+    const services = Array.from({ length: size + 2 }, (_, i) => ({ name: `svc-${String(i)}`, cost: 10_000 - i * 100 }));
     const slices = services.map(s => ({ ...s, percentage: 0 }));
     // Listed cheapest first, as a breakdown can be.
-    const days: readonly BarDay[] = [{
+    const day: BarDay = {
       date: '2026-03-01',
       total: services.reduce((sum, s) => sum + s.cost, 0),
       breakdown: Object.fromEntries([...services].reverse().map(s => [s.name, s.cost])),
-    }];
+    };
 
     const pie = await pieColors('standard', slices);
-    expect(stackedBarColors('standard', days)).toEqual(pie);
-    for (const s of services.slice(10)) expect(pie.get(s.name)).toMatch(/^rgba\(.*, 0\.5\)$/);
-    for (const s of services.slice(0, 10)) expect(pie.get(s.name)).toMatch(/^rgb\(/);
+    expect(stackedSegmentColors('standard', day)).toEqual(pie);
+    for (const s of services.slice(size)) expect(pie.get(s.name)).toBe(normalized(MINOR_COLOR));
+    expect(new Set(services.slice(0, size).map(s => pie.get(s.name))).size).toBe(size);
   });
 });

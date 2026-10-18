@@ -154,7 +154,7 @@ export function GeneralTab({
           />
         </SettingRow>
 
-        <SettingRow label="Chart palette" description="Colorblind uses the Okabe-Ito safe palette.">
+        <SettingRow label="Chart palette" description="Colorblind keeps colors apart under red-green color blindness.">
           <div className="flex items-center gap-3">
             <div className="flex gap-1" aria-hidden="true">
               {swatches.map((color, i) => (

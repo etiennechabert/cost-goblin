@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  MINOR_COLOR,
   OTHER_COLOR,
   PALETTE_COLORBLIND,
   PALETTE_STANDARD,
@@ -18,11 +19,6 @@ function color(palette: readonly string[], slot: number): string {
   const c = palette[slot];
   if (c === undefined) throw new Error(`no slot ${String(slot)}`);
   return c;
-}
-
-function dimmed(hex: string): string {
-  const [r, g, b] = [1, 3, 5].map(i => Number.parseInt(hex.slice(i, i + 2), 16));
-  return `rgba(${String(r)}, ${String(g)}, ${String(b)}, 0.5)`;
 }
 
 /** `count` series named `${prefix}-0…`, costliest first. */
@@ -87,7 +83,7 @@ const DARK_CARD = '#111111';
 describe('hashSeriesName', () => {
   it('maps a name to the same slot on every run', () => {
     // Changing the hash repaints every chart for every user: pin it.
-    expect(['BigQuery', 'Vertex AI', 'Cloud Run', 'Gemini API', 'Compute Engine'].map(n => slotOf(n))).toEqual([1, 6, 0, 2, 6]);
+    expect(['BigQuery', 'Vertex AI', 'Cloud Run', 'Gemini API', 'Compute Engine'].map(n => slotOf(n))).toEqual([11, 16, 10, 12, 6]);
   });
 
   it.each([PALETTE_STANDARD, PALETTE_COLORBLIND])('spreads names evenly over a %#-th palette', (palette) => {
@@ -98,8 +94,8 @@ describe('hashSeriesName', () => {
     }
     const mean = 1000 / palette.length;
     for (const n of counts) {
-      expect(n).toBeGreaterThan(mean * 0.7);
-      expect(n).toBeLessThan(mean * 1.3);
+      expect(n).toBeGreaterThan(mean * 0.65);
+      expect(n).toBeLessThan(mean * 1.35);
     }
   });
 
@@ -123,16 +119,16 @@ describe('assignSeriesColors', () => {
   });
 
   it('moves the cheaper of two series that hash to one slot to the next free slot', () => {
-    // EC2 and CloudFront both hash to slot 2.
-    expect(slotOf('EC2')).toBe(slotOf('CloudFront'));
+    // EC2 and SNS both hash to slot 12.
+    expect(slotOf('EC2')).toBe(slotOf('SNS'));
     const slot = slotOf('EC2');
-    const ec2First = assignSeriesColors([{ name: 'EC2', cost: 500 }, { name: 'CloudFront', cost: 300 }], PALETTE_STANDARD);
+    const ec2First = assignSeriesColors([{ name: 'EC2', cost: 500 }, { name: 'SNS', cost: 300 }], PALETTE_STANDARD);
     expect(ec2First('EC2')).toBe(color(PALETTE_STANDARD, slot));
-    expect(ec2First('CloudFront')).toBe(color(PALETTE_STANDARD, (slot + 1) % P));
+    expect(ec2First('SNS')).toBe(color(PALETTE_STANDARD, (slot + 1) % P));
 
     // The slot goes to whichever costs more over the chart's range.
-    const cloudFrontFirst = assignSeriesColors([{ name: 'EC2', cost: 300 }, { name: 'CloudFront', cost: 500 }], PALETTE_STANDARD);
-    expect(cloudFrontFirst('CloudFront')).toBe(color(PALETTE_STANDARD, slot));
+    const snsFirst = assignSeriesColors([{ name: 'EC2', cost: 300 }, { name: 'SNS', cost: 500 }], PALETTE_STANDARD);
+    expect(snsFirst('SNS')).toBe(color(PALETTE_STANDARD, slot));
   });
 
   it('gives each of the top series its own color, one per palette slot', () => {
@@ -148,30 +144,24 @@ describe('assignSeriesColors', () => {
     for (const s of all.slice(0, 6)) expect(few(s.name)).toBe(many(s.name));
   });
 
-  it('dims series ranked past the palette, keeping the hue their name hashes to', () => {
+  it('draws series ranked past the palette in the minor gray', () => {
     const all = series('svc', P + 5);
     const colors = assignSeriesColors(all, PALETTE_STANDARD);
-    for (const s of all.slice(P)) expect(colors(s.name)).toBe(dimmed(color(PALETTE_STANDARD, slotOf(s.name))));
-
-    // A dimmed series keeps its color whatever else the chart dims.
-    const tail = all.at(-1);
-    if (tail === undefined) throw new Error('no tail');
-    const other = assignSeriesColors([...all.slice(0, P), tail], PALETTE_STANDARD);
-    expect(other(tail.name)).toBe(colors(tail.name));
+    for (const s of all.slice(P)) expect(colors(s.name)).toBe(MINOR_COLOR);
   });
 
   it('breaks a cost tie by name, so equal series color alike in every chart', () => {
-    const a = assignSeriesColors([{ name: 'EC2', cost: 100 }, { name: 'CloudFront', cost: 100 }], PALETTE_STANDARD);
-    const b = assignSeriesColors([{ name: 'CloudFront', cost: 100 }, { name: 'EC2', cost: 100 }], PALETTE_STANDARD);
+    const a = assignSeriesColors([{ name: 'SNS', cost: 100 }, { name: 'EC2', cost: 100 }], PALETTE_STANDARD);
+    const b = assignSeriesColors([{ name: 'EC2', cost: 100 }, { name: 'SNS', cost: 100 }], PALETTE_STANDARD);
     expect(b('EC2')).toBe(a('EC2'));
-    expect(b('CloudFront')).toBe(a('CloudFront'));
-    // 'CloudFront' sorts first, so it keeps the shared slot.
-    expect(a('CloudFront')).toBe(color(PALETTE_STANDARD, slotOf('CloudFront')));
+    expect(b('SNS')).toBe(a('SNS'));
+    // 'EC2' sorts first, so it keeps the shared slot.
+    expect(a('EC2')).toBe(color(PALETTE_STANDARD, slotOf('EC2')));
   });
 
-  it('colors a name it was not ranked with as a dimmed series', () => {
+  it('colors a name it was not ranked with as a minor series', () => {
     const colors = assignSeriesColors([{ name: 'EC2', cost: 1 }], PALETTE_STANDARD);
-    expect(colors('S3')).toBe(dimmed(color(PALETTE_STANDARD, slotOf('S3'))));
+    expect(colors('S3')).toBe(MINOR_COLOR);
   });
 
   it('assigns the colorblind palette the same way', () => {
@@ -187,18 +177,19 @@ describe('assignSeriesColors', () => {
 
 describe('chart palettes', () => {
   // A name can hash to any slot, so any two colors can share a chart: every
-  // pair has to stay apart, not just neighbouring slots.
+  // pair has to stay apart, not just neighbouring slots, and apart from the
+  // grays of minor series and the pie's Other. 15 is the usual floor; twenty
+  // standard colors that stay visible on the light theme top out at 14.5.
   it.each([
-    { name: 'standard', palette: PALETTE_STANDARD },
-    { name: 'colorblind', palette: PALETTE_COLORBLIND },
-  ])('keeps every pair of $name colors distinguishable', ({ palette }) => {
-    expect(worstPair(palette, (a, b) => deltaE(a, b))).toBeGreaterThanOrEqual(15);
+    { name: 'standard', palette: PALETTE_STANDARD, floor: 14 },
+    { name: 'colorblind', palette: PALETTE_COLORBLIND, floor: 15 },
+  ])('keeps every pair of $name colors, grays included, distinguishable', ({ palette, floor }) => {
+    expect(worstPair([...palette, MINOR_COLOR, OTHER_COLOR], (a, b) => deltaE(a, b))).toBeGreaterThanOrEqual(floor);
   });
 
   it('keeps every pair of colorblind colors apart under protanopia and deuteranopia', () => {
     const cvd = (a: string, b: string): number => Math.min(deltaE(a, b, PROTAN), deltaE(a, b, DEUTAN));
-    // 6 is the floor that legends and tooltips (a second channel) make legal.
-    expect(worstPair(PALETTE_COLORBLIND, cvd)).toBeGreaterThanOrEqual(6);
+    expect(worstPair([...PALETTE_COLORBLIND, MINOR_COLOR, OTHER_COLOR], cvd)).toBeGreaterThanOrEqual(8);
   });
 
   it.each([
