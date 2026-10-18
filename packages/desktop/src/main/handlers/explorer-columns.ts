@@ -1,4 +1,4 @@
-import type { ExplorerSort } from '@costgoblin/core';
+import type { ExplorerSort, QueryBuilder } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
 import { toStr } from './query-utils.js';
 
@@ -45,24 +45,33 @@ export function explorerOrderBy(sort: ExplorerSort | undefined, tagSqlColumns: R
   return `${column} ${sortDirection(sort)}`;
 }
 
-/** `baseWhere` plus one equality per non-empty row filter on an allow-listed
- *  column; filters on anything else are dropped. */
-export function appendRowFilters(
-  baseWhere: string,
-  rowFilters: Record<string, string> | undefined,
+/** A row filter on an allow-listed column: line items must hold `value` there. */
+export interface RowFilter {
+  readonly column: string;
+  readonly value: string;
+}
+
+/** The non-empty row filters on allow-listed columns, each with the SQL column
+ *  behind its id; filters on anything else are dropped. */
+export function explorerRowFilters(
+  rowFilters: Readonly<Record<string, string>> | undefined,
   tagSqlColumns: ReadonlyMap<string, string>,
-): string {
-  if (rowFilters === undefined) return baseWhere;
-  const extra: string[] = [];
-  for (const [id, val] of Object.entries(rowFilters)) {
-    if (val.length === 0) continue;
-    const col = explorerSqlColumn(id, tagSqlColumns);
-    if (col === null) continue;
-    const escaped = val.replaceAll("'", "''");
-    const colExpr = col === 'usage_date' ? `usage_date::VARCHAR` : col;
-    extra.push(`${colExpr} = '${escaped}'`);
-  }
-  return extra.length === 0 ? baseWhere : andWhere(baseWhere, extra.join(' AND '));
+): RowFilter[] {
+  if (rowFilters === undefined) return [];
+  return Object.entries(rowFilters).flatMap(([id, value]) => {
+    if (value.length === 0) return [];
+    const column = explorerSqlColumn(id, tagSqlColumns);
+    return column === null ? [] : [{ column, value }];
+  });
+}
+
+/** One equality per row filter, its value bound through `qb`; usage_date is
+ *  compared as text, the form groupBySelectList reads it in. */
+export function rowFilterConditions(rowFilters: readonly RowFilter[], qb: QueryBuilder): string[] {
+  return rowFilters.map(({ column, value }) => {
+    const colExpr = column === 'usage_date' ? `usage_date::VARCHAR` : column;
+    return `${colExpr} = ${qb.addParam(value)}`;
+  });
 }
 
 /** `where` with `condition` ANDed on, where `where` is a WHERE clause or ''. */
