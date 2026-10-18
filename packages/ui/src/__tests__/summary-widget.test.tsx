@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
 import type { CostQueryParams, CostResult, DateRange, Dimension, DimensionId, SummaryMetric, WidgetSpec } from '@costgoblin/core/browser';
 import { asDateString, asDimensionId, asDollars, asEntityRef } from '@costgoblin/core/browser';
@@ -55,6 +55,8 @@ interface SummaryApiOptions {
  *  them as optional to stay override-compatible. */
 class SummaryApi extends MockCostApi {
   readonly calls: CostQueryParams[] = [];
+  /** The latest previous-period answer, for a test to wait on. */
+  previousAnswer: Promise<CostResult> | null = null;
 
   constructor(private readonly options: SummaryApiOptions = {}) {
     super();
@@ -67,7 +69,8 @@ class SummaryApi extends MockCostApi {
     if (params.dateRange.start === PREVIOUS.start) {
       if (this.options.failPrevious !== undefined) return Promise.reject(this.options.failPrevious);
       const rows = this.options.previous ?? [['prod', 400], ['staging', 320]];
-      return Promise.resolve(costResult(rows, PREVIOUS, this.options.previousCoveredDays));
+      this.previousAnswer = Promise.resolve(costResult(rows, PREVIOUS, this.options.previousCoveredDays));
+      return this.previousAnswer;
     }
     return Promise.resolve(costResult(this.options.current ?? CURRENT_ROWS[params.groupBy] ?? [], CURRENT));
   }
@@ -124,6 +127,20 @@ describe('SummaryWidget', () => {
       expect(await screen.findByText('▲25.0%')).not.toBeNull();
       expect(screen.getByText('vs Previous Period')).not.toBeNull();
       expect(screen.getByText('Total Cost')).not.toBeNull();
+    });
+
+    it('compares with nothing when the previous period has too little data', async () => {
+      // 7 of 28 days synced: $900 vs $100 would read as ▲800%.
+      const api = new SummaryApi({ previous: [['prod', 100]], previousCoveredDays: 7 });
+      renderSummary(summary({ metric: 'total' }), api, true);
+
+      expect(await screen.findByText('$900.00')).not.toBeNull();
+      await waitFor(() => { expect(api.previousAnswer).not.toBeNull(); });
+      // Let the previous period's result commit before asserting it shows nothing.
+      await act(async () => { await api.previousAnswer; });
+      expect(screen.getByText('vs Previous Period')).not.toBeNull();
+      expect(screen.queryByText(/%/)).toBeNull();
+      expect(screen.queryByText('Previous: $100.00')).toBeNull();
     });
   });
 

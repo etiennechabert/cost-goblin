@@ -23,11 +23,16 @@ type CostsHandler = (event: unknown, params: CostQueryParams) => Promise<CostRes
 
 // registerCostHandlers reaches ipcMain; context.ts reaches
 // @sentry/electron/main (which imports `electron`) through the tracing helper.
-// Tracing is never armed here.
-const ipc = vi.hoisted(() => ({ handlers: new Map<string, CostsHandler>() }));
+// Tracing is never armed here. Only query:costs is kept, so the handler's
+// declared type holds for what is stored.
+const ipc = vi.hoisted((): { costs: CostsHandler | undefined } => ({ costs: undefined }));
 vi.mock('electron', () => ({
   app: {},
-  ipcMain: { handle: (channel: string, handler: CostsHandler) => { ipc.handlers.set(channel, handler); } },
+  ipcMain: {
+    handle: (channel: string, handler: CostsHandler) => {
+      if (channel === 'query:costs') ipc.costs = handler;
+    },
+  },
 }));
 vi.mock('@sentry/electron/main', () => ({}));
 
@@ -101,12 +106,14 @@ function range(start: string, end: string): DateRange {
 }
 
 describe('query:costs data coverage (DuckDB end-to-end)', () => {
-  let root: string;
-  let app: AppContext;
+  // Unset until beforeAll gets that far: teardown must not hide its error.
+  let root: string | undefined;
+  let instance: DuckDBInstance | undefined;
+  let app: AppContext | undefined;
 
   beforeAll(async () => {
     root = await mkdtemp(join(tmpdir(), 'cg-coverage-'));
-    const instance = await DuckDBInstance.create();
+    instance = await DuckDBInstance.create();
     const conn = await instance.connect();
     const ipcContext = pinnedIpcContext(root, inProcessDb(conn));
     await mkdir(dirname(ipcContext.configPath), { recursive: true });
@@ -120,12 +127,13 @@ describe('query:costs data coverage (DuckDB end-to-end)', () => {
   });
 
   afterAll(async () => {
-    await app.awaitWarmup(5_000);
-    await rm(root, { recursive: true, force: true });
+    await app?.awaitWarmup(5_000);
+    instance?.closeSync();
+    if (root !== undefined) await rm(root, { recursive: true, force: true });
   });
 
   function queryCosts(dateRange: DateRange, filters: FilterMap = {}, granularity: Granularity = 'daily'): Promise<CostResult> {
-    const handler = ipc.handlers.get('query:costs');
+    const handler = ipc.costs;
     if (handler === undefined) throw new Error('query:costs is not registered');
     // The summary widget's grouping: per account, merged by display name.
     return handler({}, { groupBy: asDimensionId('account'), dateRange, filters, granularity });
