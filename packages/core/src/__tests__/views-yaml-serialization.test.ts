@@ -98,8 +98,9 @@ describe('widgetToYaml', () => {
       .toStrictEqual({ id: 'b', type: 'bubble', size: 'large', groupBy: 'service', logScale: 50, percentThreshold: 0 });
   });
 
-  it('leaves out an empty table column list, and copies a non-empty one', () => {
-    expect(widgetToYaml({ id: 't', type: 'table', size: 'full', enabledColumns: [] })).toStrictEqual({ id: 't', type: 'table', size: 'full' });
+  it('keeps an empty table column list, and copies a non-empty one', () => {
+    // A table with every column hidden stays that way across save and reload.
+    expect(widgetToYaml({ id: 't', type: 'table', size: 'full', enabledColumns: [] })).toStrictEqual({ id: 't', type: 'table', size: 'full', enabledColumns: [] });
     const columns = ['cost', 'region'];
     const yaml = widgetToYaml({ id: 't', type: 'table', size: 'full', enabledColumns: columns });
     expect(yaml['enabledColumns']).toStrictEqual(['cost', 'region']);
