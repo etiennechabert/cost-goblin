@@ -24,6 +24,7 @@ export function widgetToYaml(w: WidgetSpec): Record<string, unknown> {
   switch (w.type) {
     case 'summary':
       if (w.metric !== undefined) base['metric'] = w.metric;
+      if (w.groupBy !== undefined) base['groupBy'] = w.groupBy;
       return base;
     case 'pie':
     case 'stackedBar':

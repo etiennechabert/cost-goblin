@@ -67,7 +67,7 @@ function parseWidgetBase(raw: Record<string, unknown>, ctx: string): WidgetBase 
   };
 }
 
-function validateSummaryWidget(raw: Record<string, unknown>, ctx: string, base: WidgetBase): WidgetSpec {
+function validateSummaryWidget(raw: Record<string, unknown>, ctx: string, base: WidgetBase, liveDimensionIds?: ReadonlySet<string>): WidgetSpec {
   let metric: SummaryMetric | undefined;
   if (raw['metric'] !== undefined) {
     assertString(raw['metric'], `${ctx}.metric`);
@@ -78,7 +78,14 @@ function validateSummaryWidget(raw: Record<string, unknown>, ctx: string, base: 
     }
     metric = raw['metric'];
   }
-  return { type: 'summary', ...base, ...(metric === undefined ? {} : { metric }) };
+  const groupBy = raw['groupBy'] === undefined
+    ? undefined
+    : (assertString(raw['groupBy'], `${ctx}.groupBy`), asDimensionId(migrateLegacyDimensionId(raw['groupBy'], liveDimensionIds)));
+  return {
+    type: 'summary', ...base,
+    ...(metric === undefined ? {} : { metric }),
+    ...(groupBy === undefined ? {} : { groupBy }),
+  };
 }
 
 function parseBubbleLogScale(raw: Record<string, unknown>, ctx: string): number | 'linear' | undefined {
@@ -158,7 +165,7 @@ function validateWidget(raw: unknown, ctx: string, liveDimensionIds?: ReadonlySe
 
   switch (type) {
     case 'summary':
-      return validateSummaryWidget(raw, ctx, base);
+      return validateSummaryWidget(raw, ctx, base, liveDimensionIds);
     case 'pie':
     case 'stackedBar':
     case 'bubble':

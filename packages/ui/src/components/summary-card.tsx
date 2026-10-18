@@ -2,6 +2,8 @@ import { daysBetween } from '../lib/dates.js';
 import { formatDollars, formatDate } from './format.js';
 
 interface SummaryCardProps {
+  /** Heading above the total; "Total Cost" when unset. */
+  label?: string | undefined;
   /** `null` means "not loaded yet" — the card renders placeholders so the
    *  user doesn't briefly see "$0.00" before the real total lands. */
   totalCost: number | null;
@@ -12,7 +14,7 @@ interface SummaryCardProps {
 
 const PLACEHOLDER = '—';
 
-export function SummaryCard({ totalCost, previousCost, dateRange, previousDateRange }: Readonly<SummaryCardProps>) {
+export function SummaryCard({ label = 'Total Cost', totalCost, previousCost, dateRange, previousDateRange }: Readonly<SummaryCardProps>) {
   const hasTotal = totalCost !== null;
   const hasPrevious = previousCost !== null && previousCost !== undefined;
   const delta =
@@ -31,7 +33,7 @@ export function SummaryCard({ totalCost, previousCost, dateRange, previousDateRa
   return (
     <div className="flex flex-col justify-between rounded-xl border border-border bg-bg-secondary px-6 py-5 h-full">
       <div>
-        <p className="text-xs font-medium uppercase tracking-wider text-text-secondary">Total Cost</p>
+        <p className="text-xs font-medium uppercase tracking-wider text-text-secondary">{label}</p>
         <span className="mt-2 block text-4xl font-bold tabular-nums text-text-primary">
           {hasTotal ? formatDollars(totalCost) : PLACEHOLDER}
         </span>
