@@ -4,16 +4,25 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { mkdtemp, readFile, rm, stat, readdir } from 'node:fs/promises';
-import { buildRollupPartitionQuery, rollupGrainColumns, type DimensionsConfig, type CostScopeConfig, type ProviderName, type RollupStatus, asDimensionId, asProviderName } from '@costgoblin/core';
+import { buildRollupPartitionQuery, logger, rollupGrainColumns, type DimensionsConfig, type CostScopeConfig, type ProviderName, type RollupStatus, asDimensionId, asProviderName } from '@costgoblin/core';
 import { RollupStore, type RollupShape } from '../main/rollup-store.js';
 import type { RawRow } from '../main/duckdb-client.js';
 import { fetchRows } from './helpers/duckdb-rows.js';
 
-// Pass-through, so one test can fail a single manifest read.
+// Pass-through, so one test can fail a single manifest read or removal.
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
-  return { ...actual, readFile: vi.fn(actual.readFile) };
+  return { ...actual, readFile: vi.fn(actual.readFile), rm: vi.fn(actual.rm) };
 });
+
+/** Fail every `rm` of `target` with errno `code`, as a file held open (EBUSY
+ *  on Windows) or locked (EPERM) would; other paths are removed for real. */
+async function failRemovalOf(target: string, code: string): Promise<void> {
+  const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+  vi.mocked(rm).mockImplementation((path, options) => path === target
+    ? Promise.reject(Object.assign(new Error(`${code}: cannot remove '${target}'`), { code }))
+    : actual.rm(path, options));
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // core synthetic fixtures live under packages/core/src/__fixtures__/synthetic
@@ -52,7 +61,8 @@ describe('RollupStore', () => {
     runQuery = (sql: string): Promise<RawRow[]> => fetchRows(conn, sql);
   });
   afterAll(async () => { await rm(dataDir, { recursive: true, force: true }); });
-  afterEach(() => { vi.mocked(readFile).mockReset(); });
+  // Puts readFile and rm back to pass-through, and logger.warn back.
+  afterEach(() => { vi.restoreAllMocks(); });
 
   it('builds a partition, writes an atomic manifest (no .tmp), and routes to it', async () => {
     const store = new RollupStore({ dataDir, providerName, runQuery });
@@ -228,5 +238,52 @@ describe('RollupStore', () => {
     const store = new RollupStore({ dataDir, providerName: throwingProvider, runQuery });
     await expect(store.invalidate()).resolves.toBeUndefined();
     expect(store.isReady()).toBe(false);
+  });
+
+  it('invalidate() resolves when the old tree cannot be removed, leaving nothing that validates', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'cg-rollup-rm-'));
+    const store = new RollupStore({ dataDir: dir, providerName, runQuery });
+    await store.maintainPeriods(['2026-01'], buildSql, etags, shape);
+    const rollupDir = join(dir, 'aws', 'rollup');
+    await failRemovalOf(rollupDir, 'EBUSY');
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+
+    // Same callers as above: a rejection would go unhandled and skip the
+    // cache clear and re-warm they chain on it.
+    await expect(store.invalidate()).resolves.toBeUndefined();
+    expect(store.isReady()).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('EBUSY'));
+
+    // The manifest went first, so the partition left behind can't validate.
+    await expect(stat(join(rollupDir, 'manifest.json'))).rejects.toThrow();
+    await expect(stat(join(rollupDir, 'daily-2026-01', 'rollup.parquet'))).resolves.toBeDefined();
+    const reloaded = new RollupStore({ dataDir: dir, providerName, runQuery });
+    expect((await reloaded.loadAndValidate(shape, etags)).validPeriods.size).toBe(0);
+
+    vi.mocked(rm).mockReset();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('invalidate() leaves the rollup whole when its manifest cannot be removed', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'cg-rollup-rm-'));
+    const store = new RollupStore({ dataDir: dir, providerName, runQuery });
+    await store.maintainPeriods(['2026-01'], buildSql, etags, shape);
+    const rollupDir = join(dir, 'aws', 'rollup');
+    await failRemovalOf(join(rollupDir, 'manifest.json'), 'EPERM');
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+
+    await expect(store.invalidate()).resolves.toBeUndefined();
+    expect(store.isReady()).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('EPERM'));
+
+    // Deleting partitions under a manifest that stays would leave it vouching
+    // for files that are gone. Left whole, the rollup reloads valid only
+    // where it still matches the shape and etags.
+    await expect(stat(join(rollupDir, 'daily-2026-01', 'rollup.parquet'))).resolves.toBeDefined();
+    const reloaded = new RollupStore({ dataDir: dir, providerName, runQuery });
+    expect([...(await reloaded.loadAndValidate(shape, etags)).validPeriods]).toEqual(['2026-01']);
+
+    vi.mocked(rm).mockReset();
+    await rm(dir, { recursive: true, force: true });
   });
 });
