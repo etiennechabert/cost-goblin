@@ -22,8 +22,12 @@ import { parse } from 'yaml';
 
 const repoRoot = new URL('../../', import.meta.url);
 
-/** Bytes of .gitar/review/ plus .gitar/instructions/ that every run loads. */
-const ALWAYS_LOADED_BUDGET = 28_000;
+/**
+ * Bytes of .gitar/review/ plus .gitar/instructions/ that every run loads. It
+ * keeps a few KB free for the lessons CLAUDE.md asks each PR to record: at
+ * 28 KB the guides were full, and lessons were dropped or moved to CLAUDE.md.
+ */
+const ALWAYS_LOADED_BUDGET = 32_000;
 
 /** Files whose contents can define an identifier the guidance quotes. */
 const CODE_FILE = /\.(ts|tsx|mts|js|mjs|cjs|json|ya?ml|sh)$/;
