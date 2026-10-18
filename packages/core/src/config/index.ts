@@ -3,10 +3,12 @@ export { validateConfig, validateDimensions, validateOrgTree, ConfigValidationEr
 export type { StripPatternLimitMode, TagIdCollisionMode, ValidateDimensionsOptions } from './validator.js';
 export { MAX_NAME_STRIP_PATTERNS, MAX_NAME_STRIP_PATTERN_LENGTH, nameStripPatternViolations } from './strip-pattern-limits.js';
 export { validateViews } from './views-validator.js';
+export type { InvalidTopNMode, ValidateViewsOptions } from './views-validator.js';
 export { LEGACY_DIMENSION_ID_RENAMES, dimensionIdSet, migrateLegacyDimensionId } from './legacy-renames.js';
 export { validateCostScope } from './cost-scope-validator.js';
 export { validateBaselines } from './baselines-validator.js';
 export { widgetToYaml, viewToYaml, viewsConfigToYaml } from './views-serialize.js';
+export { migrateRetiredSeedViews } from './retired-seed-views.js';
 export { costScopeToYaml } from './cost-scope-serialize.js';
 export { baselineSpecToYaml, baselinesToYaml } from './baselines-serialize.js';
 export { dimensionsConfigToYaml } from './dimensions-serialize.js';

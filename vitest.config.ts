@@ -41,6 +41,24 @@ export default defineConfig({
           testTimeout: 15_000,
         },
       },
+      {
+        // The desktop renderer (packages/desktop/src/renderer) is React; the
+        // node project above globs only `*.test.ts` and has no DOM. Renderer
+        // components render @costgoblin/ui ones, so they share the ui setup
+        // (RTL cleanup and the jsdom gaps those components need:
+        // ResizeObserver, matchMedia, ...) and the ui project's timeout, for
+        // the same reasons. renderer-setup.ts then installs typed fakes of the
+        // preload's window bridges, which some renderer modules read once, at
+        // import time (debug-panel.tsx, App.tsx).
+        test: {
+          name: 'desktop-renderer',
+          include: ['packages/desktop/src/**/*.test.tsx'],
+          environment: 'jsdom',
+          setupFiles: ['packages/ui/src/__tests__/setup.ts', 'packages/desktop/src/__tests__/renderer-setup.ts'],
+          passWithNoTests: true,
+          testTimeout: 15_000,
+        },
+      },
     ],
   },
 });

@@ -720,10 +720,6 @@ function AppShell(): React.JSX.Element {
     }).catch(() => undefined);
   }
 
-  function handleGoHome() {
-    handleNavClick(defaultViewId);
-  }
-
   function handleCheckForUpdates() {
     globalThis.costgoblinUpdate.checkForUpdates().catch(() => undefined);
   }
@@ -886,6 +882,14 @@ function AppShell(): React.JSX.Element {
   const views = viewsConfig ?? FALLBACK_VIEWS;
   const viewsReady = viewsConfig !== null;
   const customNav: { id: string; name: string }[] = views.views.map(v => ({ id: v.id, name: v.name }));
+  // A dashboard id can name a view that no longer exists (deleted by hand, or a
+  // retired built-in the views migration dropped). That view renders the
+  // overview, so it counts as the overview for Home, the star and the active
+  // item. The saved default preference is left as is.
+  function shownViewId(id: string): string {
+    return viewsReady && !customNav.some(c => c.id === id) ? OVERVIEW_SEED_VIEW.id : id;
+  }
+  const homeViewId = shownViewId(defaultViewId);
 
   const paletteItems: NavItem[] = useMemo(() => [
     ...customNav.map(n => ({ id: n.id, label: n.name, group: 'Dashboards' })),
@@ -943,7 +947,7 @@ function AppShell(): React.JSX.Element {
 
   function activeNavId(): string | null {
     if (settingsTab !== null) return null;
-    if (view.page === 'custom') return view.viewId;
+    if (view.page === 'custom') return shownViewId(view.viewId);
     if (view.page === 'trends') return 'trends';
     if (view.page === 'missing-tags') return 'missing-tags';
     if (view.page === 'savings') return 'savings';
@@ -978,7 +982,7 @@ function AppShell(): React.JSX.Element {
             palette={palette}
             onTogglePalette={handleTogglePalette}
             dashboards={customNav.map(c => ({ id: c.id, name: c.name }))}
-            defaultViewId={defaultViewId}
+            defaultViewId={homeViewId}
             onSetDefaultView={handleSetDefaultView}
             appVersion={appVersion}
             updateStatus={updateStatus}
@@ -1078,13 +1082,13 @@ function AppShell(): React.JSX.Element {
           <div className="flex items-center gap-3 min-w-0">
           <nav className="flex items-center gap-1" aria-label="Dashboards and analysis">
             {(() => {
-              const isActiveDefault = view.page === 'custom' && view.viewId === defaultViewId;
-              const dv = customNav.find(c => c.id === defaultViewId);
+              const isActiveDefault = view.page === 'custom' && shownViewId(view.viewId) === homeViewId;
+              const dv = customNav.find(c => c.id === homeViewId);
               const tooltip = dv === undefined ? 'Go to default dashboard' : `Go to ${dv.name}`;
               return (
                 <button
                   type="button"
-                  onClick={handleGoHome}
+                  onClick={() => { handleNavClick(homeViewId); }}
                   className="rounded-md p-1 [-webkit-app-region:no-drag] cursor-pointer"
                   aria-label="Home"
                   aria-current={isActiveDefault ? 'page' : undefined}
@@ -1097,7 +1101,7 @@ function AppShell(): React.JSX.Element {
             <DashboardsDropdown
               items={customNav}
               activeId={active}
-              defaultId={defaultViewId}
+              defaultId={homeViewId}
               onSelect={handleNavClick}
               onSetDefault={handleSetDefaultView}
             />
@@ -1244,10 +1248,12 @@ function AppShell(): React.JSX.Element {
         {settingsTab === null ? (
           <>
             {view.page === 'custom' && viewsReady && (() => {
-              const spec = findViewSpec(view.viewId) ?? OVERVIEW_SEED_VIEW;
+              // shownViewId: a dashboard that no longer exists shows the user's
+              // own overview, the one the menu marks active.
+              const spec = findViewSpec(shownViewId(view.viewId)) ?? OVERVIEW_SEED_VIEW;
               return (
                 <Profiler id={`custom:${view.viewId}`} onRender={onPerfRender}>
-                  <CustomView spec={spec} headerSubtitle="Cloud spending visibility" initialFilter={view.initialFilter} rollupStatus={rollupStatus} />
+                  <CustomView spec={spec} headerSubtitle={spec.description ?? 'Cloud spending visibility'} initialFilter={view.initialFilter} rollupStatus={rollupStatus} />
                 </Profiler>
               );
             })()}

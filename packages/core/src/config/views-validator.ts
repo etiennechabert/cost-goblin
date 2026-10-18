@@ -1,4 +1,5 @@
 import { asDimensionId } from '../types/branded.js';
+import { logger } from '../logger/logger.js';
 import { migrateLegacyDimensionId } from './legacy-renames.js';
 import type {
   SummaryMetric,
@@ -130,13 +131,33 @@ function validateGroupByWidget(raw: Record<string, unknown>, ctx: string, base: 
   return { type, ...base, groupBy };
 }
 
-function validateTopNWidget(raw: Record<string, unknown>, ctx: string, base: WidgetBase, type: 'line' | 'topNBar' | 'heatmap' | 'waterfall' | 'priceVolume', liveDimensionIds?: ReadonlySet<string>): WidgetSpec {
+/** How `validateViews` treats a `topN` that is a number but not a positive
+ *  integer: 0 draws an empty "Top 0", a negative drops the last entries
+ *  (`slice(0, -3)`) and a fraction is truncated. Earlier builds accepted any
+ *  number, so views.yaml files and config bundles can hold one:
+ *  - `'reject'` (the default: saving the Views editor's config, importing a
+ *    pasted view) throws, so a saved views.yaml only holds positive integers;
+ *  - `'drop'` (loading views.yaml or a config bundle) keeps the file loadable:
+ *    the value is ignored, with a warning, and the widget shows its default.
+ *  A `topN` that isn't a number fails in both modes, as it always has. */
+export type InvalidTopNMode = 'drop' | 'reject';
+
+export interface ValidateViewsOptions {
+  readonly invalidTopN?: InvalidTopNMode | undefined;
+}
+
+function parseTopN(raw: Record<string, unknown>, ctx: string, mode: InvalidTopNMode): number | undefined {
+  const topN = parseOptionalNumber(raw, 'topN', ctx);
+  if (topN === undefined || (Number.isInteger(topN) && topN > 0)) return topN;
+  const problem = `${ctx}.topN must be a positive integer (got ${String(topN)})`;
+  if (mode === 'reject') throw new ConfigValidationError(problem);
+  logger.warn(`${problem}; ignoring it, so the widget shows its default Top N`);
+  return undefined;
+}
+
+function validateTopNWidget(raw: Record<string, unknown>, ctx: string, base: WidgetBase, type: 'line' | 'topNBar' | 'heatmap' | 'waterfall' | 'priceVolume', liveDimensionIds: ReadonlySet<string> | undefined, invalidTopN: InvalidTopNMode): WidgetSpec {
   assertString(raw['groupBy'], `${ctx}.groupBy`);
-  let topN: number | undefined;
-  if (raw['topN'] !== undefined) {
-    assertNumber(raw['topN'], `${ctx}.topN`);
-    topN = raw['topN'];
-  }
+  const topN = parseTopN(raw, ctx, invalidTopN);
   return { type, ...base, groupBy: asDimensionId(migrateLegacyDimensionId(raw['groupBy'], liveDimensionIds)), ...(topN === undefined ? {} : { topN }) };
 }
 
@@ -157,7 +178,7 @@ function validateTableWidget(raw: Record<string, unknown>, ctx: string, base: Wi
   return { type: 'table', ...base, ...(enabledColumns === undefined ? {} : { enabledColumns }) };
 }
 
-function validateWidget(raw: unknown, ctx: string, liveDimensionIds?: ReadonlySet<string>): WidgetSpec {
+function validateWidget(raw: unknown, ctx: string, liveDimensionIds: ReadonlySet<string> | undefined, invalidTopN: InvalidTopNMode): WidgetSpec {
   assertObject(raw, ctx);
   const base = parseWidgetBase(raw, ctx);
   assertString(raw['type'], `${ctx}.type`);
@@ -177,24 +198,29 @@ function validateWidget(raw: unknown, ctx: string, liveDimensionIds?: ReadonlySe
     case 'heatmap':
     case 'waterfall':
     case 'priceVolume':
-      return validateTopNWidget(raw, ctx, base, type, liveDimensionIds);
+      return validateTopNWidget(raw, ctx, base, type, liveDimensionIds, invalidTopN);
     case 'burndown':
       return validateBurndownWidget(raw, ctx, base);
     case 'table':
       return validateTableWidget(raw, ctx, base, liveDimensionIds);
     case 'baseline': {
-      const topN = raw['topN'] === undefined ? undefined : (assertNumber(raw['topN'], `${ctx}.topN`), raw['topN']);
+      const topN = parseTopN(raw, ctx, invalidTopN);
       return { type: 'baseline', ...base, ...(topN === undefined ? {} : { topN }) };
     }
   }
 }
 
-function validateView(raw: unknown, ctx: string, liveDimensionIds?: ReadonlySet<string>): ViewSpec {
+function validateView(raw: unknown, ctx: string, liveDimensionIds: ReadonlySet<string> | undefined, invalidTopN: InvalidTopNMode): ViewSpec {
   assertObject(raw, ctx);
   assertString(raw['id'], `${ctx}.id`);
   assertString(raw['name'], `${ctx}.name`);
   assertArray(raw['rows'], `${ctx}.rows`);
 
+  // Lenient: anything but a non-blank string (a bare `description:` parses as
+  // null) reads as absent, so the header falls back to its tagline instead of
+  // the whole file failing to load over a subtitle.
+  const rawDescription = raw['description'];
+  const description = typeof rawDescription === 'string' && rawDescription.trim() !== '' ? rawDescription : undefined;
   const icon = raw['icon'] === undefined
     ? undefined
     : (assertString(raw['icon'], `${ctx}.icon`), raw['icon']);
@@ -204,7 +230,7 @@ function validateView(raw: unknown, ctx: string, liveDimensionIds?: ReadonlySet<
     assertObject(rowRaw, `${ctx}.rows[${String(i)}]`);
     assertArray(rowRaw['widgets'], `${ctx}.rows[${String(i)}].widgets`);
     const widgets = rowRaw['widgets'].map((w, j) =>
-      validateWidget(w, `${ctx}.rows[${String(i)}].widgets[${String(j)}]`, liveDimensionIds),
+      validateWidget(w, `${ctx}.rows[${String(i)}].widgets[${String(j)}]`, liveDimensionIds, invalidTopN),
     );
     return { widgets };
   });
@@ -222,6 +248,7 @@ function validateView(raw: unknown, ctx: string, liveDimensionIds?: ReadonlySet<
   return {
     id: raw['id'],
     name: raw['name'],
+    ...(description === undefined ? {} : { description }),
     ...(icon === undefined ? {} : { icon }),
     ...(builtIn === true ? { builtIn } : {}),
     rows,
@@ -230,11 +257,13 @@ function validateView(raw: unknown, ctx: string, liveDimensionIds?: ReadonlySet<
 
 /** `liveDimensionIds` (when the caller has the current dimensions config in
  *  scope) exempts current dimension ids from the CUR-era renames; see
- *  migrateLegacyDimensionId. */
-export function validateViews(raw: unknown, liveDimensionIds?: ReadonlySet<string>): ViewsConfig {
+ *  migrateLegacyDimensionId. Loaders pass `invalidTopN: 'drop'`; see
+ *  InvalidTopNMode. */
+export function validateViews(raw: unknown, liveDimensionIds?: ReadonlySet<string>, options: ValidateViewsOptions = {}): ViewsConfig {
   assertObject(raw, 'views config');
   assertArray(raw['views'], 'views');
-  const views = raw['views'].map((v, i) => validateView(v, `views[${String(i)}]`, liveDimensionIds));
+  const invalidTopN = options.invalidTopN ?? 'reject';
+  const views = raw['views'].map((v, i) => validateView(v, `views[${String(i)}]`, liveDimensionIds, invalidTopN));
   const seenViewIds = new Set<string>();
   for (const v of views) {
     if (seenViewIds.has(v.id)) {
