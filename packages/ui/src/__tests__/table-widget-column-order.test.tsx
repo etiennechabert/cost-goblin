@@ -80,6 +80,14 @@ function renderTable(spec: WidgetSpec = SPEC, api: ColumnsApi = new ColumnsApi()
   return { api, user };
 }
 
+/** Hold the overview back, as while it loads, until the returned function
+ *  releases it. */
+function holdOverview(api: ColumnsApi): () => Promise<void> {
+  let resolve: (value: ExplorerOverviewResult) => void = () => undefined;
+  api.overview = () => new Promise((res) => { resolve = res; });
+  return () => act(async () => { resolve(OVERVIEW); await Promise.resolve(); });
+}
+
 /** The table's column headers, left to right. */
 function headers(): string[] {
   const table = screen.getAllByRole('table')[0];
@@ -169,15 +177,14 @@ describe('TableWidget — showing and hiding columns', () => {
   it('keeps a configured column the table cannot list yet', async () => {
     // Tag columns come from the overview. Until it loads, the widget doesn't
     // know Team, and toggling another column mustn't drop it.
-    let resolveOverview: (value: ExplorerOverviewResult) => void = () => undefined;
     const api = new ColumnsApi();
-    api.overview = () => new Promise((resolve) => { resolveOverview = resolve; });
+    const releaseOverview = holdOverview(api);
     const { user } = renderTable({ id: 'tbl', type: 'table', size: 'full', enabledColumns: ['service', 'cost', 'tag_team'] }, api);
     await waitFor(() => { expect(api.rowsCalls).toHaveLength(1); });
 
     await openPicker(user);
     await toggle(user, 'Cost');
-    await act(async () => { resolveOverview(OVERVIEW); await Promise.resolve(); });
+    await releaseOverview();
 
     await expectHeaders(['Service', 'Team']);
     expect(api.rowsCalls.at(-1)?.groupByColumns).toEqual(['service', 'tag_team']);
@@ -217,6 +224,20 @@ describe('TableWidget — column order', () => {
 
     await toggle(user, 'Account');
     await expectHeaders(['Service', 'Account', 'Cost', 'List', 'Usage', 'Region']);
+  });
+
+  it('keeps a configured column it cannot list yet in place through a drag', async () => {
+    // Team leads the view, but the widget only learns of it from the overview.
+    const api = new ColumnsApi();
+    const releaseOverview = holdOverview(api);
+    const { user } = renderTable({ id: 'tbl', type: 'table', size: 'full', enabledColumns: ['tag_team', 'service', 'cost'] }, api);
+    await waitFor(() => { expect(api.rowsCalls).toHaveLength(1); });
+
+    await openPicker(user);
+    drag('Cost', 'Service');
+    await releaseOverview();
+
+    await expectHeaders(['Team', 'Cost', 'Service']);
   });
 
   it('resets to the view’s configured order', async () => {

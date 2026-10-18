@@ -112,6 +112,23 @@ function useLastLoaded<T>(loaded: Loaded<T> | null, inputs: string): T | null {
   return last !== null && last.inputs === inputs ? last.value : null;
 }
 
+/** `next` orders the columns the picker lists. A column it doesn't list yet
+ *  (a tag column before the overview loads) stays right after the column it
+ *  followed in `prev`. */
+function keepUnlistedInPlace(prev: readonly string[], next: readonly string[]): string[] {
+  const listed = new Set(next);
+  const following = new Map<string | null, string[]>();
+  let anchor: string | null = null;
+  for (const key of prev) {
+    if (listed.has(key)) {
+      anchor = key;
+    } else {
+      following.set(anchor, [...(following.get(anchor) ?? []), key]);
+    }
+  }
+  return [...(following.get(null) ?? []), ...next.flatMap(key => [key, ...(following.get(key) ?? [])])];
+}
+
 const NO_COSTS: ReadonlyMap<string, number> = new Map();
 const NO_ROWS: readonly AggregatedTableRow[] = [];
 
@@ -320,7 +337,7 @@ export function TableWidget({
 
   // The picker's "Reset order" sends no order: back to the view's own.
   const handleOrderChange = useCallback((next: readonly string[]) => {
-    setColumnOrder(next.length === 0 ? specEnabled : next);
+    setColumnOrder(prev => (next.length === 0 ? specEnabled : keepUnlistedInPlace(prev, next)));
   }, [specEnabled]);
 
   const fetchDetailRows = useCallback(async (row: AggregatedTableRow) => {
