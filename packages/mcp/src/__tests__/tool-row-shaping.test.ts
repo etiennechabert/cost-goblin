@@ -62,6 +62,7 @@ let emptyDataDir: string;
 function harness(opts: {
   rows?: (sql: string) => RawRow[];
   accountMap?: ReadonlyMap<string, string>;
+  accountReverseMap?: ReadonlyMap<string, readonly string[]>;
   dataDir?: string;
 } = {}): Harness {
   const prepared: { sql: string; params: readonly unknown[] }[] = [];
@@ -79,7 +80,7 @@ function harness(opts: {
     getQueryDimensions: () => Promise.resolve(DIMENSIONS),
     getCostScope: () => Promise.resolve(COST_SCOPE),
     getAccountMap: () => Promise.resolve(new Map(opts.accountMap ?? [])),
-    getAccountReverseMap: () => Promise.resolve(new Map<string, readonly string[]>()),
+    getAccountReverseMap: () => Promise.resolve(new Map(opts.accountReverseMap ?? [])),
     getOrgAccountsPath: () => Promise.resolve(undefined),
     materializedBase: { getSource: () => undefined },
     warmup: () => Promise.resolve(),
@@ -469,6 +470,17 @@ describe('query_daily_costs', () => {
     // The same accounts, under the same names, as the overview's.
     const overview = json(await getCostOverview(ctx, { dateRange: range, format: 'json' }));
     expect(tableRows(overview, 'Top Accounts').map(r => r['account'])).toEqual(['Prod', '333']);
+  });
+
+  it('filters on a display name it shows by every account id behind it', async () => {
+    const { ctx, prepared } = harness({
+      accountMap: new Map([['111', 'Prod'], ['222', 'Prod']]),
+      accountReverseMap: new Map([['Prod', ['111', '222']]]),
+    });
+    await queryDailyCosts(ctx, { groupBy: 'account', dateRange: { start: '2026-01-01', end: '2026-01-14' }, filters: { account: ['Prod'] }, format: 'json' });
+    expect(prepared[0]?.sql).toContain('account_id IN (');
+    expect(prepared[0]?.params).toEqual(expect.arrayContaining(['111', '222']));
+    expect(prepared[0]?.params).not.toContain('Prod');
   });
 
   it('keeps an account id that has no display name, and never renames another dimension\'s groups', async () => {

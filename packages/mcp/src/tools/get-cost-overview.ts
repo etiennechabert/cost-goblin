@@ -11,6 +11,7 @@ import {
   defaultDateRange,
   emptyRangeResult,
   getQueryProviders,
+  resolveEntityName,
   resolveFormat,
   structuredToolResult,
   toDateRange,
@@ -76,7 +77,7 @@ export async function getCostOverview(
   for (const row of accountRows) {
     const entity = toStr(row['entity']);
     const cost = toNum(row['total_cost']);
-    const name = accountMap.get(entity) ?? entity;
+    const name = resolveEntityName(entity, accountMap);
     accountCosts.set(name, (accountCosts.get(name) ?? 0) + cost);
   }
   const topAccounts = [...accountCosts.entries()]
