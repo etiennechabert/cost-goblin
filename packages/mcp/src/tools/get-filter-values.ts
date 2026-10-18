@@ -14,6 +14,7 @@ import {
   defaultDateRange,
   emptyRangeResult,
   getQueryProviders,
+  isAccountGroupBy,
   lookupDimension,
   resolveEntityName,
   resolveFormat,
@@ -96,10 +97,9 @@ export async function getFilterValues(
   const queryParams = qb.build().params;
   const rows = await ctx.runPreparedQuery(sql, queryParams);
 
-  const isAccountDim = dimensionId === 'account' || dimensionId === 'account_id';
   let items: { value: string; cost: number }[];
 
-  if (isAccountDim) {
+  if (isAccountGroupBy(dimensionId)) {
     const merged = new Map<string, number>();
     for (const r of rows) {
       const rawVal = toStr(r['val']);

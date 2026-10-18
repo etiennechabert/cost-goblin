@@ -382,6 +382,24 @@ describe('query_costs', () => {
     expect(result.tables[0]?.footer).toBe('*...and 1 more totaling $0.0000*');
   });
 
+  it('merges the accounts that share a display name into one row, as get_cost_overview does', async () => {
+    const { ctx } = harness({
+      accountMap: new Map([['111', 'Prod'], ['222', 'Prod']]),
+      rows: () => [
+        { entity: '111', total_cost: 70, service: 'EC2', service_cost: 50 },
+        { entity: '111', total_cost: 70, service: 'S3', service_cost: 20 },
+        { entity: '333', total_cost: 40, service: 'EC2', service_cost: 40 },
+        { entity: '222', total_cost: 30, service: 'EC2', service_cost: 30 },
+      ],
+    });
+    const result = json(await queryCosts(ctx, { groupBy: 'account', dateRange: JAN, format: 'json' }));
+    expect(result.tables[0]?.rows).toEqual([
+      { entity: 'Prod', cost: 100, pct: (100 / 140) * 100, svc_EC2: 80, svc_S3: 20 },
+      { entity: '333', cost: 40, pct: (40 / 140) * 100, svc_EC2: 40, svc_S3: 0 },
+    ]);
+    expect(result.meta.get('Total')).toBe(140);
+  });
+
   it('shows 0% shares when every entity costs nothing, over the default range', async () => {
     const { ctx, prepared } = harness({ rows: () => [{ entity: 'EC2', total_cost: 0, service: 'EC2', service_cost: 0 }] });
     const result = json(await queryCosts(ctx, { groupBy: 'service', format: 'json' }));
@@ -424,6 +442,48 @@ describe('query_daily_costs', () => {
       { date: '2026-01-01', total: 2, grp_EC2: 2 },
       { date: '2026-01-02', total: 3, grp_EC2: 3 },
     ]);
+  });
+
+  it('names accounts as get_cost_overview does, summing the ids that share a name on each day', async () => {
+    const accountMap = new Map([['111', 'Prod'], ['222', 'Prod']]);
+    const { ctx } = harness({
+      accountMap,
+      rows: (sql) => sql.includes('AS group_name')
+        ? [
+            { date: '2026-01-01', group_name: '111', cost: 5 },
+            { date: '2026-01-01', group_name: '222', cost: 3 },
+            { date: '2026-01-01', group_name: '333', cost: 1 },
+            { date: '2026-01-02', group_name: '222', cost: 2 },
+          ]
+        : [{ entity: '111', total_cost: 5 }, { entity: '222', total_cost: 5 }, { entity: '333', total_cost: 1 }],
+    });
+    const range = { start: '2026-01-01', end: '2026-01-14' };
+    const daily = json(await queryDailyCosts(ctx, { groupBy: 'account', dateRange: range, format: 'json' }));
+    expect(daily.tables[0]?.columnKeys).toEqual(['date', 'total', 'grp_Prod', 'grp_333']);
+    expect(daily.tables[0]?.rows).toEqual([
+      { date: '2026-01-01', total: 9, grp_Prod: 8, grp_333: 1 },
+      { date: '2026-01-02', total: 2, grp_Prod: 2, grp_333: 0 },
+    ]);
+    expect(daily.meta.get('Total')).toBe(11);
+
+    // The same accounts, under the same names, as the overview's.
+    const overview = json(await getCostOverview(ctx, { dateRange: range, format: 'json' }));
+    expect(tableRows(overview, 'Top Accounts').map(r => r['account'])).toEqual(['Prod', '333']);
+  });
+
+  it('keeps an account id that has no display name, and never renames another dimension\'s groups', async () => {
+    const { ctx } = harness({
+      accountMap: new Map([['111', 'Prod']]),
+      rows: () => [
+        { date: '2026-01-01', group_name: '111', cost: 4 },
+        { date: '2026-01-01', group_name: '999', cost: 1 },
+      ],
+    });
+    const range = { start: '2026-01-01', end: '2026-01-14' };
+    const byAccount = json(await queryDailyCosts(ctx, { groupBy: 'account_id', dateRange: range, format: 'json' }));
+    expect(byAccount.tables[0]?.columnKeys).toEqual(['date', 'total', 'grp_Prod', 'grp_999']);
+    const byService = json(await queryDailyCosts(ctx, { groupBy: 'service', dateRange: range, format: 'json' }));
+    expect(byService.tables[0]?.columnKeys).toEqual(['date', 'total', 'grp_111', 'grp_999']);
   });
 });
 

@@ -11,6 +11,7 @@ import {
   computeDataCoverage,
   defaultDateRange,
   emptyRangeResult,
+  isAccountGroupBy,
   lookupDimension,
   resolveEntityName,
   resolveFormat,
@@ -69,18 +70,25 @@ export async function queryCosts(
     }
   }
 
-  const accountMap = (groupBy === 'account' || groupBy === 'account_id')
-    ? await ctx.getAccountMap()
-    : new Map<string, string>();
+  const accountMap = isAccountGroupBy(groupBy) ? await ctx.getAccountMap() : new Map<string, string>();
 
-  const costRows: { entity: string; totalCost: number; serviceCosts: Record<string, number> }[] = [];
+  // Account ids that share a display name are one row, as in get_cost_overview.
+  const rowsByName = new Map<string, { entity: string; totalCost: number; serviceCosts: Record<string, number> }>();
   let grandTotal = 0;
   for (const [entity, data] of entityMap) {
     const name = resolveEntityName(entity, accountMap);
-    costRows.push({ entity: name, totalCost: data.totalCost, serviceCosts: data.serviceCosts });
+    const named = rowsByName.get(name);
+    if (named === undefined) {
+      rowsByName.set(name, { entity: name, totalCost: data.totalCost, serviceCosts: { ...data.serviceCosts } });
+    } else {
+      named.totalCost += data.totalCost;
+      for (const [service, cost] of Object.entries(data.serviceCosts)) {
+        named.serviceCosts[service] = (named.serviceCosts[service] ?? 0) + cost;
+      }
+    }
     grandTotal += data.totalCost;
   }
-  costRows.sort((a, b) => b.totalCost - a.totalCost);
+  const costRows = [...rowsByName.values()].sort((a, b) => b.totalCost - a.totalCost);
 
   const topServices = [...serviceTotals.entries()]
     .sort((a, b) => b[1] - a[1])

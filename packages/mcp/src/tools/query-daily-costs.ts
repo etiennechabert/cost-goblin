@@ -11,8 +11,10 @@ import {
   computeDataCoverage,
   defaultDateRange,
   emptyRangeResult,
+  isAccountGroupBy,
   lookupDimension,
   mondayOf,
+  resolveEntityName,
   resolveFormat,
   structuredToolResult,
   toDimensionId,
@@ -26,12 +28,17 @@ import {
  *  bucketByWeek. */
 type BucketBreakdown = readonly [string, Record<string, number>];
 
-function aggregateByDay(rows: readonly Readonly<Record<string, unknown>>[]): { dayMap: Map<string, Record<string, number>>; totalCost: number } {
+/** Each day's cost per group, under the name `seriesName` gives the group:
+ *  groups that get the same name are summed on each day. */
+function aggregateByDay(
+  rows: readonly Readonly<Record<string, unknown>>[],
+  seriesName: (group: string) => string,
+): { dayMap: Map<string, Record<string, number>>; totalCost: number } {
   const dayMap = new Map<string, Record<string, number>>();
   let totalCost = 0;
   for (const row of rows) {
     const date = toStr(row['date']);
-    const group = typeof row['group_name'] === 'string' ? row['group_name'] : '';
+    const group = seriesName(typeof row['group_name'] === 'string' ? row['group_name'] : '');
     const cost = toNum(row['cost']);
     totalCost += cost;
     const existing = dayMap.get(date);
@@ -121,7 +128,10 @@ export async function queryDailyCosts(
   logger.info('query-daily-costs', { groupBy, dateRange });
   const rows = await ctx.runPreparedQuery(sql, queryParams);
 
-  const { dayMap, totalCost } = aggregateByDay(rows);
+  // Account ids show by display name, the ids sharing one summed on each day,
+  // as get_cost_overview and query_costs show them.
+  const accountMap = isAccountGroupBy(groupBy) ? await ctx.getAccountMap() : new Map<string, string>();
+  const { dayMap, totalCost } = aggregateByDay(rows, group => resolveEntityName(group, accountMap));
   const sortedDays: BucketBreakdown[] = [...dayMap.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   const topGroups = topGroupsOf(sortedDays);
 
