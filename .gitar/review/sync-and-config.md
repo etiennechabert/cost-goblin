@@ -22,6 +22,7 @@ Covers `packages/core/src/sync/`, `packages/core/src/config/`, `packages/core/sr
 
 - Users' YAML and shared bundles must keep loading. New fields are optional; a bare `key:` (null) is absent. A rename reads both keys and writes the new one (`packages/core/src/config/legacy-renames.ts`). A rule that could reject files already on disk is lenient on load and strict on save.
 - A new field needs its validator, its type and its serializer, or the next save strips it. Serializers omit absent optional fields, which keeps bundle fingerprints stable. The `costgoblin.yaml` writers keep unknown keys and validate before writing.
+- Making a load strict (rethrowing a failure that used to fall back) changes every caller: check each one. The LAN data share keeps serving and skips a broken views.yaml (`buildCurrentBundle`'s `brokenViews`).
 - Read-modify-writes of shared JSON go through `updatePrefsFile` (`packages/desktop/src/main/handlers/prefs-file.ts`), and each writer sends only its own fields.
 - Only etag sidecars, the rollup manifest, boot-time app state and the views migration use temp-file-plus-rename. Ask for it where truncation is costly, e.g. an unprompted config rewrite.
 - Migrations run synchronously at boot, before any worker opens a file. They are idempotent and resumable, and they touch nothing when both the old and new layout exist.

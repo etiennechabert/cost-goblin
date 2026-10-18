@@ -6,8 +6,8 @@ Review guidance lives in `.gitar/review/`; this file is what every run needs, in
 
 You also load `CLAUDE.md`. It is written for the maintainer's local Claude Code sessions, so it mixes two kinds of content:
 
-- **Repository rules.** Enforce these in reviews and follow them in anything you commit: "TypeScript Rules", "Linting Rules", "Testing Approach", "Fixture Data", "Git Safety", "Dependency supply chain", "Versioning & releases", "Key Architecture Decisions", "SQL Security", "Frontend Stack" and "What NOT To Do".
-- **The maintainer's local workflow.** Not addressed to you, and nothing to ask of a PR author: the "Development Workflow" steps, "After pushing — close the review loop" (`/code-review`, answering `sentry[bot]`, `gitar-bot[bot]` and SonarCloud), and the notes on the pre-commit hook.
+- **Repository rules.** Enforce these in reviews and follow them in anything you commit: "TypeScript Rules", "Linting Rules", "Testing Approach", "Fixture Data", "Git Safety", "Dependency supply chain", "Versioning & releases", "Key Architecture Decisions", "SQL Security", "Frontend Stack" and "What NOT To Do". Of "Linting Rules", the import-sorting and Biome lines aren't enforced by any tool yet.
+- **The maintainer's local workflow.** Not addressed to you, and nothing to ask of a PR author: the "Development Workflow" steps, "After pushing — close the review loop" (`/code-review`, answering `sentry[bot]`, `gitar-bot[bot]` and SonarCloud), and the pre-commit note under "Versioning & releases".
 
 ## Where things live
 
@@ -28,7 +28,7 @@ CLAUDE.md's "Monorepo Structure" has the top level. Inside it:
 | `security-audit` | `.github/scripts/assert-npm-guards.sh`, the lockfile `resolved`/`integrity` check, `npm ci`, `audit-ci` |
 | `version bumped past latest release` | both `package.json` files must agree and sit exactly one release past the latest `v*` tag |
 | `sonarcloud` | merges unit and e2e coverage, then applies the quality gate |
-| `CLA` (`.github/workflows/cla.yml`) | every human commit author and the PR's opener has a row in `.github/cla-signatures.md`; bots, the `claude` agent and the maintainer are exempt |
+| `cla` (`.github/workflows/cla.yml`) | every human commit author and the PR's opener has a row in `.github/cla-signatures.md`. Bot and `claude`-agent commits are skipped and the maintainer signs nothing, but a PR the `claude` account opens fails. It runs `main`'s copy of the check, so editing it in the PR changes nothing |
 
 When one of them fails:
 
@@ -39,8 +39,12 @@ When one of them fails:
 - **`scripts/ci/gitar-config.test.mjs` fails.** A file in `.gitar/` names a path or identifier the PR renamed or removed. Quote the stale line and what it should say now; the maintainer edits `.gitar/`.
 - **`e2e/collect-coverage.ts` reports coverage inflation.** A suite awaited something between `firstWindow()` and `attachCoverage` (CLAUDE.md, "Coverage-attach ordering"). It is a bug, not flakiness.
 - **The Sonar gate fails on coverage.** The fix is tests. Exclusions in `sonar-project.properties` are not.
-- **`CLA` fails.** Quote its `::error::` lines (an unsigned author or opener, a commit email not linked to GitHub, an agent-opened PR, an edited row) and point to CONTRIBUTING.md's "Sign the CLA". Signing is each person's own act: never add or edit a row for anyone.
+- **`cla` fails.** Quote its `::error::` lines (an unsigned author or opener, a commit email not linked to GitHub, an agent-opened PR, an edited row) and point to CONTRIBUTING.md's "Sign the CLA once, in your first pull request". Signing is each person's own act: never add or edit a row for anyone.
 - **A test the PR doesn't touch fails on `main` too.** Say so, and name the commit or open PR that fixes it. Don't re-run: a re-run tests the same merge commit.
+
+## Replying on a thread
+
+- When confirming a fix, review the new code too. Name a commit only by a SHA from the PR's commit list, after reading what it changed.
 
 ## Anything you commit
 

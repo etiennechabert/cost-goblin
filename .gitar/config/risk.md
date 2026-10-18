@@ -1,6 +1,6 @@
 CostGoblin's users make spending decisions from its numbers and trust it to keep billing data on their machine. Judge risk by what a change can get wrong there, whatever the diff size.
 
-The paths below name production code: a PR that only changes tests under them isn't raised by this file, though the security tests listed below and the test infrastructure under "At least Medium" still are. When a label comes from this file, name the entry it matched.
+The paths below name production code: a PR that only changes tests under them isn't raised by this file. A PR that weakens one of the security tests listed below is, and so is one that changes the test infrastructure under "At least Medium". When a label comes from this file, name the entry it matched.
 
 High risk:
 

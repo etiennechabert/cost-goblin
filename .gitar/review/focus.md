@@ -24,6 +24,6 @@ CLAUDE.md bans `as` assertions and `eslint-disable` comments, but no lint rule e
 ## How to report
 
 - Prefer one finding with a concrete failing input, state and wrong output over several speculative ones.
-- Suggested code must do everything the finding says. When confirming a fix, review the new code too, and cite only SHAs from the PR's commit list.
+- Suggested code must do everything the finding says.
 - PR descriptions here state the intent and design decisions at length. Check the code against what the description claims.
 - When a `.gitar/` file names a helper or path that no longer exists, report the stale instruction rather than flagging the code.
