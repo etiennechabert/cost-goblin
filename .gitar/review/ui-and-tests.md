@@ -18,14 +18,17 @@ Covers `packages/ui/`, `packages/desktop/src/renderer/` and the test suites, inc
 - Fetch through `useQuery` (`packages/ui/src/hooks/use-query.ts`). Its dependencies are explicit primitive keys: an object literal refetches every render, a missing key fetches stale values, and no lint catches either. `urgent: true` is only for small results that gate a page. A hand-rolled fetch needs latest-request-wins and must free its widget slot.
 - "Last N days" comes only from `lastNDaysRange`. A window that follows an editable lag is stored as trailing-or-fixed and re-derived. Never infer "trailing" from an end date. Calendar Dates are local midnight, so use `parseDay`/`formatDay`, never `toISOString`.
 - Money is formatted with `formatDollars`, `signedDollars` and `formatPercent` (`packages/ui/src/components/format.ts`); don't add another private formatter. Money cells keep `.tabular-nums`, which the e2e waits rely on. CSV string cells go through the formula guard.
-- Chart series take `useSeriesColors` (keyed by name, never index), so every widget agrees.
+- Chart series take `useSeriesColors` (keyed by name, never index), so every widget agrees. Bars and totals start at $0, and a net-credit total hangs below it. Only an axis drawn visibly cut (the waterfall's `truncated` scale) starts them at its floor.
+- A config editor saves the object it loaded with only its own fields replaced, so fields it doesn't show keep their values. A list picker leaves entries it doesn't list yet (still loading) where they were.
+- A view that reloads config the app shell also holds (Retry in the Views editor) reports what it loaded (`onConfigLoaded`), or the shell keeps the old error.
+- The table, Pareto and price-vs-volume widgets show account names while the account filter matches ids: a blank name is an unnamed account, not a charge with no account, so a click on it must not set a `''` filter (`filtersEmptyGroup`).
 - Preference saves send only the fields the view owns. They never echo values read from disk or defaults back, especially after a failed load, and a clean mount writes nothing. A missing file means defaults; an explicit `[]` is the user's choice.
 - The UI imports from `@costgoblin/core/browser` only, and additions there must be leaf modules with no Node built-ins. `packages/ui` reaches the app through `useCostApi()`, never `window`.
 
 ## Unit tests
 
 - Render inside `CostApiProvider` with `MockCostApi`, adding `PaletteProvider` for charts. Vary behavior by overriding mock methods, not with `vi.mock`. A mock for a new `CostApi` method takes typed parameters and records its calls: a zero-argument mock hides dropped arguments.
-- Wait with `findBy` or `waitFor` after a query, and for chart marks rather than titles. Fake only `Date` (`vi.useFakeTimers({ toFake: ['Date'] })`). An assertion that nothing happened must wait past the debounce.
+- Wait with `findBy` or `waitFor` after a query, and for chart marks rather than titles. Fake only `Date` (`vi.useFakeTimers({ toFake: ['Date'] })`). An assertion that nothing happened must first let what it guards settle: the debounce, or the promise itself.
 - `queryBy…` followed by `toBeDefined()` always passes; use `.not.toBeNull()`. A regression test should fail with the fix reverted.
 - A `.test.tsx` under `packages/desktop` runs in the `desktop-renderer` vitest project, against the preload-bridge fakes `renderer-setup.ts` installs. A new modal goes into `packages/ui/src/__tests__/modal-stacking.test.tsx`.
 
