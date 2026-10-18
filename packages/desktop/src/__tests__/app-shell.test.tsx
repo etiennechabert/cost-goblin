@@ -169,10 +169,11 @@ function installManualResizeObservers(): void {
 /** The debug panel's distance from the top of the window. */
 async function debugPanelTop(): Promise<string> {
   const heading = await screen.findByRole('heading', { name: 'Query Log' });
-  // The panel's root is the heading's nearest ancestor with an inline style.
-  const panel = heading.closest('[style]');
-  if (!(panel instanceof HTMLElement)) throw new Error('debug panel root not found');
-  return panel.style.top;
+  // The panel's root is the heading's nearest ancestor positioned by `top`.
+  let el: HTMLElement | null = heading;
+  while (el !== null && el.style.top === '') el = el.parentElement;
+  if (el === null) throw new Error('debug panel root not found');
+  return el.style.top;
 }
 
 function settingsRailTop(): string {
@@ -740,7 +741,8 @@ describe('App shell — sync status', () => {
     const user = await bootApp(api);
     await waitFor(() => { expect(syncButtonTitle()).toBe(`Sync error — ${GCP_SIGN_IN}`); });
 
-    // Two idle polls find the sync itself fine, and nothing checked again.
+    // Two idle polls find the sync itself fine; the check, run again while it
+    // fails, still fails.
     const pollsBefore = polls.mock.calls.length;
     await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
     expect(polls.mock.calls.length).toBeGreaterThanOrEqual(pollsBefore + 2);
@@ -779,6 +781,20 @@ describe('App shell — sync status', () => {
     expect(syncButtonTitle()).toBe('1 billing period not synced');
   });
 
+  it('keeps checking while the missing-periods check fails, so a sign-in renewed elsewhere clears without a Retry', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = new AppApi();
+    const inventory = vi.spyOn(api, 'getDataInventory').mockRejectedValue(new Error(GCP_SIGN_IN));
+    await bootApp(api);
+    await waitFor(() => { expect(syncButtonTitle()).toBe(`Sync error — ${GCP_SIGN_IN}`); });
+
+    // Signed in from the Data & Sync tab or a terminal; no sync runs.
+    inventory.mockResolvedValue(inventoryOf([]));
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+
+    await waitFor(() => { expect(syncButtonTitle()).toBe('Data sync'); });
+  });
+
   it('checks again once a sync starts, so a sign-in renewed outside the app clears', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const api = new AppApi();
@@ -811,10 +827,7 @@ describe('App shell — sync status', () => {
     expect(await screen.findByText('2 periods not synced')).toBeDefined();
   });
 
-  const GAPS = inventoryOf([
-    { period: periodAgo(6), files: [], totalSize: 0, localStatus: 'missing' },
-    { period: periodAgo(1), files: [], totalSize: 0, localStatus: 'missing' },
-  ]);
+  const GAPS = inventoryOf([gap(6), gap(1)]);
 
   it('only counts months inside the daily retention window', async () => {
     // The fixture provider keeps 90 days: the six-month-old gap is out of scope.

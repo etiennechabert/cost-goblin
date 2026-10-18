@@ -803,6 +803,15 @@ function AppShell(): React.JSX.Element {
   // missing), and on demand from the sync popover's recheck button.
   useEffect(() => { checkMissingPeriods().catch(() => undefined); }, [checkMissingPeriods, view, settingsTab, syncActivity]);
 
+  // While the check's error stands, run it again at the poller's idle pace:
+  // a sign-in renewed elsewhere (a terminal, the Data & Sync tab's own
+  // sign-in) then clears without a Retry, and a one-off failure doesn't stick.
+  useEffect(() => {
+    if (inventoryError === null) return undefined;
+    const timer = setInterval(() => { checkMissingPeriods().catch(() => undefined); }, 10_000);
+    return () => { clearInterval(timer); };
+  }, [inventoryError, checkMissingPeriods]);
+
   function handleNavClick(id: string) {
     const inSettings = settingsTab !== null;
     const alreadyActive = !inSettings && (view.page === 'custom' ? view.viewId === id : view.page === id);
