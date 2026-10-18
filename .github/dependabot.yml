@@ -185,7 +185,7 @@ updates:
         exclude-patterns:
           - "@google-cloud/bigquery"
 
-  # The exporter's Docker base image (node:24-slim). Nothing else tracked it, so
+  # The exporter's Docker base image (node:26-slim). Nothing else tracked it, so
   # the base image only ever moved when someone edited the Dockerfile by hand.
   - package-ecosystem: "docker"
     directory: "/scripts/gcp-focus-exporter"
@@ -199,10 +199,12 @@ updates:
       default-days: 7
     ignore:
       # Odd-numbered Node lines never become LTS and reach end of life within
-      # months (25 did on 2026-06-01), so the image stays on an even LTS line
-      # (see the Dockerfile). Add the next odd line here when it appears.
+      # months (25 did on 2026-06-01), so the image stays on an even line (see
+      # the Dockerfile). Add the next odd line here when it appears. A major
+      # bump also moves ci.yml's test-exporter-node26 (workflow-policy.test.mjs
+      # fails until it does).
       - dependency-name: "node"
-        versions: [">=25, <26", ">=27, <28"]
+        versions: [">=27, <28"]
     labels:
       - "dependencies"
       - "docker"

@@ -1,10 +1,11 @@
 # Deliberately minimal: one dependency install, one file, no build step — what
 # you read in export-focus.mjs is exactly what runs.
 #
-# An LTS line, and the one CI runs export-focus.test.mjs on (the root vitest
-# suite, Node 24). Odd-numbered lines like 25 never become LTS and reach
-# end-of-life within months; move to 26 once it enters LTS (2026-10-28).
-FROM node:24-slim
+# Node 26: supported until 2029-04 (LTS from 2026-10-28). CI's
+# test-exporter-node26 job runs export-focus.test.mjs on this same line, and
+# workflow-policy.test.mjs fails if the two majors drift apart. Odd-numbered
+# lines like 25 never become LTS and reach end-of-life within months.
+FROM node:26-slim
 
 WORKDIR /app
 
