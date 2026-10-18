@@ -2,20 +2,40 @@ import { useState } from 'react';
 import { describe, expect, it } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { asDateString, asDimensionId } from '@costgoblin/core/browser';
-import type { BaselinesListParams, BaselinesListResult, DateRange, Dimension, WidgetSpec } from '@costgoblin/core/browser';
+import { asDateString, asDimensionId, asDollars, asEntityRef } from '@costgoblin/core/browser';
+import type {
+  AggregatedTableParams,
+  AggregatedTableResult,
+  BaselinesListParams,
+  BaselinesListResult,
+  CostQueryParams,
+  CostResult,
+  DailyCostsResult,
+  DateRange,
+  Dimension,
+  TrendResult,
+  WidgetSpec,
+} from '@costgoblin/core/browser';
 import { WidgetInspector } from '../components/widget-inspector.js';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { PaletteProvider } from '../hooks/use-palette.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { BaselineWidget } from '../widgets/baseline-widget.js';
+import { HeatmapWidget } from '../widgets/heatmap-widget.js';
 import { LineWidget } from '../widgets/line-widget.js';
+import { PriceVolumeWidget } from '../widgets/price-volume-widget.js';
 import { WIDGET_CATALOG } from '../widgets/registry.js';
+import { TopNBarWidget } from '../widgets/top-n-bar-widget.js';
+import { WaterfallWidget } from '../widgets/waterfall-widget.js';
 import { DEFAULT_TOP_N } from '../widgets/widget.js';
-import type { TopNWidgetType } from '../widgets/widget.js';
+import type { TopNWidgetType, WidgetComponent } from '../widgets/widget.js';
 
 const SERVICE = asDimensionId('service');
-const DIMS: readonly Dimension[] = [{ name: SERVICE, label: 'Service', field: 'service' }];
+const REGION = asDimensionId('region');
+const DIMS: readonly Dimension[] = [
+  { name: SERVICE, label: 'Service', field: 'service' },
+  { name: REGION, label: 'Region', field: 'region' },
+];
 const RANGE: DateRange = { start: asDateString('2026-03-01'), end: asDateString('2026-03-31') };
 const PREV_RANGE: DateRange = { start: asDateString('2026-01-29'), end: asDateString('2026-02-28') };
 
@@ -124,5 +144,94 @@ describe('Top N defaults in the widgets', () => {
     );
 
     await waitFor(() => { expect(requests.at(-1)?.limit).toBe(DEFAULT_TOP_N.baseline); });
+  });
+});
+
+// More groups than any default shows, ranked g01 (largest) to g15.
+const GROUPS = Array.from({ length: 15 }, (_, i) => `g${String(i + 1).padStart(2, '0')}`);
+const sizeOf = (i: number) => (GROUPS.length - i) * 100;
+const DAYS = Array.from({ length: 31 }, (_, i) => asDateString(`2026-03-${String(i + 1).padStart(2, '0')}`));
+
+/** Every ranked query answers with the fifteen groups, the current period
+ *  larger than the previous one by each group's size. */
+class RankedApi extends MockCostApi {
+  override queryCosts(params?: CostQueryParams): Promise<CostResult> {
+    return Promise.resolve({
+      rows: GROUPS.map((g, i) => ({ entity: asEntityRef(g), totalCost: asDollars(sizeOf(i)), serviceCosts: {} })),
+      totalCost: asDollars(GROUPS.reduce((s, _, i) => s + sizeOf(i), 0)),
+      topServices: [],
+      dateRange: params?.dateRange ?? RANGE,
+    });
+  }
+
+  override queryDailyCosts(): Promise<DailyCostsResult> {
+    const breakdown = Object.fromEntries(GROUPS.map((g, i) => [g, asDollars(sizeOf(i))]));
+    const dayTotal = GROUPS.reduce((s, _, i) => s + sizeOf(i), 0);
+    return Promise.resolve({
+      days: DAYS.map(date => ({ date, total: asDollars(dayTotal), breakdown })),
+      groups: [...GROUPS],
+      totalCost: asDollars(dayTotal * DAYS.length),
+    });
+  }
+
+  override queryTrends(): Promise<TrendResult> {
+    return Promise.resolve({
+      increases: GROUPS.map((g, i) => ({
+        entity: asEntityRef(g),
+        currentCost: asDollars(1_000 + sizeOf(i)),
+        previousCost: asDollars(1_000),
+        delta: asDollars(sizeOf(i)),
+        percentChange: sizeOf(i) / 10,
+      })),
+      savings: [],
+      totalIncrease: asDollars(GROUPS.reduce((s, _, i) => s + sizeOf(i), 0)),
+      totalSavings: asDollars(0),
+    });
+  }
+
+  override queryAggregatedTable(params?: AggregatedTableParams): Promise<AggregatedTableResult> {
+    const column = params?.groupByColumns[0];
+    if (params === undefined || column === undefined) return Promise.reject(new Error('expected one group-by column'));
+    const previous = params.dateRange?.start === PREV_RANGE.start;
+    return Promise.resolve({
+      rows: GROUPS.map((g, i) => {
+        const cost = previous ? 1_000 : 1_000 + sizeOf(i);
+        return { values: { [column]: g }, cost, listCost: cost, usageAmount: 100, rowCount: 1 };
+      }),
+      totalRows: GROUPS.length,
+      tagColumns: [],
+    });
+  }
+}
+
+const DRAWN: readonly { readonly type: TopNWidgetType; readonly Widget: WidgetComponent; readonly spec: WidgetSpec }[] = [
+  { type: 'topNBar', Widget: TopNBarWidget, spec: { id: 'w', type: 'topNBar', size: 'large', groupBy: REGION } },
+  { type: 'heatmap', Widget: HeatmapWidget, spec: { id: 'w', type: 'heatmap', size: 'large', groupBy: REGION } },
+  { type: 'waterfall', Widget: WaterfallWidget, spec: { id: 'w', type: 'waterfall', size: 'large', groupBy: REGION } },
+  { type: 'priceVolume', Widget: PriceVolumeWidget, spec: { id: 'w', type: 'priceVolume', size: 'large', groupBy: REGION } },
+];
+
+describe('Top N defaults in the drawn widgets', () => {
+  it.each(DRAWN)('a $type widget draws its default number of groups, the largest first', async ({ type, Widget, spec }) => {
+    render(
+      <PaletteProvider>
+        <CostApiProvider value={new RankedApi()}>
+          <Widget
+            spec={spec}
+            dateRange={RANGE}
+            previousDateRange={PREV_RANGE}
+            compareEnabled={false}
+            granularity="daily"
+            globalFilters={{}}
+            dimensions={DIMS}
+            onSetFilter={() => undefined}
+          />
+        </CostApiProvider>
+      </PaletteProvider>,
+    );
+
+    await waitFor(() => {
+      expect(GROUPS.filter(g => screen.queryAllByText(g).length > 0)).toEqual(GROUPS.slice(0, DEFAULT_TOP_N[type]));
+    });
   });
 });
