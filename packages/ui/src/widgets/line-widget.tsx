@@ -6,9 +6,9 @@ import { LineChart } from '../components/line-chart.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import type { LineSeries } from '../components/line-chart.js';
 import { asTagValue } from '@costgoblin/core/browser';
-import type { DailyCostsResult, DimensionId } from '@costgoblin/core/browser';
+import type { DailyCostDay, DailyCostsResult, DimensionId } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
-import { dimensionLabelFor, filtersKey, hasSufficientDailyCoverage } from './widget.js';
+import { dimensionLabelFor, filtersKey, hasSufficientDailyCoverage, previousDayLookup } from './widget.js';
 import { GroupByTitle } from '../components/group-by-title.js';
 
 function buildSeries(data: DailyCostsResult | null, topN: number): LineSeries[] {
@@ -36,18 +36,15 @@ function buildSeries(data: DailyCostsResult | null, topN: number): LineSeries[] 
 /** Build previous period series mapped onto current period dates so lines
  *  overlay by position (day 1 vs day 1). */
 function buildPreviousSeries(
-  prevData: DailyCostsResult | null,
+  previousOf: ((date: string) => DailyCostDay | undefined) | null,
   currentSeries: readonly LineSeries[],
   currentDates: readonly string[],
 ): LineSeries[] {
-  if (prevData === null || currentSeries.length === 0) return [];
+  if (previousOf === null || currentSeries.length === 0) return [];
   const names = new Set(currentSeries.map(s => s.name));
   return [...names].map(name => ({
     name,
-    points: currentDates.map((date, i) => {
-      const prevDay = prevData.days[i];
-      return { date, cost: prevDay?.breakdown[name] ?? 0 };
-    }),
+    points: currentDates.map(date => ({ date, cost: previousOf(date)?.breakdown[name] ?? 0 })),
   }));
 }
 
@@ -95,9 +92,13 @@ export function LineWidget({
   );
 
   const prevHasCoverage = prevQuery.status === 'success' && prevQuery.data !== null && hasSufficientDailyCoverage(prevQuery.data, previousDateRange);
+  const previousOf = useMemo(
+    () => (prevHasCoverage ? previousDayLookup(prevQuery.data, previousDateRange, dateRange) : null),
+    [prevHasCoverage, prevQuery, previousDateRange, dateRange],
+  );
   const previousSeries = useMemo(
-    () => buildPreviousSeries(prevHasCoverage ? prevQuery.data : null, series, currentDates),
-    [prevHasCoverage, prevQuery, series, currentDates],
+    () => buildPreviousSeries(previousOf, series, currentDates),
+    [previousOf, series, currentDates],
   );
 
   if (spec.type !== 'line' || effectiveGroupBy === undefined || activeGroupBy === undefined) return null;

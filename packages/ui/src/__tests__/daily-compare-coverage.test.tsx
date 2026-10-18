@@ -15,12 +15,15 @@ import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { PaletteProvider } from '../hooks/use-palette.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { LineWidget } from '../widgets/line-widget.js';
+import { StackedBarWidget } from '../widgets/stacked-bar-widget.js';
 
 /** The previous-period overlay of the daily widgets is drawn only when the
  *  previous period's data is there: the main process reports how many of its
  *  days fall in synced months (`coveredDays`), and a day with no spend in a
  *  synced month counts, as a filter to a rarely used service leaves most
- *  days without rows. */
+ *  days without rows. Such a period skips days, so the overlay lines its days
+ *  up by their offset from the period start, not by their position in the
+ *  result. */
 
 const ACCOUNT = asDimensionId('account');
 
@@ -108,12 +111,39 @@ function renderLine(api: DailyApi, granularity: Granularity = 'daily') {
   );
 }
 
+const STACKED: WidgetSpec = { id: 'sb', type: 'stackedBar', size: 'large', groupBy: ACCOUNT };
+
+function renderStacked(api: DailyApi) {
+  const onSetFilter = vi.fn<(dim: DimensionId, value: TagValue) => void>();
+  return render(
+    <PaletteProvider>
+      <CostApiProvider value={api}>
+        <StackedBarWidget
+          spec={STACKED}
+          dateRange={RANGE}
+          previousDateRange={PREV_RANGE}
+          compareEnabled
+          granularity="daily"
+          globalFilters={{}}
+          dimensions={DIMS}
+          onSetFilter={onSetFilter}
+        />
+      </CostApiProvider>
+    </PaletteProvider>,
+  );
+}
+
 function lines(container: HTMLElement): Element[] {
   return [...container.querySelectorAll('path.visx-linepath:not([stroke-dasharray])')];
 }
 
 function ghostLines(container: HTMLElement): Element[] {
   return [...container.querySelectorAll('path.visx-linepath[stroke-dasharray]')];
+}
+
+/** Each path's `d`, keyed by its series color. */
+function pathsByColor(paths: readonly Element[]): Map<string | null, string | null> {
+  return new Map(paths.map(p => [p.getAttribute('stroke'), p.getAttribute('d')]));
 }
 
 /** Hourly rows for every hour of the given days. */
@@ -163,5 +193,43 @@ describe('LineWidget — previous period coverage', () => {
     await api.settled();
     await waitFor(() => { expect(lines(container)).toHaveLength(2); });
     expect(ghostLines(container)).toHaveLength(0);
+  });
+});
+
+describe('LineWidget — previous period alignment', () => {
+  it('lines each previous day up with the current day at the same offset', async () => {
+    // The current period's spend, at the same offsets (days 1, 4 and 8),
+    // plus a day 6 the current period has no row for.
+    const previous = daily([
+      ['2026-02-25', { prod: 10 }],
+      ['2026-02-28', { prod: 20, staging: 5 }],
+      ['2026-03-02', { prod: 99 }],
+      ['2026-03-04', { prod: 30 }],
+    ], 10);
+    const api = new DailyApi(CURRENT, previous);
+    const { container } = renderLine(api);
+
+    await waitFor(() => { expect(ghostLines(container)).toHaveLength(2); });
+    // Each ghost line traces its series exactly: day 6 has no current day.
+    expect(pathsByColor(ghostLines(container))).toEqual(pathsByColor(lines(container)));
+  });
+});
+
+describe('StackedBarWidget — previous period alignment', () => {
+  it('places each previous day’s total over the bar at the same offset', async () => {
+    const previous = daily([
+      ['2026-02-25', { prod: 12 }],
+      ['2026-02-28', { prod: 18, staging: 4 }],
+      ['2026-03-04', { prod: 25 }],
+    ], 10);
+    const api = new DailyApi(CURRENT, previous);
+    const { container } = renderStacked(api);
+
+    await waitFor(() => { expect(container.querySelector('polyline')).not.toBeNull(); });
+    const points = container.querySelector('polyline')?.getAttribute('points')?.split(' ') ?? [];
+    // One point per bar: the ten days, with no spend on seven of them.
+    expect(points).toHaveLength(10);
+    const raised = points.flatMap((p, i) => (p.split(',')[1] === '1000' ? [] : [i]));
+    expect(raised).toEqual([1, 4, 8]);
   });
 });
