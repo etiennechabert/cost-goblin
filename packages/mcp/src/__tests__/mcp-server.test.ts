@@ -13,6 +13,7 @@ import {
   loadCostScope,
   tagSqlColumn,
 } from '@costgoblin/core';
+import type { CostScopeConfig } from '@costgoblin/core';
 import type { McpContext, RawRow } from '../context.js';
 import { createMcpHttpServer, MCP_MIN_TOKEN_LENGTH } from '../http-server.js';
 import type { McpHttpServer } from '../http-server.js';
@@ -232,6 +233,8 @@ describe('MCP server E2E', () => {
   let outsideDir: string;
   const CANARY = 'CANARY-MCP-E2E-SECRET-594';
   let ctx: McpContext;
+  // Swapped by the cost-scope test, which must restore it.
+  let loadScope: () => Promise<CostScopeConfig>;
 
   beforeAll(async () => {
     scratchDir = realpathSync(await mkdtemp(join(tmpdir(), 'cg-mcp-e2e-'))).replaceAll('\\', '/');
@@ -259,6 +262,7 @@ describe('MCP server E2E', () => {
     const config = await loadConfig(join(CONFIG_DIR, 'costgoblin.yaml'));
     const dimensions = await loadDimensions(join(CONFIG_DIR, 'dimensions.yaml'));
     const costScope = await loadCostScope(join(CONFIG_DIR, 'cost-scope.yaml'));
+    loadScope = () => Promise.resolve(costScope);
 
     const accountMap = new Map<string, string>([
       ['100000000000', 'Acme Corp Main'],
@@ -292,7 +296,7 @@ describe('MCP server E2E', () => {
       getConfig: () => Promise.resolve(config),
       getDimensions: () => Promise.resolve(dimensions),
       getQueryDimensions: () => Promise.resolve(dimensions),
-      getCostScope: () => Promise.resolve(costScope),
+      getCostScope: () => loadScope(),
       getAccountMap: () => Promise.resolve(accountMap),
       getAccountReverseMap: () => Promise.resolve(reverseMap),
       getOrgAccountsPath: () => Promise.resolve(undefined),
@@ -1006,6 +1010,25 @@ describe('MCP server E2E', () => {
     });
     expect(isError).toBe(true);
     expect(text).toContain('Error');
+  });
+
+  // Each used to answer without the user's metric and exclusion rules, as if
+  // those were the real costs.
+  it.each([
+    ['query_costs', { groupBy: 'service' }],
+    ['get_filter_values', { dimensionId: 'service' }],
+    ['explore_data', {}],
+    ['run_sql', { sql: 'SELECT SUM(cost) AS total FROM costs' }],
+  ])('%s reports a cost scope that does not load instead of answering without it', async (tool, args) => {
+    const loaded = loadScope;
+    loadScope = () => Promise.reject(new Error("Couldn't load cost-scope.yaml: costScope.rules must be an array"));
+    try {
+      const { text, isError } = await client.callTool(tool, { ...args, dateRange: { start: '2026-01-01', end: '2026-01-31' } });
+      expect(isError).toBe(true);
+      expect(text).toBe("Error: Couldn't load cost-scope.yaml: costScope.rules must be an array");
+    } finally {
+      loadScope = loaded;
+    }
   });
 
   // ---------- Health endpoint ----------

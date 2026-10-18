@@ -23,11 +23,18 @@ export async function loadOrgTree(path: string): Promise<OrgTreeConfig> {
   let content: string;
   try {
     content = await readFile(path, 'utf-8');
-  } catch {
-    return { tree: [] };
+  } catch (err) {
+    // Only a missing file means "no tree". One that can't be read (EACCES)
+    // rejects like one that doesn't parse, instead of reading as empty.
+    if (isMissingFile(err)) return { tree: [] };
+    throw err;
   }
   const raw: unknown = parse(content);
   return validateOrgTree(raw);
+}
+
+function isMissingFile(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && 'code' in err && err.code === 'ENOENT';
 }
 
 export async function loadViews(path: string, liveDimensionIds?: ReadonlySet<string>): Promise<ViewsConfig> {

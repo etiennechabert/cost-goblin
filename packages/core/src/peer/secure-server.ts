@@ -2,6 +2,7 @@ import { createServer, type Server } from 'node:https';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
 import type { TLSSocket } from 'node:tls';
+import { isConfigFileName, MANIFEST_UNAVAILABLE_STATUS, ManifestUnavailableError } from './manifest-unavailable.js';
 import { isSafePackPath } from './pack-manifest.js';
 import {
   SHARING_PSK_IDENTITY,
@@ -11,7 +12,8 @@ import {
 } from './tls-psk.js';
 
 export interface SharingServerHandlers {
-  /** Returns the serialized SignedPackManifest JSON to advertise. */
+  /** Returns the serialized SignedPackManifest JSON to advertise. Throws
+   *  ManifestUnavailableError to tell the peer which config file stops it. */
   readonly getManifest: () => Promise<string> | string;
   /** Reads a pack file. `path` is already validated as a safe pack path. */
   readonly readFile: (path: string) => Promise<Buffer>;
@@ -245,8 +247,16 @@ async function handleRequest(
 
     res.writeHead(404);
     res.end();
-  } catch {
-    if (!res.headersSent) res.writeHead(500);
+  } catch (err: unknown) {
+    if (res.headersSent) { res.end(); return; }
+    // The one failure a peer is told about: which config file doesn't load,
+    // by its bare name. Anything else stays a bare 500.
+    if (err instanceof ManifestUnavailableError && isConfigFileName(err.file)) {
+      res.writeHead(MANIFEST_UNAVAILABLE_STATUS, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end(err.file);
+      return;
+    }
+    res.writeHead(500);
     res.end();
   }
 }

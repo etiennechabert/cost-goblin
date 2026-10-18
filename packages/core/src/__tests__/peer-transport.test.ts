@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { connect as netConnect, createServer as createNetServer, type Socket } from 'node:net';
 import { connect as tlsConnect } from 'node:tls';
+import { createServer as createHttpsServer } from 'node:https';
 import { generateIdentityKeyPair, type IdentityKeyPair } from '../peer/identity.js';
 import {
   parseSignedManifest,
@@ -10,6 +11,7 @@ import {
   verifyManifestSignature,
   type PackManifest,
 } from '../peer/pack-manifest.js';
+import { ManifestUnavailableError } from '../peer/manifest-unavailable.js';
 import {
   startSharingServer,
   type SharingAccessEvent,
@@ -585,6 +587,114 @@ describe('reaching a publisher across networks', () => {
       expect(String(result.errors[1])).toMatch(/ECONNREFUSED/);
     } finally {
       await hole.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A publisher whose manifest fails on a config file that doesn't load (a
+// broken cost-scope.yaml) says which file, so the peer isn't told to check
+// the network. Only the file's name crosses: the local error can quote a path.
+// ---------------------------------------------------------------------------
+
+function startServerWhoseManifestThrows(err: Error): Promise<SharingServer> {
+  return startSharingServer({ psk: PSK, host: '127.0.0.1' }, {
+    getManifest: () => { throw err; },
+    readFile: () => Promise.reject(new Error('no files')),
+  });
+}
+
+/** A TLS-PSK peer answering every request with `status` and `body`: a
+ *  publisher the client can't trust to send only a file name. */
+function startRawPeer(status: number, body: string): Promise<{ port: number; close: () => Promise<void> }> {
+  const server = createHttpsServer(
+    {
+      ciphers: SHARING_TLS_CIPHERS,
+      minVersion: SHARING_TLS_MIN_VERSION,
+      maxVersion: SHARING_TLS_MAX_VERSION,
+      pskCallback: (_socket, id) => (id === SHARING_PSK_IDENTITY ? PSK : null),
+    },
+    (_req, res) => {
+      res.writeHead(status, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end(body);
+    },
+  );
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address();
+      if (addr === null || typeof addr === 'string') { reject(new Error('raw peer has no port')); return; }
+      resolve({
+        port: addr.port,
+        close: () => new Promise<void>((done) => {
+          server.closeAllConnections();
+          server.close(() => { done(); });
+        }),
+      });
+    });
+  });
+}
+
+describe('a manifest the publisher cannot build', () => {
+  it('names the config file that does not load, and nothing else', async () => {
+    const server = await startServerWhoseManifestThrows(new ManifestUnavailableError('cost-scope.yaml', {
+      cause: new Error("EACCES: permission denied, open '/Users/someone/costgoblin/cost-scope.yaml'"),
+    }));
+    const endpoint: PeerEndpoint = { host: '127.0.0.1', port: server.port, psk: PSK };
+    try {
+      await expect(fetchManifest(endpoint)).rejects.toMatchObject({
+        name: 'PeerResponseError',
+        status: 503,
+        body: 'cost-scope.yaml',
+        message: 'Peer responded 503 for /manifest',
+      });
+      await expect(fetchManifestFromAny([endpoint])).resolves.toEqual({ status: 'unavailable', file: 'cost-scope.yaml' });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it.each([
+    ['a path', '/Users/someone/costgoblin/cost-scope.yaml'],
+    ['a parent-relative path', '../cost-scope.yaml'],
+    ['more than a file name', 'cost-scope.yaml: rules[0] must be an object'],
+  ])('answers a bare 500 for a "file" that is %s', async (_label, file) => {
+    const server = await startServerWhoseManifestThrows(new ManifestUnavailableError(file));
+    const endpoint: PeerEndpoint = { host: '127.0.0.1', port: server.port, psk: PSK };
+    try {
+      await expect(fetchManifest(endpoint)).rejects.toMatchObject({ status: 500, body: null });
+      const result = await fetchManifestFromAny([endpoint]);
+      expect(result.status).toBe('unreachable');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('answers any other failure with a bare 500, as before', async () => {
+    const server = await startServerWhoseManifestThrows(new Error("ENOENT: no such file or directory, scandir '/Users/someone/data'"));
+    const endpoint: PeerEndpoint = { host: '127.0.0.1', port: server.port, psk: PSK };
+    try {
+      await expect(fetchManifest(endpoint)).rejects.toThrow(/^Peer responded 500 for \/manifest$/);
+      const result = await fetchManifestFromAny([endpoint]);
+      expect(result.status).toBe('unreachable');
+      if (result.status !== 'unreachable') return;
+      expect(String(result.errors[0])).toContain('Peer responded 500 for /manifest');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it.each([
+    ['a path', '/etc/passwd'],
+    ['a message', 'Visit https://example.test to fix your sharing'],
+    ['an oversized body', `${'x'.repeat(5000)}.yaml`],
+  ])('shows no file for a 503 body that is %s', async (_label, body) => {
+    const peer = await startRawPeer(503, body);
+    try {
+      await expect(fetchManifestFromAny([{ host: '127.0.0.1', port: peer.port, psk: PSK }]))
+        .resolves.toEqual({ status: 'unavailable', file: null });
+    } finally {
+      await peer.close();
     }
   });
 });

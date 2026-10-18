@@ -399,6 +399,10 @@ export interface CostApi {
   resetViewsConfig(): Promise<ViewsConfig>;
   /** Reveal `views.yaml` in the OS file manager (Finder / Explorer). */
   revealViewsFolder(): Promise<void>;
+  /** Writes the defaults only when cost-scope.yaml doesn't exist; one that
+   *  fails to parse or validate is left as it is and the call rejects with
+   *  why. Every cost query rejects the same way until it loads, rather than
+   *  run without the user's metric and exclusion rules. */
   getCostScope(): Promise<CostScopeConfig>;
   saveCostScope(config: CostScopeConfig): Promise<void>;
   /** Exclusion tallies, daily histogram and sample line items of `config`

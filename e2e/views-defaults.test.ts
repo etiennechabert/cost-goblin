@@ -14,6 +14,7 @@ import {
   ensureViewMode,
   openDashboardsDropdown,
   selectDatePreset,
+  expectVisibleData,
 } from './helpers.js';
 
 let app: ElectronApplication;
@@ -45,17 +46,21 @@ function slug(s: string): string {
   return s.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
 }
 
-/** A throwaway copy of the active config dir without its views.yaml.
+/** A throwaway copy of the active config dir, without the files in `skip`.
  *  Dimensions + data come from the active config, so widgets still populate. */
-function configDirWithoutViews(): string {
+function copyOfConfigDir(skip: readonly string[] = []): string {
   const srcConfig = process.env['COSTGOBLIN_CONFIG_DIR'] ?? FIXTURE_CONFIG_DIR;
   const tmpConfig = mkdtempSync(join(tmpdir(), 'cg-seed-config-'));
   for (const entry of readdirSync(srcConfig)) {
-    if (entry === 'views.yaml') continue;
+    if (skip.includes(entry)) continue;
     const p = join(srcConfig, entry);
     if (statSync(p).isFile()) copyFileSync(p, join(tmpConfig, entry));
   }
   return tmpConfig;
+}
+
+function configDirWithoutViews(): string {
+  return copyOfConfigDir(['views.yaml']);
 }
 
 test.describe('default dashboards', () => {
@@ -214,5 +219,108 @@ test.describe('a views.yaml that fails to load', () => {
     await expect(p.getByRole('menuitem', { name: /Team costs/ })).toBeVisible();
     await p.keyboard.press('Escape');
     expect(readFileSync(viewsPath, 'utf-8')).toBe(FIXED_VIEWS_YAML);
+  });
+});
+
+/** A hand-edited cost-scope.yaml: a rule excluding one account's costs. */
+function customCostScopeYaml(values: string): string {
+  return `costMetric: effective
+rules:
+  - id: user:analytics
+    name: Data Analytics account
+    enabled: true
+    builtIn: false
+    conditions:
+      - dimensionId: account
+        values: ${values}
+`;
+}
+// A bare value where the validator wants a list.
+const BROKEN_COST_SCOPE_YAML = customCostScopeYaml('Data Analytics');
+const FIXED_COST_SCOPE_YAML = customCostScopeYaml('[Data Analytics]');
+const COST_SCOPE_ERROR = 'costScope.rules[0].conditions[0].values must be an array';
+
+// Every query used to answer a broken cost-scope.yaml by dropping it, so the
+// dashboards showed totals without the user's rules, and the Cost Scope page
+// could save the defaults over the file.
+test.describe('a cost-scope.yaml that fails to load', () => {
+  let scopeApp: ElectronApplication | undefined;
+  let scopePage: Page | undefined;
+  let srcConfig = '';
+  let costScopePath = '';
+
+  function launched(): { app: ElectronApplication; page: Page } {
+    if (scopeApp === undefined || scopePage === undefined) throw new Error('app not launched');
+    return { app: scopeApp, page: scopePage };
+  }
+
+  function loadError(p: Page): ReturnType<Page['getByRole']> {
+    return p.getByRole('alert').filter({ hasText: "Couldn't load your cost scope" });
+  }
+
+  test.beforeAll(async () => {
+    // A launch of its own: the broken file has to be in place before boot.
+    srcConfig = copyOfConfigDir();
+    writeFileSync(join(srcConfig, 'cost-scope.yaml'), BROKEN_COST_SCOPE_YAML);
+    ({ app: scopeApp, page: scopePage } = await launchAppWithCoverage({ configDir: srcConfig }));
+    // The app runs on its own copy of the config dir.
+    const configDir = await scopeApp.evaluate(() => process.env['COSTGOBLIN_CONFIG_DIR'] ?? '');
+    costScopePath = join(configDir, 'cost-scope.yaml');
+  });
+
+  test.afterAll(async () => {
+    await finishCoverage(scopeApp, scopePage, 'views-defaults-cost-scope');
+    if (srcConfig !== '') rmSync(srcConfig, { recursive: true, force: true });
+  });
+
+  test('the dashboard says why, and shows no total without the rules', async () => {
+    const { page: p } = launched();
+    await expect(loadError(p)).toBeVisible({ timeout: 15_000 });
+    await expect(loadError(p)).toContainText(COST_SCOPE_ERROR);
+    await waitForQuerySettle(p);
+    // The summary's query failed: a placeholder, not an unscoped total.
+    const summary = p.locator('[data-widget-id="overview-summary"]');
+    await expect(summary).toContainText('—');
+    await expect(summary).not.toContainText('$');
+    expect(readFileSync(costScopePath, 'utf-8')).toBe(BROKEN_COST_SCOPE_YAML);
+  });
+
+  test('the Cost Scope page shows the error and offers nothing that would save over the file', async () => {
+    const { page: p } = launched();
+    await clickNavButton(p, 'Cost Scope');
+    await expect(p.getByRole('heading', { name: 'Cost Scope', exact: true })).toBeVisible();
+    await expect(loadError(p)).toContainText(COST_SCOPE_ERROR);
+    await expect(p.getByRole('button', { name: 'Add rule' })).toHaveCount(0);
+    await expect(p.getByRole('button', { name: 'Save' })).toHaveCount(0);
+    await expect(p.locator('input[name="costMetric"]')).toHaveCount(0);
+    expect(readFileSync(costScopePath, 'utf-8')).toBe(BROKEN_COST_SCOPE_YAML);
+  });
+
+  test('exporting the configuration names cost-scope.yaml instead of leaving the scope out', async () => {
+    const { app: a, page: p } = launched();
+    // The bundle is built before the save dialog opens, so the export should
+    // fail first. If it doesn't, the stub cancels rather than leaving a
+    // native dialog up.
+    await a.evaluate(({ dialog }) => {
+      Reflect.set(dialog, 'showSaveDialog', () => Promise.resolve({ canceled: true, filePath: '' }));
+    });
+    await navigateTo(p, 'Share', 'Share configuration');
+    await p.getByRole('button', { name: 'Export…' }).click();
+    await expect(p.getByText(`Couldn't load cost-scope.yaml for the configuration bundle: ${COST_SCOPE_ERROR}`)).toBeVisible();
+  });
+
+  // Last: it rewrites cost-scope.yaml.
+  test('once cost-scope.yaml is fixed, Retry brings the costs back', async () => {
+    const { page: p } = launched();
+    await ensureViewMode(p);
+    await expect(loadError(p)).toBeVisible();
+
+    writeFileSync(costScopePath, FIXED_COST_SCOPE_YAML);
+    await loadError(p).getByRole('button', { name: 'Retry' }).click();
+
+    await expect(loadError(p)).toHaveCount(0);
+    await waitForQuerySettle(p);
+    await expectVisibleData(p);
+    expect(readFileSync(costScopePath, 'utf-8')).toBe(FIXED_COST_SCOPE_YAML);
   });
 });

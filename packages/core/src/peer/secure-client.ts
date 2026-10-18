@@ -1,6 +1,8 @@
+import type { IncomingMessage } from 'node:http';
 import { request, type RequestOptions } from 'node:https';
 import { connect as tlsConnect, type ConnectionOptions } from 'node:tls';
 import { firstReachable } from './first-reachable.js';
+import { isConfigFileName, MANIFEST_UNAVAILABLE_STATUS } from './manifest-unavailable.js';
 import {
   SHARING_PSK_IDENTITY,
   SHARING_TLS_CIPHERS,
@@ -21,6 +23,9 @@ const MAX_MANIFEST_BYTES = 16 * 1024 * 1024;
  *  to disk is the eventual optimization for very large monthly files. */
 const MAX_FILE_BYTES = 1024 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
+/** A MANIFEST_UNAVAILABLE_STATUS body is a config file's name: anything past
+ *  this is not one, and isn't buffered. */
+const MAX_ERROR_BODY_BYTES = 256;
 /** A host that hasn't finished the TLS handshake by then isn't coming: off its
  *  own network an address swallows the connection instead of refusing it, so
  *  without this each dead address of a sharing key stalled the full
@@ -36,6 +41,33 @@ export interface PeerRequestOptions {
 export interface PeerProbeOptions extends PeerRequestOptions {
   /** Hangs up — e.g. once another address of the key answered. */
   readonly signal?: AbortSignal;
+}
+
+/** The peer answered with an error status. `body` is the text of a
+ *  MANIFEST_UNAVAILABLE_STATUS answer (meant to be a config file's name, but
+ *  unchecked), null for any other status. */
+export class PeerResponseError extends Error {
+  readonly status: number;
+  readonly body: string | null;
+
+  constructor(status: number, path: string, body: string | null) {
+    super(`Peer responded ${String(status)} for ${path}`);
+    this.name = 'PeerResponseError';
+    this.status = status;
+    this.body = body;
+  }
+}
+
+/** Up to MAX_ERROR_BODY_BYTES of a response's text; the rest is drained. */
+function readErrorBody(res: IncomingMessage, done: (text: string) => void): void {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  res.on('data', (chunk: Buffer) => {
+    if (size > MAX_ERROR_BODY_BYTES) return;
+    chunks.push(chunk);
+    size += chunk.length;
+  });
+  res.on('end', () => { done(Buffer.concat(chunks).subarray(0, MAX_ERROR_BODY_BYTES + 1).toString('utf-8')); });
 }
 
 function connectTimeoutError(connectTimeoutMs: number): Error {
@@ -69,9 +101,14 @@ function get(endpoint: PeerEndpoint, path: string, maxBytes: number, options: Pe
     const succeed = (buf: Buffer): void => { if (!settled) { settled = true; resolve(buf); } };
     const req = request(requestOptions(endpoint, path), (res) => {
       res.on('error', fail);
-      if (res.statusCode !== 200) {
+      const status = res.statusCode ?? 0;
+      if (status === MANIFEST_UNAVAILABLE_STATUS) {
+        readErrorBody(res, (body) => { fail(new PeerResponseError(status, path, body)); });
+        return;
+      }
+      if (status !== 200) {
         res.resume();
-        fail(new Error(`Peer responded ${String(res.statusCode)} for ${path}`));
+        fail(new PeerResponseError(status, path, null));
         return;
       }
       const chunks: Buffer[] = [];
@@ -138,6 +175,9 @@ export function probeEndpoint(endpoint: PeerEndpoint, options: PeerProbeOptions 
 
 export type ManifestFromAnyResult =
   | { readonly status: 'reached'; readonly endpoint: PeerEndpoint; readonly manifest: string }
+  /** The publisher answered but can't build its manifest: `file` (its bare
+   *  name, null when it sent none) doesn't load there. */
+  | { readonly status: 'unavailable'; readonly file: string | null }
   | { readonly status: 'unreachable'; readonly errors: readonly unknown[] };
 
 /** Fetch the manifest through whichever of a sharing key's addresses answers
@@ -154,6 +194,10 @@ export async function fetchManifestFromAny(
   try {
     return { status: 'reached', endpoint: reached.candidate, manifest: await fetchManifest(reached.candidate, options) };
   } catch (err: unknown) {
+    if (err instanceof PeerResponseError && err.body !== null) {
+      // Shown to the user: only ever a bare file name from the publisher.
+      return { status: 'unavailable', file: isConfigFileName(err.body) ? err.body : null };
+    }
     return { status: 'unreachable', errors: [err] };
   }
 }

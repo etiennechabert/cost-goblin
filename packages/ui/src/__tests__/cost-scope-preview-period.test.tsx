@@ -22,9 +22,10 @@ function renderView() {
 
 afterEach(cleanup);
 
-/** Picks a preset from the preview card's date picker. */
+/** Picks a preset from the preview card's date picker, which shows once
+ *  cost-scope.yaml has loaded. */
 async function pickPeriod(user: ReturnType<typeof userEvent.setup>, current: string, preset: string): Promise<void> {
-  await user.click(within(screen.getByTestId('cost-scope-preview')).getByText(current));
+  await user.click(within(await screen.findByTestId('cost-scope-preview')).getByText(current));
   await user.click(await screen.findByText(preset));
 }
 
@@ -48,7 +49,7 @@ describe('CostScopeView — preview period', () => {
 
   it('offers the daily presets other views do, without an hourly toggle', async () => {
     const { user } = renderView();
-    await user.click(within(screen.getByTestId('cost-scope-preview')).getByText('Last 30 days'));
+    await user.click(within(await screen.findByTestId('cost-scope-preview')).getByText('Last 30 days'));
     for (const preset of ['Last 7 days', 'Last 14 days', 'Last 90 days', 'Last 365 days', 'Last month']) {
       expect(screen.getByText(preset)).toBeDefined();
     }
