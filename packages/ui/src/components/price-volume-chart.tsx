@@ -2,12 +2,35 @@ import type { ReactNode } from 'react';
 import { useContainerWidth } from '../lib/use-container-width.js';
 import { usePalette } from '../hooks/use-palette.js';
 import { getColor } from '../lib/palette.js';
-import { signedDollars, truncate } from './format.js';
+import { formatDollars, formatShare, signedDollars, truncate } from './format.js';
+import { useChartTooltip, type ChartTooltipContent } from './chart-tooltip.js';
 import type { PriceVolumeDecomp } from '../lib/price-volume.js';
 
 const ROW_H = 28;
 const LABEL_W = 116;
 const RIGHT_GUTTER = 66;
+
+function rowTooltip(r: PriceVolumeDecomp, key: string, volColor: string, rateColor: string): ChartTooltipContent {
+  const discount = r.prevDiscount !== null && r.currDiscount !== null
+    ? [{ label: 'Discount vs list', value: `${formatShare(r.prevDiscount)} → ${formatShare(r.currDiscount)}` }]
+    : [];
+  return {
+    key,
+    title: r.name,
+    rows: [
+      { label: 'Previous', value: formatDollars(r.prevCost) },
+      { label: 'Current', value: formatDollars(r.currCost) },
+      ...(r.decomposable
+        ? [
+          { label: 'Volume (usage)', value: signedDollars(r.volumeEffect), color: volColor },
+          { label: 'Rate (price)', value: signedDollars(r.rateEffect), color: rateColor },
+        ]
+        : [{ label: 'Change', value: signedDollars(r.totalDelta) }]),
+      ...discount,
+    ],
+    ...(r.decomposable ? {} : { note: 'Usage is missing on one side, so the change can\'t be split into volume and rate.' }),
+  };
+}
 
 interface PriceVolumeChartProps {
   readonly rows: readonly PriceVolumeDecomp[];
@@ -51,6 +74,7 @@ function PriceVolumeSvg({
   readonly rateColor: string;
   readonly onRowClick?: ((row: PriceVolumeDecomp) => void) | undefined;
 }) {
+  const tooltip = useChartTooltip();
   const barAreaX = LABEL_W + 8;
   const barAreaW = Math.max(width - barAreaX - RIGHT_GUTTER, 40);
   const xMid = barAreaX + barAreaW / 2;
@@ -63,44 +87,72 @@ function PriceVolumeSvg({
   const height = rows.length * ROW_H + 6;
 
   return (
-    <svg width={width} height={height}>
-      <line x1={xMid} x2={xMid} y1={2} y2={height - 2} stroke="var(--color-border)" strokeWidth={1} />
-      {rows.map((r, i) => {
-        const cy = i * ROW_H + ROW_H / 2 + 2;
-        const barY = cy - 7;
-        const volX0 = xOf(0);
-        const volX1 = xOf(r.volumeEffect);
-        const rateX1 = xOf(r.volumeEffect + r.rateEffect);
-        const volFill = r.decomposable ? volColor : 'var(--color-text-muted)';
-        const clickable = onRowClick !== undefined;
-        return (
-          <g
-            key={`${r.name}-${String(i)}`}
-            style={{ cursor: clickable ? 'pointer' : 'default' }}
-            onClick={() => { onRowClick?.(r); }}
-          >
-            <text x={0} y={cy + 3} fontSize={11} fill="var(--color-text-secondary)">{truncate(r.name, 16)}</text>
-            <rect x={Math.min(volX0, volX1)} y={barY} width={Math.max(Math.abs(volX1 - volX0), 0.5)} height={14} fill={volFill} rx={1.5}>
-              <title>{`${r.name} — Volume ${signedDollars(r.volumeEffect)}${r.decomposable ? '' : ' (mixed)'}`}</title>
-            </rect>
-            {r.decomposable && (
-              <rect x={Math.min(volX1, rateX1)} y={barY} width={Math.max(Math.abs(rateX1 - volX1), 0.5)} height={14} fill={rateColor} rx={1.5}>
-                <title>{`${r.name} — Rate ${signedDollars(r.rateEffect)}`}</title>
-              </rect>
-            )}
-            <text
-              x={width - 6}
-              y={cy + 3}
-              textAnchor="end"
-              fontSize={11}
-              className="tabular-nums"
-              fill={r.totalDelta >= 0 ? 'var(--color-negative)' : 'var(--color-positive)'}
-            >
-              {signedDollars(r.totalDelta)}
-            </text>
-          </g>
-        );
-      })}
-    </svg>
+    <div className="relative">
+      <svg width={width} height={height}>
+        <line x1={xMid} x2={xMid} y1={2} y2={height - 2} stroke="var(--color-border)" strokeWidth={1} />
+        {rows.map((r, i) => {
+          const key = `${r.name}-${String(i)}`;
+          const cy = i * ROW_H + ROW_H / 2 + 2;
+          const barY = cy - 7;
+          const volX0 = xOf(0);
+          const volX1 = xOf(r.volumeEffect);
+          const rateX1 = xOf(r.volumeEffect + r.rateEffect);
+          const volFill = r.decomposable ? volColor : 'var(--color-text-muted)';
+          const clickable = onRowClick !== undefined;
+          return (
+            <g key={key}>
+              {tooltip.active?.key === key && (
+                <rect x={0} y={i * ROW_H + 2} width={width} height={ROW_H} rx={4} fill="var(--color-bg-tertiary)" opacity={0.45} />
+              )}
+              <text x={0} y={cy + 3} fontSize={11} fill="var(--color-text-secondary)">{truncate(r.name, 16)}</text>
+              <rect
+                x={Math.min(volX0, volX1)}
+                y={barY}
+                width={Math.max(Math.abs(volX1 - volX0), 0.5)}
+                height={14}
+                fill={volFill}
+                rx={1.5}
+                aria-label={`${r.name} — Volume ${signedDollars(r.volumeEffect)}${r.decomposable ? '' : ' (mixed)'}`}
+              />
+              {r.decomposable && (
+                <rect
+                  x={Math.min(volX1, rateX1)}
+                  y={barY}
+                  width={Math.max(Math.abs(rateX1 - volX1), 0.5)}
+                  height={14}
+                  fill={rateColor}
+                  rx={1.5}
+                  aria-label={`${r.name} — Rate ${signedDollars(r.rateEffect)}`}
+                />
+              )}
+              <text
+                x={width - 6}
+                y={cy + 3}
+                textAnchor="end"
+                fontSize={11}
+                className="tabular-nums"
+                fill={r.totalDelta >= 0 ? 'var(--color-negative)' : 'var(--color-positive)'}
+              >
+                {signedDollars(r.totalDelta)}
+              </text>
+              {/* Hit area: the whole row, not just the (often thin) bars. */}
+              <rect
+                x={0}
+                y={i * ROW_H + 2}
+                width={width}
+                height={ROW_H}
+                fill="transparent"
+                data-row={r.name}
+                style={{ cursor: clickable ? 'pointer' : 'default' }}
+                onMouseMove={(e) => { tooltip.show(e, rowTooltip(r, key, volColor, rateColor)); }}
+                onMouseLeave={tooltip.hide}
+                onClick={() => { onRowClick?.(r); }}
+              />
+            </g>
+          );
+        })}
+      </svg>
+      {tooltip.element}
+    </div>
   );
 }

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { asDollars, asEntityRef } from '@costgoblin/core/browser';
 import type { TrendRow } from '@costgoblin/core/browser';
-import { buildWaterfall } from '../lib/waterfall.js';
+import { buildWaterfall, waterfallScale } from '../lib/waterfall.js';
 import { gini, buildPareto } from '../lib/concentration.js';
 import { toCumulative, projectPeriodEnd } from '../lib/day-series.js';
 import { decomposePriceVolume } from '../lib/price-volume.js';
@@ -55,6 +55,34 @@ describe('buildWaterfall', () => {
     const named = m.steps.filter(s => s.kind === 'increase' || s.kind === 'decrease');
     expect(named[0]?.name).toBe('EC2');
     expect(named.find(s => s.name === 'S3')?.kind).toBe('decrease');
+  });
+});
+
+describe('waterfallScale', () => {
+  it('zooms onto a change that is small next to the totals', () => {
+    // $9.3k → $11.2k: the movement is ~17% of the tallest level.
+    const m = buildWaterfall([trendRow('EC2', 6000, 7500), trendRow('VPC', 2000, 2300), trendRow('S3', 1300, 1400)], 8);
+    const scale = waterfallScale(m.steps);
+    expect(scale).toEqual({ floor: 8300, ceiling: 11_200, truncated: true });
+    // Every running level stays inside the axis.
+    for (const s of m.steps) expect(Math.min(s.start, s.end)).toBeGreaterThanOrEqual(s.kind === 'start' || s.kind === 'end' ? 0 : scale.floor);
+  });
+
+  it('keeps the axis at $0 when the change is large next to the totals', () => {
+    const m = buildWaterfall([trendRow('EC2', 100, 400)], 8);
+    expect(waterfallScale(m.steps)).toEqual({ floor: 0, ceiling: 400, truncated: false });
+  });
+
+  it('never zooms a bridge whose running level crosses zero', () => {
+    // A credit larger than the start total drags the running level negative.
+    const m = buildWaterfall([trendRow('Credits', 0, -150), trendRow('EC2', 100, 120)], 8);
+    const scale = waterfallScale(m.steps);
+    expect(scale.truncated).toBe(false);
+    expect(scale.floor).toBeLessThan(0);
+  });
+
+  it('falls back to a unit axis for an empty bridge', () => {
+    expect(waterfallScale([])).toEqual({ floor: 0, ceiling: 1, truncated: false });
   });
 });
 

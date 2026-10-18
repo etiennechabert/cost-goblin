@@ -26,6 +26,7 @@ function asCustomView(v: ViewSpec): ViewSpec {
     id: v.id,
     name: v.name,
     rows: v.rows,
+    ...(v.description === undefined ? {} : { description: v.description }),
     ...(v.icon === undefined ? {} : { icon: v.icon }),
   };
 }

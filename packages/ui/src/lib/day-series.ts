@@ -35,3 +35,30 @@ export function projectPeriodEnd(points: readonly CumulativePoint[], totalDays: 
   if (elapsed >= totalDays) return last.cumulative;
   return (last.cumulative / elapsed) * totalDays;
 }
+
+/** Cumulative spend at a calendar day: the last point at or before it (a day
+ *  with no spend keeps the running total), or 0 before the first spend. */
+export function cumulativeAt(points: readonly CumulativePoint[], dayIndex: number): number {
+  let value = 0;
+  for (const p of points) {
+    if (p.dayIndex > dayIndex) break;
+    value = p.cumulative;
+  }
+  return value;
+}
+
+/** The run-rate projection line's value at a day after the last actual point,
+ *  running from that point to `projected` on the period's last day. Null on or
+ *  before the last point, where actual spend applies. */
+export function projectedAt(
+  points: readonly CumulativePoint[],
+  projected: number,
+  totalDays: number,
+  dayIndex: number,
+): number | null {
+  const last = points.at(-1);
+  if (last === undefined || dayIndex <= last.dayIndex) return null;
+  const remaining = totalDays - 1 - last.dayIndex;
+  if (remaining <= 0) return null;
+  return last.cumulative + ((projected - last.cumulative) * (dayIndex - last.dayIndex)) / remaining;
+}
