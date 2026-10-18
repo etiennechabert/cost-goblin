@@ -151,7 +151,7 @@ function buildValueMatchClause(
   return `${resolved.fieldExpr} IN (${list})`;
 }
 
-function isOwnerDimension(dim: BuiltInDimension | TagDimension | null): boolean {
+function isOwnerDimension({ dim }: ResolvedDimension): boolean {
   return dim !== null && 'concept' in dim && dim.concept === 'owner';
 }
 
@@ -167,7 +167,7 @@ function buildSingleFilterClause(
   orgTree?: readonly OrgNode[],
 ): string {
   const named = values.filter(v => v !== '');
-  const present = orgTree !== undefined && isOwnerDimension(resolved.dim) ? expandOrgNodeValues(orgTree, named) : named;
+  const present = orgTree !== undefined && isOwnerDimension(resolved) ? expandOrgNodeValues(orgTree, named) : named;
   if (named.length === values.length) return buildValueMatchClause(resolved, present, accountReverseMap, qb);
   const missing = missingValueSql(resolved);
   if (present.length === 0) return missing;
