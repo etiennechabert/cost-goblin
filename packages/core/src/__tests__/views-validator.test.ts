@@ -135,6 +135,24 @@ describe('validateViews', () => {
     expect(widgets?.[1]).toMatchObject({ type: 'baseline', topN: 5 });
   });
 
+  it.each([false, true])('keeps a pie widget\'s showLegend: %s', (showLegend) => {
+    const cfg = validateViews({
+      views: [{ id: 'v', name: 'V', rows: [{ widgets: [
+        { id: 'p', type: 'pie', size: 'medium', groupBy: 'service', showLegend },
+      ] }] }],
+    });
+    expect(cfg.views[0]?.rows[0]?.widgets[0]).toEqual({ id: 'p', type: 'pie', size: 'medium', groupBy: 'service', showLegend });
+  });
+
+  it('ignores a non-boolean showLegend instead of failing the views load', () => {
+    const cfg = validateViews({
+      views: [{ id: 'v', name: 'V', rows: [{ widgets: [
+        { id: 'p', type: 'pie', size: 'medium', groupBy: 'service', showLegend: 'false' },
+      ] }] }],
+    });
+    expect(cfg.views[0]?.rows[0]?.widgets[0]).toStrictEqual({ id: 'p', type: 'pie', size: 'medium', groupBy: 'service' });
+  });
+
   it('rejects a missing groupBy on a chart widget', () => {
     expect(() => validateViews({
       views: [{

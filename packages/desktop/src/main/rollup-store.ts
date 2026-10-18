@@ -69,6 +69,8 @@ interface RollupStoreDeps {
   readonly buildConcurrency?: number;
 }
 
+const MANIFEST_FILE = 'manifest.json';
+
 /**
  * Persistent per-period pre-aggregated rollup, stored as Hive-style Parquet
  * partitions under `{dataDir}/{provider}/rollup/daily-YYYY-MM/rollup.parquet` with a
@@ -80,7 +82,9 @@ interface RollupStoreDeps {
  *  - An `epoch` token is captured at the start of each build; a concurrent
  *    `invalidate()` bumps the epoch so a stale in-flight build cannot write a
  *    manifest (kills the resurrection bug the in-memory base had).
- *  - The manifest is written atomically (temp file + rename on the same fs).
+ *  - The manifest is written atomically (temp file + rename on the same fs),
+ *    and `invalidate()` removes it before the partitions, so a removal that
+ *    fails partway never leaves it vouching for deleted files.
  *  - `resolveSource` returns the rollup glob ONLY when every required period is
  *    valid (signature + watermark match) and every needed column is in-grain;
  *    otherwise the caller queries raw Parquet. A stale partition within the
@@ -153,7 +157,7 @@ export class RollupStore {
   markSettled(): void { this.setStatus(this.settledStatus()); }
 
   private rollupDir(): string { return join(this.dataDir, String(this.providerName()), 'rollup'); }
-  private manifestPath(): string { return join(this.rollupDir(), 'manifest.json'); }
+  private manifestPath(): string { return join(this.rollupDir(), MANIFEST_FILE); }
   private partitionDir(period: string): string { return join(this.rollupDir(), `daily-${period}`); }
   private partitionPath(period: string): string { return join(this.partitionDir(period), 'rollup.parquet'); }
 
@@ -427,7 +431,9 @@ export class RollupStore {
   }
 
   /** Invalidate the whole rollup: bump the epoch (cancels in-flight builds),
-   *  clear in-memory state, and remove the on-disk artifact. */
+   *  clear in-memory state, and remove the on-disk artifact. Never rejects:
+   *  most callers fire and forget (`void invalidate().then(...)`), and none
+   *  can do better with a failed removal than rebuild over it. */
   invalidate(): Promise<void> {
     this.epoch += 1;
     this.manifest = null;
@@ -454,7 +460,24 @@ export class RollupStore {
       dir = null;
     }
     return this.enqueue(async () => {
-      if (dir !== null) await rm(dir, { recursive: true, force: true });
+      if (dir !== null) await removeRollupTree(dir);
     });
+  }
+}
+
+/** Remove a rollup tree, manifest first: once it is gone nothing left under
+ *  `dir` validates, whatever order a recursive removal that fails partway (a
+ *  partition still open: EBUSY on Windows) deleted things in. A manifest that
+ *  won't go leaves the tree whole, which the next warmup reuses only where it
+ *  still validates. Logged, not thrown: see `invalidate`. */
+async function removeRollupTree(dir: string): Promise<void> {
+  try {
+    await rm(join(dir, MANIFEST_FILE), { force: true }).catch((err: unknown) => {
+      // ENOTDIR: `dir` is a stray file, so no manifest can outlive it.
+      if (!(err instanceof Error && 'code' in err && err.code === 'ENOTDIR')) throw err;
+    });
+    await rm(dir, { recursive: true, force: true });
+  } catch (err: unknown) {
+    logger.warn(`rollup: could not remove the invalidated rollup — ${err instanceof Error ? err.message : String(err)}`);
   }
 }

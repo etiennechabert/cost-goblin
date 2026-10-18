@@ -446,7 +446,15 @@ export function createAppContext(ctx: IpcContext): AppContext {
     if (existing !== undefined) return existing;
     const promise = run();
     inflightQueries.set(key, promise);
-    void promise.finally(() => { inflightQueries.delete(key); });
+    // Callers get `promise` itself and handle its rejection. Not `.finally()`:
+    // that returns a second promise which re-rejects, and with nothing to
+    // handle it every failed or cancelled query became an unhandled rejection
+    // in main. The identity check stops a query that clearAllCaches() dropped
+    // from evicting a newer one under the same key when it settles late.
+    const cleanup = (): void => {
+      if (inflightQueries.get(key) === promise) inflightQueries.delete(key);
+    };
+    void promise.then(cleanup, cleanup);
     return promise;
   }
 
