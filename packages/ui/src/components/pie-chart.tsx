@@ -1,13 +1,13 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { Group } from '@visx/group';
 import { Pie } from '@visx/shape';
-import { getColor } from '../lib/palette.js';
+import { OTHER_COLOR } from '../lib/palette.js';
 import { CollapsedChart } from './collapsed-chart.js';
 import { useContainerWidth } from '../lib/use-container-width.js';
 import { formatDollars } from './format.js';
 import type { Dimension } from '@costgoblin/core/browser';
 import { getDimensionId, getDimensionLabel } from '../lib/dimensions.js';
-import { usePalette } from '../hooks/use-palette.js';
+import { useSeriesColors } from '../hooks/use-palette.js';
 
 export interface PieSlice {
   readonly name: string;
@@ -67,7 +67,6 @@ function PieChartInner({
   width,
   height,
 }: Omit<PieChartProps, 'collapsed'> & { width: number; height: number }) {
-  const { palette } = usePalette();
   const [localHovered, setLocalHovered] = useState<string | null>(null);
   const hoveredName = externalHoveredName ?? localHovered;
   const legendRefs = useRef(new Map<string, HTMLElement>());
@@ -78,7 +77,10 @@ function PieChartInner({
     }
   }, [hoveredName]);
 
-  const displayData = aggregateOther(data, maxSlices);
+  const displayData = useMemo(() => aggregateOther(data, maxSlices), [data, maxSlices]);
+  const ranked = useMemo(() => displayData.filter(d => d.name !== OTHER_KEY), [displayData]);
+  const seriesColor = useSeriesColors(ranked);
+  const colorOf = (name: string): string => (name === OTHER_KEY ? OTHER_COLOR : seriesColor(name));
   const pieSize = showLegend ? Math.min(width * 0.38, height - 60) : Math.min(width - 32, height - 60);
   const radius = pieSize / 2;
 
@@ -146,9 +148,9 @@ function PieChartInner({
                 padAngle={0.015}
               >
                 {(pie) =>
-                  pie.arcs.map((arc, i) => {
+                  pie.arcs.map((arc) => {
                     const sliceName = arc.data.name;
-                    const color = sliceName === OTHER_KEY ? '#374151' : getColor(i, palette);
+                    const color = colorOf(sliceName);
                     const isHovered = hoveredName === sliceName;
                     const isDimmed = hoveredName !== null && !isHovered;
                     const path = pie.path(arc) ?? '';
@@ -205,8 +207,8 @@ function PieChartInner({
 
         {/* Legend — HTML for proper text truncation */}
         {showLegend && <div className="flex-1 min-w-0 overflow-y-auto flex flex-col gap-0.5 py-1">
-          {displayData.map((d, i) => {
-            const color = d.name === OTHER_KEY ? '#374151' : getColor(i, palette);
+          {displayData.map((d) => {
+            const color = colorOf(d.name);
             const isHovered = hoveredName === d.name;
             const isDimmed = hoveredName !== null && !isHovered;
 

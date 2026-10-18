@@ -18,7 +18,7 @@ Covers `packages/ui/`, `packages/desktop/src/renderer/` and the test suites, inc
 - Fetch through `useQuery` (`packages/ui/src/hooks/use-query.ts`). Its dependencies are explicit primitive keys: an object literal refetches every render, a missing key fetches stale values, and no lint catches either. `urgent: true` is only for small results that gate a page. A hand-rolled fetch needs latest-request-wins and must free its widget slot.
 - "Last N days" comes only from `lastNDaysRange`. A window that follows an editable lag is stored as trailing-or-fixed and re-derived. Never infer "trailing" from an end date. Calendar Dates are local midnight, so use `parseDay`/`formatDay`, never `toISOString`.
 - Money is formatted with `formatDollars`, `signedDollars` and `formatPercent` (`packages/ui/src/components/format.ts`); don't add another private formatter. Money cells keep `.tabular-nums`, which the e2e waits rely on. CSV string cells go through the formula guard.
-- Chart colors come from `getColor` with `usePalette`, so the colorblind palette applies.
+- Chart series take `useSeriesColors` (keyed by name, never index), so every widget agrees.
 - Preference saves send only the fields the view owns. They never echo values read from disk or defaults back, especially after a failed load, and a clean mount writes nothing. A missing file means defaults; an explicit `[]` is the user's choice.
 - The UI imports from `@costgoblin/core/browser` only, and additions there must be leaf modules with no Node built-ins. `packages/ui` reaches the app through `useCostApi()`, never `window`.
 

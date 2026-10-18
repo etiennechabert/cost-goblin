@@ -1,7 +1,7 @@
 import { createContext, useContext, useMemo } from 'react';
 import type { ReactNode } from 'react';
-import { getActivePalette } from '../lib/palette.js';
-import type { PaletteType } from '../lib/palette.js';
+import { assignSeriesColors, getActivePalette } from '../lib/palette.js';
+import type { PaletteType, SeriesColors, SeriesCost } from '../lib/palette.js';
 
 interface PaletteContextValue {
   readonly paletteType: PaletteType;
@@ -37,4 +37,11 @@ export function usePalette(): PaletteContextValue {
     throw new Error('usePalette must be used within a PaletteProvider');
   }
   return ctx;
+}
+
+/** The active palette's colors for a chart's series (see assignSeriesColors).
+ *  Pass a stable array: the assignment reruns whenever it changes. */
+export function useSeriesColors(series: readonly SeriesCost[]): SeriesColors {
+  const { palette } = usePalette();
+  return useMemo(() => assignSeriesColors(series, palette), [series, palette]);
 }

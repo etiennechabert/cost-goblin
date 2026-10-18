@@ -974,15 +974,17 @@ As concepts are configured, these widgets activate.
 **Chart palettes:**
 ```typescript
 const PALETTE_STANDARD = [
-  '#6366f1', '#06b6d4', '#f59e0b', '#10b981',
-  '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6',
+  '#10b981', '#6366f1', '#fdba74', '#c026d3', '#d97706',
+  '#0ea5e9', '#e11d48', '#c4b5fd', '#a3e635', '#f472b6',
 ];
 
-const PALETTE_COLORBLIND = [  // Okabe-Ito
+const PALETTE_COLORBLIND = [  // Okabe-Ito, without its black
   '#0072B2', '#E69F00', '#009E73', '#CC79A7',
-  '#56B4E9', '#D55E00', '#F0E442', '#000000',
+  '#56B4E9', '#D55E00', '#F0E442',
 ];
 ```
+
+**Series colors follow the entity, not its rank.** A series takes the palette slot its name hashes to; when a costlier series in the same chart holds that slot, it takes the next free one. A chart's top series therefore get distinct colors, and since a series' color depends only on the series that outrank it, every widget over the same range and filters paints a shared series alike. Series ranked past the palette keep their hue at half opacity; the pie's folded "Other" is neutral gray. Hashing can put any two colors side by side, so every pair stays at OKLab ΔE ≥ 15 (`palette.test.ts`), which is what caps the standard palette at 10 colors.
 
 ---
 

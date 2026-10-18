@@ -75,7 +75,7 @@ describe('GeneralTab', () => {
     // The swatch strip is the decorative (aria-hidden) part of the palette row.
     const preview = screen.getByText('Chart palette').closest('div.flex')?.querySelector('[aria-hidden="true"]');
     const colors = [...(preview?.querySelectorAll('span') ?? [])].map(swatch => swatch.style.backgroundColor);
-    const expected = swatches.slice(0, 8).map((hex) => {
+    const expected = swatches.map((hex) => {
       const probe = document.createElement('span');
       probe.style.backgroundColor = hex;
       return probe.style.backgroundColor;
