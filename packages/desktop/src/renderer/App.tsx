@@ -1248,7 +1248,9 @@ function AppShell(): React.JSX.Element {
         {settingsTab === null ? (
           <>
             {view.page === 'custom' && viewsReady && (() => {
-              const spec = findViewSpec(view.viewId) ?? OVERVIEW_SEED_VIEW;
+              // shownViewId: a dashboard that no longer exists shows the user's
+              // own overview, the one the menu marks active.
+              const spec = findViewSpec(shownViewId(view.viewId)) ?? OVERVIEW_SEED_VIEW;
               return (
                 <Profiler id={`custom:${view.viewId}`} onRender={onPerfRender}>
                   <CustomView spec={spec} headerSubtitle={spec.description ?? 'Cloud spending visibility'} initialFilter={view.initialFilter} rollupStatus={rollupStatus} />

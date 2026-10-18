@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { useContainerWidth } from '../lib/use-container-width.js';
-import { formatDollars } from './format.js';
+import { formatDollars, formatShare } from './format.js';
 import { useChartTooltip, type ChartTooltipContent } from './chart-tooltip.js';
 import type { ParetoModel, ParetoPoint } from '../lib/concentration.js';
 
@@ -10,10 +10,6 @@ const PAD_BOTTOM = 26;
 const PAD_LEFT = 52;
 const PAD_RIGHT = 44;
 
-function share(fraction: number): string {
-  return `${(fraction * 100).toFixed(1)}%`;
-}
-
 function pointTooltip(p: ParetoPoint, model: ParetoModel, key: string): ChartTooltipContent {
   const groups = model.distinctTotal > 0 ? model.distinctTotal : model.points.length;
   return {
@@ -21,8 +17,8 @@ function pointTooltip(p: ParetoPoint, model: ParetoModel, key: string): ChartToo
     title: p.name,
     rows: [
       { label: 'Cost', value: formatDollars(p.cost) },
-      { label: 'Share of spend', value: share(model.total > 0 ? p.cost / model.total : 0) },
-      { label: `Top ${String(p.rank)} together`, value: share(p.cumPct) },
+      { label: 'Share of spend', value: formatShare(model.total > 0 ? p.cost / model.total : 0) },
+      { label: `Top ${String(p.rank)} together`, value: formatShare(p.cumPct) },
       { label: 'Rank', value: `${String(p.rank)} of ${String(groups)}` },
     ],
   };

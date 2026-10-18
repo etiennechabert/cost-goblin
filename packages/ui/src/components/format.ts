@@ -37,6 +37,12 @@ export function formatBytes(bytes: number): string {
   return `${value.toFixed(digits)} ${label}`;
 }
 
+/** A 0..1 fraction as an unsigned share, "10.9%". formatPercent is for signed
+ *  changes. */
+export function formatShare(fraction: number): string {
+  return `${(fraction * 100).toFixed(1)}%`;
+}
+
 export function formatPercent(value: number): string {
   const sign = value >= 0 ? '+' : '';
   return `${sign}${value.toFixed(1)}%`;

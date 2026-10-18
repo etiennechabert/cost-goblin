@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { useContainerWidth } from '../lib/use-container-width.js';
 import { usePalette } from '../hooks/use-palette.js';
 import { getColor } from '../lib/palette.js';
-import { formatDollars, signedDollars, truncate } from './format.js';
+import { formatDollars, formatShare, signedDollars, truncate } from './format.js';
 import { useChartTooltip, type ChartTooltipContent } from './chart-tooltip.js';
 import type { PriceVolumeDecomp } from '../lib/price-volume.js';
 
@@ -12,7 +12,7 @@ const RIGHT_GUTTER = 66;
 
 function rowTooltip(r: PriceVolumeDecomp, key: string, volColor: string, rateColor: string): ChartTooltipContent {
   const discount = r.prevDiscount !== null && r.currDiscount !== null
-    ? [{ label: 'Discount vs list', value: `${(r.prevDiscount * 100).toFixed(1)}% → ${(r.currDiscount * 100).toFixed(1)}%` }]
+    ? [{ label: 'Discount vs list', value: `${formatShare(r.prevDiscount)} → ${formatShare(r.currDiscount)}` }]
     : [];
   return {
     key,

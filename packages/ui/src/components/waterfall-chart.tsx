@@ -15,8 +15,8 @@ const PAD_BOTTOM_ROTATED = 66;
 const PAD_BOTTOM_FLAT = 28;
 /** Movers that get a value label; the rest are in the tooltip. */
 const LABELLED_MOVERS = 3;
-/** Narrowest column that fits a value label. */
-const MIN_LABEL_SLOT = 40;
+/** Narrowest column that fits a value label: "$-999.99" is ~48px at 10px. */
+const MIN_LABEL_SLOT = 56;
 const CUT_DEPTH = 5;
 
 function fillFor(kind: WaterfallStepKind): string {

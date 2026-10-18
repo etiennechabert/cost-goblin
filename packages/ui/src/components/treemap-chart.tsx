@@ -3,7 +3,7 @@ import { Group } from '@visx/group';
 import { Treemap, treemapSquarify, stratify } from '@visx/hierarchy';
 import { ParentSize } from '@visx/responsive';
 import { getColor } from '../lib/palette.js';
-import { formatDollars, formatPercent } from './format.js';
+import { formatDollars, formatPercent, formatShare } from './format.js';
 import { useChartTooltip, type ChartTooltipContent } from './chart-tooltip.js';
 import { usePalette } from '../hooks/use-palette.js';
 
@@ -29,7 +29,7 @@ function cellTooltip(name: string, cost: number, total: number, previous: number
     title: name,
     rows: [
       { label: 'Cost', value: formatDollars(cost) },
-      { label: 'Share of spend', value: `${(total > 0 ? (cost / total) * 100 : 0).toFixed(1)}%` },
+      { label: 'Share of spend', value: formatShare(total > 0 ? cost / total : 0) },
       ...(previous === undefined
         ? []
         : [

@@ -62,36 +62,52 @@ function HeatmapInner({
   const cellW = xScale.bandwidth();
   const cellH = yScale.bandwidth();
 
+  // The cell layer doesn't read the hover state, so a pointer move re-renders
+  // the tooltip and one outline, not every cell (a year by ten groups is
+  // thousands). show/hide are stable callbacks.
+  const { show, hide, active } = tooltip;
+  const cellLayer = useMemo(() => cells.map((c) => {
+    const key = `${c.group}-${c.date}`;
+    return (
+      <rect
+        key={key}
+        x={xScale(c.date) ?? 0}
+        y={yScale(c.group) ?? 0}
+        width={cellW}
+        height={cellH}
+        fill={colorScale(c.cost)}
+        rx={2}
+        data-cell={key}
+        onClick={() => { onCellClick?.(c.group, c.date); }}
+        onMouseMove={(e) => {
+          show(e, { key, title: c.group, rows: [{ label: formatShortDate(c.date), value: formatDollars(c.cost) }] });
+        }}
+        onMouseLeave={hide}
+        style={{ cursor: onCellClick === undefined ? 'default' : 'pointer' }}
+      />
+    );
+  }), [cells, xScale, yScale, cellW, cellH, colorScale, onCellClick, show, hide]);
+  const cellByKey = useMemo(() => new Map(cells.map(c => [`${c.group}-${c.date}`, c])), [cells]);
+  const hoveredCell = active === null ? undefined : cellByKey.get(active.key);
+
   return (
     <div className="relative" style={{ width, height }}>
       <svg width={width} height={height} aria-label="Cost heatmap: rows are groups, columns are dates, color intensity represents cost">
         <Group left={MARGIN.left} top={MARGIN.top}>
-          {cells.map((c) => {
-            const x = xScale(c.date) ?? 0;
-            const y = yScale(c.group) ?? 0;
-            const key = `${c.group}-${c.date}`;
-            const hovered = tooltip.active?.key === key;
-            return (
-              <rect
-                key={key}
-                x={x}
-                y={y}
-                width={cellW}
-                height={cellH}
-                fill={colorScale(c.cost)}
-                stroke={hovered ? 'var(--color-text-primary)' : 'none'}
-                strokeWidth={1.5}
-                rx={2}
-                data-cell={key}
-                onClick={() => { onCellClick?.(c.group, c.date); }}
-                onMouseMove={(e) => {
-                  tooltip.show(e, { key, title: c.group, rows: [{ label: formatShortDate(c.date), value: formatDollars(c.cost) }] });
-                }}
-                onMouseLeave={tooltip.hide}
-                style={{ cursor: onCellClick === undefined ? 'default' : 'pointer' }}
-              />
-            );
-          })}
+          {cellLayer}
+          {hoveredCell !== undefined && (
+            <rect
+              x={xScale(hoveredCell.date) ?? 0}
+              y={yScale(hoveredCell.group) ?? 0}
+              width={cellW}
+              height={cellH}
+              rx={2}
+              fill="none"
+              stroke="var(--color-text-primary)"
+              strokeWidth={1.5}
+              pointerEvents="none"
+            />
+          )}
           {groups.map((g) => {
             const y = (yScale(g) ?? 0) + cellH / 2;
             return (

@@ -278,12 +278,16 @@ export function createAppContext(ctx: IpcContext): AppContext {
     const { config: views, changed } = migrateRetiredSeedViews(loaded);
     if (changed) {
       const fs = await import('node:fs/promises');
-      const tmpPath = `${ctx.viewsPath}.tmp`;
+      const { randomUUID } = await import('node:crypto');
+      // Unique per call: two overlapping first loads must not share (and
+      // truncate) one temp file.
+      const tmpPath = `${ctx.viewsPath}.${randomUUID()}.tmp`;
       try {
         await fs.writeFile(tmpPath, stringify(viewsConfigToYaml(views)));
         await fs.rename(tmpPath, ctx.viewsPath);
       } catch (err: unknown) {
         logger.warn(`views: could not persist the dashboard migration: ${err instanceof Error ? err.message : String(err)}`);
+        await fs.rm(tmpPath, { force: true }).catch(() => undefined);
       }
     }
     state.views = views;

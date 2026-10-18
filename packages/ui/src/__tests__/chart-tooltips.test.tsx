@@ -129,6 +129,22 @@ describe('BurndownChart', () => {
     expect(tip.textContent).toContain('Difference$-80.00 (-26.7%)');
   });
 
+  it('dates the previous period, which is the preceding N days', async () => {
+    const { container } = renderChart(
+      <BurndownChart
+        current={current}
+        previous={previous}
+        totalDays={10}
+        projected={1000}
+        periodStart="2026-09-15"
+        previousStart="2026-09-05"
+        title="Pacing"
+      />,
+    );
+    const tip = await hover(container, '[data-testid="burndown-hit-area"]', PLOT_LEFT + 2 * DAY_PX);
+    expect(tip.textContent).toContain('Previous · Sep 7$300.00');
+  });
+
   it('switches to the projection past the last data day', async () => {
     const { container } = renderBurndown();
     const tip = await hover(container, '[data-testid="burndown-hit-area"]', PLOT_LEFT + 9 * DAY_PX);

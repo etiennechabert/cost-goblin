@@ -24,6 +24,9 @@ export interface BurndownChartProps {
   readonly budget?: number | undefined;
   /** First day of the period (YYYY-MM-DD), for dates on the axis and tooltip. */
   readonly periodStart?: string | undefined;
+  /** First day of the previous period, to date its tooltip row: it is the
+   *  preceding N days, not necessarily a calendar month. */
+  readonly previousStart?: string | undefined;
   readonly title: ReactNode;
   readonly subtitle?: string | undefined;
 }
@@ -36,22 +39,33 @@ function dayLabel(periodStart: string | undefined, dayIndex: number): string {
   return periodStart === undefined ? `Day ${String(dayIndex + 1)}` : formatShortDate(shiftDay(periodStart, dayIndex));
 }
 
+/** This period's cumulative spend at a day: actual up to the last data day,
+ *  the run-rate projection after it. */
+function thisPeriodAt(
+  { current, projected, totalDays }: BurndownChartProps,
+  dayIndex: number,
+): { readonly value: number; readonly projected: boolean } {
+  const projectedValue = projected === null || projected === undefined ? null : projectedAt(current, projected, totalDays, dayIndex);
+  return projectedValue === null
+    ? { value: cumulativeAt(current, dayIndex), projected: false }
+    : { value: projectedValue, projected: true };
+}
+
 /** This period (actual, or the projection past the last data day) against the
  *  previous period at the same calendar position. */
-function dayTooltip(
-  { current, previous, projected, totalDays, periodStart }: BurndownChartProps,
-  dayIndex: number,
-): ChartTooltipContent {
-  const projectedValue = projected === null || projected === undefined ? null : projectedAt(current, projected, totalDays, dayIndex);
-  const thisValue = projectedValue ?? cumulativeAt(current, dayIndex);
+function dayTooltip(props: BurndownChartProps, dayIndex: number): ChartTooltipContent {
+  const { previous, periodStart, previousStart } = props;
+  const thisPeriod = thisPeriodAt(props, dayIndex);
+  const thisValue = thisPeriod.value;
   const rows: ChartTooltipRow[] = [
-    projectedValue === null
-      ? { label: 'This period', value: formatDollars(thisValue), color: CURRENT_COLOR }
-      : { label: 'Projected', value: formatDollars(thisValue), color: CURRENT_COLOR, dashed: true },
+    thisPeriod.projected
+      ? { label: 'Projected', value: formatDollars(thisValue), color: CURRENT_COLOR, dashed: true }
+      : { label: 'This period', value: formatDollars(thisValue), color: CURRENT_COLOR },
   ];
   if (previous !== null && previous !== undefined && previous.length > 0) {
     const prevValue = cumulativeAt(previous, dayIndex);
-    rows.push({ label: 'Previous period', value: formatDollars(prevValue), color: PREVIOUS_COLOR, dashed: true });
+    const prevLabel = previousStart === undefined ? 'Previous period' : `Previous · ${dayLabel(previousStart, dayIndex)}`;
+    rows.push({ label: prevLabel, value: formatDollars(prevValue), color: PREVIOUS_COLOR, dashed: true });
     const diff = thisValue - prevValue;
     rows.push({
       label: 'Difference',
@@ -114,7 +128,7 @@ function BurndownSvg(props: BurndownChartProps & { readonly width: number }) {
 
   const hoveredDay = tooltip.active === null ? null : Number(tooltip.active.key);
   const hoverDots = hoveredDay === null ? [] : [
-    { key: 'cur', color: CURRENT_COLOR, value: (projected === null || projected === undefined ? null : projectedAt(current, projected, totalDays, hoveredDay)) ?? cumulativeAt(current, hoveredDay) },
+    { key: 'cur', color: CURRENT_COLOR, value: thisPeriodAt(props, hoveredDay).value },
     ...(previous !== null && previous !== undefined && previous.length > 0
       ? [{ key: 'prev', color: PREVIOUS_COLOR, value: cumulativeAt(previous, hoveredDay) }]
       : []),
