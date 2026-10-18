@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, Profiler } from 'react';
-import { CostTrends, MissingTags, Savings, Baselines, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, SharingActiveBanner, SettingsShell, SETTINGS_TABS, isSettingsTabId, WorkspacesView, WorkspaceChip, ConfirmModal, ReleaseNotes, useModalLayerCount } from '@costgoblin/ui';
+import { CostTrends, MissingTags, Savings, Baselines, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, ViewsLoadError, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, SharingActiveBanner, SettingsShell, SETTINGS_TABS, isSettingsTabId, WorkspacesView, WorkspaceChip, ConfirmModal, ReleaseNotes, useModalLayerCount } from '@costgoblin/ui';
 import type { NavItem, SettingsTabId } from '@costgoblin/ui';
 import type { CostApi, DataSharingStatus, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus, RollupStatus, BaselineRecomputeStatus, WorkspacesInfo } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagDimColumn } from '@costgoblin/core/browser';
@@ -98,6 +98,14 @@ type SetupCheck =
   | { status: 'ready' };
 
 const FALLBACK_VIEWS: ViewsConfig = { views: [OVERVIEW_SEED_VIEW] };
+
+/** views.yaml's dashboards. FALLBACK_VIEWS stands in until they load, and
+ *  while they can't: main leaves a file that fails to load as it is, and the
+ *  dashboard page shows why until a retry loads it. */
+type ViewsState =
+  | { readonly status: 'loading' }
+  | { readonly status: 'loaded'; readonly config: ViewsConfig }
+  | { readonly status: 'failed'; readonly message: string };
 
 function SyncAnnouncer({
   syncError,
@@ -497,7 +505,7 @@ function AppShell(): React.JSX.Element {
   const [defaultViewId, setDefaultViewId] = useState<string>(OVERVIEW_SEED_VIEW.id);
   const [setupCheck, setSetupCheck] = useState<SetupCheck>({ status: 'checking' });
   const [splashStep, setSplashStep] = useState('Connecting...');
-  const [viewsConfig, setViewsConfig] = useState<ViewsConfig | null>(null);
+  const [viewsState, setViewsState] = useState<ViewsState>({ status: 'loading' });
   const { syncError, setSyncError, syncActivity, syncFilesRemaining, syncTiers } = useSyncPolling(api, setupCheck);
   const { sharingStatus, setSharingStatus } = useDataSharingPolling(api, setupCheck);
   const [stoppingSharing, setStoppingSharing] = useState(false);
@@ -675,7 +683,7 @@ function AppShell(): React.JSX.Element {
 
   const applyViews = useCallback((cfg: ViewsConfig): void => {
     const resolved = cfg.views.length > 0 ? cfg : FALLBACK_VIEWS;
-    setViewsConfig(resolved);
+    setViewsState({ status: 'loaded', config: resolved });
     setView(prev => {
       if (prev.page !== 'custom') return prev;
       const exists = resolved.views.some(v => v.id === prev.viewId);
@@ -684,12 +692,20 @@ function AppShell(): React.JSX.Element {
     });
   }, []);
 
+  const loadViews = useCallback(async (): Promise<void> => {
+    try {
+      applyViews(await api.getViewsConfig());
+    } catch (err: unknown) {
+      setViewsState({ status: 'failed', message: err instanceof Error ? err.message : String(err) });
+    }
+  }, [api, applyViews]);
+
   useEffect(() => {
     if (setupCheck.status !== 'ready') return;
-    api.getViewsConfig()
-      .then(applyViews)
-      .catch(() => { setViewsConfig(FALLBACK_VIEWS); });
-  }, [api, setupCheck, applyViews]);
+    void loadViews();
+  }, [setupCheck, loadViews]);
+
+  const views = viewsState.status === 'loaded' ? viewsState.config : FALLBACK_VIEWS;
 
   useEffect(() => {
     if (isDark) {
@@ -850,7 +866,7 @@ function AppShell(): React.JSX.Element {
     confirmLeave(() => {
       api.cancelPendingQueries().catch(() => undefined);
       setSettingsTab(null);
-      const firstId = viewsConfig?.views[0]?.id ?? OVERVIEW_SEED_VIEW.id;
+      const firstId = views.views[0]?.id ?? OVERVIEW_SEED_VIEW.id;
       const initialFilter: FilterMap = { [asDimensionId(dimension)]: [asTagValue(entity)] };
       setView({ page: 'custom', viewId: firstId, initialFilter });
     });
@@ -883,8 +899,7 @@ function AppShell(): React.JSX.Element {
     setSetupCheck({ status: 'needs-setup' });
   }
 
-  const views = viewsConfig ?? FALLBACK_VIEWS;
-  const viewsReady = viewsConfig !== null;
+  const viewsReady = viewsState.status !== 'loading';
   const customNav: { id: string; name: string }[] = views.views.map(v => ({ id: v.id, name: v.name }));
 
   const paletteItems: NavItem[] = useMemo(() => [
@@ -999,7 +1014,7 @@ function AppShell(): React.JSX.Element {
       case 'dimensions':
         return <DimensionsView />;
       case 'dashboards':
-        return <ViewsEditor onConfigPersisted={setViewsConfig} />;
+        return <ViewsEditor onConfigPersisted={(config) => { setViewsState({ status: 'loaded', config }); }} />;
       case 'share':
         return <ShareTab />;
       case 'import':
@@ -1246,9 +1261,16 @@ function AppShell(): React.JSX.Element {
             {view.page === 'custom' && viewsReady && (() => {
               const spec = findViewSpec(view.viewId) ?? OVERVIEW_SEED_VIEW;
               return (
-                <Profiler id={`custom:${view.viewId}`} onRender={onPerfRender}>
-                  <CustomView spec={spec} headerSubtitle="Cloud spending visibility" initialFilter={view.initialFilter} rollupStatus={rollupStatus} />
-                </Profiler>
+                <>
+                  {viewsState.status === 'failed' && (
+                    <div className="px-6 pt-6">
+                      <ViewsLoadError message={viewsState.message} onRetry={loadViews} showOpenFolder />
+                    </div>
+                  )}
+                  <Profiler id={`custom:${view.viewId}`} onRender={onPerfRender}>
+                    <CustomView spec={spec} headerSubtitle="Cloud spending visibility" initialFilter={view.initialFilter} rollupStatus={rollupStatus} />
+                  </Profiler>
+                </>
               );
             })()}
             {view.page === 'trends' && (

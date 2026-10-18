@@ -1,4 +1,5 @@
 import { app as electronApp } from 'electron';
+import { basename } from 'node:path';
 import {
   buildConfigBundle,
   bundleConfigWithProfile,
@@ -12,6 +13,7 @@ import {
   viewsConfigToYaml,
 } from '@costgoblin/core';
 import type { BundleSectionId, ConfigBundle, ConfigBundleSections, ProviderConfig } from '@costgoblin/core';
+import { isEnoent } from '../fs-errors.js';
 import type { AppContext } from './context.js';
 
 /** The five YAML config file paths of one workspace. `IpcContext` satisfies
@@ -25,15 +27,31 @@ export interface ConfigFilePaths {
   readonly costScopePath: string;
 }
 
-/** Assemble a bundle from whatever org config exists locally. Config and
- *  dimensions are mandatory; the optional files are skipped when missing or
- *  unreadable instead of failing the whole export. */
+/** An optional section that is left out only when its file doesn't exist
+ *  (ENOENT). A file that exists but doesn't load (a YAML or validation error,
+ *  EACCES) fails the bundle, naming the file, rather than shipping one
+ *  silently missing that section. */
+async function optionalSection<T>(path: string, load: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await load();
+  } catch (err) {
+    if (isEnoent(err)) return undefined;
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(`Couldn't load ${basename(path)} for the configuration bundle: ${detail}`, { cause: err });
+  }
+}
+
+/** Assemble a bundle from the org config on disk. Config and dimensions are
+ *  mandatory. Org tree and cost scope are skipped when missing or
+ *  unreadable. Views are skipped only when views.yaml is missing: a broken
+ *  one is left on disk as it is (views:get-config never seeds over it), so
+ *  skipping it would drop the dashboards from every bundle until it's fixed. */
 export async function buildCurrentBundle(app: AppContext): Promise<ConfigBundle> {
   const config = await app.getConfig();
   const dimensions = await app.getDimensions();
   const orgTree = await app.getOrgTreeConfig().catch(() => undefined);
   const costScope = await app.getCostScope().catch(() => undefined);
-  const views = await app.getViews().catch(() => undefined);
+  const views = await optionalSection(app.ctx.viewsPath, app.getViews);
   return buildConfigBundle({ config, dimensions, orgTree, costScope, views, appVersion: electronApp.getVersion() });
 }
 

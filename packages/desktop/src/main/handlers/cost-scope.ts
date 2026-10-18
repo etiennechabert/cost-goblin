@@ -25,6 +25,7 @@ import type {
   DimensionsConfig,
 } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
+import { isEnoent } from '../fs-errors.js';
 import type { AppContext } from './context.js';
 import { tagSelectItems, tagValuesById, toNum } from './query-utils.js';
 import { costScopePreviewWindow } from './query-windows.js';
@@ -83,12 +84,6 @@ function assertRuleDimensionsExist(config: CostScopeConfig, dimensions: Dimensio
       }
     }
   }
-}
-
-function isEnoent(err: unknown): boolean {
-  if (typeof err !== 'object' || err === null) return false;
-  if (!('code' in err)) return false;
-  return err.code === 'ENOENT';
 }
 
 export function registerCostScopeHandlers(app: AppContext): void {

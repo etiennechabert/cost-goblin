@@ -4,21 +4,13 @@ import { stringify } from 'yaml';
 import { dimensionIdSet, SEED_VIEWS_CONFIG, validateViews, viewsConfigToYaml } from '@costgoblin/core';
 import type { ViewsConfig } from '@costgoblin/core';
 import type { AppContext } from './context.js';
+import { loadOrSeedViews } from './views-load.js';
 
 export function registerViewsHandlers(app: AppContext): void {
   const { ctx, getViews, getQueryDimensions, invalidateViews } = app;
 
-  ipcMain.handle('views:get-config', async (): Promise<ViewsConfig> => {
-    try {
-      return await getViews();
-    } catch {
-      // Missing / unreadable file → seed it lazily so first-run users get a
-      // working dashboard without going through setup again.
-      await writeFile(ctx.viewsPath, stringify(viewsConfigToYaml(SEED_VIEWS_CONFIG)));
-      invalidateViews();
-      return SEED_VIEWS_CONFIG;
-    }
-  });
+  ipcMain.handle('views:get-config', (): Promise<ViewsConfig> =>
+    loadOrSeedViews({ viewsPath: ctx.viewsPath, getViews, invalidateViews }));
 
   ipcMain.handle('views:save-config', async (_event, raw: unknown): Promise<void> => {
     // Live dimension ids exempt current `tag_user_*`-shaped dimensions from

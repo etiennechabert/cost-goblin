@@ -12,7 +12,7 @@ Covers `packages/core/src/sync/`, `packages/core/src/config/`, `packages/core/sr
 ## Sync state
 
 - Only `saveEtags` and `pruneEtagPeriod` write etag sidecars, through `updateEtagSidecar` (temporary file, rename, re-read). An etag means "installed": it is written last, only for files that really synced, and a request with no usable file throws.
-- Reading sync state, only ENOENT means "absent". Other errors become `LocalSyncStateError`, whose message must not contain a path. Never turn a failed read into `{}`.
+- Reading sync state or a config file, only ENOENT means "absent". Other sync-state errors become `LocalSyncStateError`, whose message must not contain a path. Never turn a failed read into `{}` or a seeded default.
 - Every `S3Client` starts from `s3ClientConfig`. GCP listing and download must act as the same principal. gcloud runs one rsync at a time with capped parallelism.
 - The manual and automatic sync completion paths (`packages/desktop/src/main/handlers/sync.ts`, `packages/desktop/src/main/handlers/auto-sync.ts`) repeat the post-sync work, so a change goes into both. `SYNC_ALREADY_RUNNING` and "Download cancelled" are compared by string across the worker boundary: never reword them.
 - Credential errors are classified by substring. New error text must not contain a classifier marker such as "credential", and reworded messages must keep theirs ("AWS credentials", "aws sso login") or the sign-in button disappears.

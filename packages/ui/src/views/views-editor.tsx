@@ -12,6 +12,7 @@ import { useQuery } from '../hooks/use-query.js';
 import { CustomView } from './custom-view.js';
 import { WidgetInspector } from '../components/widget-inspector.js';
 import { ViewYamlModal } from '../components/view-yaml-modal.js';
+import { ViewsLoadError } from '../components/views-load-error.js';
 import { WIDGET_CATALOG } from '../widgets/registry.js';
 import { getDimensionId } from '../lib/dimensions.js';
 
@@ -51,6 +52,14 @@ interface EditorState {
   readonly dirty: boolean;
 }
 
+/** Reading views.yaml. Nothing can be edited or saved until it has loaded:
+ *  the editor starts from an empty config, and saving that (plus a new view,
+ *  an import or the built-ins) would replace every view in the file. */
+type LoadState =
+  | { readonly status: 'loading' }
+  | { readonly status: 'loaded' }
+  | { readonly status: 'failed'; readonly message: string };
+
 interface ViewsEditorProps {
   /** Called whenever the persisted config changes (save / reset) so the host
    *  app can refresh its left nav without waiting for a restart. */
@@ -67,6 +76,10 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
     selectedViewId: null,
     dirty: false,
   });
+  const [load, setLoad] = useState<LoadState>({ status: 'loading' });
+  // Bumped by Retry to read views.yaml again.
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const editable = load.status === 'loaded';
   const [saving, setSaving] = useState(false);
   useUnsavedChanges(state.dirty, 'Views');
   const [error, setError] = useState<string | null>(null);
@@ -85,12 +98,18 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
         selectedViewId: cfg.views[0]?.id ?? null,
         dirty: false,
       });
+      setLoad({ status: 'loaded' });
     }).catch((err: unknown) => {
       if (cancelled) return;
-      setError(err instanceof Error ? err.message : String(err));
+      setLoad({ status: 'failed', message: err instanceof Error ? err.message : String(err) });
     });
     return () => { cancelled = true; };
-  }, [api]);
+  }, [api, loadAttempt]);
+
+  function retryLoad(): void {
+    setLoad({ status: 'loading' });
+    setLoadAttempt(n => n + 1);
+  }
 
   const selectedView = state.config.views.find(v => v.id === state.selectedViewId) ?? null;
   // Defer the spec passed to the preview so typing in the title input doesn't
@@ -199,6 +218,7 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
   }
 
   async function handleSave(): Promise<void> {
+    if (!editable) return;
     setSaving(true);
     setError(null);
     try {
@@ -213,6 +233,7 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
   }
 
   async function handleReset(): Promise<void> {
+    if (!editable) return;
     if (!globalThis.confirm('Reset built-in views to defaults? Your custom views will be kept (delete them manually to fully reset).')) return;
     // Client-side merge: built-ins from seed replace any current same-id built-in,
     // custom (non-builtIn) views in the editor are preserved in place. Missing
@@ -265,7 +286,7 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
           <button
             type="button"
             onClick={() => { setModal({ mode: 'import' }); }}
-            disabled={saving}
+            disabled={saving || !editable}
             className="px-3 py-1.5 text-sm rounded-md border border-border text-text-secondary hover:text-text-primary disabled:opacity-50"
           >
             Import
@@ -281,7 +302,7 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
           <button
             type="button"
             onClick={() => { handleReset().catch(() => undefined); }}
-            disabled={saving}
+            disabled={saving || !editable}
             className="px-3 py-1.5 text-sm rounded-md border border-border text-text-secondary hover:text-text-primary disabled:opacity-50"
           >
             Reset built-ins
@@ -289,7 +310,7 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
           <button
             type="button"
             onClick={() => { handleSave().catch(() => undefined); }}
-            disabled={saving || !state.dirty}
+            disabled={saving || !state.dirty || !editable}
             className="px-4 py-1.5 text-sm rounded-md bg-accent text-bg-primary font-medium hover:opacity-90 disabled:opacity-40"
           >
             {(() => { if (saving) { return 'Saving…'; } return state.dirty ? 'Save changes' : 'Saved'; })()}
@@ -297,6 +318,7 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
         </div>
       </div>
 
+      {load.status === 'failed' && <ViewsLoadError message={load.message} onRetry={retryLoad} />}
       {error !== null && (
         <div className="rounded-lg border border-negative/50 bg-negative-muted px-3 py-2 text-sm text-negative">
           {error}
@@ -360,7 +382,8 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
           <button
             type="button"
             onClick={addView}
-            className="mt-1 px-2 py-1.5 text-sm rounded text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/30 text-left"
+            disabled={!editable}
+            className="mt-1 px-2 py-1.5 text-sm rounded text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/30 text-left disabled:opacity-50 disabled:pointer-events-none"
           >
             + New view
           </button>
