@@ -140,11 +140,14 @@ function compareCodepoint(a: string, b: string): number {
  *  Array order is preserved (dimension/order arrays are semantically ordered).
  *  Without this, saving a dim editor — which rebuilds the dim object key-by-key
  *  in a different order than the on-disk baseline — would flip `dirty` true on a
- *  no-op save and offer a needless rollup rebuild. */
+ *  no-op save and offer a needless rollup rebuild. A field set to undefined
+ *  (how the tag editor writes one it cleared) counts as absent, as it does in
+ *  JSON and in the saved YAML. */
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
   if (isPlainRecord(value)) {
     const entries = Object.keys(value)
+      .filter(k => value[k] !== undefined)
       .sort(compareCodepoint)
       .map(k => `${JSON.stringify(k)}:${stableStringify(value[k])}`)
       .join(',');
@@ -746,6 +749,25 @@ interface EditingTag {
  *  separator wherever we segment it. */
 const OU_PATH_SEPARATOR = ' / ';
 
+/** The OU Path segment field's index (1-based, negative counts from the end),
+ *  or undefined when it keeps the whole path: blank, 0 or not a number. */
+function parsePathSegIndex(text: string): number | undefined {
+  const index = Number.parseInt(text, 10);
+  return Number.isInteger(index) && index !== 0 ? index : undefined;
+}
+
+/** The editor only shows a segment field for the OU Path source, so that
+ *  segment is the editor's to write. A segment on any other source comes from
+ *  the config file and is kept, unless the tag is moving off the OU Path,
+ *  whose ` / ` split only fits the path. */
+function editedPathSegment(editing: EditingTag, original: TagDimension | undefined): TagDimension['pathSegment'] {
+  if (editing.fallbackTag === OU_PATH_SOURCE_KEY) {
+    const index = parsePathSegIndex(editing.pathSegIndex);
+    return index === undefined ? undefined : { separator: OU_PATH_SEPARATOR, index };
+  }
+  return original?.accountTagFallback === OU_PATH_SOURCE_KEY ? undefined : original?.pathSegment;
+}
+
 function aliasesToText(aliases: Readonly<Record<string, readonly string[]>> | undefined): string {
   if (aliases === undefined) return '';
   return Object.entries(aliases)
@@ -788,6 +810,38 @@ function sortAliasText(text: string): string {
     .join('\n');
 }
 
+function nonBlankLines(text: string): string[] {
+  return text.split('\n').filter(l => l.trim().length > 0);
+}
+
+/** The rule rows while the rules are being typed in: each shows exactly what
+ *  was typed, and the rows keep the order and keys they had, so a rule being
+ *  renamed neither moves nor remounts under the caret (or under the pointer,
+ *  on its way to the rule's remove button). */
+interface PinnedAliasRows {
+  readonly lines: readonly string[];
+  readonly keys: readonly string[];
+}
+
+/** Where `line` lands once `rows` are shown tidied, or null if it's dropped. */
+function sortedRowIndex(rows: readonly string[], line: string | undefined): number | null {
+  if (line === undefined) return null;
+  const to = nonBlankLines(sortAliasText(rows.join('\n'))).indexOf(sortAliasText(line));
+  return to >= 0 ? to : null;
+}
+
+/** React keys for the rule rows: the rule's name, numbered when two rows share
+ *  one. A name can't contain ':', so `name:n` never equals another row's key. */
+function aliasRowKeys(lines: readonly string[]): string[] {
+  const seen = new Map<string, number>();
+  return lines.map(line => {
+    const name = line.split(':')[0] ?? '';
+    const n = seen.get(name) ?? 0;
+    seen.set(name, n + 1);
+    return `${name}:${String(n)}`;
+  });
+}
+
 function AliasRulesEditor({ value, savedValue, activeLine, onChange, onLineFocus }: Readonly<{
   value: string;
   savedValue: string;
@@ -796,22 +850,46 @@ function AliasRulesEditor({ value, savedValue, activeLine, onChange, onLineFocus
   onLineFocus: (lineIdx: number | null) => void;
 }>): React.JSX.Element {
   const newLineRef = useRef<HTMLInputElement>(null);
-  const sorted = sortAliasText(value);
-  const savedLines = new Set(sortAliasText(savedValue).split('\n').filter(l => l.trim().length > 0));
-  const lines = sorted.split('\n').filter(l => l.trim().length > 0);
+  // The rows show `value` tidied by sortAliasText, except while the rules are
+  // typed in: tidying on every keystroke ate the ", " before the next alias
+  // ("pay, PAY" came out "payPAY") and moved a rule being renamed. They stay
+  // pinned until focus leaves the rules or Enter ends the edit, so nothing
+  // re-sorts while the user moves between rules. A pin that no longer matches
+  // `value` was overtaken by a change made elsewhere.
+  const [pin, setPin] = useState<PinnedAliasRows | null>(null);
+  const pinned = pin !== null && pin.lines.join('\n') === value ? pin : null;
+  const sorted = nonBlankLines(sortAliasText(value));
+  const lines = pinned?.lines ?? sorted;
+  const keys = pinned?.keys ?? aliasRowKeys(sorted);
+  const savedLines = new Set(nonBlankLines(sortAliasText(savedValue)));
+
+  /** Lets the rows sort again, moving the highlight (the rule a clicked preview
+   *  value is added to) along with its rule. */
+  function finishEdit(): void {
+    setPin(null);
+    if (pinned !== null && activeLine !== null) onLineFocus(sortedRowIndex(pinned.lines, pinned.lines[activeLine]));
+  }
 
   return (
-    <div className="rounded border border-border bg-bg-primary overflow-hidden">
+    <div
+      className="rounded border border-border bg-bg-primary overflow-hidden"
+      onBlur={e => {
+        if (e.relatedTarget !== null && e.currentTarget.contains(e.relatedTarget)) return;
+        // Switching apps (to copy an alias, say) blurs the focused input but
+        // leaves it the focused element: the edit isn't over yet.
+        if (e.target.ownerDocument.activeElement === e.target) return;
+        finishEdit();
+      }}
+    >
       {lines.map((line, i) => {
         const isNew = !savedLines.has(line);
         const isActive = activeLine === i;
         let borderStyle = 'border-l-transparent';
         if (isActive) borderStyle = 'border-l-accent bg-accent/10';
         else if (isNew) borderStyle = 'border-l-warning bg-warning/5';
-        const lineKey = line.split(':')[0] ?? `line-${String(i)}`;
         return (
           <div
-            key={lineKey}
+            key={keys[i] ?? String(i)}
             className={`flex items-center gap-1 px-3 py-1 text-[11px] font-mono border-l-2 ${borderStyle} ${i > 0 ? 'border-t border-t-border/30' : ''}`}
           >
             <input
@@ -821,6 +899,7 @@ function AliasRulesEditor({ value, savedValue, activeLine, onChange, onLineFocus
               onKeyDown={e => {
                 if (e.key === 'Enter') {
                   e.preventDefault();
+                  setPin(null);
                   onLineFocus(null);
                   newLineRef.current?.focus();
                 }
@@ -828,6 +907,7 @@ function AliasRulesEditor({ value, savedValue, activeLine, onChange, onLineFocus
               onChange={e => {
                 const newLines = [...lines];
                 newLines[i] = e.target.value;
+                setPin({ lines: newLines, keys });
                 onChange(newLines.join('\n'));
               }}
               className="flex-1 bg-transparent text-text-primary outline-none"
@@ -835,7 +915,10 @@ function AliasRulesEditor({ value, savedValue, activeLine, onChange, onLineFocus
             <button
               type="button"
               onClick={() => {
-                onChange(lines.filter((_, j) => j !== i).join('\n'));
+                const rest = lines.filter((_, j) => j !== i);
+                setPin(null);
+                onChange(rest.join('\n'));
+                if (activeLine !== null) onLineFocus(activeLine === i ? null : sortedRowIndex(rest, lines[activeLine]));
               }}
               className="text-text-muted hover:text-negative text-xs px-1 opacity-0 hover:opacity-100 transition-opacity"
               aria-label="Remove rule"
@@ -1077,13 +1160,12 @@ function TagEditor({ tag, onSave, onCancel, onRemove, idConflict, availableTags,
   const fallbackValues = (() => {
     if (state.fallbackTag === undefined || state.fallbackTag.length === 0) return [];
     const usesOuPath = state.fallbackTag === OU_PATH_SOURCE_KEY;
-    const parsedSegIndex = Number.parseInt(state.pathSegIndex, 10);
-    const segActive = usesOuPath && Number.isInteger(parsedSegIndex) && parsedSegIndex !== 0;
+    const segIndex = usesOuPath ? parsePathSegIndex(state.pathSegIndex) : undefined;
     const counts = new Map<string, number>();
     for (const acct of orgAccounts) {
       const raw = usesOuPath ? acct.ouPath : acct.tags[state.fallbackTag];
       if (raw === undefined || raw.length === 0) continue;
-      const val = segActive ? takeSegment(raw, OU_PATH_SEPARATOR, parsedSegIndex) : raw;
+      const val = segIndex === undefined ? raw : takeSegment(raw, OU_PATH_SEPARATOR, segIndex);
       if (val.length === 0) continue;
       counts.set(val, (counts.get(val) ?? 0) + 1);
     }
@@ -1287,7 +1369,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, idConflict, availableTags,
         aliasText={state.aliases}
         onBadgeClick={(value) => {
           setState(s => {
-            const lines = sortAliasText(s.aliases).split('\n').filter(l => l.trim().length > 0);
+            const lines = nonBlankLines(sortAliasText(s.aliases));
 
             // If clicked value is already a canonical key, just focus that line
             const existingIdx = lines.findIndex(l => {
@@ -1311,7 +1393,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, idConflict, availableTags,
             const base = s.aliases.trimEnd();
             const prefix = base.length > 0 ? base + '\n' : '';
             const newAliases = prefix + value + ':';
-            const sorted = sortAliasText(newAliases).split('\n').filter(l => l.trim().length > 0);
+            const sorted = nonBlankLines(sortAliasText(newAliases));
             const newIdx = sorted.findIndex(l => l.startsWith(value + ':'));
             if (newIdx >= 0) setActiveAliasLine(newIdx);
             return { ...s, aliases: newAliases };
@@ -2049,30 +2131,32 @@ export function DimensionsView(): React.JSX.Element {
     .map(t => t.key)
     .filter(k => !mappedTagNames.has(k) && !hiddenResourceCols.has(k));
 
-  function editingToTagDimension(editing: EditingTag): TagDimension {
-    const tagName = editing.tagName.length > 0 ? editing.tagName : undefined;
-    const base: { label: string; tagName?: string } = { label: editing.label, ...(tagName === undefined ? {} : { tagName }) };
-    const concept = editing.concept.length > 0 ? editing.concept as ConceptType : undefined;
-    const normalize = editing.normalize.length > 0 ? editing.normalize as NormalizationRule : undefined;
-    const aliases = textToAliases(editing.aliases);
-    const accountTagFallback = editing.fallbackTag !== undefined && editing.fallbackTag.length > 0 ? editing.fallbackTag : undefined;
-    const missingValueTemplate = editing.missingValueTemplate.length > 0 ? editing.missingValueTemplate : undefined;
-    const usesOuPath = editing.fallbackTag === OU_PATH_SOURCE_KEY;
-    const parsedIndex = Number.parseInt(editing.pathSegIndex, 10);
-    const pathSegment = usesOuPath && Number.isInteger(parsedIndex) && parsedIndex !== 0
-      ? { separator: OU_PATH_SEPARATOR, index: parsedIndex }
-      : undefined;
-    const defaultFilterValues = editing.defaultFilterValues.length > 0
-      ? [...editing.defaultFilterValues]
-      : undefined;
-    return { ...base, concept, normalize, aliases, accountTagFallback, missingValueTemplate, pathSegment, defaultFilterValues };
+  /** `original` (the tag being edited; undefined for a new one) with the fields
+   *  the editor shows replaced by the editor's. The others — a description, a
+   *  separator, a path segment on a source other than the OU Path — are kept
+   *  as the config file has them: rebuilding the tag from the editor alone
+   *  dropped them on every save. A field the editor cleared is written as
+   *  undefined, which every reader treats as absent. */
+  function editingToTagDimension(editing: EditingTag, original: TagDimension | undefined): TagDimension {
+    return {
+      ...original,
+      label: editing.label,
+      tagName: editing.tagName.length > 0 ? editing.tagName : undefined,
+      concept: CONCEPTS.find(c => c.value === editing.concept)?.value,
+      normalize: NORMALIZE_RULES.find(r => r.value === editing.normalize)?.value,
+      aliases: textToAliases(editing.aliases),
+      accountTagFallback: editing.fallbackTag !== undefined && editing.fallbackTag.length > 0 ? editing.fallbackTag : undefined,
+      missingValueTemplate: editing.missingValueTemplate.length > 0 ? editing.missingValueTemplate : undefined,
+      pathSegment: editedPathSegment(editing, original),
+      defaultFilterValues: editing.defaultFilterValues.length > 0 ? [...editing.defaultFilterValues] : undefined,
+    };
   }
 
   /** Refuses a tag whose dimension id another tag (other than the one at
    *  `skipIdx`, the tag being edited) already has. */
   function tagIdConflict(editing: EditingTag, skipIdx: number | null): string | null {
     if (config === null) return null;
-    const candidate = editingToTagDimension(editing);
+    const candidate = editingToTagDimension(editing, skipIdx === null ? undefined : config.tags[skipIdx]);
     if (!hasTagSource(candidate)) return null;
     const id = tagDimColumn(candidate);
     const owner = config.tags.find((t, i) => i !== skipIdx && hasTagSource(t) && tagDimColumn(t) === id);
@@ -2082,14 +2166,14 @@ export function DimensionsView(): React.JSX.Element {
   function handleSaveTag(idx: number, editing: EditingTag): void {
     if (config === null || tagIdConflict(editing, idx) !== null) return;
     const tags = [...config.tags];
-    tags[idx] = editingToTagDimension(editing);
+    tags[idx] = editingToTagDimension(editing, config.tags[idx]);
     setConfig({ ...config, tags, order: reconcileOrder({ ...config, tags }) });
     setEditingIdx(null);
   }
 
   function handleAddTag(editing: EditingTag): void {
     if (config === null || tagIdConflict(editing, null) !== null) return;
-    const newTag = editingToTagDimension(editing);
+    const newTag = editingToTagDimension(editing, undefined);
     const tags = [...config.tags, newTag];
     setConfig({ ...config, tags, order: reconcileOrder({ ...config, tags }) });
     setAddingNew(false);
