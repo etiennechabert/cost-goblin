@@ -37,6 +37,11 @@ function isAnchor(s: WaterfallStep): boolean {
   return s.kind === 'start' || s.kind === 'end';
 }
 
+/** The bar's accessible name, e.g. "EC2: +$1.5k" or "Start: $9.3k". */
+function stepLabel(s: WaterfallStep): string {
+  return isAnchor(s) ? `${s.name}: ${formatDollars(s.end)}` : `${s.name}: ${signedDollars(s.delta)}`;
+}
+
 function stepTooltip(s: WaterfallStep, key: string): ChartTooltipContent {
   if (isAnchor(s)) {
     return { key, title: s.kind === 'start' ? 'Start · previous period' : 'End · this period', rows: [{ label: 'Total', value: formatDollars(s.end) }] };
@@ -157,8 +162,8 @@ function WaterfallSvg({
                 />
               )}
               {anchor && truncated
-                ? <path d={cutBarPath(cx - barW / 2, barW, top, bottom)} fill={fillFor(s.kind)} data-cut="true" />
-                : <rect x={cx - barW / 2} y={top} width={barW} height={h} rx={2} fill={fillFor(s.kind)} {...(anchor ? { 'data-anchor': s.kind } : {})} />}
+                ? <path d={cutBarPath(cx - barW / 2, barW, top, bottom)} fill={fillFor(s.kind)} data-cut="true" aria-label={stepLabel(s)} />
+                : <rect x={cx - barW / 2} y={top} width={barW} height={h} rx={2} fill={fillFor(s.kind)} aria-label={stepLabel(s)} {...(anchor ? { 'data-anchor': s.kind } : {})} />}
               {showValues && valueLabel !== null && (
                 <text x={cx} y={top - 5} textAnchor="middle" fontSize={10} className="tabular-nums" fill="var(--color-text-secondary)">
                   {valueLabel}

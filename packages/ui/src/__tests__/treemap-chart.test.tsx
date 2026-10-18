@@ -26,9 +26,9 @@ async function cells(container: HTMLElement, count: number): Promise<SVGElement[
   return rectsIn(container);
 }
 
-/** The cell whose native tooltip starts with `name`. */
+/** The cell whose accessible name starts with `name`. */
 function cell(rects: readonly SVGElement[], name: string): SVGElement {
-  const found = rects.find(r => r.querySelector('title')?.textContent.startsWith(`${name} — `) === true);
+  const found = rects.find(r => r.getAttribute('aria-label')?.startsWith(`${name} — `) === true);
   if (found === undefined) throw new Error(`no cell for ${name}`);
   return found;
 }
@@ -50,7 +50,7 @@ describe('TreemapChart', () => {
     // Big enough cells carry their name and cost.
     expect(screen.getByText('EC2')).toBeDefined();
     expect(screen.getByText('$500.00')).toBeDefined();
-    expect(cell(rects, 'S3').querySelector('title')?.textContent).toBe('S3 — $300.00');
+    expect(cell(rects, 'S3').getAttribute('aria-label')).toBe('S3 — $300.00');
   });
 
   it('reports hover and click, and dims around an external hover', async () => {
@@ -115,10 +115,10 @@ describe('TreemapChart', () => {
     const { container } = renderTreemap(<TreemapChart data={CELLS} previousCosts={previous} />);
     const rects = await cells(container, 3);
 
-    expect(cell(rects, 'EC2').querySelector('title')?.textContent).toBe('EC2 — $500.00 (↑25.0%)');
-    expect(cell(rects, 'S3').querySelector('title')?.textContent).toBe('S3 — $300.00 (↓50.0%)');
+    expect(cell(rects, 'EC2').getAttribute('aria-label')).toBe('EC2 — $500.00 (↑25.0%)');
+    expect(cell(rects, 'S3').getAttribute('aria-label')).toBe('S3 — $300.00 (↓50.0%)');
     // No ratio against a zero previous cost.
-    expect(cell(rects, 'RDS').querySelector('title')?.textContent).toBe('RDS — $200.00');
+    expect(cell(rects, 'RDS').getAttribute('aria-label')).toBe('RDS — $200.00');
 
     const up = [...container.querySelectorAll('tspan')].find(t => t.textContent === ' ↑25.0%');
     const down = [...container.querySelectorAll('tspan')].find(t => t.textContent === ' ↓50.0%');
@@ -146,7 +146,7 @@ describe('TreemapChart', () => {
     expect(screen.getByText('Big')).toBeDefined();
     expect(screen.queryByText('Tiny')).toBeNull();
     // It is still in the map, with its tooltip.
-    expect(cell(rects, 'Tiny').querySelector('title')?.textContent).toBe('Tiny — $1.00');
+    expect(cell(rects, 'Tiny').getAttribute('aria-label')).toBe('Tiny — $1.00');
   });
 
   it('says so when there is nothing to draw', async () => {

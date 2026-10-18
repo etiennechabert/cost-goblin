@@ -477,9 +477,10 @@ describe('ViewsEditor — Reset built-ins', () => {
     await waitFor(() => { expect(saveSpy).toHaveBeenCalledOnce(); });
 
     const saved = lastSaved(saveSpy);
-    // Missing seed built-ins are prepended; the edited built-in is replaced
-    // in place by its seed; custom views stay where they were.
-    expect(saved.views.map(v => v.id)).toEqual([...seedIdsExceptOverview, 'overview', 'team', 'other']);
+    // The edited built-in is replaced in place by its seed, missing seed
+    // built-ins go where the seed order puts them (after the overview), and
+    // custom views stay where they were.
+    expect(saved.views.map(v => v.id)).toEqual(['overview', ...seedIdsExceptOverview, 'team', 'other']);
     expect(savedView(saved, 'overview')).toEqual(OVERVIEW_SEED_VIEW);
     expect(savedView(saved, 'team')).toEqual(TEAM);
     expect(onConfigPersisted).toHaveBeenCalledWith(saved);

@@ -78,6 +78,7 @@ function HeatmapInner({
         fill={colorScale(c.cost)}
         rx={2}
         data-cell={key}
+        aria-label={`${c.group} • ${c.date} — ${formatDollars(c.cost)}`}
         onClick={() => { onCellClick?.(c.group, c.date); }}
         onMouseMove={(e) => {
           show(e, { key, title: c.group, rows: [{ label: formatShortDate(c.date), value: formatDollars(c.cost) }] });

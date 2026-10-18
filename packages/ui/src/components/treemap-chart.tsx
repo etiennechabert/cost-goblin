@@ -23,6 +23,14 @@ interface TreemapChartProps {
   readonly previousCosts?: ReadonlyMap<string, number> | undefined;
 }
 
+/** The cell's accessible name: name, cost and the change, e.g. "S3 — $250.00 (↑25.0%)". */
+function cellLabel(name: string, cost: number, previous: number | undefined): string {
+  const base = `${name} — ${formatDollars(cost)}`;
+  if (previous === undefined || previous <= 0) return base;
+  const pct = ((cost - previous) / previous) * 100;
+  return `${base} (${pct >= 0 ? '↑' : '↓'}${Math.abs(pct).toFixed(1)}%)`;
+}
+
 function cellTooltip(name: string, cost: number, total: number, previous: number | undefined): ChartTooltipContent {
   return {
     key: name,
@@ -106,6 +114,7 @@ function TreemapInner({
                       strokeWidth={isHovered ? 2 : 1.5}
                       style={{ cursor: onCellClick === undefined ? 'default' : 'pointer', transition: 'fill-opacity 0.15s, stroke 0.15s' }}
                       data-cell={name}
+                      aria-label={cellLabel(name, cost, previousCosts?.get(name))}
                       onClick={() => { onCellClick?.(name); }}
                       onMouseEnter={() => { onCellHover?.(name); }}
                       onMouseMove={(e) => { tooltip.show(e, cellTooltip(name, cost, total, previousCosts?.get(name))); }}

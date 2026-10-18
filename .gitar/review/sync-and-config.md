@@ -20,10 +20,10 @@ Covers `packages/core/src/sync/`, `packages/core/src/config/`, `packages/core/sr
 
 ## Config and state files
 
-- Users' YAML and shared bundles must keep loading. New fields are optional, and a bare `key:` (null) reads as absent. A rename reads both keys and writes the new one (`packages/core/src/config/legacy-renames.ts`). A rule that could reject files already on disk is lenient on load and strict on save.
+- Users' YAML and shared bundles must keep loading. New fields are optional; a bare `key:` (null) is absent. A rename reads both keys and writes the new one (`packages/core/src/config/legacy-renames.ts`). A rule that could reject files already on disk is lenient on load and strict on save.
 - A new field needs its validator, its type and its serializer, or the next save strips it. Serializers omit absent optional fields, which keeps bundle fingerprints stable. The `costgoblin.yaml` writers keep unknown keys and validate before writing.
 - Read-modify-writes of shared JSON go through `updatePrefsFile` (`packages/desktop/src/main/handlers/prefs-file.ts`), and each writer sends only its own fields.
-- Only etag sidecars, the rollup manifest, the boot-time app state and the views migration use temp-file-plus-rename. Ask for it on new state whose truncation would be costly, or an unprompted config rewrite.
+- Only etag sidecars, the rollup manifest, boot-time app state and the views migration use temp-file-plus-rename. Ask for it where truncation is costly, e.g. an unprompted config rewrite.
 - Migrations run synchronously at boot, before any worker opens a file. They are idempotent and resumable, and they touch nothing when both the old and new layout exist.
 
 ## Time

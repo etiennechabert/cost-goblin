@@ -99,6 +99,7 @@ function ParetoSvg({
               height={h}
               fill="var(--color-text-secondary)"
               opacity={hovered ? 0.8 : 0.45}
+              aria-label={`${p.name}: ${formatDollars(p.cost)} (${(p.cumPct * 100).toFixed(0)}% cumulative)`}
             />
           );
         })}

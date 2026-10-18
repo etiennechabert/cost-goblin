@@ -198,14 +198,15 @@ describe('App shell — header actions', () => {
     expect(headerButton('Trends').getAttribute('aria-current')).toBeNull();
   });
 
-  it('falls back to the first dashboard when the saved default no longer exists', async () => {
+  it('falls back to the Cost Overview when the saved default no longer exists', async () => {
     const api = new AppApi();
     const asCostApi: CostApi = api;
     vi.spyOn(asCostApi, 'getUIPreferences').mockResolvedValue({ theme: 'dark', palette: 'standard', defaultViewId: 'deleted-view' });
     renderApp(api);
 
     expect(await screen.findByRole('heading', { name: 'Cost Overview' })).toBeDefined();
-    expect(headerButton('Home').getAttribute('title')).toBe('Go to default dashboard');
+    // A dashboard that no longer exists counts as the overview for Home too.
+    expect(headerButton('Home').getAttribute('title')).toBe('Go to Cost Overview');
   });
 
   it('falls back to the seed dashboard when none are configured', async () => {

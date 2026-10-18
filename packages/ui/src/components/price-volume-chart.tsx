@@ -105,9 +105,25 @@ function PriceVolumeSvg({
                 <rect x={0} y={i * ROW_H + 2} width={width} height={ROW_H} rx={4} fill="var(--color-bg-tertiary)" opacity={0.45} />
               )}
               <text x={0} y={cy + 3} fontSize={11} fill="var(--color-text-secondary)">{truncate(r.name, 16)}</text>
-              <rect x={Math.min(volX0, volX1)} y={barY} width={Math.max(Math.abs(volX1 - volX0), 0.5)} height={14} fill={volFill} rx={1.5} />
+              <rect
+                x={Math.min(volX0, volX1)}
+                y={barY}
+                width={Math.max(Math.abs(volX1 - volX0), 0.5)}
+                height={14}
+                fill={volFill}
+                rx={1.5}
+                aria-label={`${r.name} — Volume ${signedDollars(r.volumeEffect)}${r.decomposable ? '' : ' (mixed)'}`}
+              />
               {r.decomposable && (
-                <rect x={Math.min(volX1, rateX1)} y={barY} width={Math.max(Math.abs(rateX1 - volX1), 0.5)} height={14} fill={rateColor} rx={1.5} />
+                <rect
+                  x={Math.min(volX1, rateX1)}
+                  y={barY}
+                  width={Math.max(Math.abs(rateX1 - volX1), 0.5)}
+                  height={14}
+                  fill={rateColor}
+                  rx={1.5}
+                  aria-label={`${r.name} — Rate ${signedDollars(r.rateEffect)}`}
+                />
               )}
               <text
                 x={width - 6}
