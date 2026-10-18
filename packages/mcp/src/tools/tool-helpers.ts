@@ -96,7 +96,7 @@ export async function buildQueryContextOpts(
   const dimensions = await ctx.getQueryDimensions();
   const accountReverseMap = await ctx.getAccountReverseMap();
   const orgPath = await ctx.getOrgAccountsPath();
-  const costScope = await ctx.getCostScope().catch(() => undefined);
+  const costScope = await ctx.getCostScope();
   const providers = await getQueryProviders(ctx, tier);
 
   // Empty only when NO provider has a month intersecting the range.

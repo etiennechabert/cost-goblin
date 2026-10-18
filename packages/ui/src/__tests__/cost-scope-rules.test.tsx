@@ -530,13 +530,14 @@ describe('CostScopeView — metric, freshness, marketplace and saving', () => {
     expect(api.savedCostScopes).toHaveLength(0);
   });
 
-  it('keeps the shipped defaults when the saved scope cannot be read, and reveals the YAML folder', async () => {
+  // The shipped defaults are not shown as the user's scope (see
+  // cost-scope-load.test.tsx); the way to the file stays open.
+  it('reveals the YAML folder when the saved scope cannot be read', async () => {
     const api = new ScopeApi();
     vi.spyOn(api, 'getCostScope').mockRejectedValue(new Error('parse error'));
     const reveal = vi.spyOn(api, 'revealCostScopeFolder').mockRejectedValue(new Error('no file manager'));
     const { user } = renderView(api);
-    expect(await ruleCard('Tax')).toBeDefined();
-    expect(screen.getByText('Saved')).toBeDefined();
+    expect(await screen.findByText('parse error')).not.toBeNull();
     await user.click(screen.getByRole('button', { name: 'Reveal YAML' }));
     expect(reveal).toHaveBeenCalledTimes(1);
   });

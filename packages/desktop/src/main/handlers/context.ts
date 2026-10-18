@@ -9,7 +9,6 @@ import { traceSpan, SPAN_OP, type SpanOptions } from '../telemetry/tracing.js';
 import { BaselineStore, type BaselineEngineDeps } from '../baselines-store.js';
 import {
   applyRegionFriendlyNames,
-  DEFAULT_COST_METRIC,
   dimensionIdSet,
   loadConfig,
   loadDimensions,
@@ -40,6 +39,7 @@ import {
 } from '@costgoblin/core';
 import { buildAccountReverseMap } from './query-utils.js';
 import { applyAccountNameTransforms } from './account-name-transforms.js';
+import { CostScopeLoadError, costScopeForQueries } from './cost-scope-load.js';
 import { type TemplateProviderType } from '../config-templates.js';
 import { mergeDefaultBuiltIns } from './dimensions-merge.js';
 import type {
@@ -111,7 +111,15 @@ export interface AppContext {
   readonly getQueryDimensions: () => Promise<DimensionsConfig>;
   readonly getOrgTreeConfig: () => Promise<OrgTreeConfig>;
   readonly getViews: () => Promise<ViewsConfig>;
+  /** cost-scope.yaml as on disk (merged with the built-in rules): rejects
+   *  when the file is missing or doesn't load. For the Cost Scope editor and
+   *  bundles, which tell those two apart. */
   readonly getCostScope: () => Promise<CostScopeConfig>;
+  /** The cost scope for query-time use: the defaults while cost-scope.yaml
+   *  doesn't exist; a CostScopeLoadError when it exists but doesn't load, so
+   *  no query runs without the user's metric and exclusion rules. Use this
+   *  in every query handler. */
+  readonly getQueryCostScope: () => Promise<CostScopeConfig>;
   readonly getAccountMap: () => Promise<Map<string, string>>;
   readonly getAccountReverseMap: () => Promise<Map<string, readonly string[]>>;
   readonly getRegionMap: () => Promise<Map<string, RegionEnrichment>>;
@@ -272,9 +280,9 @@ export function createAppContext(ctx: IpcContext): AppContext {
     // per-widget showcase set. Swap it for the current built-ins and write the
     // result back so views.yaml matches what the app shows. Temp file plus
     // rename: this write runs unprompted on every upgraded install, and a
-    // truncated views.yaml fails validation, which views:get-config answers by
-    // reseeding (dropping the user's dashboards). A failed write only means the
-    // migration re-runs on the next load.
+    // truncated views.yaml fails validation, which leaves the user looking at
+    // a load error instead of their dashboards until they fix it. A failed
+    // write only means the migration re-runs on the next load.
     const { config: views, changed } = migrateRetiredSeedViews(loaded);
     if (changed) {
       const fs = await import('node:fs/promises');
@@ -300,6 +308,22 @@ export function createAppContext(ctx: IpcContext): AppContext {
     const merged = mergeBuiltInExclusionRules(loaded);
     state.costScope = merged;
     return merged;
+  }
+
+  // Set when a rollup warmup or maintenance failed on cost-scope.yaml, which
+  // leaves the rollup unloaded or without a sync's months until the next
+  // warmup: the first query that can apply the cost scope again starts it.
+  let rollupWaitsForCostScope = false;
+
+  async function getQueryCostScope(): Promise<CostScopeConfig> {
+    const costScope = await costScopeForQueries(getCostScope);
+    if (rollupWaitsForCostScope) triggerWarmup();
+    return costScope;
+  }
+
+  function logRollupFailure(step: string, err: unknown): void {
+    if (err instanceof CostScopeLoadError) rollupWaitsForCostScope = true;
+    logger.warn(`${step}: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   async function getAccountMap(): Promise<Map<string, string>> {
@@ -499,14 +523,14 @@ export function createAppContext(ctx: IpcContext): AppContext {
   async function signatureForDimensions(dimensions: DimensionsConfig): Promise<string> {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
-    const costScope = await getCostScope().catch(() => undefined);
+    const costScope = await getQueryCostScope();
     let orgRaw = '';
     try { orgRaw = await fs.readFile(path.join(ctx.stateDir, 'org-accounts.json'), 'utf-8'); } catch { /* no org sync yet */ }
     return computeShapeSignature({
       dimensions,
-      costMetric: costScope?.costMetric ?? DEFAULT_COST_METRIC,
-      rules: costScope?.rules ?? [],
-      marketplaceAttribution: costScope?.marketplaceAttribution,
+      costMetric: costScope.costMetric,
+      rules: costScope.rules,
+      marketplaceAttribution: costScope.marketplaceAttribution,
       orgAccountsDigest: computeOrgAccountsDigest(orgRaw),
     });
   }
@@ -521,7 +545,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     const dimensions = await getQueryDimensions();
     const orgPath = await getOrgAccountsPath();
     const accountReverseMap = await getAccountReverseMap();
-    const costScope = await getCostScope().catch(() => undefined);
+    const costScope = await getQueryCostScope();
     const provider = await getFirstProviderName();
     if (provider === null) throw new Error('No provider configured');
     return (period, outPath) => Promise.resolve(buildRollupPartitionQuery(period, 'daily', outPath, {
@@ -556,7 +580,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
       ).then(() => { resultCache.clear(); });
     } catch (err: unknown) {
       rollupStore.markSettled();
-      logger.warn(`rollup-warmup: ${err instanceof Error ? err.message : String(err)}`);
+      logRollupFailure('rollup-warmup', err);
     }
   }
 
@@ -589,12 +613,20 @@ export function createAppContext(ctx: IpcContext): AppContext {
       );
       resultCache.clear();
     } catch (err: unknown) {
-      logger.warn(`rollup-maintain: ${err instanceof Error ? err.message : String(err)}`);
+      // The raw files changed whatever failed (a cost-scope.yaml that doesn't
+      // load stops this before any re-roll): drop results cached from them.
+      resultCache.clear();
+      logRollupFailure('rollup-maintain', err);
     }
   }
 
   let warmupInFlight: Promise<void> = Promise.resolve();
-  function triggerWarmup(): void { warmupInFlight = warmupRollup().catch(() => undefined); }
+  function triggerWarmup(): void {
+    // This warmup is the one a failure on cost-scope.yaml was waiting for:
+    // the cost scope it reads must not start yet another.
+    rollupWaitsForCostScope = false;
+    warmupInFlight = warmupRollup().catch(() => undefined);
+  }
 
   // A dimensions save always drops the rollup (so queries fall back to raw
   // immediately — correct) but the full re-roll is expensive. The dimensions
@@ -616,7 +648,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     getFirstProviderName,
     getQueryProviders,
     getQueryDimensions,
-    getCostScope,
+    getCostScope: getQueryCostScope,
     getAccountMap,
     getAccountReverseMap,
     getOrgTreeConfig,
@@ -633,6 +665,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     getOrgTreeConfig,
     getViews,
     getCostScope,
+    getQueryCostScope,
     getAccountMap,
     getAccountReverseMap,
     getRegionMap,

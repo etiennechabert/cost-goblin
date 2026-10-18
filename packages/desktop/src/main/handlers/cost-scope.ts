@@ -2,7 +2,6 @@ import { ipcMain, shell } from 'electron';
 import { writeFile } from 'node:fs/promises';
 import { stringify } from 'yaml';
 import {
-  DEFAULT_COST_SCOPE,
   DEFAULT_LAG_DAYS,
   ConfigValidationError,
   costScopeToYaml,
@@ -26,6 +25,7 @@ import type {
 } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
 import type { AppContext } from './context.js';
+import { loadOrSeedCostScope } from './cost-scope-load.js';
 import { tagSelectItems, tagValuesById, toNum } from './query-utils.js';
 import { costScopePreviewWindow } from './query-windows.js';
 
@@ -85,28 +85,11 @@ function assertRuleDimensionsExist(config: CostScopeConfig, dimensions: Dimensio
   }
 }
 
-function isEnoent(err: unknown): boolean {
-  if (typeof err !== 'object' || err === null) return false;
-  if (!('code' in err)) return false;
-  return err.code === 'ENOENT';
-}
-
 export function registerCostScopeHandlers(app: AppContext): void {
   const { ctx, getCostScope, invalidateCostScope, getQueryDimensions, getAccountReverseMap, getOrgAccountsPath, getQueryProviders, runPreparedQuery } = app;
 
-  ipcMain.handle('cost-scope:get-config', async (): Promise<CostScopeConfig> => {
-    try {
-      return await getCostScope();
-    } catch (err) {
-      // Seed the file only when it's missing. Validation / YAML errors bubble
-      // up to the UI so the user can fix their hand-edit — silently
-      // overwriting would destroy their custom rules.
-      if (!isEnoent(err)) throw err;
-      await writeFile(ctx.costScopePath, stringify(costScopeToYaml(DEFAULT_COST_SCOPE)));
-      invalidateCostScope();
-      return DEFAULT_COST_SCOPE;
-    }
-  });
+  ipcMain.handle('cost-scope:get-config', (): Promise<CostScopeConfig> =>
+    loadOrSeedCostScope({ costScopePath: ctx.costScopePath, getCostScope }));
 
   ipcMain.handle('cost-scope:save-config', async (_event, raw: unknown): Promise<void> => {
     const dimensions = await getQueryDimensions();

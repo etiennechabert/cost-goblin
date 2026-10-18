@@ -61,7 +61,9 @@ describe('fetchManifestFromAny when the reached publisher cannot serve', () => {
       expect(result.status).toBe('unreachable');
       if (result.status !== 'unreachable') return;
       expect(result.errors).toHaveLength(1);
-      expect(String(result.errors[0])).toBe('Error: Peer responded 500 for /manifest');
+      // A bare 500 carries no body: only a config file that doesn't load is
+      // named to the peer (ManifestUnavailableError).
+      expect(result.errors[0]).toMatchObject({ message: 'Peer responded 500 for /manifest', status: 500, body: null });
     });
   });
 

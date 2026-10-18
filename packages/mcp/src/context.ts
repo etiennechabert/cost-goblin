@@ -16,6 +16,9 @@ export interface McpContext {
   readonly getConfig: () => Promise<CostGoblinConfig>;
   readonly getDimensions: () => Promise<DimensionsConfig>;
   readonly getQueryDimensions: () => Promise<DimensionsConfig>;
+  /** The cost scope every query applies. Rejects when the host's cost scope
+   *  doesn't load, and tools let that fail the call: an answer without the
+   *  user's metric and exclusion rules would read as the real cost. */
   readonly getCostScope: () => Promise<CostScopeConfig>;
   readonly getAccountMap: () => Promise<Map<string, string>>;
   readonly getAccountReverseMap: () => Promise<Map<string, readonly string[]>>;

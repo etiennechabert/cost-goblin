@@ -61,6 +61,8 @@ export type { WidgetCommonProps, WidgetComponent } from './widgets/widget.js';
 export { CustomView } from './views/custom-view.js';
 export { OVERVIEW_SEED_VIEW } from './views/seed-views.js';
 export { ViewsEditor } from './views/views-editor.js';
+export { ViewsLoadError } from './components/views-load-error.js';
+export { CostScopeLoadError } from './components/cost-scope-load-error.js';
 export { CostOverview } from './views/cost-overview.js';
 export { CostTrends } from './views/cost-trends.js';
 export { MissingTags } from './views/missing-tags.js';

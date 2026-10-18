@@ -550,7 +550,12 @@ export class MockCostApi implements CostApi {
   setAutoPruneEnabled(): Promise<void> { return Promise.resolve(); }
   pruneNow(): Promise<PruneResult> { return Promise.resolve({ deleted: [] }); }
   getViewsConfig(): Promise<ViewsConfig> { return Promise.resolve(MOCK_VIEWS_CONFIG); }
-  saveViewsConfig(): Promise<void> { return Promise.resolve(); }
+  /** Every config `saveViewsConfig` was asked to persist, oldest first. */
+  readonly savedViewsConfigs: ViewsConfig[] = [];
+  saveViewsConfig(config: ViewsConfig): Promise<void> {
+    this.savedViewsConfigs.push(config);
+    return Promise.resolve();
+  }
   resetViewsConfig(): Promise<ViewsConfig> { return Promise.resolve(MOCK_VIEWS_CONFIG); }
   revealViewsFolder(): Promise<void> { return Promise.resolve(); }
   getCostScope(): Promise<CostScopeConfig> { return Promise.resolve(DEFAULT_COST_SCOPE); }

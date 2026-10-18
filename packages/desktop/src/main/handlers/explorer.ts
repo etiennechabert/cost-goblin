@@ -84,14 +84,14 @@ interface BuildFreshSourceOptions {
 
 async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source: string; whereStr: string }> {
   const { app, params, startStr, endStr, startHour, endHour, tier, periods, providers, dimensions, filterPredicate, accountReverseMap } = opts;
-  const { ctx, getCostScope, getOrgAccountsPath } = app;
+  const { ctx, getQueryCostScope, getOrgAccountsPath } = app;
   const orgPath = await getOrgAccountsPath();
   const applyCostScope = params.applyCostScope === true;
   // Marketplace re-attribution fixes which service a cost belongs to (a data
   // quality fix, not an exclusion), so it follows its own toggle and applies
   // regardless of the "Apply Cost Scope" checkbox — otherwise the Explorer and
   // its filter dropdowns would disagree with the dashboard on Bedrock spend.
-  const fullScope = await getCostScope().catch(() => undefined);
+  const fullScope = await getQueryCostScope();
   const scopeForExclusions = applyCostScope ? fullScope : undefined;
   // When the caller applies the cost scope but doesn't override the metric
   // (every dashboard widget — only the Explorer view sets it explicitly),
@@ -111,7 +111,7 @@ async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source
   const source = buildSource({
     dataDir: ctx.dataDir, tier, dimensions, orgAccountsPath: orgPath,
     providers: branches,
-    costMetric: metric, marketplaceAttribution: fullScope?.marketplaceAttribution,
+    costMetric: metric, marketplaceAttribution: fullScope.marketplaceAttribution,
   });
   const exclusions = scopeForExclusions === undefined ? [] : buildExclusionClauses(scopeForExclusions.rules, dimensions, accountReverseMap);
 

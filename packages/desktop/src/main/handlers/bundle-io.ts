@@ -12,6 +12,7 @@ import {
   viewsConfigToYaml,
 } from '@costgoblin/core';
 import type { BundleSectionId, ConfigBundle, ConfigBundleSections, ProviderConfig } from '@costgoblin/core';
+import { optionalSection, type BrokenSection } from './bundle-sections.js';
 import type { AppContext } from './context.js';
 
 /** The five YAML config file paths of one workspace. `IpcContext` satisfies
@@ -25,15 +26,20 @@ export interface ConfigFilePaths {
   readonly costScopePath: string;
 }
 
-/** Assemble a bundle from whatever org config exists locally. Config and
- *  dimensions are mandatory; the optional files are skipped when missing or
- *  unreadable instead of failing the whole export. */
-export async function buildCurrentBundle(app: AppContext): Promise<ConfigBundle> {
+/** Assemble a bundle from the org config on disk. Config and dimensions are
+ *  mandatory; the other sections are left out when their file doesn't exist.
+ *  An org tree or cost scope that exists but doesn't load fails the bundle,
+ *  naming the file (BrokenSectionError): both change the numbers the
+ *  receiver sees, so a bundle never goes out silently without them. A broken
+ *  views.yaml only costs dashboards, so `brokenViews` decides: `fail` for an
+ *  export or publish the user asked for, `skip` (and log) for the LAN data
+ *  share, which shouldn't stop serving data over it. */
+export async function buildCurrentBundle(app: AppContext, options: { readonly brokenViews: BrokenSection }): Promise<ConfigBundle> {
   const config = await app.getConfig();
   const dimensions = await app.getDimensions();
-  const orgTree = await app.getOrgTreeConfig().catch(() => undefined);
-  const costScope = await app.getCostScope().catch(() => undefined);
-  const views = await app.getViews().catch(() => undefined);
+  const orgTree = await optionalSection(app.ctx.orgTreePath, app.getOrgTreeConfig, 'fail');
+  const costScope = await optionalSection(app.ctx.costScopePath, app.getCostScope, 'fail');
+  const views = await optionalSection(app.ctx.viewsPath, app.getViews, options.brokenViews);
   return buildConfigBundle({ config, dimensions, orgTree, costScope, views, appVersion: electronApp.getVersion() });
 }
 

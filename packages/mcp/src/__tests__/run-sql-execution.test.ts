@@ -103,10 +103,11 @@ describe('run_sql costs CTE', () => {
     expect(statements[0]).toContain('COALESCE(ListCost, 0) AS cost');
   });
 
-  it('falls back to the effective metric when the Cost Scope cannot be read', async () => {
-    const { ctx, statements } = harness({ costScope: () => Promise.reject(new Error('cost-scope.yaml unreadable')) });
-    await runSql(ctx, { sql: 'SELECT SUM(cost) AS c FROM costs', dateRange: JAN });
-    expect(statements[0]).toContain('COALESCE(EffectiveCost, 0) AS cost');
+  // An answer on another metric than the user's would read as the real cost.
+  it('fails, running nothing, when the Cost Scope does not load', async () => {
+    const { ctx, statements } = harness({ costScope: () => Promise.reject(new Error("Couldn't load cost-scope.yaml: rules must be an array")) });
+    await expect(runSql(ctx, { sql: 'SELECT SUM(cost) AS c FROM costs', dateRange: JAN })).rejects.toThrow("Couldn't load cost-scope.yaml");
+    expect(statements).toEqual([]);
   });
 
   it('reads the materialized rollup when it covers the range', async () => {

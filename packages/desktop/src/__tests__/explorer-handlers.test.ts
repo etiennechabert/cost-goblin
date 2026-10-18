@@ -91,11 +91,12 @@ describe('explorer:query-overview', () => {
     expect(list(at(unfiltered, 'dailyTotals'))).toHaveLength(28);
   });
 
-  it('still answers when the cost scope cannot be loaded', async () => {
+  // Answering without it would show unscoped totals as if they were scoped.
+  it('refuses to answer through a cost-scope.yaml that does not load, naming it', async () => {
     const h = await explorerApp();
     await writeFile(h.ws.costScopePath, 'rules: 42\n');
-    const result = await h.ipc.invoke('explorer:query-overview', { filters: {}, dateRange: ONE_DAY, applyCostScope: true });
-    expect(num(at(result, 'totalRows'))).toBeGreaterThan(0);
+    await expect(h.ipc.invoke('explorer:query-overview', { filters: {}, dateRange: ONE_DAY, applyCostScope: true }))
+      .rejects.toThrow("Couldn't load cost-scope.yaml");
   });
 });
 
