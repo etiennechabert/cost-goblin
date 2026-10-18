@@ -1,3 +1,5 @@
+import type { UIPreferences } from '@costgoblin/core/browser';
+
 // A series wears the color its name hashes to, so the same entity (a service,
 // a team) keeps one color across every widget, whatever each widget's ranking.
 // Hashing means any two palette colors can end up side by side, so every PAIR
@@ -45,9 +47,9 @@ export const OTHER_COLOR = '#374151';
  *  a minor series never passes for a top one. */
 export const MINOR_COLOR = '#6b7280';
 
-export type PaletteType = 'standard' | 'colorblind';
-
-export type PaletteTheme = 'dark' | 'light';
+/** The user's palette choice and the app theme, as UIPreferences stores them. */
+export type PaletteType = UIPreferences['palette'];
+export type PaletteTheme = UIPreferences['theme'];
 
 /** A series and what it cost over the chart's range. */
 export interface SeriesCost {
