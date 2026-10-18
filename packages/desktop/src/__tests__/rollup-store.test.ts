@@ -61,8 +61,13 @@ describe('RollupStore', () => {
     runQuery = (sql: string): Promise<RawRow[]> => fetchRows(conn, sql);
   });
   afterAll(async () => { await rm(dataDir, { recursive: true, force: true }); });
-  // Puts readFile and rm back to pass-through, and logger.warn back.
-  afterEach(() => { vi.restoreAllMocks(); });
+  // restoreAllMocks only puts spies back (logger.warn): the module's vi.fn
+  // mocks need their own reset to pass through again.
+  afterEach(() => {
+    vi.mocked(readFile).mockReset();
+    vi.mocked(rm).mockReset();
+    vi.restoreAllMocks();
+  });
 
   it('builds a partition, writes an atomic manifest (no .tmp), and routes to it', async () => {
     const store = new RollupStore({ dataDir, providerName, runQuery });
@@ -260,7 +265,6 @@ describe('RollupStore', () => {
     const reloaded = new RollupStore({ dataDir: dir, providerName, runQuery });
     expect((await reloaded.loadAndValidate(shape, etags)).validPeriods.size).toBe(0);
 
-    vi.mocked(rm).mockReset();
     await rm(dir, { recursive: true, force: true });
   });
 
@@ -283,7 +287,6 @@ describe('RollupStore', () => {
     const reloaded = new RollupStore({ dataDir: dir, providerName, runQuery });
     expect([...(await reloaded.loadAndValidate(shape, etags)).validPeriods]).toEqual(['2026-01']);
 
-    vi.mocked(rm).mockReset();
     await rm(dir, { recursive: true, force: true });
   });
 
