@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, Profiler } from 'react';
-import { CostTrends, MissingTags, Savings, Baselines, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, ViewsLoadError, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, SharingActiveBanner, SettingsShell, SETTINGS_TABS, isSettingsTabId, WorkspacesView, WorkspaceChip, ConfirmModal, ReleaseNotes, useModalLayerCount } from '@costgoblin/ui';
+import { CostTrends, MissingTags, Savings, Baselines, DataManagement, DimensionsView, CostScopeView, CostScopeLoadError, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, ViewsLoadError, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, SharingActiveBanner, SettingsShell, SETTINGS_TABS, isSettingsTabId, WorkspacesView, WorkspaceChip, ConfirmModal, ReleaseNotes, useModalLayerCount } from '@costgoblin/ui';
 import type { NavItem, SettingsTabId } from '@costgoblin/ui';
 import type { CostApi, DataSharingStatus, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus, RollupStatus, BaselineRecomputeStatus, WorkspacesInfo } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagDimColumn } from '@costgoblin/core/browser';
@@ -105,6 +105,14 @@ const FALLBACK_VIEWS: ViewsConfig = { views: [OVERVIEW_SEED_VIEW] };
 type ViewsState =
   | { readonly status: 'loading' }
   | { readonly status: 'loaded'; readonly config: ViewsConfig }
+  | { readonly status: 'failed'; readonly message: string };
+
+/** Whether cost-scope.yaml loads. While it doesn't, main fails every cost
+ *  query rather than run one without the user's rules, so the cost pages say
+ *  why above their empty widgets until a retry loads it. */
+type CostScopeState =
+  | { readonly status: 'unchecked' }
+  | { readonly status: 'loaded' }
   | { readonly status: 'failed'; readonly message: string };
 
 function SyncAnnouncer({
@@ -506,6 +514,7 @@ function AppShell(): React.JSX.Element {
   const [setupCheck, setSetupCheck] = useState<SetupCheck>({ status: 'checking' });
   const [splashStep, setSplashStep] = useState('Connecting...');
   const [viewsState, setViewsState] = useState<ViewsState>({ status: 'loading' });
+  const [costScopeState, setCostScopeState] = useState<CostScopeState>({ status: 'unchecked' });
   const { syncError, setSyncError, syncActivity, syncFilesRemaining, syncTiers } = useSyncPolling(api, setupCheck);
   const { sharingStatus, setSharingStatus } = useDataSharingPolling(api, setupCheck);
   const [stoppingSharing, setStoppingSharing] = useState(false);
@@ -706,6 +715,34 @@ function AppShell(): React.JSX.Element {
   }, [setupCheck, loadViews]);
 
   const views = viewsState.status === 'loaded' ? viewsState.config : FALLBACK_VIEWS;
+
+  // Only the latest check may land: an older one answering late would bring
+  // back the error after a retry, or hide it.
+  const costScopeCheckRef = useRef(0);
+  const checkCostScope = useCallback(async (): Promise<boolean> => {
+    const check = ++costScopeCheckRef.current;
+    try {
+      await api.getCostScope();
+      if (check === costScopeCheckRef.current) setCostScopeState({ status: 'loaded' });
+      return true;
+    } catch (err: unknown) {
+      if (check === costScopeCheckRef.current) setCostScopeState({ status: 'failed', message: err instanceof Error ? err.message : String(err) });
+      return false;
+    }
+  }, [api]);
+
+  // Checked again on each page change (main answers from its cache once the
+  // file loads), so a file broken behind a Clear cache, or fixed by hand,
+  // shows on the next page.
+  useEffect(() => {
+    if (setupCheck.status !== 'ready') return;
+    void checkCostScope();
+  }, [setupCheck, checkCostScope, view, settingsTab, refreshNonce]);
+
+  async function retryCostScope(): Promise<void> {
+    // The page's queries failed on the file: remount it so they run again.
+    if (await checkCostScope()) setRefreshNonce(n => n + 1);
+  }
 
   useEffect(() => {
     if (isDark) {
@@ -1014,7 +1051,7 @@ function AppShell(): React.JSX.Element {
       case 'workspaces':
         return <WorkspacesView onChanged={setWorkspacesInfo} />;
       case 'cost-scope':
-        return <CostScopeView />;
+        return <CostScopeView onConfigLoaded={() => { setCostScopeState({ status: 'loaded' }); }} />;
       case 'dimensions':
         return <DimensionsView />;
       case 'dashboards':
@@ -1267,6 +1304,12 @@ function AppShell(): React.JSX.Element {
       <div key={`refresh-${String(refreshNonce)}`}>
         {settingsTab === null ? (
           <>
+            {/* Savings reads recommendations, which no cost scope applies to. */}
+            {costScopeState.status === 'failed' && view.page !== 'savings' && (
+              <div className="px-6 pt-6">
+                <CostScopeLoadError message={costScopeState.message} onRetry={retryCostScope} showOpenFolder />
+              </div>
+            )}
             {view.page === 'custom' && viewsReady && (() => {
               // shownViewId: a dashboard that no longer exists shows the user's
               // own overview, the one the menu marks active.

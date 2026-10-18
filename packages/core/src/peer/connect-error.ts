@@ -26,3 +26,10 @@ function errorText(err: unknown): string {
 function hasCode(err: unknown, code: string): boolean {
   return typeof err === 'object' && err !== null && 'code' in err && err.code === code;
 }
+
+/** The text shown when the publisher answered but couldn't build its manifest
+ *  because `file` (null when it named none) doesn't load on their side. Only
+ *  they can fix it, so it says so rather than suggesting the network. */
+export function describeUnavailableSource(file: string | null): string {
+  return `Your teammate's ${file ?? 'configuration'} doesn't load, so their CostGoblin can't share right now. Ask them to fix it, then try again.`;
+}

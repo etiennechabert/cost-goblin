@@ -575,16 +575,17 @@ describe('createAppContext: rollup lifecycle', () => {
     expect(await exists(join(rollupDir, 'daily-2026-01'))).toBe(false);
   });
 
-  it('signs the rollup shape with the org data, tolerating an unreadable cost scope', async () => {
+  it('signs the rollup shape with the org data, and refuses a cost-scope.yaml that does not load', async () => {
     const h = await harness();
     const dims = await h.app.getDimensions();
     const before = await h.app.signatureForDimensions(dims);
     expect(await h.app.signatureForDimensions(dims)).toBe(before);
     await writeFile(join(h.ws.stateDir, 'org-accounts.json'), JSON.stringify(ORG));
     expect(await h.app.signatureForDimensions(dims)).not.toBe(before);
+    // A rollup built without the user's cost scope would serve unscoped totals.
     await writeFile(h.ws.costScopePath, 'rules: 42\n');
     h.app.state.costScope = null;
-    expect(await h.app.signatureForDimensions(dims)).toMatch(/\S/);
+    await expect(h.app.signatureForDimensions(dims)).rejects.toThrow("Couldn't load cost-scope.yaml");
   });
 
   it('recomputeBaselines hands the store its engine dependencies', async () => {
