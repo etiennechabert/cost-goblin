@@ -216,6 +216,11 @@ function validateView(raw: unknown, ctx: string, liveDimensionIds: ReadonlySet<s
   assertString(raw['name'], `${ctx}.name`);
   assertArray(raw['rows'], `${ctx}.rows`);
 
+  // Lenient: anything but a non-blank string (a bare `description:` parses as
+  // null) reads as absent, so the header falls back to its tagline instead of
+  // the whole file failing to load over a subtitle.
+  const rawDescription = raw['description'];
+  const description = typeof rawDescription === 'string' && rawDescription.trim() !== '' ? rawDescription : undefined;
   const icon = raw['icon'] === undefined
     ? undefined
     : (assertString(raw['icon'], `${ctx}.icon`), raw['icon']);
@@ -243,6 +248,7 @@ function validateView(raw: unknown, ctx: string, liveDimensionIds: ReadonlySet<s
   return {
     id: raw['id'],
     name: raw['name'],
+    ...(description === undefined ? {} : { description }),
     ...(icon === undefined ? {} : { icon }),
     ...(builtIn === true ? { builtIn } : {}),
     rows,

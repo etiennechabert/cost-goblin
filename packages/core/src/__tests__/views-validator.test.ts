@@ -89,6 +89,33 @@ describe('validateViews', () => {
     expect(widgets[1]).toMatchObject({ enabledColumns: ['cost', 'tag_environment'] });
   });
 
+  it('parses an optional view description', () => {
+    const cfg = validateViews({
+      views: [
+        { id: 'a', name: 'A', description: 'What this answers', rows: [] },
+        { id: 'b', name: 'B', rows: [] },
+        { id: 'c', name: 'C', description: '  ', rows: [] },
+      ],
+    });
+    expect(cfg.views[0]?.description).toBe('What this answers');
+    expect(cfg.views[1]).not.toHaveProperty('description');
+    // Blank reads as absent, so the header falls back to its tagline.
+    expect(cfg.views[2]).not.toHaveProperty('description');
+  });
+
+  // Failing the load would let views:get-config reseed the file and drop the
+  // user's dashboards over a subtitle. A bare `description:` parses as null.
+  it('loads a null or non-string view description as absent', () => {
+    const cfg = validateViews({
+      views: [
+        { id: 'a', name: 'A', description: null, rows: [] },
+        { id: 'b', name: 'B', description: 42, rows: [] },
+      ],
+    });
+    expect(cfg.views[0]).not.toHaveProperty('description');
+    expect(cfg.views[1]).not.toHaveProperty('description');
+  });
+
   it('rejects an unknown widget type', () => {
     expect(() => validateViews({
       views: [{

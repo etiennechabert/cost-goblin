@@ -73,6 +73,7 @@ describe('views save and reload', () => {
     const view: FullySpecified<ViewSpec> = {
       id: 'everything',
       name: 'Everything',
+      description: 'Every optional field, saved and reloaded',
       icon: 'layout-grid',
       builtIn: true,
       rows: [{ widgets: Object.values(EVERY_FIELD) }],

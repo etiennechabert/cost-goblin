@@ -63,3 +63,42 @@ export function buildWaterfall(rows: readonly TrendRow[], topN = 8): WaterfallMo
 
   return { steps, startTotal, endTotal, netDelta: endTotal - startTotal, otherCount: rest.length };
 }
+
+export interface WaterfallScale {
+  /** Bottom of the value axis: 0, or above it when zoomed onto the movement. */
+  readonly floor: number;
+  readonly ceiling: number;
+  /** True when the floor is above zero, so the Start/End bars are cut short. */
+  readonly truncated: boolean;
+}
+
+/** Zoom when the movement spans less than this share of the tallest level. */
+const ZOOM_BELOW = 0.5;
+/** Room left under the lowest level, as a share of the movement, so the cut
+ *  Start/End bars still read as bars. */
+const ZOOM_HEADROOM = 0.5;
+
+/** Round down to two significant digits, so the axis floor reads cleanly. */
+function niceFloor(v: number): number {
+  if (v <= 0) return 0;
+  const step = 10 ** (Math.floor(Math.log10(v)) - 1);
+  return Math.floor(v / step) * step;
+}
+
+/** Value-axis extent for a bridge. An axis from $0 squashes the movers into
+ *  slivers whenever the change is small next to the totals (+$1.9k on $9.3k
+ *  leaves most of them under 2px), so when every level stays positive and the
+ *  movement is small, the axis starts just under the lowest level instead and
+ *  the Start/End bars are drawn cut. Levels are the anchors' totals and every
+ *  mover's running start and end. */
+export function waterfallScale(steps: readonly WaterfallStep[]): WaterfallScale {
+  const levels = steps.flatMap(s => (s.kind === 'start' || s.kind === 'end' ? [s.end] : [s.start, s.end]));
+  if (levels.length === 0) return { floor: 0, ceiling: 1, truncated: false };
+  const lo = Math.min(...levels);
+  const hi = Math.max(...levels);
+  if (lo <= 0) return { floor: Math.min(lo, 0), ceiling: Math.max(hi, 0), truncated: false };
+  const movement = hi - lo;
+  if (movement === 0 || movement >= hi * ZOOM_BELOW) return { floor: 0, ceiling: hi, truncated: false };
+  const floor = niceFloor(lo - movement * ZOOM_HEADROOM);
+  return { floor, ceiling: hi, truncated: floor > 0 };
+}

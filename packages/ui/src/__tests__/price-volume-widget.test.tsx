@@ -113,9 +113,9 @@ function renderWidget(api: MockCostApi, spec: WidgetSpec = SPEC) {
   );
 }
 
-/** The chart's tooltip for one bar, e.g. "RDS — Rate +$20.00". */
+/** One bar, by its accessible name, e.g. "RDS — Rate +$20.00". */
 async function expectBar(text: string): Promise<void> {
-  await waitFor(() => { expect(screen.getByText(text)).toBeDefined(); });
+  await waitFor(() => { expect(screen.getByLabelText(text)).toBeDefined(); });
 }
 
 describe('PriceVolumeWidget pairing', () => {
