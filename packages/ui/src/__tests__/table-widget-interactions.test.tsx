@@ -218,13 +218,16 @@ describe('TableWidget — rows and formatting', () => {
 
   it('names an empty dimension cell (none), and filters on its empty value', async () => {
     const api = new TableApi();
-    const unnamed: FixtureRow = { values: { service: '', region: '' }, cost: 25, listCost: 25, usageAmount: 0, rowCount: 4 };
+    const unnamed: FixtureRow = { values: { service: '', region: '', account_name: '' }, cost: 25, listCost: 25, usageAmount: 0, rowCount: 4 };
     api.current = (p) => Promise.resolve({ rows: project([...FIXTURE, unnamed], p.groupByColumns, r => r.cost), totalRows: 6, tagColumns: [] });
-    const { user, onSetFilter } = renderTable({ api });
+    const spec: WidgetSpec = { ...TABLE_SPEC, enabledColumns: ['service', 'cost', 'region', 'account_name'] };
+    const { user, onSetFilter } = renderTable({ api, spec });
 
     await user.click(await screen.findByRole('button', { name: '(none)' }));
     expect(onSetFilter).toHaveBeenCalledWith(asDimensionId('service'), asTagValue(''));
-    // A column that is not a dimension stays blank and inert when empty.
+    // A column that is not a dimension stays blank and inert when empty, and
+    // so does a blank account name: the account filter matches ids, and an
+    // account with no name still has one.
     expect(screen.getAllByRole('button', { name: '(none)' })).toHaveLength(1);
   });
 

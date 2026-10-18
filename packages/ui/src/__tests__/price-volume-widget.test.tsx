@@ -1,7 +1,7 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
-import { describe, it, expect } from 'vitest';
-import type { AggregatedTableParams, AggregatedTableResult, AggregatedTableRow, DateRange, ExplorerSort, WidgetSpec } from '@costgoblin/core/browser';
-import { asDateString, asDimensionId } from '@costgoblin/core/browser';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import type { AggregatedTableParams, AggregatedTableResult, AggregatedTableRow, DateRange, DimensionId, ExplorerSort, TagValue, WidgetSpec } from '@costgoblin/core/browser';
+import { asDateString, asDimensionId, asTagValue } from '@costgoblin/core/browser';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { PaletteProvider } from '../hooks/use-palette.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
@@ -94,7 +94,7 @@ class PeriodGroupsApi extends MockCostApi {
   }
 }
 
-function renderWidget(api: MockCostApi, spec: WidgetSpec = SPEC) {
+function renderWidget(api: MockCostApi, spec: WidgetSpec = SPEC, onSetFilter: (dim: DimensionId, value: TagValue) => void = () => undefined) {
   return render(
     <CostApiProvider value={api}>
       <PaletteProvider>
@@ -106,7 +106,7 @@ function renderWidget(api: MockCostApi, spec: WidgetSpec = SPEC) {
           granularity="daily"
           globalFilters={{}}
           dimensions={[]}
-          onSetFilter={() => undefined}
+          onSetFilter={onSetFilter}
         />
       </PaletteProvider>
     </CostApiProvider>,
@@ -225,5 +225,42 @@ describe('PriceVolumeWidget pairing', () => {
 
     await waitFor(() => { expect(screen.getByText('Query failed: keyed request failed')).toBeDefined(); });
     expect(screen.queryByText(/^RDS — /)).toBeNull();
+  });
+});
+
+describe('PriceVolumeWidget clicks', () => {
+  /** An account's group, by its name, that used `usage` units at $10 each. */
+  function account(name: string, usage: number): AggregatedTableRow {
+    return { values: { account_name: name }, cost: usage * 10, listCost: usage * 10, usageAmount: usage, rowCount: 1 };
+  }
+
+  /** Click a row's hit area, once its decomposition shows. */
+  async function clickRow(container: HTMLElement, name: string): Promise<void> {
+    const row = await waitFor(() => {
+      const el = container.querySelector(`[data-row="${name}"]`);
+      if (el === null) throw new Error(`no row ${name}`);
+      return el;
+    });
+    fireEvent.click(row);
+  }
+
+  it('filters on the empty group of a column that shows its dimension\'s own field', async () => {
+    const onSetFilter = vi.fn<(dim: DimensionId, value: TagValue) => void>();
+    const api = new PeriodGroupsApi([team('platform', 50), team('', 15)], [team('platform', 40), team('', 12)]);
+    const { container } = renderWidget(api, { id: 'pv-team', type: 'priceVolume', size: 'large', groupBy: asDimensionId('tag_team') }, onSetFilter);
+
+    await clickRow(container, '');
+    expect(onSetFilter).toHaveBeenCalledWith(asDimensionId('tag_team'), asTagValue(''));
+  });
+
+  it('leaves a blank account name inert: the account filter matches ids, and that account has one', async () => {
+    const onSetFilter = vi.fn<(dim: DimensionId, value: TagValue) => void>();
+    const api = new PeriodGroupsApi([account('prod', 50), account('', 15)], [account('prod', 40), account('', 12)]);
+    const { container } = renderWidget(api, { id: 'pv-account', type: 'priceVolume', size: 'large', groupBy: asDimensionId('account') }, onSetFilter);
+
+    await clickRow(container, '');
+    expect(onSetFilter).not.toHaveBeenCalled();
+    await clickRow(container, 'prod');
+    expect(onSetFilter).toHaveBeenCalledWith(asDimensionId('account'), asTagValue('prod'));
   });
 });

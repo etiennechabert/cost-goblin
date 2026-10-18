@@ -7,6 +7,7 @@ import type { DimensionId } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
 import { dimensionLabelFor } from './widget.js';
 import { useAggregatedGroups } from '../hooks/use-aggregated-groups.js';
+import { filtersEmptyGroup } from '../lib/agg-column.js';
 import { buildPareto } from '../lib/concentration.js';
 
 const ROW_LIMIT = 1000;
@@ -68,7 +69,7 @@ export function ParetoWidget({ spec, dateRange, granularity, globalFilters, dime
       model={model}
       title={title}
       subtitle={subtitle}
-      onBarClick={(name) => { onSetFilter(effectiveGroupBy, asTagValue(name)); }}
+      onBarClick={(name) => { if (name !== '' || filtersEmptyGroup(effectiveGroupBy)) onSetFilter(effectiveGroupBy, asTagValue(name)); }}
     />
   );
 }

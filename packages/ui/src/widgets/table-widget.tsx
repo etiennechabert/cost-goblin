@@ -11,7 +11,7 @@ import type { SortingState } from '@tanstack/react-table';
 import type { WidgetCommonProps } from './widget.js';
 import { filtersKey } from './widget.js';
 import { EMPTY_VALUE_LABEL, getDimensionId } from '../lib/dimensions.js';
-import { toExplorerFilters } from '../lib/agg-column.js';
+import { filtersEmptyGroup, toExplorerFilters } from '../lib/agg-column.js';
 import type { TableColumn } from '../lib/table-types.js';
 
 const ROW_LIMIT = 500;
@@ -31,7 +31,7 @@ function specToTableColumn(spec: ColumnSpec, activeDimIds: ReadonlySet<string>):
     dimId: spec.dimId,
     clickable: spec.dimId !== null && activeDimIds.has(spec.dimId),
     // The rows with no value are a group too, and a filter on '' keeps them.
-    emptyLabel: EMPTY_VALUE_LABEL,
+    emptyLabel: spec.dimId !== null && filtersEmptyGroup(spec.dimId) ? EMPTY_VALUE_LABEL : undefined,
     align: spec.align,
     mono: spec.mono,
     truncate: spec.truncate,
