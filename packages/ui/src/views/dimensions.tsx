@@ -749,14 +749,21 @@ interface EditingTag {
  *  separator wherever we segment it. */
 const OU_PATH_SEPARATOR = ' / ';
 
+/** The OU Path segment field's index (1-based, negative counts from the end),
+ *  or undefined when it keeps the whole path: blank, 0 or not a number. */
+function parsePathSegIndex(text: string): number | undefined {
+  const index = Number.parseInt(text, 10);
+  return Number.isInteger(index) && index !== 0 ? index : undefined;
+}
+
 /** The editor only shows a segment field for the OU Path source, so that
- *  segment is the editor's to write: blank (or 0) keeps the whole path. A
- *  segment on any other source comes from the config file and is kept, unless
- *  the tag is moving off the OU Path, whose ` / ` split only fits the path. */
+ *  segment is the editor's to write. A segment on any other source comes from
+ *  the config file and is kept, unless the tag is moving off the OU Path,
+ *  whose ` / ` split only fits the path. */
 function editedPathSegment(editing: EditingTag, original: TagDimension | undefined): TagDimension['pathSegment'] {
   if (editing.fallbackTag === OU_PATH_SOURCE_KEY) {
-    const index = Number.parseInt(editing.pathSegIndex, 10);
-    return Number.isInteger(index) && index !== 0 ? { separator: OU_PATH_SEPARATOR, index } : undefined;
+    const index = parsePathSegIndex(editing.pathSegIndex);
+    return index === undefined ? undefined : { separator: OU_PATH_SEPARATOR, index };
   }
   return original?.accountTagFallback === OU_PATH_SOURCE_KEY ? undefined : original?.pathSegment;
 }
@@ -1138,13 +1145,12 @@ function TagEditor({ tag, onSave, onCancel, onRemove, idConflict, availableTags,
   const fallbackValues = (() => {
     if (state.fallbackTag === undefined || state.fallbackTag.length === 0) return [];
     const usesOuPath = state.fallbackTag === OU_PATH_SOURCE_KEY;
-    const parsedSegIndex = Number.parseInt(state.pathSegIndex, 10);
-    const segActive = usesOuPath && Number.isInteger(parsedSegIndex) && parsedSegIndex !== 0;
+    const segIndex = usesOuPath ? parsePathSegIndex(state.pathSegIndex) : undefined;
     const counts = new Map<string, number>();
     for (const acct of orgAccounts) {
       const raw = usesOuPath ? acct.ouPath : acct.tags[state.fallbackTag];
       if (raw === undefined || raw.length === 0) continue;
-      const val = segActive ? takeSegment(raw, OU_PATH_SEPARATOR, parsedSegIndex) : raw;
+      const val = segIndex === undefined ? raw : takeSegment(raw, OU_PATH_SEPARATOR, segIndex);
       if (val.length === 0) continue;
       counts.set(val, (counts.get(val) ?? 0) + 1);
     }
@@ -1348,7 +1354,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, idConflict, availableTags,
         aliasText={state.aliases}
         onBadgeClick={(value) => {
           setState(s => {
-            const lines = sortAliasText(s.aliases).split('\n').filter(l => l.trim().length > 0);
+            const lines = nonBlankLines(sortAliasText(s.aliases));
 
             // If clicked value is already a canonical key, just focus that line
             const existingIdx = lines.findIndex(l => {
@@ -1372,7 +1378,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, idConflict, availableTags,
             const base = s.aliases.trimEnd();
             const prefix = base.length > 0 ? base + '\n' : '';
             const newAliases = prefix + value + ':';
-            const sorted = sortAliasText(newAliases).split('\n').filter(l => l.trim().length > 0);
+            const sorted = nonBlankLines(sortAliasText(newAliases));
             const newIdx = sorted.findIndex(l => l.startsWith(value + ':'));
             if (newIdx >= 0) setActiveAliasLine(newIdx);
             return { ...s, aliases: newAliases };

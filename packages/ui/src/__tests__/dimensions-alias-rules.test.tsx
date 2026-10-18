@@ -31,6 +31,11 @@ function renderView() {
     builtIn: [{ name: asDimensionId('resource_id'), label: 'Resource', field: 'resource_id' }],
     tags: [TEAM],
   });
+  // The value preview under the rules shows one badge per sample value.
+  vi.spyOn(api, 'discoverTagKeys').mockResolvedValue({
+    tags: [{ key: 'team', sampleValues: ['platform'], rowCount: 10, distinctCount: 1, coveragePct: 100 }],
+    samplePeriod: '2026-04',
+  });
   const saveSpy = vi.spyOn(api, 'saveDimensionsConfig');
   const user = userEvent.setup();
   render(
@@ -49,9 +54,9 @@ async function openRule(user: User, text: string): Promise<HTMLInputElement> {
   return rule;
 }
 
-/** The rules' text, in the order the editor shows them. */
+/** The rules' text (a name, then ':'), in the order the editor shows them. */
 function shownRules(): string[] {
-  return screen.getAllByDisplayValue(/^\w+:/).map(el => (el instanceof HTMLInputElement ? el.value : ''));
+  return screen.getAllByDisplayValue(/^[^:\s][^:]*:/).map(el => (el instanceof HTMLInputElement ? el.value : ''));
 }
 
 /** Saves the open editor, applies the draft, and returns the aliases persisted. */
