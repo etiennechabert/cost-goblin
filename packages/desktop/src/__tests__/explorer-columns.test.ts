@@ -7,8 +7,10 @@ import {
   explorerOrderBy,
   explorerRowFilters,
   explorerSqlColumn,
+  groupByList,
   groupBySelectList,
   groupByValues,
+  groupValueExpr,
   rowFilterConditions,
 } from '../main/handlers/explorer-columns.js';
 
@@ -90,6 +92,7 @@ describe('rowFilterConditions', () => {
 
 describe('aggregated table helpers', () => {
   const groupBy = explorerGroupBy(['usage_date', 'tag_STAGE', 'tag_unknown', 'tag_stage'], columns);
+  const text = (column: string): string => `COALESCE(CAST(${column} AS VARCHAR), '')`;
 
   it('keeps the resolvable ids in order, each with its own column', () => {
     expect(groupBy).toEqual([
@@ -97,7 +100,17 @@ describe('aggregated table helpers', () => {
       { id: 'tag_STAGE', column: UPPER },
       { id: 'tag_stage', column: LOWER },
     ]);
-    expect(groupBySelectList(groupBy)).toBe(`usage_date::VARCHAR AS usage_date, ${UPPER}, ${LOWER}`);
+  });
+
+  it('reads a group as text that is never NULL', () => {
+    expect(groupValueExpr('usage_hour')).toBe(text('usage_hour'));
+  });
+
+  it('selects each group as its text under its column, and groups on that text', () => {
+    expect(groupBySelectList(groupBy)).toBe(`${text('usage_date')} AS usage_date, ${text(UPPER)} AS ${UPPER}, ${text(LOWER)} AS ${LOWER}`);
+    // A date's text is never '' and differs per date, so grouping on the
+    // date itself splits the line items the same way, without a cast each.
+    expect(groupByList(groupBy)).toBe(`usage_date, ${text(UPPER)}, ${text(LOWER)}`);
   });
 
   it('reads each value from its column back under the id', () => {
@@ -107,7 +120,8 @@ describe('aggregated table helpers', () => {
 
   it('sorts by a measure, then by a grouped column, else by SUM(cost)', () => {
     expect(aggregatedOrderBy({ column: 'row_count', direction: 'asc' }, groupBy)).toBe('COUNT(*) ASC');
-    expect(aggregatedOrderBy({ column: 'tag_stage', direction: 'desc' }, groupBy)).toBe(`${LOWER} DESC`);
+    expect(aggregatedOrderBy({ column: 'tag_stage', direction: 'desc' }, groupBy)).toBe(`${text(LOWER)} DESC`);
+    expect(aggregatedOrderBy({ column: 'usage_date', direction: 'asc' }, groupBy)).toBe('usage_date ASC');
     expect(aggregatedOrderBy({ column: 'region', direction: 'asc' }, groupBy)).toBe('SUM(cost) DESC');
     expect(aggregatedOrderBy(undefined, groupBy)).toBe('SUM(cost) DESC');
   });

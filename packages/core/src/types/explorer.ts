@@ -118,6 +118,9 @@ export interface AggregatedTableParams extends ExplorerBaseParams {
 }
 
 export interface AggregatedTableRow {
+  /** The group's value on each group-by column, by id, as text. A tag the
+   *  line items lack reads as '', like an empty one, and is the same group:
+   *  no two rows of a result have the same values. */
   readonly values: Readonly<Record<string, string>>;
   readonly cost: number;
   readonly listCost: number;

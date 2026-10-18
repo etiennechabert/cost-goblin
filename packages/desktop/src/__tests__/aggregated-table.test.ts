@@ -1,9 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { DuckDBInstance } from '@duckdb/node-api';
 import type { DuckDBConnection } from '@duckdb/node-api';
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { asProviderName, buildSource, QueryBuilder, SecurityError, tagSqlColumn, tagSqlColumnsById } from '@costgoblin/core';
+import { asProviderName, buildSource, QueryBuilder, SecurityError, sqlStringLiteral, tagDimColumn, tagSqlColumn, tagSqlColumnsById } from '@costgoblin/core';
+import type { DimensionsConfig, TagDimension } from '@costgoblin/core';
 import { parseRowFilters, parseRowKeys, queryAggregatedRows, rowKeysFilter } from '../main/handlers/aggregated-table.js';
 import type { AggregatedRowsQuery, RunSql } from '../main/handlers/aggregated-table.js';
 import { explorerGroupBy, explorerRowFilters } from '../main/handlers/explorer-columns.js';
@@ -85,7 +88,9 @@ describe('rowKeysFilter', () => {
 describe('queryAggregatedRows against DuckDB', () => {
   let db: DuckDBInstance;
   let conn: DuckDBConnection;
-  const run: RunSql = (sql, params) => fetchRowsPrepared(conn, sql, params);
+  // Cloned, as the rows reach the main process: the DuckDB worker posts
+  // them, and a DATE or TIMESTAMP value arrives as a plain object.
+  const run: RunSql = async (sql, params) => structuredClone(await fetchRowsPrepared(conn, sql, params));
 
   beforeAll(async () => {
     db = await DuckDBInstance.create();
@@ -238,6 +243,93 @@ describe('queryAggregatedRows against DuckDB', () => {
       const detail = await queryAggregatedRows(run, { ...january, rowFilters: explorerRowFilters(day.values, new Map()), rowLimit: 500 });
       expect(detail.rows.length).toBeGreaterThan(0);
       expect(detail.rows.reduce((sum, r) => sum + r.cost, 0)).toBeCloseTo(day.cost, 6);
+    });
+  });
+
+  describe('on line items whose team tag is missing, empty or set', () => {
+    const TEAM: TagDimension = { tagName: 'team', label: 'Team' };
+    const TEAM_ID = tagDimColumn(TEAM);
+    const dimensions: DimensionsConfig = { builtIn: [], tags: [TEAM] };
+    let dataDir = '';
+
+    beforeAll(async () => {
+      dataDir = (await mkdtemp(join(tmpdir(), 'cg-agg-tags-'))).replaceAll('\\', '/');
+      // One power of two per line item, so every total names its items.
+      const item = (hour: string, service: string, tags: string, cost: number): string =>
+        `(TIMESTAMP '2026-01-05 ${hour}:00:00', '111', 'Acct', 'eu-west-1', '${service}', '${service}', 'Compute', 'usage',
+          1.0, ${String(cost)}, 'arn:${String(cost)}', ${String(cost)}, 'Usage', 'Standard', '', 'RunInstances', 'BoxUsage', ${tags})`;
+      const items = [
+        item('05', 'EC2', "MAP {'team': 'web'}", 1),
+        item('05', 'EC2', "MAP {'env': 'prod'}", 2),
+        item('06', 'EC2', "MAP {'team': ''}", 4),
+        item('06', 'RDS', "MAP {'team': ''}", 8),
+        item('06', 'RDS', "MAP {'env': 'dev'}", 16),
+      ];
+      for (const tier of ['daily', 'hourly']) {
+        const dir = join(dataDir, FIXTURE_PROVIDER, 'raw', `${tier}-2026-01`);
+        await mkdir(dir, { recursive: true });
+        await conn.run(`
+          COPY (
+            SELECT * FROM (VALUES ${items.join(',\n')}) AS t(ChargePeriodStart, SubAccountId, SubAccountName, RegionId,
+              ServiceName, x_ServiceCode, ServiceCategory, ChargeDescription, ConsumedQuantity, ListCost, ResourceId,
+              EffectiveCost, ChargeCategory, PricingCategory, CommitmentDiscountStatus, x_Operation, SkuMeter, Tags)
+          ) TO ${sqlStringLiteral(join(dir, 'data.parquet').replaceAll('\\', '/'))} (FORMAT PARQUET)
+        `);
+      }
+    });
+
+    afterAll(async () => {
+      await rm(dataDir, { recursive: true, force: true });
+    });
+
+    const query = (tier: 'daily' | 'hourly', ids: readonly string[]): AggregatedRowsQuery => ({
+      source: buildSource({ dataDir, tier, dimensions, providers: [{ name: FIXTURE_PROVIDER, periods: ['2026-01'] }], costMetric: 'effective' }),
+      where: '',
+      groupBy: explorerGroupBy(ids, tagSqlColumnsById(dimensions.tags)),
+      rowFilters: [],
+      sort: undefined,
+      rowLimit: 500,
+      rowKeys: undefined,
+    });
+
+    it('shows a missing and an empty tag as one group, counted once', async () => {
+      const result = await queryAggregatedRows(run, query('daily', ['service', TEAM_ID]));
+      expect(result.totalRows).toBe(3);
+      expect(result.rows.map(r => [r.values, r.cost, r.rowCount])).toEqual([
+        [{ service: 'RDS', [TEAM_ID]: '' }, 24, 2],
+        [{ service: 'EC2', [TEAM_ID]: '' }, 6, 2],
+        [{ service: 'EC2', [TEAM_ID]: 'web' }, 1, 1],
+      ]);
+    });
+
+    it('returns that group whole for a key with an empty value', async () => {
+      const result = await queryAggregatedRows(run, { ...query('daily', ['service', TEAM_ID]), rowKeys: [{ service: 'EC2', [TEAM_ID]: '' }] });
+      expect(result.totalRows).toBe(1);
+      expect(result.rows.map(r => [r.values, r.cost])).toEqual([[{ service: 'EC2', [TEAM_ID]: '' }, 6]]);
+    });
+
+    it('sorts by the tag as it reads', async () => {
+      const teams = async (direction: 'asc' | 'desc'): Promise<string[]> => {
+        const result = await queryAggregatedRows(run, { ...query('daily', [TEAM_ID]), sort: { column: TEAM_ID, direction } });
+        return result.rows.map(r => r.values[TEAM_ID] ?? '?');
+      };
+      expect(await teams('asc')).toEqual(['', 'web']);
+      expect(await teams('desc')).toEqual(['web', '']);
+    });
+
+    it('reads a date or an hour as text, and keys and sorts it by that text', async () => {
+      const byDate = await queryAggregatedRows(run, query('daily', ['usage_date']));
+      expect(byDate.rows.map(r => [r.values, r.cost])).toEqual([[{ usage_date: '2026-01-05' }, 31]]);
+
+      const byHour = query('hourly', ['usage_hour']);
+      expect((await queryAggregatedRows(run, byHour)).rows.map(r => [r.values, r.cost])).toEqual([
+        [{ usage_hour: '2026-01-05 06:00:00' }, 28],
+        [{ usage_hour: '2026-01-05 05:00:00' }, 3],
+      ]);
+      const keyed = await queryAggregatedRows(run, { ...byHour, rowKeys: [{ usage_hour: '2026-01-05 05:00:00' }] });
+      expect(keyed.rows.map(r => r.cost)).toEqual([3]);
+      const ascending = await queryAggregatedRows(run, { ...byHour, sort: { column: 'usage_hour', direction: 'asc' } });
+      expect(ascending.rows.map(r => r.values['usage_hour'])).toEqual(['2026-01-05 05:00:00', '2026-01-05 06:00:00']);
     });
   });
 });

@@ -1,7 +1,7 @@
 import { isStringRecord, QueryBuilder, SecurityError } from '@costgoblin/core';
 import type { AggregatedTableRow, ExplorerSort } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
-import { aggregatedOrderBy, andWhere, groupBySelectList, groupByValues, rowFilterConditions } from './explorer-columns.js';
+import { aggregatedOrderBy, andWhere, groupByList, groupBySelectList, groupByValues, groupValueExpr, rowFilterConditions } from './explorer-columns.js';
 import type { GroupByColumn, RowFilter } from './explorer-columns.js';
 import { toNum } from './query-utils.js';
 
@@ -45,9 +45,9 @@ export type RowKeysFilter =
   | { readonly kind: 'some'; readonly condition: string };
 
 /** The groups `rowKeys` lists: a key keeps the group with its value on every
- *  group-by column, read as `groupByValues` reads it (a NULL reads as ''),
- *  and a key without such a value keeps none. The values are bound through
- *  `qb`; a table with no group-by has one total row, which any key keeps. */
+ *  group-by column, read as the rows read it (`groupValueExpr`), and a key
+ *  without such a value keeps none. The values are bound through `qb`; a
+ *  table with no group-by has one total row, which any key keeps. */
 export function rowKeysFilter(rowKeys: readonly RowKey[] | undefined, groupBy: readonly GroupByColumn[], qb: QueryBuilder): RowKeysFilter {
   if (rowKeys === undefined) return { kind: 'all' };
   if (groupBy.length === 0) return rowKeys.length === 0 ? { kind: 'none' } : { kind: 'all' };
@@ -55,7 +55,7 @@ export function rowKeysFilter(rowKeys: readonly RowKey[] | undefined, groupBy: r
   // read as a value.
   const usable = rowKeys.filter(key => groupBy.every(({ id }) => Object.hasOwn(key, id)));
   if (usable.length === 0) return { kind: 'none' };
-  const columns = groupBy.map(({ column }) => `COALESCE(CAST(${column} AS VARCHAR), '')`).join(', ');
+  const columns = groupBy.map(({ column }) => groupValueExpr(column)).join(', ');
   const rows = usable.map(key => `row(${groupBy.map(({ id }) => qb.addParam(key[id])).join(', ')})`).join(', ');
   return { kind: 'some', condition: `row(${columns}) IN (${rows})` };
 }
@@ -110,11 +110,11 @@ export async function queryAggregatedRows(run: RunSql, q: AggregatedRowsQuery): 
     return { rows: [toAggregatedRow(r, q.groupBy)], totalRows: 1 };
   }
 
-  const groupByList = q.groupBy.map(g => g.column).join(', ');
+  const groupKeys = groupByList(q.groupBy);
   const countSql = `
     SELECT CAST(COUNT(*) AS DOUBLE) AS n FROM (
       SELECT 1 FROM ${q.source} ${where}
-      GROUP BY ${groupByList}
+      GROUP BY ${groupKeys}
     ) AS _cnt
   `.trim();
   const dataSql = `
@@ -126,7 +126,7 @@ export async function queryAggregatedRows(run: RunSql, q: AggregatedRowsQuery): 
       CAST(COUNT(*) AS DOUBLE) AS row_count
     FROM ${q.source}
     ${where}
-    GROUP BY ${groupByList}
+    GROUP BY ${groupKeys}
     ORDER BY ${aggregatedOrderBy(q.sort, q.groupBy)}
     LIMIT ${String(q.rowLimit)}
   `.trim();

@@ -93,11 +93,34 @@ export function explorerGroupBy(ids: readonly string[], tagSqlColumns: ReadonlyM
   });
 }
 
-/** The group-by SELECT list; usage_date is cast so it survives IPC as a string. */
+/** Explorer columns that hold a DATE or a TIMESTAMP. */
+const TEMPORAL_COLUMNS: ReadonlySet<string> = new Set(['usage_date', 'usage_hour']);
+
+/** A group-by column's value as its row shows it (`AggregatedTableRow.values`):
+ *  text, never NULL. A tag the line item lacks (NULL) reads as '' like an
+ *  empty one, so the two are one group. A date or an hour is text too: the
+ *  DuckDB worker's postMessage turns a DATE or TIMESTAMP into a plain object.
+ *  The select list, the sort and the keyed rows all read a group through
+ *  this, so each value a row shows is exactly one group. */
+export function groupValueExpr(column: string): string {
+  return `COALESCE(CAST(${column} AS VARCHAR), '')`;
+}
+
+/** What a group-by column groups on: its value, except that a date or an
+ *  hour groups on itself. Its text is never '' and differs per date or hour,
+ *  so the groups are the same, without casting every line item. */
+function groupKeyExpr(column: string): string {
+  return TEMPORAL_COLUMNS.has(column) ? column : groupValueExpr(column);
+}
+
+/** The group-by SELECT list: each group's value under its column's name. */
 export function groupBySelectList(groupBy: readonly GroupByColumn[]): string {
-  return groupBy
-    .map(({ column }) => (column === 'usage_date' ? `usage_date::VARCHAR AS usage_date` : column))
-    .join(', ');
+  return groupBy.map(({ column }) => `${groupValueExpr(column)} AS ${column}`).join(', ');
+}
+
+/** The GROUP BY list behind `groupBySelectList`. */
+export function groupByList(groupBy: readonly GroupByColumn[]): string {
+  return groupBy.map(({ column }) => groupKeyExpr(column)).join(', ');
 }
 
 /** A grouped result row's values, keyed by the renderer's id. */
@@ -123,6 +146,6 @@ export function aggregatedOrderBy(sort: ExplorerSort | undefined, groupBy: reado
   const fn = Object.hasOwn(AGG_SORT_COLUMNS, sort.column) ? AGG_SORT_COLUMNS[sort.column] : undefined;
   if (fn !== undefined) return fn(dir);
   const grouped = groupBy.find(g => g.id === sort.column);
-  if (grouped !== undefined) return `${grouped.column} ${dir}`;
+  if (grouped !== undefined) return `${groupKeyExpr(grouped.column)} ${dir}`;
   return 'SUM(cost) DESC';
 }
