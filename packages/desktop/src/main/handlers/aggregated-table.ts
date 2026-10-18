@@ -1,8 +1,8 @@
-import { QueryBuilder, SecurityError } from '@costgoblin/core';
+import { isStringRecord, QueryBuilder, SecurityError } from '@costgoblin/core';
 import type { AggregatedTableRow, ExplorerSort } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
-import { aggregatedOrderBy, andWhere, groupBySelectList, groupByValues } from './explorer-columns.js';
-import type { GroupByColumn } from './explorer-columns.js';
+import { aggregatedOrderBy, andWhere, groupBySelectList, groupByValues, rowFilterConditions } from './explorer-columns.js';
+import type { GroupByColumn, RowFilter } from './explorer-columns.js';
 import { toNum } from './query-utils.js';
 
 /** One group's values by group-by id, as in `AggregatedTableRow.values`. */
@@ -11,8 +11,16 @@ export type RowKey = Readonly<Record<string, string>>;
 /** Runs a query with its bound `$n` parameters. */
 export type RunSql = (sql: string, params: readonly unknown[]) => Promise<RawRow[]>;
 
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
+/** `raw` as an object of string values; `what` names it in the error.
+ *  @throws {SecurityError} for anything else */
+function parseStringValues(raw: unknown, what: string): Record<string, string> {
+  if (!isStringRecord(raw)) throw new SecurityError(`${what} must be an object`);
+  const values: Record<string, string> = {};
+  for (const [id, value] of Object.entries(raw)) {
+    if (typeof value !== 'string') throw new SecurityError(`${what} value for "${id}" must be a string`);
+    values[id] = value;
+  }
+  return values;
 }
 
 /** The renderer's `rowKeys`: none, or at most `max` objects of string values.
@@ -21,15 +29,13 @@ export function parseRowKeys(raw: unknown, max: number): readonly RowKey[] | und
   if (raw === undefined) return undefined;
   if (!Array.isArray(raw)) throw new SecurityError('rowKeys must be a list');
   if (raw.length > max) throw new SecurityError(`rowKeys has ${String(raw.length)} keys, more than the ${String(max)} rows a result can have`);
-  return raw.map((entry: unknown): RowKey => {
-    if (!isRecord(entry)) throw new SecurityError('each rowKeys entry must be an object');
-    const key: Record<string, string> = {};
-    for (const [id, value] of Object.entries(entry)) {
-      if (typeof value !== 'string') throw new SecurityError(`rowKeys value for "${id}" must be a string`);
-      key[id] = value;
-    }
-    return key;
-  });
+  return raw.map((entry: unknown): RowKey => parseStringValues(entry, 'each rowKeys entry'));
+}
+
+/** The renderer's `rowFilters`: none, or an object of string values.
+ *  @throws {SecurityError} for any other payload */
+export function parseRowFilters(raw: unknown): Readonly<Record<string, string>> | undefined {
+  return raw === undefined ? undefined : parseStringValues(raw, 'rowFilters');
 }
 
 /** Which groups a query keeps for its `rowKeys`. */
@@ -56,9 +62,12 @@ export function rowKeysFilter(rowKeys: readonly RowKey[] | undefined, groupBy: r
 
 export interface AggregatedRowsQuery {
   readonly source: string;
-  /** The WHERE clause every line item must pass, or ''. */
+  /** The WHERE clause every line item must pass, or ''. It binds nothing:
+   *  the row filters and keys number their parameters from $1. */
   readonly where: string;
   readonly groupBy: readonly GroupByColumn[];
+  /** Only the line items with these values, e.g. a table row's group when it expands. */
+  readonly rowFilters: readonly RowFilter[];
   readonly sort: ExplorerSort | undefined;
   readonly rowLimit: number;
   readonly rowKeys: readonly RowKey[] | undefined;
@@ -77,10 +86,13 @@ function toAggregatedRow(r: RawRow, groupBy: readonly GroupByColumn[]): Aggregat
 /** The aggregated table's rows (the first `rowLimit` groups in `sort` order,
  *  or the one total row without a group-by) and how many groups pass. */
 export async function queryAggregatedRows(run: RunSql, q: AggregatedRowsQuery): Promise<{ rows: AggregatedTableRow[]; totalRows: number }> {
+  // One builder numbers every bound value, in WHERE order: the row filters', then the keys'.
   const qb = new QueryBuilder();
+  const filters = rowFilterConditions(q.rowFilters, qb);
   const keys = rowKeysFilter(q.rowKeys, q.groupBy, qb);
   if (keys.kind === 'none') return { rows: [], totalRows: 0 };
-  const where = keys.kind === 'some' ? andWhere(q.where, keys.condition) : q.where;
+  const conditions = keys.kind === 'some' ? [...filters, keys.condition] : filters;
+  const where = conditions.length === 0 ? q.where : andWhere(q.where, conditions.join(' AND '));
   const { params } = qb.build();
 
   if (q.groupBy.length === 0) {
