@@ -288,6 +288,10 @@ describe('AliasRulesEditor', () => {
     await addRule(user, ': orphan');
     expect(ruleLines()).toEqual(['payments: pay']);
 
+    // The orphan alone leaves the tag unchanged, so Save would have nothing to
+    // apply (#737 compares what is saved, not the editor text). Make one real
+    // edit, so the saved config shows the orphan was dropped.
+    await user.selectOptions(screen.getByLabelText('Normalization'), 'lowercase');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await user.click(await screen.findByRole('button', { name: /Apply & rebuild/ }));
     await waitFor(() => { expect(save).toHaveBeenCalledTimes(1); });
