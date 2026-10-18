@@ -403,6 +403,11 @@ function GroupBySelect({
   dimensions: readonly Dimension[];
   onChange: (value: string) => void;
 }>) {
+  // A value outside the list (a disabled dimension, or a summary's implicit
+  // `service`) still gets an option: without one the select would show the
+  // first dimension while the spec reads another, and picking it would fire
+  // no change.
+  const listed = dimensions.some(d => getDimensionId(d) === value);
   return (
     <label className="flex items-center gap-2">
       <span className="text-text-muted shrink-0 w-14">Group by</span>
@@ -411,6 +416,7 @@ function GroupBySelect({
         onChange={(e) => { onChange(e.target.value); }}
         className="flex-1 bg-transparent border border-border rounded px-2 py-1 text-text-primary"
       >
+        {!listed && <option value={value}>{value}</option>}
         {dimensions.map(d => (
           <option key={getDimensionId(d)} value={getDimensionId(d)}>
             {getDimensionLabel(d)}

@@ -1,5 +1,5 @@
 import { daysBetween } from '../lib/dates.js';
-import { formatDollars, formatDate } from './format.js';
+import { formatDollars, formatDateRange } from './format.js';
 
 interface SummaryCardProps {
   /** Heading above the total; "Total Cost" when unset. */
@@ -13,6 +13,9 @@ interface SummaryCardProps {
 }
 
 const PLACEHOLDER = '—';
+
+/** The frame every summary metric's card shares. */
+export const SUMMARY_CARD_CLASS = 'flex flex-col justify-between rounded-xl border border-border bg-bg-secondary px-6 py-5 h-full';
 
 export function SummaryCard({ label = 'Total Cost', totalCost, previousCost, dateRange, previousDateRange }: Readonly<SummaryCardProps>) {
   const hasTotal = totalCost !== null;
@@ -31,7 +34,7 @@ export function SummaryCard({ label = 'Total Cost', totalCost, previousCost, dat
   const prevDailyAvg = hasPrevious ? previousCost / prevRangeDays : null;
 
   return (
-    <div className="flex flex-col justify-between rounded-xl border border-border bg-bg-secondary px-6 py-5 h-full">
+    <div className={SUMMARY_CARD_CLASS}>
       <div>
         <p className="text-xs font-medium uppercase tracking-wider text-text-secondary">{label}</p>
         <span className="mt-2 block text-4xl font-bold tabular-nums text-text-primary">
@@ -95,7 +98,7 @@ export function SummaryCard({ label = 'Total Cost', totalCost, previousCost, dat
       </div>
 
       <p className="mt-3 text-xs text-text-muted">
-        {formatDate(dateRange.start)} – {formatDate(dateRange.end)}
+        {formatDateRange(dateRange)}
       </p>
     </div>
   );

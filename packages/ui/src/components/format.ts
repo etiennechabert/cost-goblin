@@ -74,3 +74,8 @@ export function formatDate(date: string): string {
     year: 'numeric',
   });
 }
+
+/** "Jan 29, 2026 – Feb 28, 2026": a range's first and last day. */
+export function formatDateRange(range: { readonly start: string; readonly end: string }): string {
+  return `${formatDate(range.start)} – ${formatDate(range.end)}`;
+}

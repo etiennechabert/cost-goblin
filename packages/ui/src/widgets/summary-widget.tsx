@@ -2,9 +2,9 @@ import type { ReactNode } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 
-import { SummaryCard } from '../components/summary-card.js';
+import { SUMMARY_CARD_CLASS, SummaryCard } from '../components/summary-card.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
-import { formatDate, formatDollars, formatPercent, signedDollars } from '../components/format.js';
+import { formatDateRange, formatDollars, formatPercent, signedDollars } from '../components/format.js';
 import { asDimensionId, trendPercentChange } from '@costgoblin/core/browser';
 import type { CostResult, CostRow, DateRange, SummaryMetric } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
@@ -12,7 +12,13 @@ import { dimensionLabelFor, filtersKey, hasSufficientCoverage, summaryGroupBy, s
 
 const PLACEHOLDER = '—';
 
-const CARD_CLASS = 'flex flex-col justify-between rounded-xl border border-border bg-bg-secondary px-6 py-5 h-full';
+/** How an entity with no value for the dimension (an untagged row's NULL,
+ *  which arrives as '') is named. */
+const NO_VALUE = '(no value)';
+
+/** Under half a cent, a period's total is float residue from charges and
+ *  credits netting out, not spend: no ratio is taken against it. */
+const RESIDUE = 0.005;
 
 export function SummaryWidget({
   dateRange,
@@ -24,12 +30,13 @@ export function SummaryWidget({
   spec,
 }: WidgetCommonProps) {
   const api = useCostApi();
-  const isSummary = spec.type === 'summary';
-  const metric: SummaryMetric = (spec.type === 'summary' ? spec.metric : undefined) ?? 'total';
+  const summary = spec.type === 'summary' ? spec : null;
+  const isSummary = summary !== null;
+  const metric: SummaryMetric = summary?.metric ?? 'total';
   // `total` and `delta` only read the period's total, which any grouping
   // gives; they keep the account grouping the widget has always queried.
-  const groupBy = summaryUsesGroupBy(metric) && spec.type === 'summary'
-    ? summaryGroupBy(spec.groupBy)
+  const groupBy = summary !== null && summaryUsesGroupBy(metric)
+    ? summaryGroupBy(summary.groupBy)
     : asDimensionId('account');
   // `delta` is the comparison itself, so it reads the previous period even
   // while the global compare toggle is off.
@@ -45,10 +52,10 @@ export function SummaryWidget({
     [isSummary, needsPrevious, metric, groupBy, previousDateRange.start, previousDateRange.end, previousDateRange.startHour, previousDateRange.endHour, fk, granularity, api],
   );
 
-  if (spec.type !== 'summary') return null;
+  if (summary === null) return null;
 
   if (cur.status === 'loading' || (metric === 'delta' && prev.status === 'loading')) return (
-    <div className={CARD_CLASS}>
+    <div className={SUMMARY_CARD_CLASS}>
       <CoinRainLoader height={200} count={4} />
     </div>
   );
@@ -57,7 +64,7 @@ export function SummaryWidget({
   if (cur.status === 'error') failed = cur.error;
   else if (metric === 'delta' && prev.status === 'error') failed = prev.error;
   if (failed !== null) return (
-    <div className={CARD_CLASS}>
+    <div className={SUMMARY_CARD_CLASS}>
       <div className="flex items-center justify-center h-full text-xs text-warning">Query failed: {failed.message}</div>
     </div>
   );
@@ -72,7 +79,7 @@ export function SummaryWidget({
     case 'total':
       return (
         <SummaryCard
-          label={spec.title}
+          label={summary.title}
           totalCost={current === null ? null : current.totalCost}
           previousCost={previousCost}
           dateRange={dateRange}
@@ -82,7 +89,7 @@ export function SummaryWidget({
     case 'delta':
       return (
         <DeltaCard
-          label={spec.title ?? 'Change vs previous period'}
+          label={summary.title ?? 'Change vs previous period'}
           current={current === null ? 0 : current.totalCost}
           previous={previousCost}
           dateRange={dateRange}
@@ -90,12 +97,12 @@ export function SummaryWidget({
         />
       );
     case 'topEntity':
-      return <TopEntityCard label={spec.title ?? `Top ${label}`} result={current} dateRange={dateRange} />;
+      return <TopEntityCard label={summary.title ?? `Top ${label}`} result={current} dateRange={dateRange} />;
     case 'entityCount':
       return (
-        <SummaryShell label={spec.title ?? `${label} count`} dateRange={dateRange}>
+        <SummaryShell label={summary.title ?? `${label} count`} footer={formatDateRange(dateRange)}>
           <span className="mt-2 block text-4xl font-bold tabular-nums text-text-primary">
-            {current === null ? PLACEHOLDER : current.rows.length.toLocaleString('en-US')}
+            {current === null ? PLACEHOLDER : current.rows.filter(r => r.entity !== '').length.toLocaleString('en-US')}
           </span>
           <p className="mt-1 text-xs text-text-muted">Distinct values in range</p>
         </SummaryShell>
@@ -103,22 +110,18 @@ export function SummaryWidget({
   }
 }
 
-function SummaryShell({ label, dateRange, footer, children }: Readonly<{
+function SummaryShell({ label, footer, children }: Readonly<{
   label: string;
-  dateRange: DateRange;
-  /** Replaces the default "start – end" footer. */
-  footer?: string | undefined;
+  footer: string;
   children: ReactNode;
 }>) {
   return (
-    <div className={CARD_CLASS}>
+    <div className={SUMMARY_CARD_CLASS}>
       <div>
         <p className="text-xs font-medium uppercase tracking-wider text-text-secondary">{label}</p>
         {children}
       </div>
-      <p className="mt-3 text-xs text-text-muted">
-        {footer ?? `${formatDate(dateRange.start)} – ${formatDate(dateRange.end)}`}
-      </p>
+      <p className="mt-3 text-xs text-text-muted">{footer}</p>
     </div>
   );
 }
@@ -131,23 +134,25 @@ function DeltaCard({ label, current, previous, dateRange, previousDateRange }: R
   dateRange: DateRange;
   previousDateRange: DateRange;
 }>) {
-  const footer = `${formatDate(dateRange.start)} – ${formatDate(dateRange.end)} vs ${formatDate(previousDateRange.start)} – ${formatDate(previousDateRange.end)}`;
+  const footer = `${formatDateRange(dateRange)} vs ${formatDateRange(previousDateRange)}`;
   if (previous === null) return (
-    <SummaryShell label={label} dateRange={dateRange} footer={footer}>
+    <SummaryShell label={label} footer={footer}>
       <span className="mt-2 block text-4xl font-bold tabular-nums text-text-muted">{PLACEHOLDER}</span>
       <p className="mt-1 text-xs text-text-muted">Not enough data for the previous period</p>
     </SummaryShell>
   );
 
-  const change = current - previous;
+  // In whole cents, so residue neither colors the card nor prints "$-0.00"
+  // (`+ 0` turns -0 into 0).
+  const change = Math.round((current - previous) * 100) / 100 + 0;
   let color = 'text-text-primary';
   if (change > 0) color = 'text-negative';
   else if (change < 0) color = 'text-positive';
   // A change from $0 has no ratio; say so rather than show trends' ±100%.
-  const percent = previous === 0 ? null : trendPercentChange(current, previous);
+  const percent = Math.abs(previous) < RESIDUE ? null : trendPercentChange(current, previous);
 
   return (
-    <SummaryShell label={label} dateRange={dateRange} footer={footer}>
+    <SummaryShell label={label} footer={footer}>
       <span className={`mt-2 block text-4xl font-bold tabular-nums ${color}`}>{signedDollars(change)}</span>
       <div className="mt-4 rounded-lg bg-bg-tertiary/30 px-4 py-3">
         {percent === null
@@ -173,16 +178,17 @@ function TopEntityCard({ label, result, dateRange }: Readonly<{
     null,
   );
   if (result === null || top === null) return (
-    <SummaryShell label={label} dateRange={dateRange}>
+    <SummaryShell label={label} footer={formatDateRange(dateRange)}>
       <span className="mt-2 block text-4xl font-bold tabular-nums text-text-muted">{PLACEHOLDER}</span>
       <p className="mt-1 text-xs text-text-muted">No spend in range</p>
     </SummaryShell>
   );
 
+  const name = top.entity === '' ? NO_VALUE : top.entity;
   const total = result.totalCost;
   return (
-    <SummaryShell label={label} dateRange={dateRange}>
-      <span className="mt-2 block truncate text-2xl font-bold text-text-primary" title={top.entity}>{top.entity}</span>
+    <SummaryShell label={label} footer={formatDateRange(dateRange)}>
+      <span className="mt-2 block truncate text-2xl font-bold text-text-primary" title={name}>{name}</span>
       <span className="mt-1 block text-xl font-semibold tabular-nums text-text-primary">{formatDollars(top.totalCost)}</span>
       {total > 0 && (
         <p className="mt-0.5 text-xs tabular-nums text-text-muted">

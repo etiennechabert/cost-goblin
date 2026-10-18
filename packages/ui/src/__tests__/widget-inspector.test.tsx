@@ -9,12 +9,12 @@ const DIMENSIONS: readonly Dimension[] = [
   { name: asDimensionId('service'), label: 'Service', field: 'service' },
 ];
 
-function renderInspector(widget: WidgetSpec) {
+function renderInspector(widget: WidgetSpec, dimensions: readonly Dimension[] = DIMENSIONS) {
   const changes: WidgetSpec[] = [];
   render(
     <WidgetInspector
       widget={widget}
-      dimensions={DIMENSIONS}
+      dimensions={dimensions}
       onChange={(next) => { changes.push(next); }}
       onDelete={() => undefined}
     />,
@@ -51,6 +51,16 @@ describe('WidgetInspector summary metric', () => {
     fireEvent.change(select('Group by'), { target: { value: 'account' } });
 
     expect(changes).toEqual([{ id: 's', type: 'summary', size: 'small', metric: 'topEntity', groupBy: 'account' }]);
+  });
+
+  it('shows the group-by it reads even when that dimension is not listed', () => {
+    const changes = renderInspector({ id: 's', type: 'summary', size: 'small', metric: 'entityCount' }, DIMENSIONS.slice(0, 1));
+
+    const groupBy = select('Group by');
+    expect(groupBy.value).toBe('service');
+    fireEvent.change(groupBy, { target: { value: 'account' } });
+
+    expect(changes).toEqual([{ id: 's', type: 'summary', size: 'small', metric: 'entityCount', groupBy: 'account' }]);
   });
 
   it('drops the group-by when switching to a metric that ignores it', () => {

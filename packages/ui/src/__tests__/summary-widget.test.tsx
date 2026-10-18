@@ -41,7 +41,9 @@ interface SummaryApiOptions {
   readonly previous?: Rows;
   /** The span the previous period's data covers; the whole period by default. */
   readonly previousCovered?: DateRange;
+  /** Fails every query, or only the previous period's. */
   readonly fail?: Error;
+  readonly failPrevious?: Error;
 }
 
 /** Serves each period and grouping its own rows, and records every query.
@@ -59,6 +61,7 @@ class SummaryApi extends MockCostApi {
     this.calls.push(params);
     if (this.options.fail !== undefined) return Promise.reject(this.options.fail);
     if (params.dateRange.start === PREVIOUS.start) {
+      if (this.options.failPrevious !== undefined) return Promise.reject(this.options.failPrevious);
       const rows = this.options.previous ?? [['prod', 400], ['staging', 320]];
       return Promise.resolve(costResult(rows, this.options.previousCovered ?? PREVIOUS));
     }
@@ -155,6 +158,32 @@ describe('SummaryWidget', () => {
       expect(screen.queryByText(/%$/)).toBeNull();
     });
 
+    it('takes no ratio against a previous total that is only float residue', async () => {
+      // Charges and credits netting out leave 1e-13, not $0.
+      const api = new SummaryApi({ previous: [['prod', 0.1 + 0.2 - 0.3]] });
+      renderSummary(summary({ metric: 'delta' }), api);
+
+      expect(await screen.findByText('+$900.00')).not.toBeNull();
+      expect(screen.getByText('No spend in the previous period')).not.toBeNull();
+      expect(screen.queryByText(/%$/)).toBeNull();
+    });
+
+    it('prints no residue change as a negative zero or colors it', async () => {
+      const api = new SummaryApi({ current: [['prod', 0.3]], previous: [['prod', 0.1 + 0.2]] });
+      renderSummary(summary({ metric: 'delta' }), api);
+
+      const change = await screen.findByText('+$0.00');
+      expect(change.classList.contains('text-text-primary')).toBe(true);
+    });
+
+    it('shows a failed previous-period query instead of a comparison', async () => {
+      const api = new SummaryApi({ failPrevious: new Error('previous gone') });
+      renderSummary(summary({ metric: 'delta' }), api);
+
+      expect(await screen.findByText('Query failed: previous gone')).not.toBeNull();
+      expect(screen.queryByText('Not enough data for the previous period')).toBeNull();
+    });
+
     it('shows the dollar change but no percent when the previous period had no spend', async () => {
       const api = new SummaryApi({ previous: [] });
       renderSummary(summary({ metric: 'delta' }), api);
@@ -188,6 +217,14 @@ describe('SummaryWidget', () => {
       expect(api.groupBys()).toEqual(['region']);
     });
 
+    it('names the bucket of rows with no value for the dimension', async () => {
+      const api = new SummaryApi({ current: [['', 700], ['platform', 200]] });
+      renderSummary(summary({ metric: 'topEntity', groupBy: asDimensionId('tag_team') }), api);
+
+      expect(await screen.findByText('(no value)')).not.toBeNull();
+      expect(screen.getByText('$700.00')).not.toBeNull();
+    });
+
     it('says so when nothing was spent', async () => {
       const api = new SummaryApi();
       renderSummary(summary({ metric: 'topEntity', groupBy: asDimensionId('nothing') }), api);
@@ -207,6 +244,13 @@ describe('SummaryWidget', () => {
       expect(await screen.findByText('3')).not.toBeNull();
       expect(screen.getByText('Service count')).not.toBeNull();
       expect(api.groupBys()).toEqual(['service']);
+    });
+
+    it('does not count rows with no value for the dimension', async () => {
+      const api = new SummaryApi({ current: [['', 700], ['platform', 200], ['data', 100]] });
+      renderSummary(summary({ metric: 'entityCount', groupBy: asDimensionId('tag_team') }), api);
+
+      expect(await screen.findByText('2')).not.toBeNull();
     });
 
     it('counts the configured groupBy', async () => {
