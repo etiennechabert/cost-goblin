@@ -971,22 +971,16 @@ As concepts are configured, these widgets activate.
 - `--positive` / `--negative`
 - `--warning`
 
-**Chart palettes:**
-```typescript
-const PALETTE_STANDARD = [
-  '#195fd9', '#137f1f', '#f8a4ae', '#7923fe', '#fb86fc',
-  '#2ab301', '#c16c99', '#1ddbfa', '#fc19c4', '#2bb69d',
-  '#af1497', '#a3abf0', '#f1113e', '#1a95d8', '#fa7926',
-  '#9471ed', '#f1bc25', '#a74a04', '#c715ff', '#a0932d',
-];
+**Chart palettes** (`packages/ui/src/lib/palette.ts`): standard (20 colors) and colorblind-safe (12), each with a step per theme. Slot k keeps its hue family on both cards (within 25°), so a series stays recognizable when the theme flips.
 
-const PALETTE_COLORBLIND = [  // apart under protanopia and deuteranopia
-  '#3a49fc', '#0db98e', '#d52f4a', '#96c0fe', '#357518', '#48fbf6',
-  '#be6db7', '#6ae72c', '#2291f8', '#e4e495', '#a019c1', '#cf9d22',
-];
-```
+| Palette | Every pair at (OKLab ΔE ×100) | Under protanopia / deuteranopia | Contrast on its card |
+|---|---|---|---|
+| `PALETTE_STANDARD` (dark) | ≥ 14.5 | — | ≥ 3:1 |
+| `PALETTE_STANDARD_LIGHT` | ≥ 13 | — | ≥ 3:1 |
+| `PALETTE_COLORBLIND` (dark) | ≥ 14.7 | ≥ 7.9 | ≥ 3:1 |
+| `PALETTE_COLORBLIND_LIGHT` | ≥ 14.7 | ≥ 7.9 | ≥ 3:1 |
 
-**Series colors follow the entity, not its rank.** A series takes the palette slot its name hashes to; when a costlier series in the same chart holds that slot, it takes the next free one. A chart's top series therefore get distinct colors, and since a series' color depends only on the series that outrank it, every widget over the same range and filters paints a shared series alike. Series ranked past the palette are drawn in a neutral gray, and the pie's folded "Other" in a darker one. Hashing can put any two colors side by side, so every pair has to stay distinguishable (`palette.test.ts`, OKLab ΔE ×100): ≥ 14.5 for the 20 standard colors (about the most a dark surface fits while staying visible on the light theme), and ≥ 16 for the 12 colorblind ones, which also stay ≥ 8.6 apart under protanopia and deuteranopia.
+**Series colors follow the entity, not its rank.** A series takes the palette slot its name hashes to; when a costlier series in the same chart holds that slot, it takes the next free one. A chart's top series therefore get distinct colors, and since a series' color depends only on the series that outrank it, every widget over the same range and filters paints a shared series alike. Series ranked past the palette are drawn in a neutral gray, and the pie's folded "Other" in a darker one. Hashing can put any two colors side by side, so every pair has to stay distinguishable (`palette.test.ts` holds the floors above). Twenty colors is about as many as a dark card fits; the light card's 3:1 contrast leaves only the darker half of the gamut, so pairs sit closer there. The colorblind pair was chosen for both themes at once.
 
 ---
 

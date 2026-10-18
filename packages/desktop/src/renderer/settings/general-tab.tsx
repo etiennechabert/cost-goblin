@@ -130,7 +130,7 @@ export function GeneralTab({
   onShowReleaseNotes,
   onRerunSetup,
 }: Readonly<Props>): React.JSX.Element {
-  const swatches = getActivePalette(palette);
+  const swatches = getActivePalette(palette, isDark ? 'dark' : 'light');
   const updatesDescription = describeUpdateRow({
     state: updateStatus.state,
     checked: updateChecked,

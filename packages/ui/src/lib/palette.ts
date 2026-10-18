@@ -3,8 +3,10 @@
 // Hashing means any two palette colors can end up side by side, so every PAIR
 // must stay distinguishable, not just neighbouring slots (palette.test.ts).
 // Distance is OKLab ΔE ×100; 15 is the usual floor for telling two marks
-// apart. Twenty colors is about as many as a dark surface fits: these keep
-// every pair at ΔE >= 14.5 while staying visible on the light theme too.
+// apart. Each palette has a step per theme: slot k keeps its hue family (within
+// 25°) on both cards, so a series looks related when the theme flips.
+//
+// Twenty colors is about as many as a dark card fits: every pair at ΔE >= 14.5.
 // Past 20, pairs fall under 14 whatever the colors.
 export const PALETTE_STANDARD: readonly string[] = [
   '#195fd9', '#137f1f', '#f8a4ae', '#7923fe', '#fb86fc',
@@ -13,12 +15,27 @@ export const PALETTE_STANDARD: readonly string[] = [
   '#9471ed', '#f1bc25', '#a74a04', '#c715ff', '#a0932d',
 ];
 
+// The light card leaves only the darker half of the gamut (3:1 on white), so
+// the same twenty sit closer together: every pair at ΔE >= 13.
+export const PALETTE_STANDARD_LIGHT: readonly string[] = [
+  '#4e6afd', '#0d9414', '#f9508c', '#5f24b8', '#c76ccf',
+  '#306d3c', '#ca0c73', '#0b96d6', '#9746ac', '#3ba088',
+  '#8c0669', '#2c5dae', '#b96365', '#1235ee', '#ac0312',
+  '#d318fc', '#7c4b02', '#ea0707', '#901bf8', '#a0932d',
+];
+
 // Red-green color blindness flattens hue, so these twelve are told apart
-// mostly by lightness and the blue-yellow axis: every pair stays at ΔE >= 8.6
-// under protanopia and deuteranopia, and >= 16 for everyone else.
+// mostly by lightness and the blue-yellow axis. Chosen for both themes at once:
+// on either card every pair stays at ΔE >= 7.9 under protanopia and
+// deuteranopia, and >= 14.7 for everyone else.
 export const PALETTE_COLORBLIND: readonly string[] = [
-  '#3a49fc', '#0db98e', '#d52f4a', '#96c0fe', '#357518', '#48fbf6',
-  '#be6db7', '#6ae72c', '#2291f8', '#e4e495', '#a019c1', '#cf9d22',
+  '#3947fb', '#fea47c', '#35cd0e', '#c67ea3', '#fedc67', '#8742b5',
+  '#8d9c23', '#da1c66', '#8ac3fc', '#a84811', '#1a95d8', '#ef58fe',
+];
+
+export const PALETTE_COLORBLIND_LIGHT: readonly string[] = [
+  '#1387fe', '#7f1522', '#399f6e', '#7f3a86', '#c57d08', '#3f0199',
+  '#197502', '#ce70ad', '#3c01fe', '#d41101', '#2055b3', '#eb2ee4',
 ];
 
 /** The pie's folded remainder, and the fallback when a palette is empty. */
@@ -29,6 +46,8 @@ export const OTHER_COLOR = '#374151';
 export const MINOR_COLOR = '#6b7280';
 
 export type PaletteType = 'standard' | 'colorblind';
+
+export type PaletteTheme = 'dark' | 'light';
 
 /** A series and what it cost over the chart's range. */
 export interface SeriesCost {
@@ -105,6 +124,7 @@ export function getColor(index: number, palette: readonly string[] = PALETTE_STA
   return palette[index] ?? OTHER_COLOR;
 }
 
-export function getActivePalette(type: PaletteType = 'standard'): readonly string[] {
-  return type === 'colorblind' ? PALETTE_COLORBLIND : PALETTE_STANDARD;
+export function getActivePalette(type: PaletteType = 'standard', theme: PaletteTheme = 'dark'): readonly string[] {
+  if (type === 'colorblind') return theme === 'light' ? PALETTE_COLORBLIND_LIGHT : PALETTE_COLORBLIND;
+  return theme === 'light' ? PALETTE_STANDARD_LIGHT : PALETTE_STANDARD;
 }

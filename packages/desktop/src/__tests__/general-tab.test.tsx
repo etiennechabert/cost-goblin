@@ -2,7 +2,8 @@ import { render, screen } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import type { UpdateInfo, UpdateStatus } from '@costgoblin/core/browser';
-import { PALETTE_COLORBLIND, PALETTE_STANDARD } from '@costgoblin/ui';
+import { PALETTE_COLORBLIND, PALETTE_COLORBLIND_LIGHT, PALETTE_STANDARD, PALETTE_STANDARD_LIGHT } from '@costgoblin/ui';
+import type { PaletteType } from '@costgoblin/ui';
 import { GeneralTab } from '../renderer/settings/general-tab.js';
 
 type Props = Parameters<typeof GeneralTab>[0];
@@ -66,11 +67,14 @@ describe('GeneralTab', () => {
     expect(pressed('Dark')).toBe(false);
   });
 
-  it.each([
-    { palette: 'standard' as const, swatches: PALETTE_STANDARD, other: 'Colorblind', announced: 'Standard chart palette active' },
-    { palette: 'colorblind' as const, swatches: PALETTE_COLORBLIND, other: 'Standard', announced: 'Colorblind-safe chart palette active' },
-  ])('previews and announces the $palette palette, and switches to $other', async ({ palette, swatches, other, announced }) => {
-    const { user, props: p } = renderTab({ palette });
+  const previews: readonly { palette: PaletteType; isDark: boolean; swatches: readonly string[]; other: string; announced: string }[] = [
+    { palette: 'standard', isDark: true, swatches: PALETTE_STANDARD, other: 'Colorblind', announced: 'Standard chart palette active' },
+    { palette: 'colorblind', isDark: true, swatches: PALETTE_COLORBLIND, other: 'Standard', announced: 'Colorblind-safe chart palette active' },
+    { palette: 'standard', isDark: false, swatches: PALETTE_STANDARD_LIGHT, other: 'Colorblind', announced: 'Standard chart palette active' },
+    { palette: 'colorblind', isDark: false, swatches: PALETTE_COLORBLIND_LIGHT, other: 'Standard', announced: 'Colorblind-safe chart palette active' },
+  ];
+  it.each(previews)('previews the $palette palette for the theme (dark: $isDark), and switches to $other', async ({ palette, isDark, swatches, other, announced }) => {
+    const { user, props: p } = renderTab({ palette, isDark });
 
     // The swatch strip is the decorative (aria-hidden) part of the palette row.
     const preview = screen.getByText('Chart palette').closest('div.flex')?.querySelector('[aria-hidden="true"]');

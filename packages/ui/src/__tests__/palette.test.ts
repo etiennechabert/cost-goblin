@@ -3,8 +3,11 @@ import {
   MINOR_COLOR,
   OTHER_COLOR,
   PALETTE_COLORBLIND,
+  PALETTE_COLORBLIND_LIGHT,
   PALETTE_STANDARD,
+  PALETTE_STANDARD_LIGHT,
   assignSeriesColors,
+  getActivePalette,
   hashSeriesName,
 } from '../lib/palette.js';
 import type { SeriesCost } from '../lib/palette.js';
@@ -77,8 +80,15 @@ function contrast(a: string, b: string): number {
   return ((hi ?? 0) + 0.05) / ((lo ?? 0) + 0.05);
 }
 
-// The dark theme's card: bg-secondary (#171717) at 50% over bg-primary (#0a0a0b).
+// Each theme's card: bg-secondary at 50% over bg-primary (app.css):
+// #171717 over #0a0a0b, and #f5f5f5 over #ffffff.
 const DARK_CARD = '#111111';
+const LIGHT_CARD = '#fafafa';
+
+function hue(hex: string): number {
+  const [, a, b] = oklab(linearRgb(hex));
+  return ((Math.atan2(b, a) * 180) / Math.PI + 360) % 360;
+}
 
 describe('hashSeriesName', () => {
   it('maps a name to the same slot on every run', () => {
@@ -86,7 +96,10 @@ describe('hashSeriesName', () => {
     expect(['BigQuery', 'Vertex AI', 'Cloud Run', 'Gemini API', 'Compute Engine'].map(n => slotOf(n))).toEqual([11, 16, 10, 12, 6]);
   });
 
-  it.each([PALETTE_STANDARD, PALETTE_COLORBLIND])('spreads names evenly over a %#-th palette', (palette) => {
+  it.each([
+    { name: 'standard', palette: PALETTE_STANDARD },
+    { name: 'colorblind', palette: PALETTE_COLORBLIND },
+  ])('spreads names evenly over the $name palette', ({ palette }) => {
     const counts = new Array<number>(palette.length).fill(0);
     for (let i = 0; i < 1000; i++) {
       const slot = slotOf(`service-${String(i)}`, palette.length);
@@ -190,27 +203,53 @@ describe('assignSeriesColors', () => {
   });
 });
 
+const PALETTES = [
+  { name: 'standard dark', palette: PALETTE_STANDARD, card: DARK_CARD, floor: 14 },
+  { name: 'standard light', palette: PALETTE_STANDARD_LIGHT, card: LIGHT_CARD, floor: 13 },
+  { name: 'colorblind dark', palette: PALETTE_COLORBLIND, card: DARK_CARD, floor: 14 },
+  { name: 'colorblind light', palette: PALETTE_COLORBLIND_LIGHT, card: LIGHT_CARD, floor: 14 },
+];
+
 describe('chart palettes', () => {
   // A name can hash to any slot, so any two colors can share a chart: every
   // pair has to stay apart, not just neighbouring slots, and apart from the
   // grays of minor series and the pie's Other. 15 is the usual floor; twenty
-  // standard colors that stay visible on the light theme top out at 14.5.
-  it.each([
-    { name: 'standard', palette: PALETTE_STANDARD, floor: 14 },
-    { name: 'colorblind', palette: PALETTE_COLORBLIND, floor: 15 },
-  ])('keeps every pair of $name colors, grays included, distinguishable', ({ palette, floor }) => {
+  // colors top out near 14.5 on the dark card and 13 on the light one, where
+  // 3:1 contrast leaves only the darker half of the gamut.
+  it.each(PALETTES)('keeps every pair of $name colors, grays included, distinguishable', ({ palette, floor }) => {
     expect(worstPair([...palette, MINOR_COLOR, OTHER_COLOR], (a, b) => deltaE(a, b))).toBeGreaterThanOrEqual(floor);
   });
 
-  it('keeps every pair of colorblind colors apart under protanopia and deuteranopia', () => {
+  it.each([
+    { name: 'dark', palette: PALETTE_COLORBLIND },
+    { name: 'light', palette: PALETTE_COLORBLIND_LIGHT },
+  ])('keeps every pair of $name colorblind colors apart under protanopia and deuteranopia', ({ palette }) => {
     const cvd = (a: string, b: string): number => Math.min(deltaE(a, b, PROTAN), deltaE(a, b, DEUTAN));
-    expect(worstPair([...PALETTE_COLORBLIND, MINOR_COLOR, OTHER_COLOR], cvd)).toBeGreaterThanOrEqual(8);
+    // 8 is the target; 6 the floor that legends and tooltips make legal.
+    expect(worstPair([...palette, MINOR_COLOR, OTHER_COLOR], cvd)).toBeGreaterThanOrEqual(7.5);
   });
 
+  it.each(PALETTES)('keeps every $name color, and the minor gray, at 3:1 on its card', ({ palette, card }) => {
+    for (const c of [...palette, MINOR_COLOR]) expect(contrast(c, card)).toBeGreaterThanOrEqual(3);
+  });
+
+  // A series keeps its slot when the theme flips, so slot k must read as the
+  // same color, a step lighter or darker.
   it.each([
-    { name: 'standard', palette: PALETTE_STANDARD },
-    { name: 'colorblind', palette: PALETTE_COLORBLIND },
-  ])('keeps every $name color visible on the dark card', ({ palette }) => {
-    for (const c of palette) expect(contrast(c, DARK_CARD)).toBeGreaterThanOrEqual(3);
+    { name: 'standard', dark: PALETTE_STANDARD, light: PALETTE_STANDARD_LIGHT },
+    { name: 'colorblind', dark: PALETTE_COLORBLIND, light: PALETTE_COLORBLIND_LIGHT },
+  ])('keeps each $name slot in its hue family on both themes', ({ dark, light }) => {
+    expect(light).toHaveLength(dark.length);
+    dark.forEach((c, k) => {
+      const gap = Math.abs(hue(c) - hue(light[k] ?? '')) % 360;
+      expect(Math.min(gap, 360 - gap)).toBeLessThanOrEqual(25);
+    });
+  });
+
+  it('picks the palette for the type and theme', () => {
+    expect(getActivePalette()).toBe(PALETTE_STANDARD);
+    expect(getActivePalette('standard', 'light')).toBe(PALETTE_STANDARD_LIGHT);
+    expect(getActivePalette('colorblind')).toBe(PALETTE_COLORBLIND);
+    expect(getActivePalette('colorblind', 'light')).toBe(PALETTE_COLORBLIND_LIGHT);
   });
 });

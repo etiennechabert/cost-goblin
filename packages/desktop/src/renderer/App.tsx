@@ -1114,7 +1114,7 @@ function AppShell(): React.JSX.Element {
   }
 
   return (
-    <PaletteProvider palette={palette}>
+    <PaletteProvider palette={palette} theme={isDark ? 'dark' : 'light'}>
       <CommandPalette items={paletteItems} onNavigate={handleCommand} />
       <div className="min-h-screen bg-bg-primary text-text-primary">
         <SyncAnnouncer

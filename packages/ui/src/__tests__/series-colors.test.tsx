@@ -9,8 +9,8 @@ import type { BarDay } from '../components/stacked-bar-chart.js';
 import { TopNBarChart } from '../components/top-n-bar-chart.js';
 import { TreemapChart } from '../components/treemap-chart.js';
 import { PaletteProvider } from '../hooks/use-palette.js';
-import { MINOR_COLOR, PALETTE_COLORBLIND, PALETTE_STANDARD, hashSeriesName } from '../lib/palette.js';
-import type { PaletteType } from '../lib/palette.js';
+import { MINOR_COLOR, PALETTE_COLORBLIND, PALETTE_COLORBLIND_LIGHT, PALETTE_STANDARD, PALETTE_STANDARD_LIGHT, hashSeriesName } from '../lib/palette.js';
+import type { PaletteTheme, PaletteType } from '../lib/palette.js';
 
 // One range's spend, as each widget receives it. EC2 and SNS hash to the same
 // standard slot, so the ranking decides which keeps it.
@@ -35,8 +35,16 @@ const LINES: readonly LineSeries[] = ['Lambda', 'S3', 'SNS', 'EC2'].map(name => 
   points: DAYS.map(d => ({ date: d.date, cost: d.breakdown[name] ?? 0 })),
 }));
 
-function renderIn(palette: PaletteType, ui: React.ReactElement): HTMLElement {
-  return render(<PaletteProvider palette={palette}>{ui}</PaletteProvider>).container;
+/** Which palette a chart renders with: the user's choice and the app theme. */
+interface Look {
+  readonly palette: PaletteType;
+  readonly theme: PaletteTheme;
+}
+
+const STANDARD_DARK: Look = { palette: 'standard', theme: 'dark' };
+
+function renderIn({ palette, theme }: Look, ui: React.ReactElement): HTMLElement {
+  return render(<PaletteProvider palette={palette} theme={theme}>{ui}</PaletteProvider>).container;
 }
 
 /** A color as the DOM spells it, so hex, rgb and rgba compare equal. */
@@ -53,8 +61,8 @@ function swatch(root: HTMLElement, name: string, selector: string): HTMLElement 
   return dot;
 }
 
-async function pieColors(palette: PaletteType, slices: readonly PieSlice[] = SLICES): Promise<Map<string, string>> {
-  const root = renderIn(palette, <PieChart data={slices} title="By service" />);
+async function pieColors(look: Look, slices: readonly PieSlice[] = SLICES): Promise<Map<string, string>> {
+  const root = renderIn(look, <PieChart data={slices} title="By service" />);
   await waitFor(() => { expect(root.querySelectorAll('svg path')).toHaveLength(slices.length); });
   return new Map(slices.map(s => [s.name, normalized(swatch(root, s.name, 'span.inline-block').style.backgroundColor)]));
 }
@@ -66,8 +74,8 @@ function lastBar(root: HTMLElement): Element {
 }
 
 /** Read off the last bar's tooltip, which lists up to twelve series. */
-function stackedBarColors(palette: PaletteType, days: readonly BarDay[] = DAYS): Map<string, string> {
-  const root = renderIn(palette, <StackedBarChart days={days} />);
+function stackedBarColors(look: Look, days: readonly BarDay[] = DAYS): Map<string, string> {
+  const root = renderIn(look, <StackedBarChart days={days} />);
   fireEvent.mouseEnter(lastBar(root));
   const tip = within(root).getByText(/^Total:/).closest('.min-w-\\[280px\\]');
   if (!(tip instanceof HTMLElement)) throw new Error('no tooltip');
@@ -76,8 +84,8 @@ function stackedBarColors(palette: PaletteType, days: readonly BarDay[] = DAYS):
 }
 
 /** Read off the last bar's segments, which stack costliest first. */
-function stackedSegmentColors(palette: PaletteType, day: BarDay): Map<string, string> {
-  const root = renderIn(palette, <StackedBarChart days={[day]} />);
+function stackedSegmentColors(look: Look, day: BarDay): Map<string, string> {
+  const root = renderIn(look, <StackedBarChart days={[day]} />);
   const segments = [...(lastBar(root).firstElementChild?.children ?? [])];
   const names = Object.entries(day.breakdown).sort((a, b) => b[1] - a[1]).map(([name]) => name);
   return new Map(names.map((name, i) => {
@@ -87,15 +95,15 @@ function stackedSegmentColors(palette: PaletteType, day: BarDay): Map<string, st
   }));
 }
 
-async function lineColors(palette: PaletteType): Promise<Map<string, string>> {
-  const root = renderIn(palette, <LineChart series={LINES} />);
+async function lineColors(look: Look): Promise<Map<string, string>> {
+  const root = renderIn(look, <LineChart series={LINES} />);
   await waitFor(() => { expect(root.querySelectorAll('path.visx-linepath')).toHaveLength(LINES.length); });
   return new Map(NAMES.map(name => [name, normalized(swatch(root, name, 'span.inline-block').style.backgroundColor)]));
 }
 
-async function topNColors(palette: PaletteType): Promise<Map<string, string>> {
+async function topNColors(look: Look): Promise<Map<string, string>> {
   const shuffled = [COSTS[2], COSTS[0], COSTS[3], COSTS[1]].filter(c => c !== undefined);
-  const root = renderIn(palette, <TopNBarChart data={shuffled.map(c => ({ ...c, percentage: 0 }))} title="Top services" />);
+  const root = renderIn(look, <TopNBarChart data={shuffled.map(c => ({ ...c, percentage: 0 }))} title="Top services" />);
   await waitFor(() => { expect(root.querySelectorAll('li')).toHaveLength(COSTS.length); });
   return new Map(NAMES.map((name) => {
     const fill = within(root).getByTitle(new RegExp(`^${name} — `)).querySelector('.rounded-sm');
@@ -104,8 +112,8 @@ async function topNColors(palette: PaletteType): Promise<Map<string, string>> {
   }));
 }
 
-async function treemapColors(palette: PaletteType): Promise<Map<string, string>> {
-  const root = renderIn(palette, <TreemapChart data={[...COSTS].reverse()} />);
+async function treemapColors(look: Look): Promise<Map<string, string>> {
+  const root = renderIn(look, <TreemapChart data={[...COSTS].reverse()} />);
   await waitFor(() => { expect(root.querySelectorAll('svg rect')).toHaveLength(COSTS.length); });
   return new Map(NAMES.map((name) => {
     const rect = root.querySelector(`rect[data-cell="${name}"]`);
@@ -113,19 +121,22 @@ async function treemapColors(palette: PaletteType): Promise<Map<string, string>>
   }));
 }
 
-const PALETTES: readonly { readonly palette: PaletteType; readonly colors: readonly string[] }[] = [
-  { palette: 'standard', colors: PALETTE_STANDARD },
-  { palette: 'colorblind', colors: PALETTE_COLORBLIND },
+const LOOKS: readonly (Look & { readonly colors: readonly string[] })[] = [
+  { palette: 'standard', theme: 'dark', colors: PALETTE_STANDARD },
+  { palette: 'standard', theme: 'light', colors: PALETTE_STANDARD_LIGHT },
+  { palette: 'colorblind', theme: 'dark', colors: PALETTE_COLORBLIND },
+  { palette: 'colorblind', theme: 'light', colors: PALETTE_COLORBLIND_LIGHT },
 ];
 
 describe('series colors across widgets', () => {
-  it.each(PALETTES)('paints each series alike in every chart ($palette)', async ({ palette, colors }) => {
-    const pie = await pieColors(palette);
+  it.each(LOOKS)('paints each series alike in every chart ($palette, $theme theme)', async (look) => {
+    const { colors } = look;
+    const pie = await pieColors(look);
 
-    expect(stackedBarColors(palette)).toEqual(pie);
-    expect(await lineColors(palette)).toEqual(pie);
-    expect(await topNColors(palette)).toEqual(pie);
-    expect(await treemapColors(palette)).toEqual(pie);
+    expect(stackedBarColors(look)).toEqual(pie);
+    expect(await lineColors(look)).toEqual(pie);
+    expect(await topNColors(look)).toEqual(pie);
+    expect(await treemapColors(look)).toEqual(pie);
 
     // EC2, the costliest, keeps the slot its name hashes to (SNS's too, on
     // the standard palette); the four series get four colors.
@@ -145,8 +156,8 @@ describe('series colors across widgets', () => {
       breakdown: Object.fromEntries([...services].reverse().map(s => [s.name, s.cost])),
     };
 
-    const pie = await pieColors('standard', slices);
-    expect(stackedSegmentColors('standard', day)).toEqual(pie);
+    const pie = await pieColors(STANDARD_DARK, slices);
+    expect(stackedSegmentColors(STANDARD_DARK, day)).toEqual(pie);
     for (const s of services.slice(size)) expect(pie.get(s.name)).toBe(normalized(MINOR_COLOR));
     expect(new Set(services.slice(0, size).map(s => pie.get(s.name))).size).toBe(size);
   });
