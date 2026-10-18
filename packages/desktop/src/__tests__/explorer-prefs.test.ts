@@ -130,6 +130,19 @@ describe('readExplorerPreferences', () => {
     expect(prefs.lastUsedDateRange).toEqual({ start: '2026-07-15', end: '2026-07-15' });
   });
 
+  it('ignores a lastUsedDateRange of the wrong shape', async () => {
+    for (const lastUsedDateRange of [
+      '2026-07-01..2026-07-31',
+      { start: '2026-07-01', end: 31 },
+      { start: '2026-07-15', end: '2026-07-15', startHour: 3, endHour: '2026-07-15 09:00:00' },
+      { start: '2026-07-15', end: '2026-07-15', startHour: '2026-07-15 03:00:00', endHour: 9 },
+    ]) {
+      await writeFile(prefsFile, JSON.stringify({ hiddenColumns: [], columnOrder: [], lastUsedDateRange }));
+      const prefs = await readExplorerPreferences(prefsFile, noLiveIds);
+      expect(prefs.lastUsedDateRange).toBeUndefined();
+    }
+  });
+
   it('rejects a calendar-impossible lastUsedDateRange (strict date validation)', async () => {
     await writeFile(prefsFile, JSON.stringify({
       hiddenColumns: [],
