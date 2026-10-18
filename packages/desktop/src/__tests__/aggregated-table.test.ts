@@ -191,7 +191,7 @@ describe('queryAggregatedRows against DuckDB', () => {
 
     const [data] = calls;
     expect(calls).toHaveLength(1);
-    expect(data?.sql).toContain(`WHERE service = $1 AND row(COALESCE(CAST(service AS VARCHAR), ''), COALESCE(CAST(region AS VARCHAR), '')) IN (row($2, $3), row($4, $5))`);
+    expect(data?.sql).toContain(`WHERE COALESCE(CAST(service AS VARCHAR), '') = $1 AND row(COALESCE(CAST(service AS VARCHAR), ''), COALESCE(CAST(region AS VARCHAR), '')) IN (row($2, $3), row($4, $5))`);
     expect(data?.params).toEqual(["O'Brien", 'RDS', 'eu-west-1', "O'Brien", 'eu-west-1']);
   });
 
@@ -308,6 +308,14 @@ describe('queryAggregatedRows against DuckDB', () => {
       expect(result.rows.map(r => [r.values, r.cost])).toEqual([[{ service: 'EC2', [TEAM_ID]: '' }, 6]]);
     });
 
+    it('expands that group to its line items, the untagged and the empty-tagged', async () => {
+      const detail = await queryAggregatedRows(run, {
+        ...query('daily', ['resource_id']),
+        rowFilters: explorerRowFilters({ service: 'EC2', [TEAM_ID]: '' }, tagSqlColumnsById(dimensions.tags)),
+      });
+      expect(detail.rows.map(r => [r.values['resource_id'], r.cost])).toEqual([['arn:4', 4], ['arn:2', 2]]);
+    });
+
     it('sorts by the tag as it reads', async () => {
       const teams = async (direction: 'asc' | 'desc'): Promise<string[]> => {
         const result = await queryAggregatedRows(run, { ...query('daily', [TEAM_ID]), sort: { column: TEAM_ID, direction } });
@@ -317,7 +325,7 @@ describe('queryAggregatedRows against DuckDB', () => {
       expect(await teams('desc')).toEqual(['web', '']);
     });
 
-    it('reads a date or an hour as text, and keys and sorts it by that text', async () => {
+    it('reads a date or an hour as text, and keys, sorts and expands it by that text', async () => {
       const byDate = await queryAggregatedRows(run, query('daily', ['usage_date']));
       expect(byDate.rows.map(r => [r.values, r.cost])).toEqual([[{ usage_date: '2026-01-05' }, 31]]);
 
@@ -330,6 +338,11 @@ describe('queryAggregatedRows against DuckDB', () => {
       expect(keyed.rows.map(r => r.cost)).toEqual([3]);
       const ascending = await queryAggregatedRows(run, { ...byHour, sort: { column: 'usage_hour', direction: 'asc' } });
       expect(ascending.rows.map(r => r.values['usage_hour'])).toEqual(['2026-01-05 05:00:00', '2026-01-05 06:00:00']);
+      const expanded = await queryAggregatedRows(run, {
+        ...query('hourly', ['resource_id']),
+        rowFilters: explorerRowFilters({ usage_hour: '2026-01-05 05:00:00' }, new Map()),
+      });
+      expect(expanded.rows.map(r => r.values['resource_id'])).toEqual(['arn:2', 'arn:1']);
     });
   });
 });

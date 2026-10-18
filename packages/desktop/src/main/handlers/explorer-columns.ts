@@ -45,33 +45,32 @@ export function explorerOrderBy(sort: ExplorerSort | undefined, tagSqlColumns: R
   return `${column} ${sortDirection(sort)}`;
 }
 
-/** A row filter on an allow-listed column: line items must hold `value` there. */
+/** A row filter on an allow-listed column: line items must hold `value` there,
+ *  read as a group-by row reads the column (`groupValueExpr`). */
 export interface RowFilter {
   readonly column: string;
   readonly value: string;
 }
 
-/** The non-empty row filters on allow-listed columns, each with the SQL column
- *  behind its id; filters on anything else are dropped. */
+/** The row filters on allow-listed columns, each with the SQL column behind
+ *  its id; filters on anything else are dropped. An empty value filters too:
+ *  it is the value of the group whose line items have none. */
 export function explorerRowFilters(
   rowFilters: Readonly<Record<string, string>> | undefined,
   tagSqlColumns: ReadonlyMap<string, string>,
 ): RowFilter[] {
   if (rowFilters === undefined) return [];
   return Object.entries(rowFilters).flatMap(([id, value]) => {
-    if (value.length === 0) return [];
     const column = explorerSqlColumn(id, tagSqlColumns);
     return column === null ? [] : [{ column, value }];
   });
 }
 
-/** One equality per row filter, its value bound through `qb`; usage_date is
- *  compared as text, the form groupBySelectList reads it in. */
+/** One equality per row filter, its value bound through `qb`, on the column
+ *  as a group-by row reads it: a row's values keep exactly its group's line
+ *  items, so '' keeps a missing tag as well as an empty one. */
 export function rowFilterConditions(rowFilters: readonly RowFilter[], qb: QueryBuilder): string[] {
-  return rowFilters.map(({ column, value }) => {
-    const colExpr = column === 'usage_date' ? `usage_date::VARCHAR` : column;
-    return `${colExpr} = ${qb.addParam(value)}`;
-  });
+  return rowFilters.map(({ column, value }) => `${groupValueExpr(column)} = ${qb.addParam(value)}`);
 }
 
 /** `where` with `condition` ANDed on, where `where` is a WHERE clause or ''. */
@@ -100,8 +99,9 @@ const TEMPORAL_COLUMNS: ReadonlySet<string> = new Set(['usage_date', 'usage_hour
  *  text, never NULL. A tag the line item lacks (NULL) reads as '' like an
  *  empty one, so the two are one group. A date or an hour is text too: the
  *  DuckDB worker's postMessage turns a DATE or TIMESTAMP into a plain object.
- *  The select list, the sort and the keyed rows all read a group through
- *  this, so each value a row shows is exactly one group. */
+ *  The select list, the keyed rows and the row filters all read a column
+ *  through this, so each value a row shows is exactly one group, and filters
+ *  to exactly its line items. */
 export function groupValueExpr(column: string): string {
   return `COALESCE(CAST(${column} AS VARCHAR), '')`;
 }
