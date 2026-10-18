@@ -55,12 +55,12 @@ describe('redactEventInPlace on sparse events', () => {
 
   it('leaves non-text span attributes and spans without a description alone', () => {
     const event: Event = {
-      spans: [{ span_id: 's1', trace_id: 't1', start_timestamp: 0, data: { 'cache.hit': true, 'db.rows': 12 } }],
+      spans: [{ span_id: 's1', trace_id: 't1', start_timestamp: 0, status: 'ok', data: { 'cache.hit': true, 'db.rows': 12 } }],
     };
 
     redactEventInPlace(event);
 
-    expect(event.spans?.[0]).toEqual({ span_id: 's1', trace_id: 't1', start_timestamp: 0, data: { 'cache.hit': true, 'db.rows': 12 } });
+    expect(event.spans?.[0]).toEqual({ span_id: 's1', trace_id: 't1', start_timestamp: 0, status: 'ok', data: { 'cache.hit': true, 'db.rows': 12 } });
   });
 
   it('drops breadcrumb data it cannot redact as a record, and keeps bare breadcrumbs', () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { classifyImpersonatedAdc } from '../sync/gcp-adc-classify.js';
-import { activeGcloudConfigPath, adcCredentialsLocation, emailFromIdToken } from '../sync/gcp-identity.js';
+import { activeGcloudConfigPath, adcCredentialsLocation, emailFromIdToken, parseAdcJson } from '../sync/gcp-identity.js';
 
 /** Credential shapes the main identity suite does not feed in: an impersonated
  *  ADC file whose service-account source the SDK's JWT path would refuse, a
@@ -34,6 +34,12 @@ describe('classifyImpersonatedAdc with a service-account source', () => {
     ['without its client email', { type: 'service_account', private_key: 'FAKE-KEY' }],
   ])('calls a file whose key source is %s unusable, as the SDK would refuse it', (_label, source) => {
     expect(classifyImpersonatedAdc(impersonatedFile(source))).toEqual({ kind: 'unusable' });
+  });
+
+  it('keeps a GDCH key off the key path: google-auth-library 11 loads it into its own client', () => {
+    const source = { type: 'gdch_service_account', name: 'ci', private_key: 'FAKE-KEY', client_email: 'ci@gdch.example' };
+    expect(classifyImpersonatedAdc(impersonatedFile(source))).toMatchObject({ kind: 'impersonated', source: { kind: 'other', type: 'gdch_service_account' } });
+    expect(parseAdcJson(source)).toEqual({ kind: 'other', type: 'gdch_service_account' });
   });
 });
 

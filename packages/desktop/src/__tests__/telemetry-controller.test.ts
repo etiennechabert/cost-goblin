@@ -42,6 +42,19 @@ const DSN = 'https://public@sentry.example.test/42';
 const OFF: TelemetryPreferences = TELEMETRY_DEFAULTS;
 const ERRORS_ONLY: TelemetryPreferences = { ...OFF, errorReports: true };
 const EVERYTHING: TelemetryPreferences = { errorReports: true, nativeCrashReports: true, performance: true, analytics: false };
+/** Every Sentry 11 data-collection category off; frameContextLines keeps its default. */
+const COLLECT_NOTHING = {
+  userInfo: false,
+  cookies: false,
+  httpHeaders: false,
+  httpBodies: [],
+  urlQueryParams: false,
+  graphQL: { document: false, variables: false },
+  genAI: { inputs: false, outputs: false },
+  databaseQueryData: false,
+  queues: false,
+  stackFrameVariables: false,
+};
 
 async function loadController(): Promise<typeof import('../main/telemetry/controller.js')['telemetry']> {
   vi.resetModules();
@@ -61,7 +74,14 @@ async function sendError(options: ElectronMainOptions, event: ErrorEvent): Promi
   return options.beforeSend(event, {});
 }
 
-async function sendTransaction(options: ElectronMainOptions, event: TransactionEvent): Promise<TransactionEvent | null> {
+/** The transaction hook the controller keeps under the static trace lifecycle.
+ *  Sentry 11 deprecates the option because span streaming ignores it; the
+ *  controller opts out of streaming, so the hook is read through this shape. */
+interface StaticTraceHooks {
+  readonly beforeSendTransaction?: ElectronMainOptions['beforeSendTransaction'];
+}
+
+async function sendTransaction(options: StaticTraceHooks, event: TransactionEvent): Promise<TransactionEvent | null> {
   if (options.beforeSendTransaction === undefined) throw new Error('no beforeSendTransaction hook');
   return options.beforeSendTransaction(event, {});
 }
@@ -166,8 +186,10 @@ describe('telemetry start', () => {
     expect(options.environment).toBe('development');
     expect(options.release).toBe('costgoblin@1.2.3');
     expect(options.initialScope).toEqual({ tags: { branch: 'feature/x', commit: 'abc1234' } });
-    // Never let the SDK attach IP / user / cookies on its own.
-    expect(options).toMatchObject({ sendDefaultPii: false, tracesSampleRate: 0 });
+    // Never let the SDK collect user info, headers, cookies, bodies or local
+    // variables on its own (Sentry 11 defaults every category on), and keep
+    // traces as transactions, which beforeSendTransaction gates and scrubs.
+    expect(options).toMatchObject({ dataCollection: COLLECT_NOTHING, traceLifecycle: 'static', tracesSampleRate: 0 });
     expect('tunnel' in options).toBe(false);
     expect(telemetry.getStatus()).toMatchObject({
       dsnConfigured: true,

@@ -139,9 +139,15 @@ describe('ADC and gcloud locations', () => {
       .toEqual({ path: '/keys/lower.json', origin: 'env' });
   });
 
-  it('falls back to the well-known file under HOME, or APPDATA on Windows, ignoring CLOUDSDK_CONFIG', () => {
+  it('falls back to the well-known file in CLOUDSDK_CONFIG, else under HOME, or APPDATA on Windows', () => {
     expect(adcCredentialsLocation({ HOME: '/Users/a', CLOUDSDK_CONFIG: '/elsewhere' }, 'darwin'))
+      .toEqual({ path: '/elsewhere/application_default_credentials.json', origin: 'well-known' });
+    expect(adcCredentialsLocation({ APPDATA: String.raw`C:\R`, CLOUDSDK_CONFIG: String.raw`D:\gc` }, 'win32'))
+      .toEqual({ path: String.raw`D:\gc\application_default_credentials.json`, origin: 'well-known' });
+    expect(adcCredentialsLocation({ HOME: '/Users/a', CLOUDSDK_CONFIG: '' }, 'darwin'))
       .toEqual({ path: '/Users/a/.config/gcloud/application_default_credentials.json', origin: 'well-known' });
+    expect(adcCredentialsLocation({ GOOGLE_APPLICATION_CREDENTIALS: '/keys/sa.json', CLOUDSDK_CONFIG: '/elsewhere' }, 'linux'))
+      .toEqual({ path: '/keys/sa.json', origin: 'env' });
     expect(adcCredentialsLocation({ APPDATA: String.raw`C:\R` }, 'win32'))
       .toEqual({ path: String.raw`C:\R\gcloud\application_default_credentials.json`, origin: 'well-known' });
     expect(adcCredentialsLocation({ GOOGLE_APPLICATION_CREDENTIALS: '', HOME: '/h' }, 'linux')?.origin).toBe('well-known');

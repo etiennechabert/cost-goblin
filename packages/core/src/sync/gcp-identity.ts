@@ -30,9 +30,9 @@ export interface AuthorizedUserSecret {
   readonly refreshToken: string;
 }
 
-/** A credential file, described. Mirrors google-auth-library 9's
+/** A credential file, described. Mirrors google-auth-library 11's
  *  `GoogleAuth.fromJSON` dispatch — `authorized_user`,
- *  `impersonated_service_account`, the federation types, and everything else
+ *  `impersonated_service_account`, the federation and GDCH types, and everything else
  *  through the JWT path, which needs only `client_email` + `private_key` —
  *  so what the panel says is what the SDK will do. */
 export type ParsedAdc =
@@ -68,7 +68,9 @@ export function parseAdcJson(raw: unknown): ParsedAdc | null {
     const target = impersonationTargetFromUrl(raw['service_account_impersonation_url']);
     return target === null ? { kind: 'other', type } : { kind: 'impersonated', target };
   }
-  if (type === 'external_account' || type === 'external_account_authorized_user') return { kind: 'other', type };
+  if (type === 'external_account' || type === 'external_account_authorized_user' || type === 'gdch_service_account') {
+    return { kind: 'other', type };
+  }
   // The JWT path: whatever the `type`, a file with both fields is a
   // service-account key to the SDK. Only the email is read.
   const email = nonEmptyString(raw['private_key']) === null ? null : nonEmptyString(raw['client_email']);
@@ -99,12 +101,13 @@ function joinFor(platform: NodeJS.Platform): (...parts: string[]) => string {
 }
 
 /** Where the Cloud Storage SDK will look for ADC, mirroring
- *  google-auth-library 9: `GOOGLE_APPLICATION_CREDENTIALS` (or its lowercase
+ *  google-auth-library 11: `GOOGLE_APPLICATION_CREDENTIALS` (or its lowercase
  *  form) when non-empty — and then ONLY that file, it does not fall through —
- *  else the well-known file under `%APPDATA%` on Windows or `$HOME/.config`
- *  elsewhere. `CLOUDSDK_CONFIG` is deliberately not consulted: the SDK
- *  ignores it. Null when neither root is set. Pure — existence is the
- *  caller's check. */
+ *  else the well-known file in gcloud's config directory: `CLOUDSDK_CONFIG`
+ *  when set (gcloud writes ADC there, and the SDK reads it there too; version
+ *  9 did not), otherwise `%APPDATA%\gcloud` on Windows or `$HOME/.config/gcloud`
+ *  elsewhere. Null when no root is set. Pure — existence is the caller's
+ *  check. */
 export function adcCredentialsLocation(
   env: Readonly<Record<string, string | undefined>>,
   platform: NodeJS.Platform,
@@ -112,6 +115,8 @@ export function adcCredentialsLocation(
   const fromEnv = nonEmptyString(env['GOOGLE_APPLICATION_CREDENTIALS']) ?? nonEmptyString(env['google_application_credentials']);
   if (fromEnv !== null) return { path: displayablePath(fromEnv, 'GOOGLE_APPLICATION_CREDENTIALS'), origin: 'env' };
   const join = joinFor(platform);
+  const configDir = nonEmptyString(env['CLOUDSDK_CONFIG']);
+  if (configDir !== null) return { path: join(configDir, ADC_FILE_NAME), origin: 'well-known' };
   if (platform === 'win32') {
     const appData = nonEmptyString(env['APPDATA']);
     return appData === null ? null : { path: join(appData, 'gcloud', ADC_FILE_NAME), origin: 'well-known' };

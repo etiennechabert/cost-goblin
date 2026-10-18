@@ -1,4 +1,5 @@
 import type { TelemetryStatus } from '@costgoblin/core/browser';
+import { SENTRY_DATA_COLLECTION, SENTRY_TRACE_LIFECYCLE } from '../../main/telemetry/sentry-privacy.js';
 
 let initialized = false;
 
@@ -31,6 +32,10 @@ export async function syncRendererTelemetry(status: TelemetryStatus): Promise<vo
   try {
     const Sentry = await import('@sentry/electron/renderer');
     Sentry.init({
+      // This client collects before it forwards, so it gets the main process's
+      // privacy settings too (see sentry-privacy.ts).
+      dataCollection: SENTRY_DATA_COLLECTION,
+      traceLifecycle: SENTRY_TRACE_LIFECYCLE,
       ...(wantTracing
         ? { tracesSampleRate: status.tracesSampleRate, integrations: [Sentry.browserTracingIntegration()] }
         : {}),
