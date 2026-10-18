@@ -60,11 +60,13 @@ function configDirWithoutViews(): string {
 
 test.describe('default dashboards', () => {
   test.describe.configure({ timeout: 180_000 });
+  let seedConfig = '';
 
   test.beforeAll(async () => {
     // Force the app to seed the full default set: with no views.yaml,
     // views:get-config writes SEED_VIEWS_CONFIG.
-    ({ app, page } = await launchAppWithCoverage({ configDir: configDirWithoutViews() }));
+    seedConfig = configDirWithoutViews();
+    ({ app, page } = await launchAppWithCoverage({ configDir: seedConfig }));
     await waitForQuerySettle(page);
 
     // Synthetic fixtures sit in early 2026; widen the range so the dashboards
@@ -76,6 +78,7 @@ test.describe('default dashboards', () => {
 
   test.afterAll(async () => {
     await finishCoverage(app, page, 'views-defaults');
+    if (seedConfig !== '') rmSync(seedConfig, { recursive: true, force: true });
   });
 
   test('the Dashboards menu lists every default dashboard', async () => {

@@ -10,10 +10,10 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function renderEditor(api: MockCostApi = new MockCostApi()) {
+function renderEditor(api: MockCostApi = new MockCostApi(), onConfigLoaded?: (cfg: ViewsConfig) => void) {
   return render(
     <CostApiProvider value={api}>
-      <ViewsEditor />
+      <ViewsEditor onConfigLoaded={onConfigLoaded} />
     </CostApiProvider>,
   );
 }
@@ -61,11 +61,14 @@ describe('ViewsEditor when views.yaml fails to load', () => {
     expect(api.savedViewsConfigs).toEqual([]);
   });
 
-  it('reads views.yaml again on Retry and turns editing back on', async () => {
+  it('reads views.yaml again on Retry, turns editing back on and hands the config to the host', async () => {
     const api = new MockCostApi();
+    const realConfig = await api.getViewsConfig();
     const load = vi.spyOn(api, 'getViewsConfig').mockRejectedValueOnce(new Error(LOAD_ERROR));
-    renderEditor(api);
+    const onConfigLoaded = vi.fn();
+    renderEditor(api, onConfigLoaded);
     await screen.findByText(LOAD_ERROR);
+    expect(onConfigLoaded).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
 
@@ -75,6 +78,8 @@ describe('ViewsEditor when views.yaml fails to load', () => {
       expect(screen.getByRole('button', { name })).toHaveProperty('disabled', false);
     }
     expect(load).toHaveBeenCalledTimes(2);
+    // The app shell is still showing the load error; this is how it learns.
+    expect(onConfigLoaded).toHaveBeenCalledExactlyOnceWith(realConfig);
   });
 
   it('keeps editing off until views.yaml has loaded', async () => {

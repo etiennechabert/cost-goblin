@@ -64,9 +64,12 @@ interface ViewsEditorProps {
   /** Called whenever the persisted config changes (save / reset) so the host
    *  app can refresh its left nav without waiting for a restart. */
   readonly onConfigPersisted?: ((cfg: ViewsConfig) => void) | undefined;
+  /** Called with each config the editor loads, so the host also picks up a
+   *  views.yaml that only loaded on a Retry here. */
+  readonly onConfigLoaded?: ((cfg: ViewsConfig) => void) | undefined;
 }
 
-export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React.JSX.Element {
+export function ViewsEditor({ onConfigPersisted, onConfigLoaded }: ViewsEditorProps = {}): React.JSX.Element {
   const api = useCostApi();
   const idGenRef = useRef({ count: 0 });
   const idGen = idGenRef.current;
@@ -99,11 +102,14 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
         dirty: false,
       });
       setLoad({ status: 'loaded' });
+      onConfigLoaded?.(cfg);
     }).catch((err: unknown) => {
       if (cancelled) return;
       setLoad({ status: 'failed', message: err instanceof Error ? err.message : String(err) });
     });
     return () => { cancelled = true; };
+    // onConfigLoaded is left out on purpose: a host passing a fresh callback
+    // each render must not refetch views.yaml each render.
   }, [api, loadAttempt]);
 
   function retryLoad(): void {

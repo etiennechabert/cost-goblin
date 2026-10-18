@@ -1014,7 +1014,12 @@ function AppShell(): React.JSX.Element {
       case 'dimensions':
         return <DimensionsView />;
       case 'dashboards':
-        return <ViewsEditor onConfigPersisted={(config) => { setViewsState({ status: 'loaded', config }); }} />;
+        return (
+          <ViewsEditor
+            onConfigLoaded={applyViews}
+            onConfigPersisted={(config) => { setViewsState({ status: 'loaded', config }); }}
+          />
+        );
       case 'share':
         return <ShareTab />;
       case 'import':
