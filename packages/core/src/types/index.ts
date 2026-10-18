@@ -102,7 +102,7 @@ export type {
   ViewSpec,
   ViewsConfig,
 } from './views.js';
-export { OVERVIEW_SEED_VIEW, SEED_VIEWS_CONFIG } from './seed-views.js';
+export { OVERVIEW_SEED_VIEW, SEED_VIEWS_CONFIG, withMissingSeedViews } from './seed-views.js';
 
 export type {
   CostMetric,

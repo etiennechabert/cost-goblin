@@ -287,7 +287,8 @@ export function parseConfigBundle(content: string): ParsedConfigBundle {
   const liveDimensionIds = dimensionIdSet(dimensions);
   const orgTree: OrgTreeConfig | undefined = rawSections['orgTree'] === undefined ? undefined : validateOrgTree(rawSections['orgTree']);
   const costScope: CostScopeConfig | undefined = rawSections['costScope'] === undefined ? undefined : validateCostScope(rawSections['costScope'], liveDimensionIds);
-  const views: ViewsConfig | undefined = rawSections['views'] === undefined ? undefined : validateViews(rawSections['views'], liveDimensionIds);
+  // Bundles exported before topN had to be a positive integer still import.
+  const views: ViewsConfig | undefined = rawSections['views'] === undefined ? undefined : validateViews(rawSections['views'], liveDimensionIds, { invalidTopN: 'drop' });
   const baselines: readonly BaselineSpec[] | undefined = rawSections['baselines'] === undefined ? undefined : validateBaselines(rawSections['baselines'], dimensions);
 
   const sections: ConfigBundleSections = {

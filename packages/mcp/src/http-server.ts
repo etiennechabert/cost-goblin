@@ -218,8 +218,27 @@ export async function createMcpHttpServer(ctx: McpContext, options: McpHttpServe
     });
   }
 
-  await listen(ipv4Server, '127.0.0.1');
-  await listen(ipv6Server, '::1');
+  /** Resolves once both servers are closed. One that never listened (::1
+   *  unavailable, or a failed start) gets ERR_SERVER_NOT_RUNNING in its close
+   *  callback, which is ignored: it holds no port. */
+  async function closeListeners(): Promise<void> {
+    await Promise.all([
+      new Promise<void>((resolve) => { ipv4Server.close(() => { resolve(); }); }),
+      new Promise<void>((resolve) => { ipv6Server.close(() => { resolve(); }); }),
+    ]);
+  }
+
+  try {
+    await listen(ipv4Server, '127.0.0.1');
+    await listen(ipv6Server, '::1');
+  } catch (err: unknown) {
+    // A failed start hands the caller nothing to close, so release it all here:
+    // a 127.0.0.1 listener left bound would keep serving MCP and fail every
+    // retry with EADDRINUSE.
+    clearInterval(reaper);
+    await closeListeners();
+    throw err;
+  }
 
   return {
     port: resolvedPort,
@@ -228,10 +247,7 @@ export async function createMcpHttpServer(ctx: McpContext, options: McpHttpServe
       const closePromises = [...sessions.values()].map((e) => e.transport.close());
       await Promise.all(closePromises);
       sessions.clear();
-      await Promise.all([
-        new Promise<void>((resolve) => { ipv4Server.close(() => { resolve(); }); }),
-        new Promise<void>((resolve) => { ipv6Server.close(() => { resolve(); }); }),
-      ]);
+      await closeListeners();
     },
   };
 }
