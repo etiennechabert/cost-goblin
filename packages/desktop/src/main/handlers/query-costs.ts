@@ -97,8 +97,10 @@ export function registerCostHandlers(app: AppContext): void {
     const costScope = await getCostScope().catch(() => undefined);
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
     const providers = await getQueryProviders(tier);
+    // As in query:costs: `days` only lists the days that returned rows.
+    const coveredDays = coveredDaysInRange(params.dateRange, providers);
     const empty = providersEmptyForRange(providers, params.dateRange);
-    if (empty) return { days: [], groups: [], totalCost: asDollars(0) };
+    if (empty) return { days: [], groups: [], totalCost: asDollars(0), coveredDays };
     const matSource = resolveRollupSource(rollupStore, providers, params.dateRange, tier, [
       ...Object.keys(params.filters).map(k => columnForDimension(dimensions, k)),
       columnForDimension(dimensions, params.groupBy), 'cost',
@@ -143,7 +145,7 @@ export function registerCostHandlers(app: AppContext): void {
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(toDailyCostDay);
 
-    return { days, groups: [...groupSet], totalCost: asDollars(totalCost) };
+    return { days, groups: [...groupSet], totalCost: asDollars(totalCost), coveredDays };
   }));
 
   ipcMain.handle('query:entity-detail', (_event, params: EntityDetailParams): Promise<EntityDetailResult> => originStore.run(params.origin ?? null, async () => {

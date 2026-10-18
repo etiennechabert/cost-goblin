@@ -8,6 +8,18 @@ export function daysBetween(start: string, end: string): number {
   return Math.round((new Date(end).getTime() - new Date(start).getTime()) / DAY_MS) + 1;
 }
 
+/** Every day from `start` to `end`, both included, as `YYYY-MM-DD` in UTC:
+ *  the keys `query:daily-costs` returns on the daily tier. Empty for a
+ *  reversed or unparseable range. */
+export function daysInRange(start: string, end: string): string[] {
+  const out: string[] = [];
+  const last = Date.parse(`${end}T00:00:00Z`);
+  for (let t = Date.parse(`${start}T00:00:00Z`); t <= last; t += DAY_MS) {
+    out.push(new Date(t).toISOString().slice(0, 10));
+  }
+  return out;
+}
+
 /** The YYYY-MM months a date range spans, inclusive — mirrors core's
  *  `computePeriodsInRange` so the renderer can intersect a selected range
  *  against the rollup's per-period readiness without importing query logic. */

@@ -210,9 +210,15 @@ export interface DailyCostDay {
 }
 
 export interface DailyCostsResult {
+  /** The days that returned rows: a day with nothing matching is left out. */
   readonly days: readonly DailyCostDay[];
   readonly groups: readonly string[];
   readonly totalCost: Dollars;
+  /** How many days of the asked range fall in a billing month the queried
+   *  providers have synced (`coveredDaysInRange`), as on `CostResult`. Absent
+   *  from a producer that can't tell, which leaves `days` as the covered
+   *  span. */
+  readonly coveredDays?: number;
 }
 
 /** One row of the baseline-discovery query: a single day's cost for one tuple

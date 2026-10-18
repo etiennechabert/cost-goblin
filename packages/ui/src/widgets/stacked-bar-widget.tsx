@@ -7,24 +7,18 @@ import { asDateString, asHourString, asTagValue } from '@costgoblin/core/browser
 import { useCostFocus, useCostFocusDispatch } from '../hooks/use-cost-focus.js';
 import type { DailyCostsResult, DateRange, DateString, DimensionId, Granularity } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
-import { dimensionLabelFor, filtersKey, hasSufficientDailyCoverage } from './widget.js';
+import { dimensionLabelFor, filtersKey, hasSufficientDailyCoverage, previousDayLookup } from './widget.js';
 import { GroupByTitle } from '../components/group-by-title.js';
+import { daysInRange } from '../lib/dates.js';
 import { computeBucketedHourRange, computeBucketedRange } from '../lib/drag-select.js';
 
 const MAX_BARS = 170;
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 function fillDateRange(bars: BarDay[], start: string, end: string): BarDay[] {
   const existing = new Set(bars.map(b => b.date));
   const result = [...bars];
-  const current = new Date(start + 'T00:00:00Z');
-  const last = new Date(end + 'T00:00:00Z');
-  while (current <= last) {
-    const dateStr = current.toISOString().slice(0, 10);
-    if (!existing.has(dateStr)) {
-      result.push({ date: dateStr, total: 0, breakdown: {} });
-    }
-    current.setTime(current.getTime() + DAY_MS);
+  for (const date of daysInRange(start, end)) {
+    if (!existing.has(date)) result.push({ date, total: 0, breakdown: {} });
   }
   return result.sort((a, b) => a.date.localeCompare(b.date));
 }
@@ -36,11 +30,6 @@ function dailyToBarDays(data: DailyCostsResult | null): BarDay[] {
     total: d.total,
     breakdown: { ...d.breakdown },
   }));
-}
-
-function dailyToTotals(data: DailyCostsResult | null): readonly number[] {
-  if (data === null) return [];
-  return data.days.map(d => d.total);
 }
 
 function bucketTotals(raw: readonly number[]): readonly number[] {
@@ -113,19 +102,25 @@ export function StackedBarWidget({
     [compareEnabled, effectiveGroupBy, previousDateRange.start, previousDateRange.end, previousDateRange.startHour, previousDateRange.endHour, fk, granularity, api, origin],
   );
 
-  const barDays = useMemo(
+  const filledDays = useMemo(
     () => {
       const raw = dailyToBarDays(dailyResult);
-      const filled = granularity === 'daily' ? fillDateRange(raw, dateRange.start, dateRange.end) : raw;
-      return bucketBars(filled, MAX_BARS);
+      return granularity === 'daily' ? fillDateRange(raw, dateRange.start, dateRange.end) : raw;
     },
     [dailyResult, granularity, dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour],
   );
+  const barDays = useMemo(() => bucketBars(filledDays, MAX_BARS), [filledDays]);
 
   const prevHasCoverage = prevQuery.status === 'success' && prevQuery.data !== null && hasSufficientDailyCoverage(prevQuery.data, previousDateRange);
+  // One total per bar, from the previous day at the same offset, bucketed as
+  // the bars are.
   const previousTotals = useMemo(
-    () => bucketTotals(dailyToTotals(prevHasCoverage ? prevQuery.data : null)),
-    [prevHasCoverage, prevQuery],
+    () => {
+      if (!prevHasCoverage) return [];
+      const previousOf = previousDayLookup(prevQuery.data, previousDateRange, dateRange);
+      return bucketTotals(filledDays.map(d => previousOf(d.date)?.total ?? 0));
+    },
+    [prevHasCoverage, prevQuery, previousDateRange, dateRange, filledDays],
   );
 
   const handleRangeSelect = useCallback((startIdx: number, endIdx: number) => {
