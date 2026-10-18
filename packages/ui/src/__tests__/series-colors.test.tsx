@@ -113,11 +113,13 @@ async function treemapColors(palette: PaletteType): Promise<Map<string, string>>
   }));
 }
 
+const PALETTES: readonly { readonly palette: PaletteType; readonly colors: readonly string[] }[] = [
+  { palette: 'standard', colors: PALETTE_STANDARD },
+  { palette: 'colorblind', colors: PALETTE_COLORBLIND },
+];
+
 describe('series colors across widgets', () => {
-  it.each([
-    { palette: 'standard' as const, colors: PALETTE_STANDARD },
-    { palette: 'colorblind' as const, colors: PALETTE_COLORBLIND },
-  ])('paints each series alike in every chart ($palette)', async ({ palette, colors }) => {
+  it.each(PALETTES)('paints each series alike in every chart ($palette)', async ({ palette, colors }) => {
     const pie = await pieColors(palette);
 
     expect(stackedBarColors(palette)).toEqual(pie);

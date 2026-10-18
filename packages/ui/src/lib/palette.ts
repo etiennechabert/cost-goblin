@@ -44,8 +44,8 @@ export type SeriesColors = (name: string) => string;
  *  power-of-two palette would put "team-1" and "team-A" on the same slot. */
 export function hashSeriesName(name: string): number {
   let h = 0x811c9dc5;
-  for (let i = 0; i < name.length; i++) {
-    h ^= name.charCodeAt(i);
+  for (const ch of name) {
+    h ^= ch.codePointAt(0) ?? 0;
     h = Math.imul(h, 0x01000193);
   }
   h ^= h >>> 16;
