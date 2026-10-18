@@ -6,44 +6,66 @@ import {
   logger,
   asEntityRef,
   asDollars,
-  asDateString,
 } from '@costgoblin/core';
 import type {
   CostQueryParams,
   CostResult,
   DailyCostsParams,
   DailyCostsResult,
-  DailyCostDay,
-  Dollars,
+  DimensionId,
+  DimensionsConfig,
   EntityDetailParams,
   EntityDetailResult,
+  OrgNode,
   QueryContextOptions,
 } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 import {
   applyOrgTreeRollup,
   buildCostResult,
+  buildDailyCostsResult,
   buildEntityDetailResult,
   columnForDimension,
+  isAccountGroupBy,
   isOwnerGroupBy,
   mergeCostRowsByEntity,
   providersEmptyForRange,
   resolveEntityName,
   resolveRollupSource,
+  rollupNodeByValue,
 } from './query-utils.js';
 import { originStore } from '../query-log.js';
 
-function toDailyCostDay([date, breakdown]: readonly [string, Record<string, number>]): DailyCostDay {
-  const total = Object.values(breakdown).reduce((s, v) => s + v, 0);
-  const typedBreakdown: Record<string, Dollars> = {};
-  for (const [k, v] of Object.entries(breakdown)) {
-    typedBreakdown[k] = asDollars(v);
-  }
-  return { date: asDateString(date), total: asDollars(total), breakdown: typedBreakdown };
-}
-
 export function registerCostHandlers(app: AppContext): void {
   const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getOrgTreeConfig, getQueryCostScope, getQueryProviders, runPreparedQuery, rollupStore } = app;
+
+  /** The org tree a query grouped by the owner dimension rolls its values up
+   *  through. None when it groups by anything else, when it drills into one
+   *  node's values (orgNodeValues), or when no tree is configured. */
+  async function rollupTree(
+    params: { readonly groupBy: DimensionId; readonly orgNodeValues?: readonly string[] | undefined },
+    dimensions: DimensionsConfig,
+  ): Promise<readonly OrgNode[] | undefined> {
+    if (!isOwnerGroupBy(params.groupBy, dimensions) || params.orgNodeValues !== undefined) return undefined;
+    const { tree } = await getOrgTreeConfig();
+    return tree.length > 0 ? tree : undefined;
+  }
+
+  /** The name a daily series takes, matching query:costs' row for the same
+   *  group so the bar and line widgets agree with the pie, treemap and top-N
+   *  bar on labels (and the colors keyed by them): an account id becomes its
+   *  display name, an owner value the org-tree node it rolls up into, and any
+   *  other value stays as is. */
+  async function seriesNameFor(params: DailyCostsParams, dimensions: DimensionsConfig): Promise<(group: string) => string> {
+    if (isAccountGroupBy(params.groupBy)) {
+      const accountMap = await getAccountMap();
+      return group => resolveEntityName(group, accountMap);
+    }
+    const tree = await rollupTree(params, dimensions);
+    if (tree === undefined) return group => group;
+    const nodeByValue = rollupNodeByValue(tree);
+    return group => nodeByValue.get(group) ?? group;
+  }
 
   ipcMain.handle('query:costs', (_event, params: CostQueryParams): Promise<CostResult> => originStore.run(params.origin ?? null, async () => {
     const dimensions = await getDimensions();
@@ -69,19 +91,15 @@ export function registerCostHandlers(app: AppContext): void {
     const rows = await runPreparedQuery(sql, queryParams, isMat);
     let result = buildCostResult(rows, params.dateRange);
 
-    if (params.groupBy === 'account' || params.groupBy === 'account_id') {
+    if (isAccountGroupBy(params.groupBy)) {
       result = {
         ...result,
         rows: mergeCostRowsByEntity(result.rows.map(r => ({ ...r, entity: asEntityRef(resolveEntityName(r.entity, accountMap)) }))),
       };
     }
 
-    if (isOwnerGroupBy(params.groupBy, dimensions) && params.orgNodeValues === undefined) {
-      const orgTreeConfig = await getOrgTreeConfig();
-      if (orgTreeConfig.tree.length > 0) {
-        result = applyOrgTreeRollup(result, orgTreeConfig.tree);
-      }
-    }
+    const tree = await rollupTree(params, dimensions);
+    if (tree !== undefined) result = applyOrgTreeRollup(result, tree);
 
     return result;
   }));
@@ -105,41 +123,7 @@ export function registerCostHandlers(app: AppContext): void {
     logger.info('query:daily-costs', { groupBy: params.groupBy, materialized: isMat });
 
     const rows = await runPreparedQuery(sql, queryParams, isMat);
-
-    const dayMap = new Map<string, Record<string, number>>();
-    const groupSet = new Set<string>();
-    let totalCost = 0;
-
-    for (const row of rows) {
-      const rawDate = row['date'];
-      const rawGroup = row['group_name'];
-      let date: string;
-      if (rawDate instanceof Date) {
-        date = rawDate.toISOString().slice(0, 10);
-      } else if (typeof rawDate === 'string') {
-        date = rawDate;
-      } else {
-        date = '';
-      }
-      const group = typeof rawGroup === 'string' ? rawGroup : '';
-      const cost = Number(row['cost'] ?? 0);
-
-      groupSet.add(group);
-      totalCost += cost;
-
-      const existing = dayMap.get(date);
-      if (existing === undefined) {
-        dayMap.set(date, { [group]: cost });
-      } else {
-        existing[group] = (existing[group] ?? 0) + cost;
-      }
-    }
-
-    const days: DailyCostDay[] = [...dayMap.entries()]
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(toDailyCostDay);
-
-    return { days, groups: [...groupSet], totalCost: asDollars(totalCost) };
+    return buildDailyCostsResult(rows, await seriesNameFor(params, dimensions));
   }));
 
   ipcMain.handle('query:entity-detail', (_event, params: EntityDetailParams): Promise<EntityDetailResult> => originStore.run(params.origin ?? null, async () => {

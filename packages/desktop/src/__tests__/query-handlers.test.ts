@@ -2,7 +2,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { registerQueryHandlers } from '../main/handlers/query.js';
-import { at, createHarness, list, num, str, type Harness, type HarnessOptions } from './helpers/ipc-harness.js';
+import { at, createHarness, isRecord, list, num, str, type Harness, type HarnessOptions } from './helpers/ipc-harness.js';
 
 /** The dashboard query channels — costs, daily costs, entity detail, trends,
  *  filter values, missing tags and savings — run end to end against a real
@@ -28,6 +28,13 @@ const ORG = JSON.stringify({
   ],
 });
 
+/** Every owner value under "Company", the one top-level node of the fixture
+ *  org tree (packages/core/src/__fixtures__/config/org-tree.yaml). The
+ *  synthetic tree tags payments, identity and platform among them. */
+const COMPANY_VALUES: ReadonlySet<string> = new Set([
+  'core-banking', 'payments', 'identity', 'platform', 'analytics', 'ml-platform', 'SRE', 'sre-emea', 'sre-us',
+]);
+
 const harnesses: Harness[] = [];
 
 afterEach(async () => {
@@ -49,6 +56,49 @@ async function withOrgNames(h: Harness): Promise<void> {
 
 function entities(result: unknown, key = 'rows'): string[] {
   return list(at(result, key)).map(r => str(at(r, 'entity')));
+}
+
+/** The series of a daily result, as the stacked bar and line widgets read them. */
+function groups(result: unknown): string[] {
+  return list(at(result, 'groups')).map(str);
+}
+
+function breakdownOf(day: unknown): Readonly<Record<string, unknown>> {
+  const breakdown = at(day, 'breakdown');
+  if (!isRecord(breakdown)) throw new Error('expected a breakdown object');
+  return breakdown;
+}
+
+/** One day's cost for a series: 0 when the day has none. */
+function dayCost(day: unknown, series: string): number {
+  const cost = breakdownOf(day)[series];
+  return cost === undefined ? 0 : num(cost);
+}
+
+/** Each series' cost, summed over every day of a daily result. */
+function seriesTotals(result: unknown): Map<string, number> {
+  const totals = new Map<string, number>();
+  for (const day of list(at(result, 'days'))) {
+    for (const [series, cost] of Object.entries(breakdownOf(day))) totals.set(series, (totals.get(series) ?? 0) + num(cost));
+  }
+  return totals;
+}
+
+function daysByDate(result: unknown): Map<string, unknown> {
+  return new Map(list(at(result, 'days')).map(d => [str(at(d, 'date')), d]));
+}
+
+function sorted(values: readonly string[]): string[] {
+  return [...values].sort((a, b) => a.localeCompare(b));
+}
+
+/** The bars' series are the pie's slices: the same names, the same totals. */
+function expectSameSeries(daily: unknown, costs: unknown): void {
+  expect(sorted(groups(daily))).toEqual(sorted(entities(costs)));
+  const totals = seriesTotals(daily);
+  for (const row of list(at(costs, 'rows'))) {
+    expect(totals.get(str(at(row, 'entity')))).toBeCloseTo(num(at(row, 'totalCost')), 4);
+  }
 }
 
 describe('query plumbing channels', () => {
@@ -127,6 +177,58 @@ describe('query:daily-costs', () => {
   it('is empty when no provider has data in range', async () => {
     const h = await queryApp();
     expect(await h.ipc.invoke('query:daily-costs', { groupBy: 'service', dateRange: NO_DATA, filters: {} })).toEqual({ days: [], groups: [], totalCost: 0 });
+  });
+
+  it('names accounts as query:costs does, summing the ids that share a name on each day', async () => {
+    const h = await queryApp();
+    const byId = await h.ipc.invoke('query:daily-costs', { groupBy: 'account', dateRange: FEBRUARY, filters: {} });
+    await withOrgNames(h);
+    const named = await h.ipc.invoke('query:daily-costs', { groupBy: 'account', dateRange: FEBRUARY, filters: {} });
+    expectSameSeries(named, await h.ipc.invoke('query:costs', { groupBy: 'account', dateRange: FEBRUARY, filters: {} }));
+    expect(groups(named)).toEqual(expect.arrayContaining(['Payments', 'Shared Name']));
+    expect(groups(named)).not.toContain('100000000002');
+
+    const rawDays = daysByDate(byId);
+    const days = list(at(named, 'days'));
+    expect(days).toHaveLength(rawDays.size);
+    for (const day of days) {
+      const raw = rawDays.get(str(at(day, 'date')));
+      expect(dayCost(day, 'Shared Name')).toBeCloseTo(dayCost(raw, '100000000002') + dayCost(raw, '100000000003'), 6);
+      expect(Object.keys(breakdownOf(day))).not.toContain('100000000003');
+      expect(num(at(day, 'total'))).toBeCloseTo(num(at(raw, 'total')), 6);
+    }
+    expect(num(at(named, 'totalCost'))).toBeCloseTo(num(at(byId, 'totalCost')), 4);
+  });
+
+  it('rolls an owner dimension up the org tree on each day, as query:costs does', async () => {
+    const h = await queryApp();
+    const rolled = await h.ipc.invoke('query:daily-costs', { groupBy: 'tag_team', dateRange: FEBRUARY, filters: {} });
+    expectSameSeries(rolled, await h.ipc.invoke('query:costs', { groupBy: 'tag_team', dateRange: FEBRUARY, filters: {} }));
+    expect(groups(rolled)).toContain('Company');
+    expect(groups(rolled)).not.toContain('payments');
+    expect(seriesTotals(rolled).get('Company')).toBeGreaterThan(0);
+
+    // Each day's "Company" is that day's spend on the values under it.
+    await writeFile(h.ws.orgTreePath, 'tree: []\n');
+    h.app.state.orgTree = null;
+    const flatDays = daysByDate(await h.ipc.invoke('query:daily-costs', { groupBy: 'tag_team', dateRange: FEBRUARY, filters: {} }));
+    for (const day of list(at(rolled, 'days'))) {
+      const raw = flatDays.get(str(at(day, 'date')));
+      const underCompany = Object.keys(breakdownOf(raw))
+        .filter(team => COMPANY_VALUES.has(team))
+        .reduce((n, team) => n + dayCost(raw, team), 0);
+      expect(dayCost(day, 'Company')).toBeCloseTo(underCompany, 6);
+      expect(num(at(day, 'total'))).toBeCloseTo(num(at(raw, 'total')), 6);
+    }
+  });
+
+  it('filters on an account series by the name it shows, as a click on its segment does', async () => {
+    const h = await queryApp();
+    await withOrgNames(h);
+    const all = await h.ipc.invoke('query:daily-costs', { groupBy: 'account', dateRange: FEBRUARY, filters: {} });
+    const shared = await h.ipc.invoke('query:daily-costs', { groupBy: 'account', dateRange: FEBRUARY, filters: { account: ['Shared Name'] } });
+    expect(groups(shared)).toEqual(['Shared Name']);
+    expect(num(at(shared, 'totalCost'))).toBeCloseTo(seriesTotals(all).get('Shared Name') ?? Number.NaN, 4);
   });
 });
 

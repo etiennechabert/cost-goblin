@@ -15,8 +15,11 @@ import {
 import type {
   CostResult,
   CostRow,
+  DailyCostDay,
+  DailyCostsResult,
   DateRange,
   DimensionsConfig,
+  Dollars,
   TrendResult,
   TrendRow,
   MissingTagsResult,
@@ -125,6 +128,12 @@ export function isOwnerGroupBy(groupBy: string, dimensions: DimensionsConfig): b
   return dimensions.tags.some(
     t => t.concept === 'owner' && tagDimColumn(t) === groupBy,
   );
+}
+
+/** A query grouped by account returns account ids, which the handlers show
+ *  by display name (resolveEntityName). */
+export function isAccountGroupBy(groupBy: string): boolean {
+  return groupBy === 'account' || groupBy === 'account_id';
 }
 
 export function resolveEntityName(entity: string, accountMap: Map<string, string>): string {
@@ -261,6 +270,54 @@ export function buildCostResult(rows: RawRow[], dateRange: DateRange): CostResul
     topServices,
     dateRange,
   };
+}
+
+function dailyDate(raw: unknown): string {
+  if (raw instanceof Date) return raw.toISOString().slice(0, 10);
+  return typeof raw === 'string' ? raw : '';
+}
+
+function toDailyCostDay([date, breakdown]: readonly [string, Record<string, number>]): DailyCostDay {
+  const total = Object.values(breakdown).reduce((s, v) => s + v, 0);
+  const typedBreakdown: Record<string, Dollars> = {};
+  for (const [k, v] of Object.entries(breakdown)) {
+    typedBreakdown[k] = asDollars(v);
+  }
+  return { date: asDateString(date), total: asDollars(total), breakdown: typedBreakdown };
+}
+
+/** The daily result for buildDailyCostsQuery's rows (date, group_name, cost):
+ *  one entry per date, each group's cost under the series name `seriesName`
+ *  gives it. Groups that get the same name (account ids sharing a display
+ *  name, the owner values under one org-tree node) are summed on each day, so
+ *  every day's total stays the sum of its rows. */
+export function buildDailyCostsResult(rows: readonly RawRow[], seriesName: (group: string) => string): DailyCostsResult {
+  const dayMap = new Map<string, Record<string, number>>();
+  const groupSet = new Set<string>();
+  let totalCost = 0;
+
+  for (const row of rows) {
+    const date = dailyDate(row['date']);
+    const rawGroup = row['group_name'];
+    const group = seriesName(typeof rawGroup === 'string' ? rawGroup : '');
+    const cost = Number(row['cost'] ?? 0);
+
+    groupSet.add(group);
+    totalCost += cost;
+
+    const existing = dayMap.get(date);
+    if (existing === undefined) {
+      dayMap.set(date, { [group]: cost });
+    } else {
+      existing[group] = (existing[group] ?? 0) + cost;
+    }
+  }
+
+  const days = [...dayMap.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(toDailyCostDay);
+
+  return { days, groups: [...groupSet], totalCost: asDollars(totalCost) };
 }
 
 export function buildTrendResult(rows: RawRow[], deltaThreshold: number, percentThreshold: number): TrendResult {
@@ -548,4 +605,22 @@ export function applyOrgTreeRollup(result: CostResult, tree: readonly OrgNode[])
   }
 
   return { ...result, rows: rolledUpRows };
+}
+
+/** Each owner value the tree rolls up, mapped to the top-level node whose row
+ *  applyOrgTreeRollup counts it in: every value getDescendantTagValues lists
+ *  under that node (a virtual node's descendants, a real node's own value and
+ *  its descendants'). Values outside the tree are left out; a value listed
+ *  under two top-level nodes goes to the first. Renaming each value this way
+ *  and summing, as the daily series do, keeps a node whose total is zero or
+ *  negative, where applyOrgTreeRollup drops it: on a day with a credit, the
+ *  day's bars still add up to its total. */
+export function rollupNodeByValue(tree: readonly OrgNode[]): Map<string, string> {
+  const nodeByValue = new Map<string, string>();
+  for (const node of tree) {
+    for (const value of getDescendantTagValues(node)) {
+      if (!nodeByValue.has(value)) nodeByValue.set(value, node.name);
+    }
+  }
+  return nodeByValue;
 }

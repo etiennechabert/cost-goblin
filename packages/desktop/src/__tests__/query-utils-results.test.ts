@@ -14,14 +14,17 @@ import {
   applyOrgTreeRollup,
   buildAccountReverseMap,
   buildCostResult,
+  buildDailyCostsResult,
   buildEntityDetailResult,
   buildMissingTagsResult,
   buildTrendResult,
+  isAccountGroupBy,
   isOwnerGroupBy,
   mergeCostRowsByEntity,
   mergeTrendRowsByEntity,
   resolveAvailablePeriods,
   resolveEntityName,
+  rollupNodeByValue,
   toEffort,
   toNum,
   toStr,
@@ -124,6 +127,15 @@ describe('isOwnerGroupBy', () => {
     expect(isOwnerGroupBy('tag_team', dims)).toBe(true);
     expect(isOwnerGroupBy('tag_env', dims)).toBe(false);
     expect(isOwnerGroupBy('service', dims)).toBe(false);
+  });
+});
+
+describe('isAccountGroupBy', () => {
+  it('is true for the account dimension and its raw column only', () => {
+    expect(isAccountGroupBy('account')).toBe(true);
+    expect(isAccountGroupBy('account_id')).toBe(true);
+    expect(isAccountGroupBy('account_name')).toBe(false);
+    expect(isAccountGroupBy('tag_team')).toBe(false);
   });
 });
 
@@ -260,6 +272,44 @@ describe('buildCostResult', () => {
     const services = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
     const rows = services.map((service, i) => ({ entity: 'e', total_cost: 100, service, service_cost: i + 1 }));
     expect(buildCostResult(rows, RANGE).topServices).toEqual(['G', 'F', 'E', 'D', 'C']);
+  });
+});
+
+describe('buildDailyCostsResult', () => {
+  const rows = [
+    { date: '2026-01-02', group_name: '111', cost: 4 },
+    { date: '2026-01-01', group_name: '111', cost: 10 },
+    { date: '2026-01-01', group_name: '222', cost: 5n },
+    { date: '2026-01-01', group_name: '333', cost: 1 },
+    { date: '2026-01-02', group_name: null, cost: 2 },
+  ];
+  const asIs = (group: string): string => group;
+
+  it('keeps each group as its own series, with one entry per day in date order', () => {
+    const result = buildDailyCostsResult(rows, asIs);
+    expect(result.days).toEqual([
+      { date: '2026-01-01', total: 16, breakdown: { '111': 10, '222': 5, '333': 1 } },
+      { date: '2026-01-02', total: 6, breakdown: { '111': 4, '': 2 } },
+    ]);
+    expect(result.groups).toEqual(['111', '222', '333', '']);
+    expect(result.totalCost).toBe(22);
+  });
+
+  it('sums on each day the groups that get one series name, and lists that name once', () => {
+    const result = buildDailyCostsResult(rows, group => (group === '111' || group === '222' ? 'payments' : group));
+    expect(result.days.map(d => d.breakdown)).toEqual([{ payments: 15, '333': 1 }, { payments: 4, '': 2 }]);
+    expect(result.days.map(d => d.total)).toEqual([16, 6]);
+    expect(result.groups).toEqual(['payments', '333', '']);
+    expect(result.totalCost).toBe(22);
+  });
+
+  it('reads a DuckDB DATE as its calendar day', () => {
+    const result = buildDailyCostsResult([{ date: new Date('2026-01-03T00:00:00Z'), group_name: 'x', cost: 1 }], asIs);
+    expect(result.days.map(d => d.date)).toEqual(['2026-01-03']);
+  });
+
+  it('is empty for no rows', () => {
+    expect(buildDailyCostsResult([], asIs)).toEqual({ days: [], groups: [], totalCost: 0 });
   });
 });
 
@@ -450,5 +500,44 @@ describe('applyOrgTreeRollup', () => {
     const tree: OrgNode[] = [{ name: 'eng', children: [{ name: 'squads', virtual: true, children: [{ name: 'team-a' }] }] }];
     const result = applyOrgTreeRollup(costResult([costRow('team-a', 6, { EC2: 6 })]), tree);
     expect(result.rows).toEqual([costRow('eng', 6, { EC2: 6 }, true)]);
+  });
+});
+
+describe('rollupNodeByValue', () => {
+  const tree: OrgNode[] = [
+    { name: 'platform', virtual: true, children: [{ name: 'team-a' }, { name: 'squads', virtual: true, children: [{ name: 'team-b' }] }] },
+    { name: 'eng', children: [{ name: 'web', children: [{ name: 'web-api' }] }] },
+    { name: 'ops' },
+    { name: 'empty', virtual: true, children: [] },
+  ];
+
+  it('maps each value under a top-level node to that node', () => {
+    expect(Object.fromEntries(rollupNodeByValue(tree))).toEqual({
+      'team-a': 'platform', 'team-b': 'platform', eng: 'eng', web: 'eng', 'web-api': 'eng', ops: 'ops',
+    });
+  });
+
+  it('maps a value listed under two top-level nodes to the first', () => {
+    const twice: OrgNode[] = [...tree, { name: 'again', virtual: true, children: [{ name: 'team-a' }, { name: 'team-c' }] }];
+    const nodeByValue = rollupNodeByValue(twice);
+    expect(nodeByValue.get('team-a')).toBe('platform');
+    expect(nodeByValue.get('team-c')).toBe('again');
+  });
+
+  it('renames and sums rows into the same rows, with the same totals, as applyOrgTreeRollup', () => {
+    const rows = [costRow('team-a', 10), costRow('team-b', 5), costRow('eng', 100), costRow('web-api', 30), costRow('ops', 3), costRow('outsider', 7)];
+    const nodeByValue = rollupNodeByValue(tree);
+    const renamed = mergeCostRowsByEntity(rows.map(r => ({ ...r, entity: asEntityRef(nodeByValue.get(r.entity) ?? r.entity) })));
+    expect(totalsByEntity(costResult(renamed))).toEqual(totalsByEntity(applyOrgTreeRollup(costResult(rows), tree)));
+  });
+
+  it('keeps the credit of a node whose values net below zero on a day in that day\'s total', () => {
+    const nodeByValue = rollupNodeByValue(tree);
+    const result = buildDailyCostsResult([
+      { date: '2026-01-01', group_name: 'team-a', cost: 4 },
+      { date: '2026-01-01', group_name: 'team-b', cost: -9 },
+      { date: '2026-01-01', group_name: 'outsider', cost: 7 },
+    ], group => nodeByValue.get(group) ?? group);
+    expect(result.days).toEqual([{ date: '2026-01-01', total: 2, breakdown: { platform: -5, outsider: 7 } }]);
   });
 });
