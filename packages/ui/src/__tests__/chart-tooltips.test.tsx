@@ -56,6 +56,26 @@ describe('WaterfallChart', () => {
     expect(screen.getByText('+$1.5k')).toBeDefined();
   });
 
+  it('draws the totals from $0 when a credit takes the running level below zero', async () => {
+    // Start $100, a $150 credit, then +$20: the axis spans -$50..$100 uncut.
+    const credit = buildWaterfall([trendRow('Credits', 0, -150), trendRow('EC2', 100, 120)], 8);
+    const { container } = renderChart(<WaterfallChart model={credit} title="Service bridge" />);
+    const anchors = await waitFor(() => {
+      const start = container.querySelector('[data-anchor="start"]');
+      const end = container.querySelector('[data-anchor="end"]');
+      if (start === null || end === null) throw new Error('anchors not drawn');
+      return { start, end };
+    });
+    // 178px plot from y=20 over $150: $0 sits at 20 + (100/150)·178.
+    const zeroY = 20 + (100 / 150) * 178;
+    const bottomOf = (el: Element): number => Number(el.getAttribute('y')) + Number(el.getAttribute('height'));
+    // Start ($100) rises from $0, not from the -$50 axis floor.
+    expect(bottomOf(anchors.start)).toBeCloseTo(zeroY);
+    // End (-$30) hangs below $0.
+    expect(Number(anchors.end.getAttribute('y'))).toBeCloseTo(zeroY);
+    expect(bottomOf(anchors.end)).toBeCloseTo(20 + (130 / 150) * 178);
+  });
+
   it('explains a mover on hover', async () => {
     const { container } = renderChart(<WaterfallChart model={model} title="Service bridge" />);
     const tip = await hover(container, '[data-step="VPC"]');

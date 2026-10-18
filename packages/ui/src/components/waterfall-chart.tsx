@@ -128,10 +128,12 @@ function WaterfallSvg({
           const key = `${s.name}-${String(i)}`;
           const cx = PAD_LEFT + slot * (i + 0.5);
           const anchor = isAnchor(s);
-          // Anchors run from the axis floor (cut when the axis is zoomed); the
-          // movers float between their running levels.
-          const top = yOf(anchor ? s.end : Math.max(s.start, s.end));
-          const bottom = anchor ? baseline : yOf(Math.min(s.start, s.end));
+          // Anchors run from $0 to their total (down, for a net-credit total),
+          // or from the axis floor when the axis is cut; the movers float
+          // between their running levels.
+          const anchorBase = truncated ? floor : 0;
+          const top = yOf(anchor ? Math.max(anchorBase, s.end) : Math.max(s.start, s.end));
+          const bottom = yOf(anchor ? Math.min(anchorBase, s.end) : Math.min(s.start, s.end));
           const h = Math.max(bottom - top, 1.5);
           const next = steps[i + 1];
           const hovered = tooltip.active?.key === key;
@@ -156,7 +158,7 @@ function WaterfallSvg({
               )}
               {anchor && truncated
                 ? <path d={cutBarPath(cx - barW / 2, barW, top, bottom)} fill={fillFor(s.kind)} data-cut="true" />
-                : <rect x={cx - barW / 2} y={top} width={barW} height={h} rx={2} fill={fillFor(s.kind)} />}
+                : <rect x={cx - barW / 2} y={top} width={barW} height={h} rx={2} fill={fillFor(s.kind)} {...(anchor ? { 'data-anchor': s.kind } : {})} />}
               {showValues && valueLabel !== null && (
                 <text x={cx} y={top - 5} textAnchor="middle" fontSize={10} className="tabular-nums" fill="var(--color-text-secondary)">
                   {valueLabel}
