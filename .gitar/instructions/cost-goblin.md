@@ -28,7 +28,7 @@ CLAUDE.md's "Monorepo Structure" has the top level. Inside it:
 | `security-audit` | `.github/scripts/assert-npm-guards.sh`, the lockfile `resolved`/`integrity` check, `npm ci`, `audit-ci` |
 | `version bumped past latest release` | both `package.json` files must agree and sit exactly one release past the latest `v*` tag |
 | `sonarcloud` | merges unit and e2e coverage, then applies the quality gate |
-| `CLA` (`.github/workflows/cla.yml`) | every commit author and the PR's opener has a row in `.github/cla-signatures.md` |
+| `CLA` (`.github/workflows/cla.yml`) | every human commit author and the PR's opener has a row in `.github/cla-signatures.md`; bots, the `claude` agent and the maintainer are exempt |
 
 When one of them fails:
 
@@ -39,7 +39,7 @@ When one of them fails:
 - **`scripts/ci/gitar-config.test.mjs` fails.** A file in `.gitar/` names a path or identifier the PR renamed or removed. Quote the stale line and what it should say now; the maintainer edits `.gitar/`.
 - **`e2e/collect-coverage.ts` reports coverage inflation.** A suite awaited something between `firstWindow()` and `attachCoverage` (CLAUDE.md, "Coverage-attach ordering"). It is a bug, not flakiness.
 - **The Sonar gate fails on coverage.** The fix is tests. Exclusions in `sonar-project.properties` are not.
-- **`CLA` fails.** Name who hasn't signed and point to CONTRIBUTING.md's "Sign the CLA". Signing is each person's own act: never add a row for anyone.
+- **`CLA` fails.** Quote its `::error::` lines (an unsigned author or opener, a commit email not linked to GitHub, an agent-opened PR, an edited row) and point to CONTRIBUTING.md's "Sign the CLA". Signing is each person's own act: never add or edit a row for anyone.
 - **A test the PR doesn't touch fails on `main` too.** Say so, and name the commit or open PR that fixes it. Don't re-run: a re-run tests the same merge commit.
 
 ## Anything you commit
