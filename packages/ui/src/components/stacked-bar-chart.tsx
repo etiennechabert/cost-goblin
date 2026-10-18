@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { formatDollars } from './format.js';
 import { CoinRainLoader } from './coin-rain-loader.js';
 import { useSeriesColors } from '../hooks/use-palette.js';
+import type { SeriesColors } from '../lib/palette.js';
 import { useBarDragSelect } from '../hooks/use-bar-drag-select.js';
 import { formatBucketKey } from '../lib/drag-select.js';
 
@@ -57,6 +58,14 @@ export function bucketBars(bars: readonly BarDay[], maxBuckets: number): readonl
 }
 
 type Segment = { readonly key: string; readonly value: number; readonly color: string };
+
+/** A day's positive series, largest first. */
+function daySegments(day: BarDay, seriesColor: SeriesColors): Segment[] {
+  return Object.entries(day.breakdown)
+    .filter(([, value]) => value > 0)
+    .map(([key, value]) => ({ key, value, color: seriesColor(key) }))
+    .sort((a, b) => b.value - a.value);
+}
 
 interface TooltipSegmentRowProps {
   readonly seg: Segment;
@@ -317,10 +326,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
             const totalDelta = compTotal !== undefined && compTotal > 0
               ? ((day.total - compTotal) / compTotal) * 100
               : undefined;
-            const segs = seriesTotals
-              .map(({ name }) => ({ key: name, value: day.breakdown[name] ?? 0, color: seriesColor(name) }))
-              .filter(s => s.value > 0)
-              .sort((a, b) => b.value - a.value);
+            const segs = daySegments(day, seriesColor);
             const segTotal = segs.reduce((sum, s) => sum + s.value, 0);
             return (
               <div className={`absolute top-0 bottom-0 z-20 ${onLeft ? 'right-0 mr-1' : 'left-12 ml-1'}`}>
@@ -384,14 +390,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
           >
             {days.map((day) => {
               const barPct = maxCost > 0 ? (day.total / maxCost) * 100 : 0;
-              const segments = seriesTotals
-                .map(({ name }) => ({
-                  key: name,
-                  value: day.breakdown[name] ?? 0,
-                  color: seriesColor(name),
-                }))
-                .filter(s => s.value > 0)
-                .sort((a, b) => b.value - a.value);
+              const segments = daySegments(day, seriesColor);
               const segTotal = segments.reduce((sum, s) => sum + s.value, 0);
 
               return (

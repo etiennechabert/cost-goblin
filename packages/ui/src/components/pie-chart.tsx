@@ -34,13 +34,19 @@ interface PieChartProps {
 
 const OTHER_KEY = 'Other';
 
-function aggregateOther(data: readonly PieSlice[], maxSlices: number): PieSlice[] {
-  if (data.length <= maxSlices) return [...data];
-  const top = data.slice(0, maxSlices);
+/** A drawn slice. `folded` marks the remainder aggregateOther adds, so a real
+ *  entity that happens to be named "Other" is colored and clickable. */
+interface DisplaySlice extends PieSlice {
+  readonly folded: boolean;
+}
+
+function aggregateOther(data: readonly PieSlice[], maxSlices: number): DisplaySlice[] {
+  const top = data.slice(0, maxSlices).map(d => ({ ...d, folded: false }));
+  if (data.length <= maxSlices) return top;
   const rest = data.slice(maxSlices);
   const otherCost = rest.reduce((s, d) => s + d.cost, 0);
   const otherPct = rest.reduce((s, d) => s + d.percentage, 0);
-  return [...top, { name: OTHER_KEY, cost: otherCost, percentage: otherPct }];
+  return [...top, { name: OTHER_KEY, cost: otherCost, percentage: otherPct, folded: true }];
 }
 
 
@@ -78,9 +84,9 @@ function PieChartInner({
   }, [hoveredName]);
 
   const displayData = useMemo(() => aggregateOther(data, maxSlices), [data, maxSlices]);
-  const ranked = useMemo(() => displayData.filter(d => d.name !== OTHER_KEY), [displayData]);
+  const ranked = useMemo(() => displayData.filter(d => !d.folded), [displayData]);
   const seriesColor = useSeriesColors(ranked);
-  const colorOf = (name: string): string => (name === OTHER_KEY ? OTHER_COLOR : seriesColor(name));
+  const colorOf = (slice: DisplaySlice): string => (slice.folded ? OTHER_COLOR : seriesColor(slice.name));
   const pieSize = showLegend ? Math.min(width * 0.38, height - 60) : Math.min(width - 32, height - 60);
   const radius = pieSize / 2;
 
@@ -140,7 +146,7 @@ function PieChartInner({
         <div className={showLegend ? 'shrink-0' : 'flex-1 flex justify-center'} style={showLegend ? { width: pieSize + 32 } : undefined}>
           <svg width={pieSize + 32} height={pieSize + 16}>
             <Group top={radius + 8} left={radius + 16}>
-              <Pie<PieSlice>
+              <Pie<DisplaySlice>
                 data={displayData}
                 pieValue={(d) => d.cost}
                 outerRadius={radius}
@@ -150,7 +156,8 @@ function PieChartInner({
                 {(pie) =>
                   pie.arcs.map((arc) => {
                     const sliceName = arc.data.name;
-                    const color = colorOf(sliceName);
+                    const interactive = !arc.data.folded && onSliceClick !== undefined;
+                    const color = colorOf(arc.data);
                     const isHovered = hoveredName === sliceName;
                     const isDimmed = hoveredName !== null && !isHovered;
                     const path = pie.path(arc) ?? '';
@@ -160,11 +167,11 @@ function PieChartInner({
                         key={sliceName}
                         onMouseEnter={() => { handleMouseEnter(sliceName); }}
                         onMouseLeave={handleMouseLeave}
-                        onClick={() => { if (sliceName !== OTHER_KEY) onSliceClick?.(sliceName); }}
-                        onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && sliceName !== OTHER_KEY) onSliceClick?.(sliceName); }}
-                        role={sliceName !== OTHER_KEY && onSliceClick !== undefined ? 'button' : undefined}
-                        tabIndex={sliceName !== OTHER_KEY && onSliceClick !== undefined ? 0 : undefined}
-                        style={{ cursor: sliceName !== OTHER_KEY && onSliceClick !== undefined ? 'pointer' : 'default' }}
+                        onClick={() => { if (interactive) onSliceClick(sliceName); }}
+                        onKeyDown={(e) => { if (interactive && (e.key === 'Enter' || e.key === ' ')) onSliceClick(sliceName); }}
+                        role={interactive ? 'button' : undefined}
+                        tabIndex={interactive ? 0 : undefined}
+                        style={{ cursor: interactive ? 'pointer' : 'default' }}
                       >
                         <path
                           d={path}
@@ -208,11 +215,11 @@ function PieChartInner({
         {/* Legend — HTML for proper text truncation */}
         {showLegend && <div className="flex-1 min-w-0 overflow-y-auto flex flex-col gap-0.5 py-1">
           {displayData.map((d) => {
-            const color = colorOf(d.name);
+            const color = colorOf(d);
             const isHovered = hoveredName === d.name;
             const isDimmed = hoveredName !== null && !isHovered;
 
-            const isInteractive = d.name !== OTHER_KEY && onSliceClick !== undefined;
+            const isInteractive = !d.folded && onSliceClick !== undefined;
             const itemClassName = [
               'rounded text-[11px] transition-colors w-full text-left',
               isInteractive ? 'cursor-pointer' : '',

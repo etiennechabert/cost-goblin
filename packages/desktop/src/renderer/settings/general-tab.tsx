@@ -156,7 +156,7 @@ export function GeneralTab({
 
         <SettingRow label="Chart palette" description="Colorblind keeps colors apart under red-green color blindness.">
           <div className="flex items-center gap-3">
-            <div className="flex gap-1" aria-hidden="true">
+            <div className="grid grid-flow-col grid-rows-2 gap-1" aria-hidden="true">
               {swatches.map((color, i) => (
                 <span key={`${color}-${String(i)}`} className="h-4 w-4 rounded" style={{ backgroundColor: color }} />
               ))}

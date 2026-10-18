@@ -159,6 +159,21 @@ describe('assignSeriesColors', () => {
     expect(a('EC2')).toBe(color(PALETTE_STANDARD, slotOf('EC2')));
   });
 
+  it('ranks spend that differs only in float noise as a tie, broken by name', () => {
+    // One widget's SQL SUM and another's added-up daily sums of the same $73.
+    const pie = assignSeriesColors([{ name: 'SNS', cost: 73 }, { name: 'EC2', cost: 72.999_999_999_999_99 }], PALETTE_STANDARD);
+    const bars = assignSeriesColors([{ name: 'SNS', cost: 72.999_999_999_999_99 }, { name: 'EC2', cost: 73.000_000_000_000_01 }], PALETTE_STANDARD);
+    expect(bars('EC2')).toBe(pie('EC2'));
+    expect(pie('EC2')).toBe(color(PALETTE_STANDARD, slotOf('EC2')));
+  });
+
+  it('ranks a series whose cost is not a number last', () => {
+    const colors = assignSeriesColors([{ name: 'EC2', cost: Number.NaN }, { name: 'SNS', cost: 1 }], PALETTE_STANDARD);
+    // SNS ranks first and takes the slot both names hash to.
+    expect(colors('SNS')).toBe(color(PALETTE_STANDARD, slotOf('SNS')));
+    expect(colors('EC2')).toBe(color(PALETTE_STANDARD, (slotOf('EC2') + 1) % P));
+  });
+
   it('colors a name it was not ranked with as a minor series', () => {
     const colors = assignSeriesColors([{ name: 'EC2', cost: 1 }], PALETTE_STANDARD);
     expect(colors('S3')).toBe(MINOR_COLOR);

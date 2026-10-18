@@ -14,7 +14,7 @@ export const PALETTE_STANDARD: readonly string[] = [
 ];
 
 // Red-green color blindness flattens hue, so these twelve are told apart
-// mostly by lightness and the blue-yellow axis: every pair stays at ΔE >= 8.7
+// mostly by lightness and the blue-yellow axis: every pair stays at ΔE >= 8.6
 // under protanopia and deuteranopia, and >= 16 for everyone else.
 export const PALETTE_COLORBLIND: readonly string[] = [
   '#3a49fc', '#0db98e', '#d52f4a', '#96c0fe', '#357518', '#48fbf6',
@@ -56,8 +56,16 @@ export function hashSeriesName(name: string): number {
   return h >>> 0;
 }
 
+/** A cost in whole cents for ranking. The pie gets one SQL SUM over the range
+ *  and the stacked bar adds up per-day sums: equal spend can differ in the
+ *  last float bits, which must not reorder a tie. A non-finite cost ranks last. */
+function rankCents(cost: number): number {
+  return Number.isFinite(cost) ? Math.round(cost * 100) : Number.NEGATIVE_INFINITY;
+}
+
 function byCostThenName(a: SeriesCost, b: SeriesCost): number {
-  if (a.cost !== b.cost) return b.cost - a.cost;
+  const [ca, cb] = [rankCents(a.cost), rankCents(b.cost)];
+  if (ca !== cb) return cb > ca ? 1 : -1;
   if (a.name < b.name) return -1;
   return a.name > b.name ? 1 : 0;
 }

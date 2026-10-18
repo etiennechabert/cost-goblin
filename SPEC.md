@@ -986,7 +986,7 @@ const PALETTE_COLORBLIND = [  // apart under protanopia and deuteranopia
 ];
 ```
 
-**Series colors follow the entity, not its rank.** A series takes the palette slot its name hashes to; when a costlier series in the same chart holds that slot, it takes the next free one. A chart's top series therefore get distinct colors, and since a series' color depends only on the series that outrank it, every widget over the same range and filters paints a shared series alike. Series ranked past the palette are drawn in a neutral gray, and the pie's folded "Other" in a darker one. Hashing can put any two colors side by side, so every pair has to stay distinguishable (`palette.test.ts`, OKLab ΔE ×100): ≥ 14.5 for the 20 standard colors (about the most a dark surface fits while staying visible on the light theme), and ≥ 16 for the 12 colorblind ones, which also stay ≥ 8.7 apart under protanopia and deuteranopia.
+**Series colors follow the entity, not its rank.** A series takes the palette slot its name hashes to; when a costlier series in the same chart holds that slot, it takes the next free one. A chart's top series therefore get distinct colors, and since a series' color depends only on the series that outrank it, every widget over the same range and filters paints a shared series alike. Series ranked past the palette are drawn in a neutral gray, and the pie's folded "Other" in a darker one. Hashing can put any two colors side by side, so every pair has to stay distinguishable (`palette.test.ts`, OKLab ΔE ×100): ≥ 14.5 for the 20 standard colors (about the most a dark surface fits while staying visible on the light theme), and ≥ 16 for the 12 colorblind ones, which also stay ≥ 8.6 apart under protanopia and deuteranopia.
 
 ---
 

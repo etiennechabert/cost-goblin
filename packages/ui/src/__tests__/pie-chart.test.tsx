@@ -6,6 +6,7 @@ import type { Dimension } from '@costgoblin/core/browser';
 import { PieChart } from '../components/pie-chart.js';
 import type { PieSlice } from '../components/pie-chart.js';
 import { PaletteProvider } from '../hooks/use-palette.js';
+import { PALETTE_STANDARD, assignSeriesColors } from '../lib/palette.js';
 
 const SLICES: readonly PieSlice[] = [
   { name: 'EC2', cost: 500, percentage: 50 },
@@ -157,6 +158,19 @@ describe('PieChart — slices', () => {
     fireEvent.click(other);
     fireEvent.keyDown(other, { key: 'Enter' });
     expect(onSliceClick).not.toHaveBeenCalled();
+  });
+
+  it('treats an entity named Other like any other series', async () => {
+    // FOCUS has a real "Other" service category; only the folded remainder is gray.
+    const onSliceClick = vi.fn<(name: string) => void>();
+    const data = [{ name: 'Other', cost: 500, percentage: 50 }, ...SLICES.slice(1)];
+    const { container } = renderPie(<PieChart data={data} title="t" onSliceClick={onSliceClick} />);
+    const real = slice(await slices(container, 4), 0);
+
+    expect(slicePath(real).getAttribute('fill')).toBe(assignSeriesColors(data, PALETTE_STANDARD)('Other'));
+    expect(real.getAttribute('role')).toBe('button');
+    fireEvent.click(real);
+    expect(onSliceClick.mock.calls).toEqual([['Other']]);
   });
 
   it('is not focusable without a click handler', async () => {
