@@ -11,6 +11,7 @@ import type {
   TagValue,
   WidgetSize,
   WidgetSpec,
+  WidgetType,
 } from '@costgoblin/core/browser';
 import { asDimensionId } from '@costgoblin/core/browser';
 import { getDimensionId, getDimensionLabel } from '../lib/dimensions.js';
@@ -50,6 +51,35 @@ export interface WidgetCommonProps {
 }
 
 export type WidgetComponent = ComponentType<WidgetCommonProps>;
+
+/** The widget types with a Top N setting: they rank their entries and show
+ *  only the first N. */
+export type TopNWidgetType = {
+  [T in WidgetType]: 'topN' extends keyof Extract<WidgetSpec, { readonly type: T }> ? T : never;
+}[WidgetType];
+
+export type TopNWidgetSpec = Extract<WidgetSpec, { readonly type: TopNWidgetType }>;
+
+/** How many entries each ranked widget shows when its spec sets no Top N.
+ *  The widgets and the views editor both read it, so what the editor shows is
+ *  what the widget draws. */
+export const DEFAULT_TOP_N: Readonly<Record<TopNWidgetType, number>> = {
+  line: 6,
+  topNBar: 12,
+  heatmap: 12,
+  baseline: 8,
+  waterfall: 8,
+  priceVolume: 6,
+};
+
+export function isTopNWidget(spec: WidgetSpec): spec is TopNWidgetSpec {
+  return Object.hasOwn(DEFAULT_TOP_N, spec.type);
+}
+
+/** The widget's own Top N, else its type's default. */
+export function topNOf(spec: TopNWidgetSpec): number {
+  return spec.topN ?? DEFAULT_TOP_N[spec.type];
+}
 
 const SIZE_TO_FRACTION: Readonly<Record<WidgetSize, number>> = {
   small: 1,

@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { asDimensionId, OVERVIEW_SEED_VIEW, type Dimension, type WidgetSize, type WidgetSpec, type WidgetType } from '@costgoblin/core/browser';
 import { getDimensionId, getDimensionLabel, isTagDimension } from '../lib/dimensions.js';
 import { WIDGET_CATALOG } from '../widgets/registry.js';
+import { DEFAULT_TOP_N, isTopNWidget, topNOf } from '../widgets/widget.js';
 import { buildAllColumns } from './data-table.js';
 
 interface WidgetInspectorProps {
@@ -90,7 +91,7 @@ function defaultSpecForType(type: WidgetType, prev: WidgetSpec, fallbackDim: str
     case 'heatmap':
     case 'waterfall':
     case 'priceVolume':
-      return { ...base, type, groupBy: existingGroupBy, topN: 'topN' in prev && prev.topN !== undefined ? prev.topN : 10 };
+      return { ...base, type, groupBy: existingGroupBy, topN: 'topN' in prev && prev.topN !== undefined ? prev.topN : DEFAULT_TOP_N[type] };
     case 'burndown':
       return { ...base, type };
     case 'table':
@@ -100,7 +101,7 @@ function defaultSpecForType(type: WidgetType, prev: WidgetSpec, fallbackDim: str
         enabledColumns: [...SEED_TABLE_ENABLED],
       };
     case 'baseline':
-      return { ...base, type, topN: 'topN' in prev && prev.topN !== undefined ? prev.topN : 8 };
+      return { ...base, type, topN: 'topN' in prev && prev.topN !== undefined ? prev.topN : DEFAULT_TOP_N[type] };
   }
 }
 
@@ -139,9 +140,7 @@ export function WidgetInspector({
   }
 
   function setTopN(value: number) {
-    if (widget.type === 'line' || widget.type === 'topNBar' || widget.type === 'heatmap' || widget.type === 'baseline' || widget.type === 'waterfall' || widget.type === 'priceVolume') {
-      onChange({ ...widget, topN: value });
-    }
+    if (isTopNWidget(widget)) onChange({ ...widget, topN: value });
   }
 
   return (
@@ -316,14 +315,14 @@ export function WidgetInspector({
         );
       })()}
 
-      {(widget.type === 'line' || widget.type === 'topNBar' || widget.type === 'heatmap' || widget.type === 'baseline' || widget.type === 'waterfall' || widget.type === 'priceVolume') && (
+      {isTopNWidget(widget) && (
         <label className="flex items-center gap-2">
           <span className="text-text-muted shrink-0 w-14">Top N</span>
           <input
             type="number"
             min={1}
             max={100}
-            value={widget.topN ?? 10}
+            value={topNOf(widget)}
             onChange={(e) => {
               const v = Number.parseInt(e.target.value, 10);
               if (Number.isFinite(v) && v > 0) setTopN(v);

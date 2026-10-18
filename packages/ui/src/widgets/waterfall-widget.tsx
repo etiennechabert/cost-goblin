@@ -8,7 +8,7 @@ import { formatDollars } from '../components/format.js';
 import { asDollars, asTagValue } from '@costgoblin/core/browser';
 import type { DimensionId, TrendResult } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
-import { dimensionLabelFor, filtersKey } from './widget.js';
+import { DEFAULT_TOP_N, dimensionLabelFor, filtersKey, topNOf } from './widget.js';
 import { buildWaterfall } from '../lib/waterfall.js';
 
 const ZERO = asDollars(0);
@@ -18,7 +18,7 @@ export function WaterfallWidget({ spec, dateRange, globalFilters, dimensions, on
   const [groupByOverride, setGroupByOverride] = useState<DimensionId | undefined>(undefined);
   const specGroupBy = spec.type === 'waterfall' ? spec.groupBy : undefined;
   const effectiveGroupBy = groupByOverride ?? specGroupBy;
-  const topN = spec.type === 'waterfall' ? (spec.topN ?? 8) : 8;
+  const topN = spec.type === 'waterfall' ? topNOf(spec) : DEFAULT_TOP_N.waterfall;
   const fk = filtersKey(globalFilters);
 
   const query = useQuery<TrendResult | null>(

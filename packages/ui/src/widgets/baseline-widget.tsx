@@ -1,4 +1,5 @@
 import type { WidgetCommonProps } from './widget.js';
+import { DEFAULT_TOP_N, topNOf } from './widget.js';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { formatDollars } from '../components/format.js';
@@ -8,7 +9,7 @@ import { BaselineMicroBar } from '../components/baseline-micro-bar.js';
  *  dropping into a custom View or an entity-detail page. */
 export function BaselineWidget({ spec }: WidgetCommonProps) {
   const api = useCostApi();
-  const topN = spec.type === 'baseline' && spec.topN !== undefined ? spec.topN : 8;
+  const topN = spec.type === 'baseline' ? topNOf(spec) : DEFAULT_TOP_N.baseline;
   const query = useQuery(() => api.listBaselines({ sortBy: 'potential', sortDir: 'desc', limit: topN }), [api, topN]);
   const items = query.status === 'success' ? query.data.items : [];
 

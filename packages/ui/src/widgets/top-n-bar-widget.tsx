@@ -9,7 +9,7 @@ import { useCostFocus, useCostFocusDispatch } from '../hooks/use-cost-focus.js';
 import { asTagValue } from '@costgoblin/core/browser';
 import type { CostResult, DimensionId } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
-import { dimensionLabelFor, filtersKey, hasSufficientCoverage } from './widget.js';
+import { dimensionLabelFor, filtersKey, hasSufficientCoverage, topNOf } from './widget.js';
 import { GroupByTitle } from '../components/group-by-title.js';
 
 function rowsToBars(data: CostResult | null): TopNBar[] {
@@ -87,7 +87,7 @@ export function TopNBarWidget({
       data={bars}
       title={spec.title ?? <GroupByTitle dimensions={dimensions} currentGroupBy={activeGroupBy} onGroupByChange={setGroupByOverride} label={label} />}
       subtitle="Click to filter"
-      topN={spec.topN ?? 12}
+      topN={topNOf(spec)}
       onBarClick={(name) => { onSetFilter(activeGroupBy, asTagValue(name)); }}
       onBarHover={(name) => { dispatch({ type: 'HOVER', entity: name, dimension: activeGroupBy }); }}
       externalHoveredName={focus.hoveredDimension === activeGroupBy ? focus.hoveredEntity : null}
