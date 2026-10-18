@@ -23,8 +23,8 @@ import {
   effectiveBands,
   estimateBytesPerRow,
   getAncestorPath,
-  isDateString,
   logger,
+  parseBaselineHistory,
   resolveDiscoveryGrain,
   runRateSeries,
   validateBaselines,
@@ -237,11 +237,7 @@ export class BaselineStore {
     let raw: unknown;
     try { raw = JSON.parse(await readFile(this.dataPath(), 'utf-8')); } catch { return; }
     if (!isRecord(raw)) return;
-    if (isRecord(raw['history'])) {
-      for (const [id, pts] of Object.entries(raw['history'])) {
-        if (Array.isArray(pts)) this.histories.set(id, parsePoints(pts));
-      }
-    }
+    for (const [id, pts] of parseBaselineHistory(raw['history'])) this.histories.set(id, pts);
     if (isRecord(raw['snapshots'])) {
       for (const [id, snaps] of Object.entries(raw['snapshots'])) {
         if (Array.isArray(snaps)) this.snapshots.set(id, parseSnapshots(snaps));
@@ -1056,27 +1052,6 @@ function parseConfig(raw: Record<string, unknown>): BaselinesDiscoveryConfig {
     reopenPct: typeof raw['reopenPct'] === 'number' ? raw['reopenPct'] : base.reopenPct,
     grainDimensions: grain,
   };
-}
-
-/** A real UTC calendar day as YYYY-MM-DD. isDateString checks the shape only
- *  (month 01-12, day 01-31), so the round trip also rejects a day the month
- *  lacks, like 2026-02-31, which Date.parse rolls into March. */
-function isCalendarDay(v: unknown): v is string {
-  return typeof v === 'string' && isDateString(v) && daysBefore(Date.parse(`${v}T00:00:00Z`), 0) === v;
-}
-
-/** Skips a point whose date isn't a calendar day, as it does a non-object one:
- *  computeCurrent would throw on the invalid Date, failing list() for every
- *  baseline. History is derived, so the next recompute rebuilds what's lost. */
-function parsePoints(raw: readonly unknown[]): readonly BaselineDailyPoint[] {
-  const out: BaselineDailyPoint[] = [];
-  for (const p of raw) {
-    if (!isRecord(p)) continue;
-    const date = p['date'];
-    if (!isCalendarDay(date)) continue;
-    out.push({ date: asDateString(date), cost: asDollars(num(p['cost'])) });
-  }
-  return out;
 }
 
 function parseSnapshots(raw: readonly unknown[]): readonly BaselineSnapshot[] {

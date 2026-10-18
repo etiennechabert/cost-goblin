@@ -624,9 +624,9 @@ describe('BaselineStore', () => {
   describe('malformed persisted history', () => {
     const SEED_ID = 'seed-malformed-history';
 
-    const loadSeeded = async (history: readonly unknown[]): Promise<{ store: BaselineStore; deps: BaselineEngineDeps }> => {
+    const loadSeeded = async (history: readonly unknown[]): Promise<{ store: BaselineStore; deps: BaselineEngineDeps; stateDir: string }> => {
       const stateDir = await seedStateDir(SEED_ID, history);
-      return { store: new BaselineStore(stateDir, wallClock), deps: makeDeps(stateDir) };
+      return { store: new BaselineStore(stateDir, wallClock), deps: makeDeps(stateDir), stateDir };
     };
 
     it.each([
@@ -645,8 +645,8 @@ describe('BaselineStore', () => {
       expect((await store.getDetail(deps, SEED_ID))?.dailyHistory).toEqual([]);
     });
 
-    it('keeps the valid points around malformed ones and derives the record from them alone', async () => {
-      const { store, deps } = await loadSeeded([
+    it('keeps the valid points around malformed ones, derives the record from them alone, and saves only them', async () => {
+      const { store, deps, stateDir } = await loadSeeded([
         { date: 7, cost: 1 },
         { date: '2026-02-01', cost: 10 },
         { date: 'garbage', cost: 1 },
@@ -659,6 +659,10 @@ describe('BaselineStore', () => {
       expect(detail?.record.current).toEqual({ avgDaily: 15, windowStart: '2026-02-01', windowEnd: '2026-02-02', days: 2 });
       const listed = (await store.list(deps, {})).items.find((r) => r.spec.id === SEED_ID);
       expect(listed?.currentDaily).toBe(15);
+
+      await store.setConfig(DISCOVERY_CONFIG);
+      const dataDoc = rec(JSON.parse(await readFile(join(stateDir, 'baselines-data.json'), 'utf-8')));
+      expect(rec(dataDoc['history'])[SEED_ID]).toEqual([{ date: '2026-02-01', cost: 10 }, { date: '2026-02-02', cost: 20 }]);
     });
   });
 
