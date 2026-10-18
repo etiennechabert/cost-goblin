@@ -164,7 +164,8 @@ describe('config:remove-provider', () => {
 
     const unsafe = await configApp('none');
     await writeFile(unsafe.ws.configPath, 'providers:\n  - name: ../escape\n  - name: other\n');
-    await expect(unsafe.ipc.invoke('config:remove-provider', '../escape')).rejects.toThrow();
+    // Refused by the path-segment check itself, not by some earlier failure.
+    await expect(unsafe.ipc.invoke('config:remove-provider', '../escape')).rejects.toThrow('Provider names must start with a letter or number');
     expect(await readFile(unsafe.ws.configPath, 'utf-8')).toContain('../escape');
   });
 });

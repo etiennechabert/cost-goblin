@@ -156,6 +156,8 @@ describe('query:trends', () => {
     const all = await h.ipc.invoke('query:trends', { groupBy: 'service', dateRange: FEBRUARY, filters: {}, deltaThreshold: 0, percentThreshold: 0 });
     const filtered = await h.ipc.invoke('query:trends', { groupBy: 'service', dateRange: FEBRUARY, filters: { service: [EC2] }, deltaThreshold: 0, percentThreshold: 0 });
     const named = [...entities(filtered, 'increases'), ...entities(filtered, 'savings')];
+    // Non-empty first: `every` on an empty list would pass whatever the filter did.
+    expect(named).toContain(EC2);
     expect(named.every(e => e === EC2)).toBe(true);
     expect([...entities(all, 'increases'), ...entities(all, 'savings')].length).toBeGreaterThan(named.length);
   });
@@ -212,7 +214,9 @@ describe('query:filter-values', () => {
     const empty = await queryApp({ data: 'none' });
     expect(await empty.ipc.invoke('query:filter-values', 'service', {})).toEqual([]);
     const h = await queryApp();
-    await expect(h.ipc.invoke('query:filter-values', 'service; DROP TABLE x', {}, FEBRUARY)).rejects.toThrow();
+    // Refused by the dimension allow-list, before any SQL is built: a DuckDB
+    // parse error would satisfy a bare toThrow() too.
+    await expect(h.ipc.invoke('query:filter-values', 'service; DROP TABLE x', {}, FEBRUARY)).rejects.toThrow('Unknown dimension "service; DROP TABLE x"');
   });
 
   it('reads from the rollup once it is built for the period', async () => {

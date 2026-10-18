@@ -191,6 +191,6 @@ describe('explorer:filter-values', () => {
   it('is empty without data in range, and refuses an unknown dimension', async () => {
     const h = await explorerApp();
     expect(await h.ipc.invoke('explorer:filter-values', { dimensionId: 'service', filters: {}, dateRange: NO_DATA })).toEqual([]);
-    await expect(h.ipc.invoke('explorer:filter-values', { dimensionId: 'nope', filters: {}, dateRange: FEBRUARY })).rejects.toThrow();
+    await expect(h.ipc.invoke('explorer:filter-values', { dimensionId: 'nope', filters: {}, dateRange: FEBRUARY })).rejects.toThrow('Unknown dimension "nope"');
   });
 });

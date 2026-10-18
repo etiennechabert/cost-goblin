@@ -136,12 +136,12 @@ No I/O, no DuckDB. Tests run in milliseconds.
 Real DuckDB queries against synthetic fixture Parquet files in `packages/core/src/__fixtures__/synthetic/`.
 Shared DuckDB instance created once per test suite. Fixtures are small (~1000 rows), queries complete in milliseconds.
 Provider-shape coverage uses the committed FOCUS 1.2 samples in `packages/core/src/__fixtures__/focus-1-2/` (AWS/Azure/GCP native export shapes, materialized to Parquet at test time).
+Main-process IPC handlers (`packages/desktop/src/main/handlers/`) are tested at this layer through `helpers/ipc-harness.ts`: a real `createAppContext` over a temp workspace (copies of the fixture configs, optionally of the synthetic tree) with its own in-process DuckDB, and the fake `ipcMain`/`dialog`/`app` of `helpers/electron-fake.ts` (`vi.mock('electron', async () => (await import('./helpers/electron-fake.js')).fakeElectronModule)`).
 
 ### Layer 3: React Components (Vitest + React Testing Library)
 Components tested against `MockCostApi` (implements `CostApi` interface with fixture data).
 No Electron, no DuckDB, no file system.
 The desktop renderer's own React files (`packages/desktop/src/renderer/`) are tested the same way in the `desktop-renderer` vitest project (jsdom; `packages/desktop/src/__tests__/*.test.tsx`). `renderer-setup.ts` installs typed fakes of the preload bridges from `helpers/renderer-bridges.ts`, and `window.costgoblin` is a `MockCostApi`.
-Main-process IPC handlers (`packages/desktop/src/main/handlers/`) are unit-tested through `helpers/ipc-harness.ts`: a real `createAppContext` over a temp workspace, with the fake `ipcMain`/`dialog`/`app` of `helpers/electron-fake.ts` (`vi.mock('electron', async () => (await import('./helpers/electron-fake.js')).fakeElectronModule)`).
 
 ### Layer 4: Electron E2E (Playwright)
 Full app launch pinned to fixture data via `COSTGOBLIN_DATA_DIR` / `COSTGOBLIN_CONFIG_DIR` env vars (see `e2e/helpers.ts`).

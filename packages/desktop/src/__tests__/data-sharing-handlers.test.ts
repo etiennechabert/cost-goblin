@@ -236,12 +236,16 @@ describe('data-sharing: publisher status and lifecycle', () => {
 
   it('rotate while disabled only replaces the secret', async () => {
     const pub = await publisher();
-    const before: unknown = JSON.parse(await readFile(join(pub.ws.configDir, 'peer-sharing.json'), 'utf-8').catch(() => '{}'));
+    // The secret is created on first use: read the status so there is one to replace.
+    await pub.ipc.invoke('data-sharing:status');
+    const before: unknown = JSON.parse(await readFile(join(pub.ws.configDir, 'peer-sharing.json'), 'utf-8'));
+    expect(typeof at(before, 'psk')).toBe('string');
     const rotated = await pub.ipc.invoke('data-sharing:rotate');
     expect(rotated).toMatchObject({ status: 'ok', sharing: { enabled: false } });
     expect(startSharingServer).not.toHaveBeenCalled();
     const after: unknown = JSON.parse(await readFile(join(pub.ws.configDir, 'peer-sharing.json'), 'utf-8'));
     expect(at(after, 'psk')).not.toBe(at(before, 'psk'));
+    expect(at(after, 'label')).toBe(at(before, 'label'));
   });
 
   it('turns itself off when idle, ignoring a stale callback from a server rotate replaced', async () => {

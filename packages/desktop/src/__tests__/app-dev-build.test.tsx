@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import type { ViewsConfig } from '@costgoblin/core/browser';
 import { MockCostApi } from '@costgoblin/ui';
@@ -50,7 +50,11 @@ describe('App in a dev build', () => {
 
   it('shows no memory figure until one has been read', async () => {
     fakeDebug.memoryMB = 0;
+    const read = vi.spyOn(fakeDebug, 'getMemoryMB');
     await bootApp();
+    // Let the read land first: before it, nothing would show whatever it said.
+    await waitFor(() => { expect(read).toHaveBeenCalled(); });
+    await act(async () => { await read.mock.results[0]?.value; });
     expect(screen.queryByText(/^\d+(\.\d+)? (MB|GB)$/)).toBeNull();
   });
 

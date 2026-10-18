@@ -125,7 +125,7 @@ describe('views channels', () => {
     await h.ipc.invoke('views:save-config', { ...current, views: [{ ...first, name: 'Renamed overview' }] });
     expect(JSON.stringify(parse(await readFile(h.ws.viewsPath, 'utf-8')))).toContain('Renamed overview');
     expect(h.app.state.views).toBeNull();
-    await expect(h.ipc.invoke('views:save-config', { views: 'nope' })).rejects.toThrow();
+    await expect(h.ipc.invoke('views:save-config', { views: 'nope' })).rejects.toThrow('views must be an array');
 
     expect(await h.ipc.invoke('views:reset-defaults')).toEqual(SEED_VIEWS_CONFIG);
     expect(JSON.stringify(parse(await readFile(h.ws.viewsPath, 'utf-8')))).not.toContain('Renamed overview');
@@ -202,6 +202,8 @@ describe('baselines, MCP and sync-log channels', () => {
     await h.ipc.invoke('baselines:recompute', { startFresh: true });
     expect(recompute).toHaveBeenLastCalledWith(h.app.baselineEngineDeps, { startFresh: true });
     expect(await h.ipc.invoke('baselines:status')).toEqual(h.app.baselineStore.getStatus());
+    // Subscribing replays the current status to the open window.
+    expect(win.webContents.send).toHaveBeenCalledWith('baselines:status-changed', h.app.baselineStore.getStatus());
     await h.app.baselineStore.resetConfig();
     expect(win.webContents.send.mock.calls.every(c => c[0] === 'baselines:status-changed')).toBe(true);
   });

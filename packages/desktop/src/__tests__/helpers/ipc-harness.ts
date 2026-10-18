@@ -25,7 +25,8 @@ import { newIpcScope, type IpcScope } from './electron-fake.js';
  * - DuckDB: an in-process `@duckdb/node-api` instance standing in for the
  *   worker-backed client, rows drained exactly as the worker does. Rollup
  *   partition builds are refused unless asked for, so the background warmups
- *   a handler kicks stay cheap and never race the workspace's cleanup.
+ *   a handler kicks stay cheap; when they are asked for, `dispose` waits for
+ *   them before it deletes the workspace.
  * - Sync: a fake `SyncClient` whose calls each test scripts.
  */
 
@@ -241,8 +242,21 @@ export interface Harness {
   /** This app's channels — register the handler module(s) under test right
    *  after createHarness (before creating another harness), then invoke. */
   readonly ipc: IpcScope;
-  /** Let in-flight warmups settle, close DuckDB, delete the workspace. */
+  /** Let in-flight warmups (and, with real builds, the partition builds they
+   *  launch) settle, close DuckDB, delete the workspace. */
   readonly dispose: () => Promise<void>;
+}
+
+/** Wait (bounded) until no rollup build is running. A warmup only launches
+ *  its partition builds, so `awaitWarmup` returning says nothing about them;
+ *  a build still writing partitions and the manifest would race the
+ *  workspace's deletion. */
+async function drainRollupBuilds(app: AppContext, timeoutMs: number): Promise<void> {
+  // Bounded by a count, not by Date: a test may leave the clock pinned.
+  const POLL_MS = 20;
+  for (let waited = 0; waited < timeoutMs && app.rollupStore.getStatus().state === 'computing'; waited += POLL_MS) {
+    await new Promise<void>((resolve) => { setTimeout(resolve, POLL_MS); });
+  }
 }
 
 /** Fresh workspace + real AppContext + a fresh, current fake-ipcMain scope. */
@@ -271,6 +285,8 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
     ws, ctx, app, db, sync, ipc,
     dispose: async () => {
       await app.awaitWarmup(5_000).catch(() => false);
+      // Builds are refused unless asked for, so only real ones can still be writing.
+      if (options.rollupBuilds === true) await drainRollupBuilds(app, 15_000);
       await db.terminate();
       await rm(ws.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     },

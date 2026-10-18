@@ -205,7 +205,7 @@ describe('createAppContext: config caches', () => {
   it('loads views and cost scope ungated when the dimensions config is broken', async () => {
     const h = await harness();
     await writeFile(h.ws.dimensionsPath, 'builtIn: 42\n');
-    await expect(h.app.getDimensions()).rejects.toThrow();
+    await expect(h.app.getDimensions()).rejects.toThrow('builtIn must be an array');
     expect((await h.app.getViews()).views.length).toBeGreaterThan(0);
     expect((await h.app.getCostScope()).rules.length).toBeGreaterThan(0);
   });
@@ -545,7 +545,9 @@ describe('createAppContext: rollup lifecycle', () => {
     h.app.invalidateCostScope();
     expect(invalidate).toHaveBeenCalledTimes(1);
     await vi.waitFor(() => { expect(load).toHaveBeenCalled(); });
-    await h.app.awaitWarmup(10_000);
+    // The warmup only launches the rebuild; the manifest lands once a
+    // partition commits, so wait for the store to be ready again.
+    await vi.waitFor(() => { expect(h.app.rollupStore.getStatus().state).toBe('ready'); }, { timeout: 15_000 });
     expect(await exists(join(h.ws.dataDir, AWS, 'rollup', 'manifest.json'))).toBe(true);
   });
 

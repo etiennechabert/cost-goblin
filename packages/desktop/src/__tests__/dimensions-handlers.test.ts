@@ -130,7 +130,7 @@ describe('dimensions:get-config and dimensions:save-config', () => {
   it('refuses an invalid payload without touching the file', async () => {
     const h = await dimsApp();
     const before = await readFile(h.ws.dimensionsPath, 'utf-8');
-    await expect(h.ipc.invoke('dimensions:save-config', { builtIn: 'nope', tags: [] })).rejects.toThrow();
+    await expect(h.ipc.invoke('dimensions:save-config', { builtIn: 'nope', tags: [] })).rejects.toThrow('builtIn must be an array');
     expect(await readFile(h.ws.dimensionsPath, 'utf-8')).toBe(before);
   });
 });
@@ -166,6 +166,7 @@ describe('dimensions:discover-column-values', () => {
   it('names accounts from org data when asked, normalizing and stripping them', async () => {
     const h = await dimsApp();
     const raw = values(await h.ipc.invoke('dimensions:discover-column-values', 'account_id', { useOrgAccounts: true }));
+    expect(raw.length).toBeGreaterThan(0);
     expect(raw.every(v => /^\d{12}$/.test(v))).toBe(true);
 
     await writeFile(join(h.ws.stateDir, 'org-accounts.json'), JSON.stringify({
@@ -241,7 +242,7 @@ describe('dimensions:estimate-rollup-grain', () => {
 
   it('refuses an invalid candidate and returns the empty estimate without data', async () => {
     const h = await dimsApp();
-    await expect(h.ipc.invoke('dimensions:estimate-rollup-grain', { builtIn: 7 })).rejects.toThrow();
+    await expect(h.ipc.invoke('dimensions:estimate-rollup-grain', { builtIn: 7 })).rejects.toThrow('builtIn must be an array');
     const dims = await h.app.getDimensions();
 
     const none = await dimsApp({ config: 'none' });

@@ -316,7 +316,7 @@ describe('setup:write-config', () => {
     expect(list(at(parse(await readFile(h.ws.configPath, 'utf-8')), 'providers'))).toHaveLength(1);
 
     await expect(h.ipc.invoke('setup:write-config', { ...awsWizard, type: 'gcp', impersonateServiceAccount: 'nobody' })).rejects.toThrow('"nobody" is not');
-    await expect(h.ipc.invoke('setup:write-config', { ...awsWizard, providerName: '../escape' })).rejects.toThrow();
+    await expect(h.ipc.invoke('setup:write-config', { ...awsWizard, providerName: '../escape' })).rejects.toThrow('Provider names must start with a letter or number');
   });
 });
 
