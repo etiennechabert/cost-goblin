@@ -15,13 +15,20 @@ costgoblin/
     core/                   # @costgoblin/core — pure TypeScript, no framework deps
     desktop/                # Electron shell — imports @costgoblin/core
     ui/                     # @costgoblin/ui — shared React components
+    mcp/                    # @costgoblin/mcp — opt-in local MCP server exposing cost tools to AI assistants
     web-backend/            # (Future) server — imports @costgoblin/core
+  e2e/                      # Playwright suites, one CI shard per file
+  workers/signup/           # Cloudflare Worker behind costgoblin.com's launch-notification form (own lockfile)
+  scripts/                  # ci/ policy tests, build/ packaging, aws-exports/ template, gcp-focus-exporter/ (own lockfile)
+  docs/                     # costgoblin.com website (incl. the GDPR privacy.html) and design docs
+  .gitar/                   # Gitar AI-review config: review guidance, rules, risk and auto-apply policy
 ```
 
 **Package dependency rules:**
 - `core` has ZERO dependency on `desktop`, `ui`, or any framework
 - `ui` depends on `core` (for types only — never imports query/sync logic directly)
-- `desktop` depends on `core` and `ui`
+- `mcp` depends on `core` only
+- `desktop` depends on `core`, `ui` and `mcp`
 - `web-backend` (future) depends on `core` only
 
 ## Commands
@@ -120,6 +127,8 @@ type QueryState<T> =
 - Formatting: Biome (configured once, never debated)
 
 ## Testing Approach
+
+In Vitest, a `vi.fn(impl)` from a `vi.mock` factory is reset with `mockReset()` in `afterEach`: since Vitest 3, `vi.restoreAllMocks()` only restores `vi.spyOn` spies, so an override or an unused `…Once` leaks into the next test.
 
 ### Layer 1: Core Logic (Vitest)
 Pure functions: config loader, tag normalizer, alias resolver, org tree traversal, cost math.
@@ -276,6 +285,16 @@ gh api -X POST repos/etiennechabert/cost-goblin/pulls/comments/<id>/reactions -f
 gh api -X POST repos/etiennechabert/cost-goblin/issues/comments/<id>/reactions -f content='+1'   # summary comment; or -1
 ```
 
+**Make each lesson stick.** On the free open-source plan, Gitar carries nothing learned in one PR's threads over to the next PR. When a finding shows a mistake that could recur, record it in the same PR:
+- A valid finding of a general kind → add the check, in one line, to the matching `.gitar/review/` guide. If it's also a rule for writing code here, add it to this file too.
+- A false positive Gitar will raise again → add a line to that guide's "Intentional, don't flag" list.
+
+**Check against the guides before pushing.** `.gitar/review/` holds what Gitar reviews against (SQL and cost math, security and privacy, sync and config, UI and tests). Read the guide for each area you touched, so the finding never has to be raised.
+
+**Gitar can commit to the branch:** when someone ticks a suggestion's "Apply fix" box, replies `gitar fix`, or turns on auto-apply. It also pushes a repair when one of its own commits breaks CI. If the remote branch moved, `git pull --ff-only` before pushing.
+
+**Editing `.gitar/`.** Gitar filters these files before each review, so put every instruction under a heading that matches it. On #716 a "flag this" note inside the "Don't comment on" list was dropped and never reached the reviewer. `npm run check` (`scripts/ci/gitar-config.test.mjs`) fails when a `.gitar/` file names a path or identifier that no longer exists, or when `review/` plus `instructions/` grow past 28 KB. See `.gitar/README.md` for what each file does.
+
 ### 4. SonarCloud findings
 
 SonarCloud analyzes every PR, and the `sonarcloud` job fails when its quality gate does (most often on the 80% coverage-on-new-code condition). **Read the new issues even when the gate passes**: the gate only rates them, so code smells, bugs and security hotspots on new code can sit behind a green check. The API is public:
@@ -315,6 +334,7 @@ curl -s "https://sonarcloud.io/api/hotspots/search?projectKey=etiennechabert_cos
 - TanStack Table (headless table with virtual scrolling)
 - No animation library — Tailwind utilities for CSS motion, hand-rolled rAF where JS is needed. JS-driven motion must gate on `useReducedMotion` (`packages/ui/src/hooks/use-reduced-motion.ts`); CSS motion should use Tailwind's `motion-reduce:` variant.
 - Lucide React (icons)
+- Rows that are tidied or sorted from their own text, with React keys taken from it (the tag editor's alias rules), stay pinned while the user types and re-sort only once focus leaves the list. Re-keying a row unmounts the focused input, or the button that focus or a click is heading to.
 
 ## What NOT To Do
 

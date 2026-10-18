@@ -62,10 +62,12 @@ export function appendRowFilters(
     const colExpr = col === 'usage_date' ? `usage_date::VARCHAR` : col;
     extra.push(`${colExpr} = '${escaped}'`);
   }
-  if (extra.length === 0) return baseWhere;
-  const joined = extra.join(' AND ');
-  if (baseWhere.length === 0) return `WHERE ${joined}`;
-  return `${baseWhere} AND ${joined}`;
+  return extra.length === 0 ? baseWhere : andWhere(baseWhere, extra.join(' AND '));
+}
+
+/** `where` with `condition` ANDed on, where `where` is a WHERE clause or ''. */
+export function andWhere(where: string, condition: string): string {
+  return where.length === 0 ? `WHERE ${condition}` : `${where} AND ${condition}`;
 }
 
 /** An aggregated-table group-by column: the renderer's id and the SQL column behind it. */
@@ -98,6 +100,8 @@ export function groupByValues(row: RawRow, groupBy: readonly GroupByColumn[]): R
 
 const AGG_SORT_COLUMNS: Readonly<Record<string, (dir: string) => string>> = {
   cost: (dir) => `SUM(cost) ${dir}`,
+  // By size, so a credit ranks with spend.
+  abs_cost: (dir) => `ABS(SUM(cost)) ${dir}`,
   list_cost: (dir) => `SUM(list_cost) ${dir}`,
   usage_amount: (dir) => `SUM(usage_amount) ${dir}`,
   row_count: (dir) => `COUNT(*) ${dir}`,

@@ -7,17 +7,32 @@ import { asEntityRef, asTagValue } from '@costgoblin/core/browser';
 import type { DimensionId } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
 import { dimensionLabelFor } from './widget.js';
-import { useAggregatedGroups } from '../hooks/use-aggregated-groups.js';
+import { usePairedGroups } from '../hooks/use-aggregated-groups.js';
+import type { AggGroupPair } from '../hooks/use-aggregated-groups.js';
 import { decomposePriceVolume } from '../lib/price-volume.js';
 import type { PriceVolumeDecomp } from '../lib/price-volume.js';
 
-// Current and previous periods are fetched as independent top-N-by-cost sets;
-// a group present in one cap but not the other is treated as zero on the
-// missing side, which can fabricate a spurious volume spike. Keep the cap well
-// above the distinct-group count of realistic price-volume dimensions
-// (service, sku_meter, tags) so that boundary only ever falls on negligible
-// long-tail groups.
+// The groups decomposed: each period's ROW_LIMIT largest by the size of their
+// cost, each paired with its real cost in the other period. When a period has
+// more groups than that, the ones past the limit in both are left out of the
+// ranking and the totals, and the subtitle says so. A left-out group is no
+// bigger than the last one listed in either period, so it changed by at most
+// those two sizes together: it can only outrank a shown change smaller than
+// that.
 const ROW_LIMIT = 500;
+
+function decomposePair({ name, current, previous }: AggGroupPair): PriceVolumeDecomp {
+  return decomposePriceVolume({
+    name,
+    entity: asEntityRef(name),
+    prevCost: previous?.cost ?? 0,
+    currCost: current?.cost ?? 0,
+    prevUsage: previous?.usageAmount ?? 0,
+    currUsage: current?.usageAmount ?? 0,
+    ...(previous === null ? {} : { prevListCost: previous.listCost }),
+    ...(current === null ? {} : { currListCost: current.listCost }),
+  });
+}
 
 export function PriceVolumeWidget({ spec, dateRange, previousDateRange, granularity, globalFilters, dimensions, onSetFilter }: WidgetCommonProps) {
   const [groupByOverride, setGroupByOverride] = useState<DimensionId | undefined>(undefined);
@@ -26,36 +41,21 @@ export function PriceVolumeWidget({ spec, dateRange, previousDateRange, granular
   const topN = spec.type === 'priceVolume' ? (spec.topN ?? 6) : 6;
 
   // Always compares — the decomposition is inherently period-over-period.
-  const { status, error, rows, prevByName } = useAggregatedGroups({
+  const query = usePairedGroups({
     groupBy: effectiveGroupBy,
     dateRange,
     previousDateRange,
-    comparePrev: true,
     granularity,
     globalFilters,
     rowLimit: ROW_LIMIT,
     origin: `widget:priceVolume:${String(effectiveGroupBy ?? '')}`,
   });
+  const paired = query.status === 'success' ? query.data : null;
 
-  const all = useMemo<PriceVolumeDecomp[]>(() => {
-    if (prevByName === null) return [];
-    const curByName = new Map(rows.map(r => [r.name, r]));
-    const names = new Set<string>([...curByName.keys(), ...prevByName.keys()]);
-    return [...names].map(name => {
-      const cur = curByName.get(name);
-      const prev = prevByName.get(name);
-      return decomposePriceVolume({
-        name,
-        entity: asEntityRef(name),
-        prevCost: prev?.cost ?? 0,
-        currCost: cur?.cost ?? 0,
-        prevUsage: prev?.usageAmount ?? 0,
-        currUsage: cur?.usageAmount ?? 0,
-        ...(prev === undefined ? {} : { prevListCost: prev.listCost }),
-        ...(cur === undefined ? {} : { currListCost: cur.listCost }),
-      });
-    }).filter(d => d.totalDelta !== 0);
-  }, [rows, prevByName]);
+  const all = useMemo<PriceVolumeDecomp[]>(
+    () => (paired === null ? [] : paired.pairs.map(decomposePair).filter(d => d.totalDelta !== 0)),
+    [paired],
+  );
 
   const shown = useMemo(
     () => [...all].sort((a, b) => Math.abs(b.totalDelta) - Math.abs(a.totalDelta)).slice(0, topN),
@@ -75,16 +75,16 @@ export function PriceVolumeWidget({ spec, dateRange, previousDateRange, granular
     <GroupByTitle dimensions={dimensions} currentGroupBy={effectiveGroupBy} onGroupByChange={setGroupByOverride} label={label} suffix="price vs volume" />
   );
 
-  if (status === 'loading' || status === 'idle') return (
+  if (query.status === 'loading' || query.status === 'idle') return (
     <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-4">
       <CoinRainLoader height={260} count={5} />
     </div>
   );
 
-  if (status === 'error') return (
+  if (query.status === 'error') return (
     <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-4">
       <div className="mb-2">{title}</div>
-      <div className="flex items-center justify-center h-[240px] text-xs text-warning">Query failed: {error?.message ?? 'unknown error'}</div>
+      <div className="flex items-center justify-center h-[240px] text-xs text-warning">Query failed: {query.error.message}</div>
     </div>
   );
 
@@ -95,7 +95,8 @@ export function PriceVolumeWidget({ spec, dateRange, previousDateRange, granular
     </div>
   );
 
-  const subtitle = `Net ${signedDollars(totals.net)} · Vol ${signedDollars(totals.volume)} / Rate ${signedDollars(totals.rate)}`;
+  const capNote = paired?.capped === true ? ` · top ${String(ROW_LIMIT)} per period` : '';
+  const subtitle = `Net ${signedDollars(totals.net)} · Vol ${signedDollars(totals.volume)} / Rate ${signedDollars(totals.rate)}${capNote}`;
 
   return (
     <PriceVolumeChart
