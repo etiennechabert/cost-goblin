@@ -21,7 +21,7 @@ const dateRangeSchema = z.object({
 }).optional();
 
 const filtersSchema = z.record(z.string(), z.array(z.string())).optional()
-  .describe('Filter map: dimension ID -> array of values to include');
+  .describe('Filter map: dimension ID -> array of values to include. An empty string "" includes the rows with no value (an untagged resource, an empty field).');
 
 const formatSchema = z.enum(['markdown', 'json', 'csv']).optional().describe(
   'Response format. "markdown" (default) for human-readable tables. ' +

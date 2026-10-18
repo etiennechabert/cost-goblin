@@ -38,6 +38,12 @@ function formatDateUTC(date: Date): DateString {
   return asDateString(`${year}-${month}-${day}`);
 }
 
+/** The YYYY-MM-DD day `days` after `day` (negative goes back), in the same UTC
+ *  calendar arithmetic as daysBetween. */
+export function shiftDay(day: string, days: number): DateString {
+  return formatDateUTC(new Date(new Date(day).getTime() + days * DAY_MS));
+}
+
 /** Returns start and end of current month. */
 export function getThisMonth(): { start: DateString; end: DateString } {
   const now = new Date();

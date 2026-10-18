@@ -132,6 +132,8 @@ export function groupByValues(row: RawRow, groupBy: readonly GroupByColumn[]): R
 
 const AGG_SORT_COLUMNS: Readonly<Record<string, (dir: string) => string>> = {
   cost: (dir) => `SUM(cost) ${dir}`,
+  // By size, so a credit ranks with spend.
+  abs_cost: (dir) => `ABS(SUM(cost)) ${dir}`,
   list_cost: (dir) => `SUM(list_cost) ${dir}`,
   usage_amount: (dir) => `SUM(usage_amount) ${dir}`,
   row_count: (dir) => `COUNT(*) ${dir}`,

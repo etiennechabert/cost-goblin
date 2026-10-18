@@ -5,7 +5,6 @@ import {
   dimensionIdSet,
   buildExclusionClauses,
   buildSource,
-  buildRuleMatchExpr,
   computePeriodsInRange,
   logger,
   resolveField,
@@ -13,7 +12,6 @@ import {
   tagSqlColumnsById,
 } from '@costgoblin/core';
 import type {
-  ExclusionRule,
   ExplorerBaseParams,
   ExplorerFilterMap,
   ExplorerFilterValue,
@@ -38,6 +36,7 @@ import { buildAccountReverseMap, columnForDimension, resolveRollupSource, tagSel
 import { parseRowFilters, parseRowKeys, queryAggregatedRows } from './aggregated-table.js';
 import type { RunSql } from './aggregated-table.js';
 import { explorerGroupBy, explorerOrderBy, explorerRowFilters } from './explorer-columns.js';
+import { buildExplorerFilterPredicate } from './explorer-filters.js';
 import { readExplorerPreferences, writeExplorerPreferences } from './explorer-prefs.js';
 import { resolveScopeMetric } from './explorer-scope.js';
 import { resolveExplorerDateRange } from './query-windows.js';
@@ -47,28 +46,6 @@ const MAX_ROW_LIMIT = 1000;
 function clampRowLimit(n: number): number {
   if (!Number.isFinite(n) || n <= 0) return 500;
   return Math.min(Math.floor(n), MAX_ROW_LIMIT);
-}
-
-function buildExplorerFilterPredicate(
-  filters: ExplorerFilterMap,
-  dimensions: DimensionsConfig,
-  accountReverseMap: ReadonlyMap<string, readonly string[]>,
-): string | null {
-  const conditions = Object.entries(filters)
-    .filter(([, values]) => values.length > 0)
-    .map(([dimId, values]) => ({
-      dimensionId: asDimensionId(dimId),
-      values,
-    }));
-  if (conditions.length === 0) return null;
-  const synthetic: ExclusionRule = {
-    id: '_explorer_filters',
-    name: '_explorer_filters',
-    enabled: true,
-    builtIn: false,
-    conditions,
-  };
-  return buildRuleMatchExpr(synthetic, dimensions, accountReverseMap);
 }
 
 /** Everything the overview / rows / filter-values handlers compute up front.

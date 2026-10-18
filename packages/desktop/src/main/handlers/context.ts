@@ -1,3 +1,4 @@
+import { stringify } from 'yaml';
 import type { DuckDBClient, RawRow } from '../duckdb-client.js';
 import { LRUCache } from '../lru-cache.js';
 import { QueryLog } from '../query-log.js';
@@ -16,6 +17,8 @@ import {
   loadViews,
   loadCostScope,
   mergeBuiltInExclusionRules,
+  migrateRetiredSeedViews,
+  viewsConfigToYaml,
   buildRollupPartitionQuery,
   computeShapeSignature,
   computeOrgAccountsDigest,
@@ -264,7 +267,29 @@ export function createAppContext(ctx: IpcContext): AppContext {
 
   async function getViews(): Promise<ViewsConfig> {
     if (state.views !== null) return state.views;
-    const views = await loadViews(ctx.viewsPath, await getLiveDimensionIds());
+    const loaded = await loadViews(ctx.viewsPath, await getLiveDimensionIds());
+    // A file seeded before the question-led dashboards still holds the retired
+    // per-widget showcase set. Swap it for the current built-ins and write the
+    // result back so views.yaml matches what the app shows. Temp file plus
+    // rename: this write runs unprompted on every upgraded install, and a
+    // truncated views.yaml fails validation, which views:get-config answers by
+    // reseeding (dropping the user's dashboards). A failed write only means the
+    // migration re-runs on the next load.
+    const { config: views, changed } = migrateRetiredSeedViews(loaded);
+    if (changed) {
+      const fs = await import('node:fs/promises');
+      const { randomUUID } = await import('node:crypto');
+      // Unique per call: two overlapping first loads must not share (and
+      // truncate) one temp file.
+      const tmpPath = `${ctx.viewsPath}.${randomUUID()}.tmp`;
+      try {
+        await fs.writeFile(tmpPath, stringify(viewsConfigToYaml(views)));
+        await fs.rename(tmpPath, ctx.viewsPath);
+      } catch (err: unknown) {
+        logger.warn(`views: could not persist the dashboard migration: ${err instanceof Error ? err.message : String(err)}`);
+        await fs.rm(tmpPath, { force: true }).catch(() => undefined);
+      }
+    }
     state.views = views;
     return views;
   }
@@ -425,7 +450,15 @@ export function createAppContext(ctx: IpcContext): AppContext {
     if (existing !== undefined) return existing;
     const promise = run();
     inflightQueries.set(key, promise);
-    void promise.finally(() => { inflightQueries.delete(key); });
+    // Callers get `promise` itself and handle its rejection. Not `.finally()`:
+    // that returns a second promise which re-rejects, and with nothing to
+    // handle it every failed or cancelled query became an unhandled rejection
+    // in main. The identity check stops a query that clearAllCaches() dropped
+    // from evicting a newer one under the same key when it settles late.
+    const cleanup = (): void => {
+      if (inflightQueries.get(key) === promise) inflightQueries.delete(key);
+    };
+    void promise.then(cleanup, cleanup);
     return promise;
   }
 

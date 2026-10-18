@@ -16,9 +16,9 @@ import {
   summarizeConfigBundle,
   validateConfig,
 } from '../config/index.js';
-import type { AwsProviderConfig, ConfigBundle, ProviderConfig, SharedCostGoblinConfig } from '../types/index.js';
+import type { AwsProviderConfig, ConfigBundle, ProviderConfig, SharedCostGoblinConfig, ViewsConfig } from '../types/index.js';
 import { CONFIG_BUNDLE_KIND, CONFIG_BUNDLE_SCHEMA_VERSION } from '../types/index.js';
-import { asBucketPath } from '../types/branded.js';
+import { asBucketPath, asDimensionId } from '../types/branded.js';
 import { parseProviderName } from '../config/provider-name.js';
 
 const fixturesDir = join(import.meta.dirname, '..', '__fixtures__', 'config');
@@ -108,6 +108,37 @@ describe('serializeConfigBundle / parseConfigBundle', () => {
     expect(parsed.bundle.sections.orgTree).toBeUndefined();
     expect(parsed.bundle.sections.costScope).toBeUndefined();
     expect(parsed.bundle.sections.views).toBeUndefined();
+  });
+
+  it('keeps a valid fingerprint for a hidden pie legend and a column-less table', async () => {
+    const config = await loadConfig(join(fixturesDir, 'costgoblin.yaml'));
+    const dimensions = await loadDimensions(join(fixturesDir, 'dimensions.yaml'));
+    const views: ViewsConfig = { views: [{ id: 'v', name: 'V', rows: [{ widgets: [
+      { id: 'p', type: 'pie', size: 'medium', groupBy: asDimensionId('service'), showLegend: false },
+      { id: 't', type: 'table', size: 'full', enabledColumns: [] },
+    ] }] }] };
+    const bundle = buildConfigBundle({ config, dimensions, views, appVersion: '0.0.0-test' });
+    const parsed = parseConfigBundle(serializeConfigBundle(bundle));
+    expect(parsed.fingerprintValid).toBe(true);
+    expect(parsed.bundle.sections.views).toStrictEqual(views);
+  });
+
+  it('imports views whose topN is not a positive integer, without that value', async () => {
+    // Earlier builds accepted and exported any number. Their bundles must
+    // keep importing; saving a views config refuses such a value.
+    const config = await loadConfig(join(fixturesDir, 'costgoblin.yaml'));
+    const dimensions = await loadDimensions(join(fixturesDir, 'dimensions.yaml'));
+    const service = asDimensionId('service');
+    const views: ViewsConfig = { views: [{ id: 'v', name: 'V', rows: [{ widgets: [
+      { id: 'zero', type: 'topNBar', size: 'medium', groupBy: service, topN: 0 },
+      { id: 'kept', type: 'line', size: 'large', groupBy: service, topN: 5 },
+    ] }] }] };
+    const bundle = buildConfigBundle({ config, dimensions, views, appVersion: '0.0.0-test' });
+    const parsed = parseConfigBundle(serializeConfigBundle(bundle));
+    expect(parsed.bundle.sections.views?.views[0]?.rows[0]?.widgets).toStrictEqual([
+      { id: 'zero', type: 'topNBar', size: 'medium', groupBy: service },
+      { id: 'kept', type: 'line', size: 'large', groupBy: service, topN: 5 },
+    ]);
   });
 
   it('rejects non-YAML content', () => {

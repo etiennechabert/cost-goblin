@@ -205,6 +205,14 @@ describe('FilterBar', () => {
     expect(screen.getByLabelText('Clear Team filter')).toBeDefined();
   });
 
+  it('names an empty value (none): the rows with no value, as clicked on a widget', () => {
+    const filters: FilterMap = { [asDimensionId('tag_team')]: [asTagValue('')] };
+    renderFilterBar({ filters });
+
+    expect(screen.getByText('Team: (none)')).toBeDefined();
+    expect(screen.getByLabelText('Clear Team filter')).toBeDefined();
+  });
+
   it('multi-value badge shows count', () => {
     const filters: FilterMap = { [asDimensionId('tag_team')]: [asTagValue('platform'), asTagValue('data')] };
     renderFilterBar({ filters });

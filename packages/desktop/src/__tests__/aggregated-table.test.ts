@@ -163,6 +163,19 @@ describe('queryAggregatedRows against DuckDB', () => {
     expect(await queryAggregatedRows(neverRun, { ...byServiceAndRegion, groupBy: [], rowKeys: [] })).toEqual({ rows: [], totalRows: 0 });
   });
 
+  it('ranks the groups by the size of their cost, so a credit ranks with spend', async () => {
+    const signed: AggregatedRowsQuery = {
+      ...byServiceAndRegion,
+      source: "(SELECT *, cost AS list_cost, 1.0 AS usage_amount FROM (VALUES ('EC2', 30.0), ('RDS', 20.0), ('Credit', -45.0)) AS t(service, cost))",
+      groupBy: explorerGroupBy(['service'], new Map()),
+      rowLimit: 2,
+    };
+    const bySize = await queryAggregatedRows(run, { ...signed, sort: { column: 'abs_cost', direction: 'desc' } });
+    expect(bySize.rows.map(r => [r.values['service'], r.cost])).toEqual([['Credit', -45], ['EC2', 30]]);
+    const byCost = await queryAggregatedRows(run, { ...signed, sort: { column: 'cost', direction: 'desc' } });
+    expect(byCost.rows.map(r => r.values['service'])).toEqual(['EC2', 'RDS']);
+  });
+
   it('keeps the total row of a table with no group-by for any key', async () => {
     const result = await queryAggregatedRows(run, { ...byServiceAndRegion, groupBy: [], rowKeys: [{}] });
     expect(result.rows.map(r => [r.values, r.cost])).toEqual([[{}, 150]]);

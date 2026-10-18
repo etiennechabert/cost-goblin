@@ -121,6 +121,7 @@ describe('aggregated table helpers', () => {
 
   it('sorts by a measure, then by a grouped column, else by SUM(cost)', () => {
     expect(aggregatedOrderBy({ column: 'row_count', direction: 'asc' }, groupBy)).toBe('COUNT(*) ASC');
+    expect(aggregatedOrderBy({ column: 'abs_cost', direction: 'desc' }, groupBy)).toBe('ABS(SUM(cost)) DESC');
     expect(aggregatedOrderBy({ column: 'tag_stage', direction: 'desc' }, groupBy)).toBe(`${text(LOWER)} DESC`);
     expect(aggregatedOrderBy({ column: 'usage_date', direction: 'asc' }, groupBy)).toBe('usage_date ASC');
     expect(aggregatedOrderBy({ column: 'region', direction: 'asc' }, groupBy)).toBe('SUM(cost) DESC');

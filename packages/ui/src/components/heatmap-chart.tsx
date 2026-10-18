@@ -2,7 +2,8 @@ import { useMemo } from 'react';
 import { Group } from '@visx/group';
 import { scaleBand, scaleLinear } from '@visx/scale';
 import { ParentSize } from '@visx/responsive';
-import { formatDollars } from './format.js';
+import { formatDollars, formatShortDate } from './format.js';
+import { useChartTooltip } from './chart-tooltip.js';
 
 export interface HeatmapCell {
   readonly date: string;
@@ -32,6 +33,7 @@ function HeatmapInner({
   height,
   onCellClick,
 }: Omit<HeatmapChartProps, 'title' | 'subtitle'> & { readonly width: number; readonly height: number }) {
+  const tooltip = useChartTooltip();
   const innerW = Math.max(width - MARGIN.left - MARGIN.right, 10);
   const innerH = Math.max(height - MARGIN.top - MARGIN.bottom, 10);
 
@@ -60,67 +62,94 @@ function HeatmapInner({
   const cellW = xScale.bandwidth();
   const cellH = yScale.bandwidth();
 
+  // The cell layer doesn't read the hover state, so a pointer move re-renders
+  // the tooltip and one outline, not every cell (a year by ten groups is
+  // thousands). show/hide are stable callbacks.
+  const { show, hide, active } = tooltip;
+  const cellLayer = useMemo(() => cells.map((c) => {
+    const key = `${c.group}-${c.date}`;
+    return (
+      <rect
+        key={key}
+        x={xScale(c.date) ?? 0}
+        y={yScale(c.group) ?? 0}
+        width={cellW}
+        height={cellH}
+        fill={colorScale(c.cost)}
+        rx={2}
+        data-cell={key}
+        aria-label={`${c.group} • ${c.date} — ${formatDollars(c.cost)}`}
+        onClick={() => { onCellClick?.(c.group, c.date); }}
+        onMouseMove={(e) => {
+          show(e, { key, title: c.group, rows: [{ label: formatShortDate(c.date), value: formatDollars(c.cost) }] });
+        }}
+        onMouseLeave={hide}
+        style={{ cursor: onCellClick === undefined ? 'default' : 'pointer' }}
+      />
+    );
+  }), [cells, xScale, yScale, cellW, cellH, colorScale, onCellClick, show, hide]);
+  const cellByKey = useMemo(() => new Map(cells.map(c => [`${c.group}-${c.date}`, c])), [cells]);
+  const hoveredCell = active === null ? undefined : cellByKey.get(active.key);
+
   return (
-    <svg width={width} height={height} aria-label="Cost heatmap: rows are groups, columns are dates, color intensity represents cost">
-      <Group left={MARGIN.left} top={MARGIN.top}>
-        {cells.map((c) => {
-          const x = xScale(c.date) ?? 0;
-          const y = yScale(c.group) ?? 0;
-          return (
+    <div className="relative" style={{ width, height }}>
+      <svg width={width} height={height} aria-label="Cost heatmap: rows are groups, columns are dates, color intensity represents cost">
+        <Group left={MARGIN.left} top={MARGIN.top}>
+          {cellLayer}
+          {hoveredCell !== undefined && (
             <rect
-              key={`${c.group}-${c.date}`}
-              x={x}
-              y={y}
+              x={xScale(hoveredCell.date) ?? 0}
+              y={yScale(hoveredCell.group) ?? 0}
               width={cellW}
               height={cellH}
-              fill={colorScale(c.cost)}
               rx={2}
-              onClick={() => { onCellClick?.(c.group, c.date); }}
-              style={{ cursor: onCellClick === undefined ? 'default' : 'pointer' }}
-            >
-              <title>{`${c.group} • ${c.date} — ${formatDollars(c.cost)}`}</title>
-            </rect>
-          );
-        })}
-        {groups.map((g) => {
-          const y = (yScale(g) ?? 0) + cellH / 2;
-          return (
-            <text
-              key={g}
-              x={-8}
-              y={y}
-              fontSize={10}
-              textAnchor="end"
-              dy="0.33em"
-              fill="var(--color-text-secondary)"
-            >
-              {g.length > 16 ? `${g.slice(0, 15)}…` : g}
-            </text>
-          );
-        })}
-        {dates.length > 0 && (() => {
-          const tickEvery = Math.max(1, Math.ceil(dates.length / Math.max(4, Math.floor(innerW / 60))));
-          return dates
-            .map((d, i) => ({ d, i }))
-            .filter(({ i }) => i % tickEvery === 0)
-            .map(({ d, i: idx }) => {
-              const x = (xScale(d) ?? 0) + cellW / 2;
-              return (
-                <text
-                  key={`${d}-${String(idx)}`}
-                  x={x}
-                  y={innerH + 14}
-                  fontSize={9}
-                  textAnchor="middle"
-                  fill="var(--color-text-muted)"
-                >
-                  {d.slice(5)}
-                </text>
-              );
-            });
-        })()}
-      </Group>
-    </svg>
+              fill="none"
+              stroke="var(--color-text-primary)"
+              strokeWidth={1.5}
+              pointerEvents="none"
+            />
+          )}
+          {groups.map((g) => {
+            const y = (yScale(g) ?? 0) + cellH / 2;
+            return (
+              <text
+                key={g}
+                x={-8}
+                y={y}
+                fontSize={10}
+                textAnchor="end"
+                dy="0.33em"
+                fill="var(--color-text-secondary)"
+              >
+                {g.length > 16 ? `${g.slice(0, 15)}…` : g}
+              </text>
+            );
+          })}
+          {dates.length > 0 && (() => {
+            const tickEvery = Math.max(1, Math.ceil(dates.length / Math.max(4, Math.floor(innerW / 60))));
+            return dates
+              .map((d, i) => ({ d, i }))
+              .filter(({ i }) => i % tickEvery === 0)
+              .map(({ d, i: idx }) => {
+                const x = (xScale(d) ?? 0) + cellW / 2;
+                return (
+                  <text
+                    key={`${d}-${String(idx)}`}
+                    x={x}
+                    y={innerH + 14}
+                    fontSize={9}
+                    textAnchor="middle"
+                    fill="var(--color-text-muted)"
+                  >
+                    {d.slice(5)}
+                  </text>
+                );
+              });
+          })()}
+        </Group>
+      </svg>
+      {tooltip.element}
+    </div>
   );
 }
 
