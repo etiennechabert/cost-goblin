@@ -146,6 +146,31 @@ describe('BaselineStore', () => {
     return d;
   };
 
+  /** A fresh state dir holding one manual EC2 baseline `id` with `history` and
+   *  `snapshots` persisted for it: the files an earlier run (or a hand edit)
+   *  left behind. */
+  const seedStateDir = async (id: string, history: readonly unknown[], snapshots: readonly unknown[] = []): Promise<string> => {
+    const stateDir = await newStateDir();
+    const spec = {
+      id,
+      source: 'manual',
+      scope: { kind: 'filter', filters: { service: [EC2] } },
+      basis: { costMetric: 'billed', rules: [] },
+      basisSnapshotAt: NOW_ISO,
+      createdAt: NOW_ISO,
+      updatedAt: NOW_ISO,
+    };
+    await writeFile(
+      join(stateDir, 'baselines.json'),
+      JSON.stringify({ version: 1, config: null, baselines: [spec], meta: {} }),
+    );
+    await writeFile(
+      join(stateDir, 'baselines-data.json'),
+      JSON.stringify({ version: 1, history: { [id]: history }, snapshots: { [id]: snapshots } }),
+    );
+    return stateDir;
+  };
+
   const sql = (q: string): ReturnType<typeof fetchRows> => fetchRows(conn, q);
 
   const makeDeps = (stateDir: string): BaselineEngineDeps => ({
@@ -556,28 +581,11 @@ describe('BaselineStore', () => {
 
     beforeAll(async () => {
       vi.setSystemTime(new Date(NOW_ISO));
-      const stateDir = await newStateDir();
-      deps = makeDeps(stateDir);
-      const spec = {
-        id: SEED_ID,
-        source: 'manual',
-        scope: { kind: 'filter', filters: { service: [EC2] } },
-        basis: { costMetric: 'billed', rules: [] },
-        basisSnapshotAt: NOW_ISO,
-        createdAt: NOW_ISO,
-        updatedAt: NOW_ISO,
-      };
-      await writeFile(
-        join(stateDir, 'baselines.json'),
-        JSON.stringify({ version: 1, config: null, baselines: [spec], meta: {} }),
-      );
       const snapshots = Array.from({ length: 400 }, (_, i) => ({
         date: seedDate(i), lower: 1, upper: 2, current: 1.5, potential: 0.5, realized: 0.5, status: 'in-band',
       }));
-      await writeFile(
-        join(stateDir, 'baselines-data.json'),
-        JSON.stringify({ version: 1, history: { [SEED_ID]: [{ date: '2026-01-01', cost: 12 }] }, snapshots: { [SEED_ID]: snapshots } }),
-      );
+      const stateDir = await seedStateDir(SEED_ID, [{ date: '2026-01-01', cost: 12 }], snapshots);
+      deps = makeDeps(stateDir);
       store = new BaselineStore(stateDir, wallClock);
     });
 
@@ -607,6 +615,54 @@ describe('BaselineStore', () => {
       expect(String(snaps[snaps.length - 1]?.date)).toBe('2026-03-05');
       expect(String(snaps[snaps.length - 2]?.date)).toBe(TODAY);
       expect(String(snaps[0]?.date)).toBe(seedDate(37));
+    });
+  });
+
+  // computeCurrent reads every history date through Date.parse. A persisted date
+  // that isn't a calendar day became an invalid Date and threw, so one corrupt
+  // point failed list() for every baseline: the whole view wouldn't load.
+  describe('malformed persisted history', () => {
+    const SEED_ID = 'seed-malformed-history';
+
+    const loadSeeded = async (history: readonly unknown[]): Promise<{ store: BaselineStore; deps: BaselineEngineDeps; stateDir: string }> => {
+      const stateDir = await seedStateDir(SEED_ID, history);
+      return { store: new BaselineStore(stateDir, wallClock), deps: makeDeps(stateDir), stateDir };
+    };
+
+    it.each([
+      ['a number', { date: 7, cost: 1 }],
+      ['not a date', { date: 'garbage', cost: 1 }],
+      ['month 13, day 45', { date: '2026-13-45', cost: 1 }],
+      // Shape-valid, so isDateString alone keeps it; Date.parse rolls it into March.
+      ['February 31st', { date: '2026-02-31', cost: 1 }],
+      ['missing', { cost: 1 }],
+    ])('skips a point whose date is %s; list() and getDetail() still resolve', async (_label, point) => {
+      const { store, deps } = await loadSeeded([point]);
+      const record = (await store.list(deps, {})).items.find((r) => r.spec.id === SEED_ID);
+      expect(record?.stats).toBeNull();
+      expect(record?.current).toBeNull();
+      expect(record?.status).toBe('insufficient-data');
+      expect((await store.getDetail(deps, SEED_ID))?.dailyHistory).toEqual([]);
+    });
+
+    it('keeps the valid points around malformed ones, derives the record from them alone, and saves only them', async () => {
+      const { store, deps, stateDir } = await loadSeeded([
+        { date: 7, cost: 1 },
+        { date: '2026-02-01', cost: 10 },
+        { date: 'garbage', cost: 1 },
+        { date: '2026-02-02', cost: 20 },
+        { date: '2026-02-31', cost: 1 },
+      ]);
+      const detail = await store.getDetail(deps, SEED_ID);
+      expect(detail?.dailyHistory).toEqual([{ date: '2026-02-01', cost: 10 }, { date: '2026-02-02', cost: 20 }]);
+      expect(detail?.record.stats?.dataPoints).toBe(2);
+      expect(detail?.record.current).toEqual({ avgDaily: 15, windowStart: '2026-02-01', windowEnd: '2026-02-02', days: 2 });
+      const listed = (await store.list(deps, {})).items.find((r) => r.spec.id === SEED_ID);
+      expect(listed?.currentDaily).toBe(15);
+
+      await store.setConfig(DISCOVERY_CONFIG);
+      const dataDoc = rec(JSON.parse(await readFile(join(stateDir, 'baselines-data.json'), 'utf-8')));
+      expect(rec(dataDoc['history'])[SEED_ID]).toEqual([{ date: '2026-02-01', cost: 10 }, { date: '2026-02-02', cost: 20 }]);
     });
   });
 

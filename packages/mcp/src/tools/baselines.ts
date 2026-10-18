@@ -1,13 +1,12 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  asDateString,
-  asDollars,
   computeBands,
   computeCurrent,
   computeSavings,
   deriveStatus,
   effectiveBands,
+  parseBaselineHistory,
   runRateSeries,
 } from '@costgoblin/core';
 import type { BaselineDailyPoint, BaselineStatus, ManualBand } from '@costgoblin/core';
@@ -107,16 +106,6 @@ function parseSpecs(baselines: unknown): Spec[] {
   return specs;
 }
 
-function parseHistory(historyRaw: unknown): Map<string, readonly BaselineDailyPoint[]> {
-  const history = new Map<string, readonly BaselineDailyPoint[]>();
-  if (!isRecord(historyRaw)) return history;
-  for (const [id, pts] of Object.entries(historyRaw)) {
-    if (!Array.isArray(pts)) continue;
-    history.set(id, pts.filter(isRecord).map((p) => ({ date: asDateString(str(p['date'])), cost: asDollars(num(p['cost'])) })));
-  }
-  return history;
-}
-
 function parseSnapshots(snapshotsRaw: unknown): Map<string, readonly Record<string, unknown>[]> {
   const snapshots = new Map<string, readonly Record<string, unknown>[]>();
   if (!isRecord(snapshotsRaw)) return snapshots;
@@ -139,7 +128,7 @@ async function load(ctx: McpContext): Promise<Loaded> {
   const dataRoot = isRecord(dataRaw) ? dataRaw : {};
   return {
     specs: parseSpecs(specsRoot['baselines']),
-    history: parseHistory(dataRoot['history']),
+    history: parseBaselineHistory(dataRoot['history']),
     snapshots: parseSnapshots(dataRoot['snapshots']),
     ...parseBandConfig(specsRoot['config']),
   };

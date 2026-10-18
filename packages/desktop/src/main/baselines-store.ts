@@ -24,6 +24,7 @@ import {
   estimateBytesPerRow,
   getAncestorPath,
   logger,
+  parseBaselineHistory,
   resolveDiscoveryGrain,
   runRateSeries,
   validateBaselines,
@@ -236,11 +237,7 @@ export class BaselineStore {
     let raw: unknown;
     try { raw = JSON.parse(await readFile(this.dataPath(), 'utf-8')); } catch { return; }
     if (!isRecord(raw)) return;
-    if (isRecord(raw['history'])) {
-      for (const [id, pts] of Object.entries(raw['history'])) {
-        if (Array.isArray(pts)) this.histories.set(id, parsePoints(pts));
-      }
-    }
+    for (const [id, pts] of parseBaselineHistory(raw['history'])) this.histories.set(id, pts);
     if (isRecord(raw['snapshots'])) {
       for (const [id, snaps] of Object.entries(raw['snapshots'])) {
         if (Array.isArray(snaps)) this.snapshots.set(id, parseSnapshots(snaps));
@@ -1055,15 +1052,6 @@ function parseConfig(raw: Record<string, unknown>): BaselinesDiscoveryConfig {
     reopenPct: typeof raw['reopenPct'] === 'number' ? raw['reopenPct'] : base.reopenPct,
     grainDimensions: grain,
   };
-}
-
-function parsePoints(raw: readonly unknown[]): readonly BaselineDailyPoint[] {
-  const out: BaselineDailyPoint[] = [];
-  for (const p of raw) {
-    if (!isRecord(p)) continue;
-    out.push({ date: asDateString(str(p['date'])), cost: asDollars(num(p['cost'])) });
-  }
-  return out;
 }
 
 function parseSnapshots(raw: readonly unknown[]): readonly BaselineSnapshot[] {
