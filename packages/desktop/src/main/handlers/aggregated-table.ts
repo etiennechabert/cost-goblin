@@ -1,4 +1,4 @@
-import { QueryBuilder, SecurityError } from '@costgoblin/core';
+import { isStringRecord, QueryBuilder, SecurityError } from '@costgoblin/core';
 import type { AggregatedTableRow, ExplorerSort } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
 import { aggregatedOrderBy, andWhere, groupBySelectList, groupByValues, rowFilterConditions } from './explorer-columns.js';
@@ -11,14 +11,10 @@ export type RowKey = Readonly<Record<string, string>>;
 /** Runs a query with its bound `$n` parameters. */
 export type RunSql = (sql: string, params: readonly unknown[]) => Promise<RawRow[]>;
 
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
-}
-
 /** `raw` as an object of string values; `what` names it in the error.
  *  @throws {SecurityError} for anything else */
 function parseStringValues(raw: unknown, what: string): Record<string, string> {
-  if (!isRecord(raw)) throw new SecurityError(`${what} must be an object`);
+  if (!isStringRecord(raw)) throw new SecurityError(`${what} must be an object`);
   const values: Record<string, string> = {};
   for (const [id, value] of Object.entries(raw)) {
     if (typeof value !== 'string') throw new SecurityError(`${what} value for "${id}" must be a string`);
