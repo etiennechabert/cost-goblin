@@ -1,6 +1,11 @@
 import type { Dimension, DimensionId, FilterMap, TagDimension, TagValue } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue, tagDimColumn } from '@costgoblin/core/browser';
 
+/** How a filter value of '' reads: the group of rows with no value for the
+ *  dimension (a tag the resource lacks, or an empty field), all of which the
+ *  filter keeps. */
+export const EMPTY_VALUE_LABEL = '(none)';
+
 function isTagDim(dim: Dimension): dim is TagDimension {
   return !('field' in dim);
 }

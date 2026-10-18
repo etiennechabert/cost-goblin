@@ -216,6 +216,18 @@ describe('TableWidget — rows and formatting', () => {
     expect(screen.queryByRole('button', { name: '$1.2k' })).toBeNull();
   });
 
+  it('names an empty dimension cell (none), and filters on its empty value', async () => {
+    const api = new TableApi();
+    const unnamed: FixtureRow = { values: { service: '', region: '' }, cost: 25, listCost: 25, usageAmount: 0, rowCount: 4 };
+    api.current = (p) => Promise.resolve({ rows: project([...FIXTURE, unnamed], p.groupByColumns, r => r.cost), totalRows: 6, tagColumns: [] });
+    const { user, onSetFilter } = renderTable({ api });
+
+    await user.click(await screen.findByRole('button', { name: '(none)' }));
+    expect(onSetFilter).toHaveBeenCalledWith(asDimensionId('service'), asTagValue(''));
+    // A column that is not a dimension stays blank and inert when empty.
+    expect(screen.getAllByRole('button', { name: '(none)' })).toHaveLength(1);
+  });
+
   it('defaults to the seed columns when the spec names none', async () => {
     const { api } = renderTable({ spec: { id: 'tbl', type: 'table', size: 'full' } });
 

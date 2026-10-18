@@ -1,12 +1,15 @@
 import { ipcMain } from 'electron';
 import {
   asDimensionId,
+  asTagValue,
   buildExclusionClauses,
+  buildFilterClauses,
   buildSource,
   computePeriodsInRange,
   resolveField,
   QueryBuilder,
 } from '@costgoblin/core';
+import type { DimensionId, FilterMap, TagValue } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 import {
   columnForDimension,
@@ -16,60 +19,12 @@ import {
 } from './query-utils.js';
 import { originStore } from '../query-log.js';
 
-/** Build a SQL IN-list using parameterized placeholders. */
-function buildSqlList(values: readonly string[], qb: QueryBuilder): string {
-  return values.map(v => qb.addParam(v)).join(', ');
-}
-
-function resolveAccountIds(
-  values: readonly string[],
-  accountReverseMap: Map<string, readonly string[]>,
-): { allIds: Set<string>; usedReverse: boolean } {
-  const allIds = new Set<string>();
-  let usedReverse = false;
-  for (const v of values) {
-    const ids = accountReverseMap.get(v);
-    if (ids !== undefined && ids.length > 0) {
-      for (const id of ids) allIds.add(id);
-      usedReverse = true;
-    } else {
-      allIds.add(v);
-    }
-  }
-  return { allIds, usedReverse };
-}
-
-function buildValueClause(fieldExpr: string, values: readonly string[], qb: QueryBuilder): string {
-  if (values.length === 1) {
-    const first = values[0];
-    if (first === undefined) return '';
-    return `${fieldExpr} = ${qb.addParam(first)}`;
-  }
-  return `${fieldExpr} IN (${buildSqlList(values, qb)})`;
-}
-
-function buildFilterWhereClauses(
-  filterEntries: Record<string, readonly string[]>,
-  dimensions: import('@costgoblin/core').DimensionsConfig,
-  accountReverseMap: Map<string, readonly string[]>,
-  qb: QueryBuilder,
-): string[] {
-  const clauses: string[] = [];
-  for (const [key, values] of Object.entries(filterEntries)) {
-    if (values.length === 0) continue;
-    const { rawField, fieldExpr } = resolveField(asDimensionId(key), dimensions);
-
-    if (rawField === 'account_id') {
-      const { allIds, usedReverse } = resolveAccountIds(values, accountReverseMap);
-      if (usedReverse) {
-        clauses.push(`${rawField} IN (${buildSqlList([...allIds], qb)})`);
-        continue;
-      }
-    }
-    const clause = buildValueClause(fieldExpr, values, qb);
-    if (clause.length > 0) clauses.push(clause);
-  }
-  return clauses;
+/** The renderer's filter entries as a FilterMap. Their ids reach the SQL only
+ *  through buildFilterClauses, whose resolveField throws on an unknown one. */
+function toFilterMap(entries: Record<string, readonly string[]>): FilterMap {
+  const filters: Partial<Record<DimensionId, readonly TagValue[]>> = {};
+  for (const [id, values] of Object.entries(entries)) filters[asDimensionId(id)] = values.map(v => asTagValue(v));
+  return filters;
 }
 
 function mergeAccountRows(
@@ -112,7 +67,7 @@ export function registerFilterHandlers(app: AppContext): void {
           columnForDimension(dimensions, dimensionId), 'cost',
         ]);
 
-    const filterClauses = buildFilterWhereClauses(filterEntries, dimensions, accountReverseMap, qb);
+    const filterClauses = buildFilterClauses(toFilterMap(filterEntries), dimensions, accountReverseMap, qb);
     // Exclusions are baked into the rollup; only apply them on the raw path.
     const exclusionClauses = matSource === undefined && costScope !== undefined
       ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap, qb)

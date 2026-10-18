@@ -132,7 +132,7 @@ export function resolveField(dimensionId: DimensionId, dimensions: DimensionsCon
   );
 }
 
-function buildSingleFilterClause(
+function buildValueMatchClause(
   resolved: ResolvedDimension,
   values: readonly string[],
   accountReverseMap: ReadonlyMap<string, readonly string[]> | undefined,
@@ -150,10 +150,26 @@ function buildSingleFilterClause(
   return `${resolved.fieldExpr} IN (${list})`;
 }
 
+/** The rows a filter's values keep. '' is the value of the group of rows with
+ *  none, so it keeps all of them (missingValueSql): a tag the resource lacks
+ *  is NULL, which `= ''` would drop. */
+function buildSingleFilterClause(
+  resolved: ResolvedDimension,
+  values: readonly string[],
+  accountReverseMap: ReadonlyMap<string, readonly string[]> | undefined,
+  qb: QueryBuilder,
+): string {
+  const present = values.filter(v => v !== '');
+  if (present.length === values.length) return buildValueMatchClause(resolved, values, accountReverseMap, qb);
+  const missing = missingValueSql(resolved);
+  if (present.length === 0) return missing;
+  return `(${buildValueMatchClause(resolved, present, accountReverseMap, qb)} OR ${missing})`;
+}
+
 /** One parameterized WHERE clause per non-empty filter entry. Dimension ids
  *  resolve through `resolveField` (unknown ids throw SecurityError), account
- *  display names expand to their ids via `accountReverseMap`, and every value
- *  is bound on `qb`. */
+ *  display names expand to their ids via `accountReverseMap`, every value is
+ *  bound on `qb`, and '' keeps the rows with no value (NULL or ''). */
 export function buildFilterClauses(
   filters: FilterMap,
   dimensions: DimensionsConfig,

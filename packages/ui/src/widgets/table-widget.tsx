@@ -10,7 +10,7 @@ import type { AggregatedTableRow, ExplorerSort } from '@costgoblin/core/browser'
 import type { SortingState } from '@tanstack/react-table';
 import type { WidgetCommonProps } from './widget.js';
 import { filtersKey } from './widget.js';
-import { getDimensionId } from '../lib/dimensions.js';
+import { EMPTY_VALUE_LABEL, getDimensionId } from '../lib/dimensions.js';
 import { toExplorerFilters } from '../lib/agg-column.js';
 import type { TableColumn } from '../lib/table-types.js';
 
@@ -30,6 +30,8 @@ function specToTableColumn(spec: ColumnSpec, activeDimIds: ReadonlySet<string>):
     header: spec.label,
     dimId: spec.dimId,
     clickable: spec.dimId !== null && activeDimIds.has(spec.dimId),
+    // The rows with no value are a group too, and a filter on '' keeps them.
+    emptyLabel: EMPTY_VALUE_LABEL,
     align: spec.align,
     mono: spec.mono,
     truncate: spec.truncate,
@@ -319,7 +321,7 @@ export function TableWidget({
 
   const handleCellClick = useCallback((_row: AggregatedTableRow, columnId: string, value: unknown) => {
     const col = allColumnSpecs.find(c => c.key === columnId);
-    if (col?.dimId !== undefined && col.dimId !== null && activeDimIds.has(col.dimId) && typeof value === 'string' && value.length > 0) {
+    if (col?.dimId !== undefined && col.dimId !== null && activeDimIds.has(col.dimId) && typeof value === 'string') {
       onSetFilter(asDimensionId(col.dimId), asTagValue(value));
     }
   }, [allColumnSpecs, onSetFilter, activeDimIds]);
