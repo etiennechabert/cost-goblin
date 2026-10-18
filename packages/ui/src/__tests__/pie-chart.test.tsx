@@ -160,6 +160,24 @@ describe('PieChart — slices', () => {
     expect(onSliceClick).not.toHaveBeenCalled();
   });
 
+  it('keeps a real Other and the folded remainder apart on hover', async () => {
+    const onSliceHover = vi.fn<(name: string | null) => void>();
+    const data = [{ name: 'Other', cost: 500, percentage: 50 }, ...SLICES.slice(1)];
+    const { container } = renderPie(<PieChart data={data} title="t" maxSlices={2} onSliceHover={onSliceHover} />);
+    const groups = await slices(container, 3);
+    const [real, , folded] = [slice(groups, 0), slice(groups, 1), slice(groups, 2)];
+
+    // The remainder is no entity: it lights only itself and reports no hover.
+    fireEvent.mouseEnter(folded);
+    expect(onSliceHover).toHaveBeenLastCalledWith(null);
+    expect(slicePath(folded).getAttribute('opacity')).toBe('1');
+    expect(slicePath(real).getAttribute('opacity')).toBe('0.3');
+
+    fireEvent.mouseEnter(real);
+    expect(onSliceHover).toHaveBeenLastCalledWith('Other');
+    expect(slicePath(folded).getAttribute('opacity')).toBe('0.3');
+  });
+
   it('treats an entity named Other like any other series', async () => {
     // FOCUS has a real "Other" service category; only the folded remainder is gray.
     const onSliceClick = vi.fn<(name: string) => void>();
