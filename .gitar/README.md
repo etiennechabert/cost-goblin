@@ -13,7 +13,7 @@
 
 `config/apply.md` is read from `main` only, so a PR can't widen its own auto-apply limits. `config/risk.md` combines `main`'s copy with what the PR adds. The review guides and rules come from the PR's head: a PR can edit the rules it is judged by, so read `.gitar/` diffs closely, and a branch cut before a `.gitar/` change runs without it until it merges `main` (#718 and #719 showed "No rules evaluated").
 
-Gitar also reads a root AGENTS.md, the .claude/rules and .cursor/rules directories, and skills in .agents/skills. None exist here; anything added there reaches every run without the checks below.
+Gitar also reads the .claude/rules and .cursor/rules directories and discovers skills in .agents/skills (release notes, 2026-09-17), and Sonar's Gitar guide adds a root AGENTS.md. None exist here; anything added there reaches every run without the checks below.
 
 ## Keeping it useful
 
@@ -21,7 +21,7 @@ Gitar also reads a root AGENTS.md, the .claude/rules and .cursor/rules directori
 - On the free open-source plan Gitar's Knowledge feature is not available, so a reply settles that PR only. Write lessons down instead: a valid finding of a general kind becomes a check in the matching `review/` file, and a false positive that comes back becomes a line in its "Intentional, don't flag" list (CLAUDE.md, "Gitar review").
 - Gitar filters these files before each review, so keep every instruction under a heading that matches it. On #716 a "flag this" note placed inside the "Don't comment on" list was dropped.
 - Debug a rule with a `gitar display:verbose` comment: it shows why each rule matched or was skipped.
-- Gitar's plan allows five custom rules per organization; three are used here.
+- Sonar's Gitar guide gives Pro, whose features the open-source plan includes, up to five custom rules per organization (docs.gitar.ai doesn't state the cap); three are used here.
 
 ## On the PR
 
@@ -39,4 +39,4 @@ These live in the Gitar dashboard (app.gitar.ai, Settings → Configuration), no
 - **Retry unrelated CI failures**: on. Gitar re-runs a job when its failure has nothing to do with the PR, such as a flaky e2e shard. It also re-runs a test that is broken on `main` (#744, #748), which can't help: the re-run tests the same merge commit.
 - **Skip drafts**: on, so a draft's work-in-progress pushes don't use up the review budget.
 - **Enhance summaries**: off. PR descriptions here are written in full and shouldn't be rewritten.
-- **Auto-approve / auto-merge**: off. Admins bypass the `main` ruleset's required approval anyway, and a Gitar approval would satisfy that approval for Dependabot and contributor PRs. With no approve.md or merge.md under `config/`, auto-merge can't be armed.
+- **Auto-approve / auto-merge**: off. Admins bypass the `main` ruleset's required approval anyway, and a Gitar approval would satisfy that approval for Dependabot and contributor PRs. There is no merge.md under `config/`, and a repository without one is never armed for auto-merge (release notes, 2026-08-28). Auto-approve needs no approve.md: with the toggle on, Gitar approves once its findings are resolved, so the toggle alone keeps approvals off.
