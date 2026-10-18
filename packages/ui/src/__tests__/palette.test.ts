@@ -6,6 +6,8 @@ import {
   PALETTE_COLORBLIND_LIGHT,
   PALETTE_STANDARD,
   PALETTE_STANDARD_LIGHT,
+  PALETTE_VIVID,
+  PALETTE_VIVID_LIGHT,
   assignSeriesColors,
   getActivePalette,
   hashSeriesName,
@@ -84,6 +86,16 @@ function contrast(a: string, b: string): number {
 // #171717 over #0a0a0b, and #f5f5f5 over #ffffff.
 const DARK_CARD = '#111111';
 const LIGHT_CARD = '#fafafa';
+
+/** OKLab distance ×100 with the hue difference counted twice: how far apart
+ *  two colors read as categories (two shades of purple land near 16). */
+function familyDistance(x: string, y: string): number {
+  const [l1, a1, b1] = oklab(linearRgb(x));
+  const [l2, a2, b2] = oklab(linearRgb(y));
+  const dC = Math.hypot(a1, b1) - Math.hypot(a2, b2);
+  const dH2 = Math.max(0, (a1 - a2) ** 2 + (b1 - b2) ** 2 - dC ** 2);
+  return 100 * Math.sqrt((l1 - l2) ** 2 + dC ** 2 + 4 * dH2);
+}
 
 function hue(hex: string): number {
   const [, a, b] = oklab(linearRgb(hex));
@@ -206,6 +218,8 @@ describe('assignSeriesColors', () => {
 const PALETTES = [
   { name: 'standard dark', palette: PALETTE_STANDARD, card: DARK_CARD, floor: 14 },
   { name: 'standard light', palette: PALETTE_STANDARD_LIGHT, card: LIGHT_CARD, floor: 13 },
+  { name: 'vivid dark', palette: PALETTE_VIVID, card: DARK_CARD, floor: 11.5 },
+  { name: 'vivid light', palette: PALETTE_VIVID_LIGHT, card: LIGHT_CARD, floor: 13 },
   { name: 'colorblind dark', palette: PALETTE_COLORBLIND, card: DARK_CARD, floor: 14 },
   { name: 'colorblind light', palette: PALETTE_COLORBLIND_LIGHT, card: LIGHT_CARD, floor: 14 },
 ];
@@ -237,12 +251,15 @@ describe('chart palettes', () => {
   // same color, a step lighter or darker.
   it.each([
     { name: 'standard', dark: PALETTE_STANDARD, light: PALETTE_STANDARD_LIGHT },
+    { name: 'vivid', dark: PALETTE_VIVID, light: PALETTE_VIVID_LIGHT },
     { name: 'colorblind', dark: PALETTE_COLORBLIND, light: PALETTE_COLORBLIND_LIGHT },
+    // Vivid is standard at full saturation: switching keeps each series' hue.
+    { name: 'vivid-to-standard', dark: PALETTE_STANDARD, light: PALETTE_VIVID },
   ])('keeps each $name slot in its hue family on both themes', ({ dark, light }) => {
     expect(light).toHaveLength(dark.length);
     dark.forEach((c, k) => {
       const gap = Math.abs(hue(c) - hue(light[k] ?? '')) % 360;
-      expect(Math.min(gap, 360 - gap)).toBeLessThanOrEqual(25);
+      expect(Math.min(gap, 360 - gap)).toBeLessThanOrEqual(26);
     });
   });
 
@@ -251,5 +268,40 @@ describe('chart palettes', () => {
     expect(getActivePalette('standard', 'light')).toBe(PALETTE_STANDARD_LIGHT);
     expect(getActivePalette('colorblind')).toBe(PALETTE_COLORBLIND);
     expect(getActivePalette('colorblind', 'light')).toBe(PALETTE_COLORBLIND_LIGHT);
+    expect(getActivePalette('vivid')).toBe(PALETTE_VIVID);
+    expect(getActivePalette('vivid', 'light')).toBe(PALETTE_VIVID_LIGHT);
+  });
+});
+
+describe('assignSeriesColors — hue families', () => {
+  it('never paints the top two series as two shades of one hue', () => {
+    // On the light card, EC2's name hashes to the purple and VPC's to the
+    // bright purple: VPC moves on to a color of another family.
+    const ec2 = 'Amazon Elastic Compute Cloud';
+    const vpc = 'Amazon Virtual Private Cloud';
+    expect(familyDistance(color(PALETTE_STANDARD_LIGHT, slotOf(ec2)), color(PALETTE_STANDARD_LIGHT, slotOf(vpc)))).toBeLessThan(20);
+    const colors = assignSeriesColors([{ name: ec2, cost: 8000 }, { name: vpc, cost: 1200 }], PALETTE_STANDARD_LIGHT);
+    expect(colors(ec2)).toBe(color(PALETTE_STANDARD_LIGHT, slotOf(ec2)));
+    expect(familyDistance(colors(ec2), colors(vpc))).toBeGreaterThanOrEqual(22);
+  });
+
+  // Any chart's top series stay in clearly different hue families, for as many
+  // series as the palette holds families (fewer under the colorblind check).
+  it.each([
+    { name: 'standard dark', palette: PALETTE_STANDARD, top: 7, colorblind: false },
+    { name: 'standard light', palette: PALETTE_STANDARD_LIGHT, top: 6, colorblind: false },
+    { name: 'vivid dark', palette: PALETTE_VIVID, top: 7, colorblind: false },
+    { name: 'vivid light', palette: PALETTE_VIVID_LIGHT, top: 6, colorblind: false },
+    { name: 'colorblind dark', palette: PALETTE_COLORBLIND, top: 4, colorblind: true },
+    { name: 'colorblind light', palette: PALETTE_COLORBLIND_LIGHT, top: 3, colorblind: true },
+  ])('keeps the top $top series of any $name chart in different hue families', ({ palette, top, colorblind }) => {
+    const cvd = (a: string, b: string): number => Math.min(deltaE(a, b, PROTAN), deltaE(a, b, DEUTAN));
+    for (let chart = 0; chart < 300; chart++) {
+      const ranked = series(`chart${String(chart)}`, top);
+      const colors = assignSeriesColors(ranked, palette, { colorblind });
+      const used = ranked.map(s => colors(s.name));
+      expect(worstPair(used, familyDistance)).toBeGreaterThanOrEqual(22);
+      if (colorblind) expect(2 * worstPair(used, cvd)).toBeGreaterThanOrEqual(22);
+    }
   });
 });

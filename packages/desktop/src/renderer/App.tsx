@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, Profiler } from 'react';
 import { CostTrends, MissingTags, Savings, Baselines, DataManagement, DimensionsView, CostScopeView, CostScopeLoadError, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, ViewsLoadError, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, SharingActiveBanner, SettingsShell, SETTINGS_TABS, isSettingsTabId, WorkspacesView, WorkspaceChip, ConfirmModal, ReleaseNotes, useModalLayerCount } from '@costgoblin/ui';
 import type { NavItem, SettingsTabId } from '@costgoblin/ui';
-import type { CostApi, DataSharingStatus, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus, RollupStatus, BaselineRecomputeStatus, WorkspacesInfo } from '@costgoblin/core/browser';
+import type { ChartPalette, CostApi, DataSharingStatus, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus, RollupStatus, BaselineRecomputeStatus, WorkspacesInfo } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagDimColumn } from '@costgoblin/core/browser';
 import { Download, RefreshCw, TrendingUp, Lightbulb, Tag, Search, Gauge, Terminal, RotateCw, Settings, ArrowLeft, GitBranch, GitPullRequest } from 'lucide-react';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
@@ -509,7 +509,7 @@ function AppShell(): React.JSX.Element {
   const [missingPeriods, setMissingPeriods] = useState(0);
   const [currentMonthUpdating, setCurrentMonthUpdating] = useState(false);
   const [isDark, setIsDark] = useState(true);
-  const [palette, setPalette] = useState<'standard' | 'colorblind'>('standard');
+  const [palette, setPalette] = useState<ChartPalette>('standard');
   const [defaultViewId, setDefaultViewId] = useState<string>(OVERVIEW_SEED_VIEW.id);
   const [setupCheck, setSetupCheck] = useState<SetupCheck>({ status: 'checking' });
   const [splashStep, setSplashStep] = useState('Connecting...');
@@ -758,8 +758,7 @@ function AppShell(): React.JSX.Element {
     api.saveUIPreferences({ theme: next ? 'dark' : 'light', palette, defaultViewId }).catch(() => undefined);
   }
 
-  function handleTogglePalette() {
-    const next: 'standard' | 'colorblind' = palette === 'standard' ? 'colorblind' : 'standard';
+  function handleSetPalette(next: ChartPalette) {
     setPalette(next);
     api.saveUIPreferences({ theme: isDark ? 'dark' : 'light', palette: next, defaultViewId }).catch(() => undefined);
   }
@@ -1032,7 +1031,7 @@ function AppShell(): React.JSX.Element {
             isDark={isDark}
             onToggleTheme={handleToggleTheme}
             palette={palette}
-            onTogglePalette={handleTogglePalette}
+            onSetPalette={handleSetPalette}
             dashboards={customNav.map(c => ({ id: c.id, name: c.name }))}
             defaultViewId={homeViewId}
             onSetDefaultView={handleSetDefaultView}

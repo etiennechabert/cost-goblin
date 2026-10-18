@@ -1,6 +1,7 @@
 import { Download, RefreshCw, RotateCw, Check } from 'lucide-react';
 import { getActivePalette } from '@costgoblin/ui';
-import type { UpdateStatus } from '@costgoblin/core/browser';
+import { isChartPalette } from '@costgoblin/core/browser';
+import type { ChartPalette, UpdateStatus } from '@costgoblin/core/browser';
 import { describeUpdateRow } from './update-row.js';
 
 interface DashboardOption {
@@ -8,11 +9,17 @@ interface DashboardOption {
   readonly name: string;
 }
 
+const PALETTE_ANNOUNCEMENTS: Readonly<Record<ChartPalette, string>> = {
+  standard: 'Standard chart palette active',
+  vivid: 'Vivid chart palette active',
+  colorblind: 'Colorblind-safe chart palette active',
+};
+
 interface Props {
   readonly isDark: boolean;
   readonly onToggleTheme: () => void;
-  readonly palette: 'standard' | 'colorblind';
-  readonly onTogglePalette: () => void;
+  readonly palette: ChartPalette;
+  readonly onSetPalette: (palette: ChartPalette) => void;
   readonly dashboards: readonly DashboardOption[];
   readonly defaultViewId: string;
   readonly onSetDefaultView: (id: string) => void;
@@ -117,7 +124,7 @@ export function GeneralTab({
   isDark,
   onToggleTheme,
   palette,
-  onTogglePalette,
+  onSetPalette,
   dashboards,
   defaultViewId,
   onSetDefaultView,
@@ -154,7 +161,7 @@ export function GeneralTab({
           />
         </SettingRow>
 
-        <SettingRow label="Chart palette" description="Colorblind keeps colors apart under red-green color blindness.">
+        <SettingRow label="Chart palette" description="Vivid is more saturated; Colorblind keeps colors apart under red-green color blindness.">
           <div className="flex items-center gap-3">
             <div className="grid grid-flow-col grid-rows-2 gap-1" aria-hidden="true">
               {swatches.map((color, i) => (
@@ -163,8 +170,8 @@ export function GeneralTab({
             </div>
             <Segmented
               value={palette}
-              onChange={() => { onTogglePalette(); }}
-              options={[{ value: 'standard', label: 'Standard' }, { value: 'colorblind', label: 'Colorblind' }]}
+              onChange={(next) => { if (isChartPalette(next)) onSetPalette(next); }}
+              options={[{ value: 'standard', label: 'Standard' }, { value: 'vivid', label: 'Vivid' }, { value: 'colorblind', label: 'Colorblind' }]}
             />
           </div>
         </SettingRow>
@@ -219,7 +226,7 @@ export function GeneralTab({
       </div>
 
       <span className="sr-only" aria-live="polite">
-        {palette === 'standard' ? 'Standard chart palette active' : 'Colorblind-safe chart palette active'}
+        {PALETTE_ANNOUNCEMENTS[palette]}
       </span>
     </div>
   );

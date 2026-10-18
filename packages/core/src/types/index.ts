@@ -91,7 +91,8 @@ export type {
   GcpSplitAccounts,
 } from './gcp-identity.js';
 
-export type { Dimension, CostApi, ColumnValuesPreview, StripPatternIssues, DataInventoryResult, DataTier, ExportFileVersioning, GcloudLoginMode, GcpProject, GcsBrowseResult, GcsDownloadCheckParams, GcsDownloadCheckResult, PruneResult, ProviderSyncError, AccountMappingStatus, AccountMappingEntry, SavingsPreferences, UIPreferences, PerformanceSettings, PerformanceInfo, AutoSyncStatus, OrgAccount, OrgSyncResult, OrgSyncProgress, UpdateInfo, UpdateLogEntry, UpdateStage, UpdateStatus, UpdateSnapshot, UpdateApi, RollupStatus, RollupApi, RollupStats, BaselinesApi, WorkspaceSummary, WorkspacesInfo, CreateWorkspaceSource } from './api.js';
+export { isChartPalette } from './api.js';
+export type { Dimension, CostApi, ColumnValuesPreview, StripPatternIssues, DataInventoryResult, DataTier, ExportFileVersioning, GcloudLoginMode, GcpProject, GcsBrowseResult, GcsDownloadCheckParams, GcsDownloadCheckResult, PruneResult, ProviderSyncError, AccountMappingStatus, AccountMappingEntry, SavingsPreferences, UIPreferences, ChartPalette, PerformanceSettings, PerformanceInfo, AutoSyncStatus, OrgAccount, OrgSyncResult, OrgSyncProgress, UpdateInfo, UpdateLogEntry, UpdateStage, UpdateStatus, UpdateSnapshot, UpdateApi, RollupStatus, RollupApi, RollupStats, BaselinesApi, WorkspaceSummary, WorkspacesInfo, CreateWorkspaceSource } from './api.js';
 
 export type {
   WidgetSize,

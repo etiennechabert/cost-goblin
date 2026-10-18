@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import type { UpdateInfo, UpdateStatus } from '@costgoblin/core/browser';
-import { PALETTE_COLORBLIND, PALETTE_COLORBLIND_LIGHT, PALETTE_STANDARD, PALETTE_STANDARD_LIGHT } from '@costgoblin/ui';
+import { PALETTE_COLORBLIND, PALETTE_COLORBLIND_LIGHT, PALETTE_STANDARD, PALETTE_STANDARD_LIGHT, PALETTE_VIVID, PALETTE_VIVID_LIGHT } from '@costgoblin/ui';
 import type { PaletteType } from '@costgoblin/ui';
 import { GeneralTab } from '../renderer/settings/general-tab.js';
 
@@ -15,7 +15,7 @@ function props(overrides: Partial<Props> = {}): Props {
     isDark: true,
     onToggleTheme: vi.fn(),
     palette: 'standard',
-    onTogglePalette: vi.fn(),
+    onSetPalette: vi.fn(),
     dashboards: [{ id: 'overview', name: 'Overview' }, { id: 'costs', name: 'Team costs' }],
     defaultViewId: 'overview',
     onSetDefaultView: vi.fn(),
@@ -67,13 +67,16 @@ describe('GeneralTab', () => {
     expect(pressed('Dark')).toBe(false);
   });
 
-  const previews: readonly { palette: PaletteType; isDark: boolean; swatches: readonly string[]; other: string; announced: string }[] = [
-    { palette: 'standard', isDark: true, swatches: PALETTE_STANDARD, other: 'Colorblind', announced: 'Standard chart palette active' },
-    { palette: 'colorblind', isDark: true, swatches: PALETTE_COLORBLIND, other: 'Standard', announced: 'Colorblind-safe chart palette active' },
-    { palette: 'standard', isDark: false, swatches: PALETTE_STANDARD_LIGHT, other: 'Colorblind', announced: 'Standard chart palette active' },
-    { palette: 'colorblind', isDark: false, swatches: PALETTE_COLORBLIND_LIGHT, other: 'Standard', announced: 'Colorblind-safe chart palette active' },
+  const PALETTE_LABELS: Readonly<Record<PaletteType, string>> = { standard: 'Standard', vivid: 'Vivid', colorblind: 'Colorblind' };
+  const previews: readonly { palette: PaletteType; isDark: boolean; swatches: readonly string[]; other: string; picked: PaletteType; announced: string }[] = [
+    { palette: 'standard', isDark: true, swatches: PALETTE_STANDARD, other: 'Colorblind', picked: 'colorblind', announced: 'Standard chart palette active' },
+    { palette: 'vivid', isDark: true, swatches: PALETTE_VIVID, other: 'Standard', picked: 'standard', announced: 'Vivid chart palette active' },
+    { palette: 'colorblind', isDark: true, swatches: PALETTE_COLORBLIND, other: 'Vivid', picked: 'vivid', announced: 'Colorblind-safe chart palette active' },
+    { palette: 'standard', isDark: false, swatches: PALETTE_STANDARD_LIGHT, other: 'Vivid', picked: 'vivid', announced: 'Standard chart palette active' },
+    { palette: 'vivid', isDark: false, swatches: PALETTE_VIVID_LIGHT, other: 'Colorblind', picked: 'colorblind', announced: 'Vivid chart palette active' },
+    { palette: 'colorblind', isDark: false, swatches: PALETTE_COLORBLIND_LIGHT, other: 'Standard', picked: 'standard', announced: 'Colorblind-safe chart palette active' },
   ];
-  it.each(previews)('previews the $palette palette for the theme (dark: $isDark), and switches to $other', async ({ palette, isDark, swatches, other, announced }) => {
+  it.each(previews)('previews the $palette palette for the theme (dark: $isDark), and switches to $other', async ({ palette, isDark, swatches, other, picked, announced }) => {
     const { user, props: p } = renderTab({ palette, isDark });
 
     // The swatch strip is the decorative (aria-hidden) part of the palette row.
@@ -88,7 +91,11 @@ describe('GeneralTab', () => {
     expect(screen.getByText(announced)).toBeDefined();
 
     await user.click(screen.getByRole('button', { name: other }));
-    expect(p.onTogglePalette).toHaveBeenCalledOnce();
+    expect(p.onSetPalette).toHaveBeenCalledExactlyOnceWith(picked);
+
+    // Picking the palette already in use changes nothing.
+    await user.click(screen.getByRole('button', { name: PALETTE_LABELS[palette] }));
+    expect(p.onSetPalette).toHaveBeenCalledOnce();
   });
 
   it('picks the default dashboard from the list', async () => {

@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { parseJsonObject, isStringRecord } from '@costgoblin/core';
+import { isChartPalette, parseJsonObject, isStringRecord } from '@costgoblin/core';
 import type { UIPreferences, PerformanceInfo, PerformanceSettings } from '@costgoblin/core';
 import { readAppStateSync } from '../workspace-env.js';
 import { type AppContext, prefsPath } from './context.js';
@@ -65,7 +65,7 @@ export function registerUIHandlers(app: AppContext): void {
     const defaultViewId = parsed?.['defaultViewId'];
     return {
       theme: theme === 'light' || theme === 'dark' ? theme : 'dark',
-      palette: palette === 'standard' || palette === 'colorblind' ? palette : 'standard',
+      palette: isChartPalette(palette) ? palette : 'standard',
       defaultViewId: typeof defaultViewId === 'string' ? defaultViewId : undefined,
       performance: parsePerformance(parsed),
     };

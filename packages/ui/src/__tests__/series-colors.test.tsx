@@ -9,7 +9,7 @@ import type { BarDay } from '../components/stacked-bar-chart.js';
 import { TopNBarChart } from '../components/top-n-bar-chart.js';
 import { TreemapChart } from '../components/treemap-chart.js';
 import { PaletteProvider } from '../hooks/use-palette.js';
-import { MINOR_COLOR, PALETTE_COLORBLIND, PALETTE_COLORBLIND_LIGHT, PALETTE_STANDARD, PALETTE_STANDARD_LIGHT, hashSeriesName } from '../lib/palette.js';
+import { MINOR_COLOR, PALETTE_COLORBLIND, PALETTE_COLORBLIND_LIGHT, PALETTE_STANDARD, PALETTE_STANDARD_LIGHT, PALETTE_VIVID, PALETTE_VIVID_LIGHT, hashSeriesName } from '../lib/palette.js';
 import type { PaletteTheme, PaletteType } from '../lib/palette.js';
 
 // One range's spend, as each widget receives it. EC2 and SNS hash to the same
@@ -124,6 +124,8 @@ async function treemapColors(look: Look): Promise<Map<string, string>> {
 const LOOKS: readonly (Look & { readonly colors: readonly string[] })[] = [
   { palette: 'standard', theme: 'dark', colors: PALETTE_STANDARD },
   { palette: 'standard', theme: 'light', colors: PALETTE_STANDARD_LIGHT },
+  { palette: 'vivid', theme: 'dark', colors: PALETTE_VIVID },
+  { palette: 'vivid', theme: 'light', colors: PALETTE_VIVID_LIGHT },
   { palette: 'colorblind', theme: 'dark', colors: PALETTE_COLORBLIND },
   { palette: 'colorblind', theme: 'light', colors: PALETTE_COLORBLIND_LIGHT },
 ];

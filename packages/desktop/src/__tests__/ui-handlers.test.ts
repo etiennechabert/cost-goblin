@@ -2,6 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parseWorkspaceName } from '@costgoblin/core';
+import type { ChartPalette } from '@costgoblin/core';
 import { registerUIHandlers } from '../main/handlers/ui.js';
 import { MAX_MEMORY_GB, MIN_MEMORY_GB, maxThreads, totalMemoryGB } from '../main/duckdb-tuning.js';
 import { at, createHarness, num, type Harness, type TestWorkspace } from './helpers/ipc-harness.js';
@@ -55,6 +56,17 @@ describe('ui:get-preferences / ui:save-preferences', () => {
     await h.ipc.invoke('ui:save-preferences', { theme: 'light', palette: 'colorblind', defaultViewId: 'overview' });
     expect(await h.ipc.invoke('ui:get-preferences')).toEqual({ theme: 'light', palette: 'colorblind', defaultViewId: 'overview', performance: undefined });
     expect(JSON.parse(await readFile(prefsFile(h), 'utf-8'))).toMatchObject({ telemetry: { errorReports: true } });
+  });
+
+  it('keeps every palette the settings offer, and reads an unknown one as standard', async () => {
+    const h = await uiApp();
+    const palettes: readonly ChartPalette[] = ['standard', 'vivid', 'colorblind'];
+    for (const palette of palettes) {
+      await h.ipc.invoke('ui:save-preferences', { theme: 'dark', palette });
+      expect(await h.ipc.invoke('ui:get-preferences')).toMatchObject({ palette });
+    }
+    await writeFile(prefsFile(h), JSON.stringify({ theme: 'dark', palette: 'sepia' }));
+    expect(await h.ipc.invoke('ui:get-preferences')).toMatchObject({ palette: 'standard' });
   });
 
   it('ignores values it does not recognise and a prefs file that is not JSON', async () => {
