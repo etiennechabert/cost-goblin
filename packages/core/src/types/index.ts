@@ -78,7 +78,7 @@ export type {
   SyncLogLine,
   QueryState,
 } from './query.js';
-export { DEFAULT_PLACEHOLDER_PATTERNS } from './query.js';
+export { DEFAULT_PLACEHOLDER_PATTERNS, toFilterMap } from './query.js';
 
 export type {
   GcpAccountLookup,

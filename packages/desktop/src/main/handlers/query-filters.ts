@@ -1,15 +1,14 @@
 import { ipcMain } from 'electron';
 import {
   asDimensionId,
-  asTagValue,
   buildExclusionClauses,
   buildFilterClauses,
   buildSource,
   computePeriodsInRange,
   resolveField,
   QueryBuilder,
+  toFilterMap,
 } from '@costgoblin/core';
-import type { DimensionId, FilterMap, TagValue } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 import {
   columnForDimension,
@@ -18,14 +17,6 @@ import {
   toStr,
 } from './query-utils.js';
 import { originStore } from '../query-log.js';
-
-/** The renderer's filter entries as a FilterMap. Their ids reach the SQL only
- *  through buildFilterClauses, whose resolveField throws on an unknown one. */
-function toFilterMap(entries: Record<string, readonly string[]>): FilterMap {
-  const filters: Partial<Record<DimensionId, readonly TagValue[]>> = {};
-  for (const [id, values] of Object.entries(entries)) filters[asDimensionId(id)] = values.map(v => asTagValue(v));
-  return filters;
-}
 
 function mergeAccountRows(
   rows: import('../duckdb-client.js').RawRow[],

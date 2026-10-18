@@ -1177,20 +1177,10 @@ export function buildEntityDetailQuery(
   const { qb, filterClauses, exclusionClauses, source } = setupQuery(params, tier, opts);
   const dimResolved = resolveField(params.dimension, opts.dimensions);
 
-  // Same display-name collision treatment for the entity selector itself: if
-  // the user clicked into "sre default" we need to match every underlying id,
-  // not just one.
-  const entityClause = (() => {
-    if (dimResolved.rawField === 'account_id' && opts.accountReverseMap !== undefined) {
-      const ids = opts.accountReverseMap.get(String(params.entity));
-      if (ids !== undefined && ids.length > 0) {
-        const placeholders = ids.map(id => qb.addParam(id)).join(', ');
-        return `${dimResolved.rawField} IN (${placeholders})`;
-      }
-    }
-    const entityPlaceholder = qb.addParam(String(params.entity));
-    return `${dimResolved.fieldExpr} = ${entityPlaceholder}`;
-  })();
+  // The entity is a filter on its own value: a display name shared by several
+  // accounts ("sre default") matches every underlying id, and '' (the group
+  // with no value) every row with none.
+  const entityClause = buildSingleFilterClause(dimResolved, [String(params.entity)], opts.accountReverseMap, qb);
 
   const whereConditions = [
     buildDateRangeWhere(qb, params.dateRange),

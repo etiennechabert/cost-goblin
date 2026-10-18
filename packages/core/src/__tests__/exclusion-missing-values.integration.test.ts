@@ -4,9 +4,9 @@ import type { DuckDBConnection } from '@duckdb/node-api';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildExclusionClauses, buildFilterClauses, buildRollupPartitionQuery, buildRuleMatchExpr, buildSource, sqlStringLiteral } from '../query/builder.js';
+import { buildEntityDetailQuery, buildExclusionClauses, buildFilterClauses, buildRollupPartitionQuery, buildRuleMatchExpr, buildSource, sqlStringLiteral } from '../query/builder.js';
 import { QueryBuilder } from '../query/parameterized.js';
-import { asDimensionId, asProviderName, asTagValue, tagDimColumn } from '../types/branded.js';
+import { asDateString, asDimensionId, asEntityRef, asProviderName, asTagValue, tagDimColumn } from '../types/branded.js';
 import type { DimensionsConfig, TagDimension } from '../types/config.js';
 import type { ExclusionCondition, ExclusionRule } from '../types/cost-scope.js';
 import type { FilterMap } from '../types/query.js';
@@ -206,4 +206,17 @@ describe('exclusion rules and missing values (DuckDB execution)', () => {
       expect(await filteredTotals(c.filters)).toEqual({ live: c.kept, rollup: c.kept });
     });
   }
+
+  it("details the group with no value as the filter on '' keeps it", async () => {
+    const detailTotal = async (entity: string): Promise<number> => {
+      const { sql, params } = buildEntityDetailQuery(
+        { entity: asEntityRef(entity), dimension: TEAM_ID, dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') }, filters: {} },
+        { dataDir, dimensions, providers: [{ name: PROVIDER, availablePeriods: ['2026-01'] }] },
+      );
+      const [r] = await runPrepared(conn, `SELECT COALESCE(SUM(cost), 0)::DOUBLE AS total FROM (${sql})`, params);
+      return Number(r?.['total']);
+    };
+    expect(await detailTotal('')).toBe(ROW_COST.untagged + ROW_COST.emptyTag);
+    expect(await detailTotal('sandbox')).toBe(ROW_COST.sandbox);
+  });
 });
