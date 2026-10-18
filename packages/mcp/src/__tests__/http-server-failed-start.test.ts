@@ -79,6 +79,10 @@ async function occupy(port: number): Promise<NetServer> {
   return blocker;
 }
 
+async function release(blocker: NetServer): Promise<void> {
+  await new Promise<void>((resolve) => { blocker.close(() => { resolve(); }); });
+}
+
 afterEach(() => {
   control.ipv6ListenError = undefined;
   vi.useRealTimers();
@@ -97,10 +101,8 @@ describe('a failed start', () => {
 
     // Nothing serves on 127.0.0.1 any more...
     await expect(fetch(`http://127.0.0.1:${String(port)}/health`)).rejects.toMatchObject({ cause: { code: 'ECONNREFUSED' } });
-    // ...and the port is free again: a retry binds it.
-    control.ipv6ListenError = undefined;
-    const retry = await createMcpHttpServer(ctx, { port, authToken: TOKEN });
-    await retry.close();
+    // ...and the port is free again.
+    await release(await occupy(port));
   });
 
   it('stops the session reaper when the 127.0.0.1 listen fails', async () => {
@@ -111,7 +113,7 @@ describe('a failed start', () => {
       await expect(createMcpHttpServer(ctx, { port, authToken: TOKEN })).rejects.toMatchObject({ code: 'EADDRINUSE' });
       expect(vi.getTimerCount()).toBe(0);
     } finally {
-      await new Promise<void>((resolve) => { blocker.close(() => { resolve(); }); });
+      await release(blocker);
     }
   });
 });
