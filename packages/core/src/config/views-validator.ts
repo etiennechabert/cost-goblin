@@ -130,6 +130,13 @@ function validateGroupByWidget(raw: Record<string, unknown>, ctx: string, base: 
       : (assertString(raw['drillTo'], `${ctx}.drillTo`), asDimensionId(migrateLegacyDimensionId(raw['drillTo'], liveDimensionIds)));
     return { type, ...base, groupBy, ...(drillTo === undefined ? {} : { drillTo }) };
   }
+  if (type === 'pie') {
+    // A non-boolean is ignored rather than rejected, like a view's `builtIn`:
+    // a typo in a display toggle must not fail the whole views.yaml load.
+    const rawShowLegend = raw['showLegend'];
+    const showLegend = typeof rawShowLegend === 'boolean' ? rawShowLegend : undefined;
+    return { type, ...base, groupBy, ...(showLegend === undefined ? {} : { showLegend }) };
+  }
   if (type === 'bubble') return validateBubbleWidget(raw, ctx, base, groupBy);
   return { type, ...base, groupBy };
 }

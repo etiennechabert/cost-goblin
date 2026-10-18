@@ -16,9 +16,9 @@ import {
   summarizeConfigBundle,
   validateConfig,
 } from '../config/index.js';
-import type { AwsProviderConfig, ConfigBundle, ProviderConfig, SharedCostGoblinConfig } from '../types/index.js';
+import type { AwsProviderConfig, ConfigBundle, ProviderConfig, SharedCostGoblinConfig, ViewsConfig } from '../types/index.js';
 import { CONFIG_BUNDLE_KIND, CONFIG_BUNDLE_SCHEMA_VERSION } from '../types/index.js';
-import { asBucketPath } from '../types/branded.js';
+import { asBucketPath, asDimensionId } from '../types/branded.js';
 import { parseProviderName } from '../config/provider-name.js';
 
 const fixturesDir = join(import.meta.dirname, '..', '__fixtures__', 'config');
@@ -108,6 +108,19 @@ describe('serializeConfigBundle / parseConfigBundle', () => {
     expect(parsed.bundle.sections.orgTree).toBeUndefined();
     expect(parsed.bundle.sections.costScope).toBeUndefined();
     expect(parsed.bundle.sections.views).toBeUndefined();
+  });
+
+  it('keeps a valid fingerprint for a hidden pie legend and a column-less table', async () => {
+    const config = await loadConfig(join(fixturesDir, 'costgoblin.yaml'));
+    const dimensions = await loadDimensions(join(fixturesDir, 'dimensions.yaml'));
+    const views: ViewsConfig = { views: [{ id: 'v', name: 'V', rows: [{ widgets: [
+      { id: 'p', type: 'pie', size: 'medium', groupBy: asDimensionId('service'), showLegend: false },
+      { id: 't', type: 'table', size: 'full', enabledColumns: [] },
+    ] }] }] };
+    const bundle = buildConfigBundle({ config, dimensions, views, appVersion: '0.0.0-test' });
+    const parsed = parseConfigBundle(serializeConfigBundle(bundle));
+    expect(parsed.fingerprintValid).toBe(true);
+    expect(parsed.bundle.sections.views).toStrictEqual(views);
   });
 
   it('rejects non-YAML content', () => {

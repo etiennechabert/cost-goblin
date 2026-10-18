@@ -27,6 +27,9 @@ export function widgetToYaml(w: WidgetSpec): Record<string, unknown> {
       if (w.groupBy !== undefined) base['groupBy'] = w.groupBy;
       return base;
     case 'pie':
+      addGroupByFields(base, w);
+      if (w.showLegend !== undefined) base['showLegend'] = w.showLegend;
+      return base;
     case 'stackedBar':
     case 'pareto':
       addGroupByFields(base, w);
@@ -50,7 +53,7 @@ export function widgetToYaml(w: WidgetSpec): Record<string, unknown> {
       if (w.budget !== undefined) base['budget'] = w.budget;
       return base;
     case 'table':
-      if (w.enabledColumns !== undefined && w.enabledColumns.length > 0) base['enabledColumns'] = [...w.enabledColumns];
+      if (w.enabledColumns !== undefined) base['enabledColumns'] = [...w.enabledColumns];
       return base;
     case 'baseline':
       if (w.topN !== undefined) base['topN'] = w.topN;
