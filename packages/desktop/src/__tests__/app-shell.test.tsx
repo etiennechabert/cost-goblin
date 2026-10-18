@@ -13,6 +13,7 @@ import type {
   WorkspaceSummary,
   WorkspacesInfo,
 } from '@costgoblin/core/browser';
+import { GCLOUD_ADC_LOGIN_COMMAND } from '@costgoblin/core/browser';
 import { MockCostApi } from '@costgoblin/ui';
 import { App } from '../renderer/App.js';
 import { fakeDebug, fakeUpdate } from './helpers/renderer-bridges.js';
@@ -112,6 +113,73 @@ function syncErrorAnnouncement(): string {
   return region?.textContent ?? '';
 }
 
+function syncButtonTitle(): string | null {
+  return headerButton('Data sync').getAttribute('title');
+}
+
+/** jsdom lays nothing out, so every element is 0 px tall. Report `px(element)`
+ *  as each element's offsetHeight instead — the shell only measures its header. */
+function stubOffsetHeight(px: (element: HTMLElement) => number): void {
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) {
+    return px(this);
+  });
+}
+
+/** Swap the setup's ResizeObserver, which reports each element once when it is
+ *  observed, for one that reports only when the test says the layout changed. */
+class ManualResizeObserver implements ResizeObserver {
+  static readonly live = new Set<ManualResizeObserver>();
+  private readonly callback: ResizeObserverCallback;
+  private readonly targets = new Set<Element>();
+
+  constructor(callback: ResizeObserverCallback) {
+    this.callback = callback;
+    ManualResizeObserver.live.add(this);
+  }
+
+  observe(target: Element): void { this.targets.add(target); }
+  unobserve(target: Element): void { this.targets.delete(target); }
+  disconnect(): void {
+    this.targets.clear();
+    ManualResizeObserver.live.delete(this);
+  }
+
+  /** Report every observed element, as a browser does after a layout change. */
+  static resizeAll(): void {
+    act(() => {
+      for (const observer of ManualResizeObserver.live) {
+        const entries = [...observer.targets].map(target => ({
+          target,
+          contentRect: target.getBoundingClientRect(),
+          borderBoxSize: [],
+          contentBoxSize: [],
+          devicePixelContentBoxSize: [],
+        }));
+        if (entries.length > 0) observer.callback(entries, observer);
+      }
+    });
+  }
+}
+
+function installManualResizeObservers(): void {
+  ManualResizeObserver.live.clear();
+  vi.stubGlobal('ResizeObserver', ManualResizeObserver);
+}
+
+/** The debug panel's distance from the top of the window. */
+async function debugPanelTop(): Promise<string> {
+  const heading = await screen.findByRole('heading', { name: 'Query Log' });
+  // The panel's root is the heading's nearest ancestor positioned by `top`.
+  let el: HTMLElement | null = heading;
+  while (el !== null && el.style.top === '') el = el.parentElement;
+  if (el === null) throw new Error('debug panel root not found');
+  return el.style.top;
+}
+
+function settingsRailTop(): string {
+  return screen.getByRole('navigation', { name: 'Settings sections' }).style.top;
+}
+
 describe('App shell — header actions', () => {
   it('reloads data after confirming: clears caches and the query log, and locks the button meanwhile', async () => {
     const api = new AppApi();
@@ -173,6 +241,19 @@ describe('App shell — header actions', () => {
     fakeDebug.inFlightCount = 4;
     await bootApp();
     await waitFor(() => { expect(headerButton('Debug panel').textContent).toBe('4'); });
+  });
+
+  it('sits the debug panel and the settings rail right under the header it measured', async () => {
+    // The header mounts only once the splash is gone; 72 px was the guess
+    // used when nothing had been measured.
+    stubOffsetHeight(() => 60);
+    const user = await bootApp();
+
+    await user.click(headerButton('Debug panel'));
+    expect(await debugPanelTop()).toBe('60px');
+
+    await openSettingsTab(user, 'Performance');
+    expect(settingsRailTop()).toBe('60px');
   });
 
   it('goes home to the default dashboard, naming it in the tooltip', async () => {
@@ -590,21 +671,13 @@ describe('App shell — sync status', () => {
     await waitFor(() => { expect(syncAnnouncement()).toBe('Checking for updates'); });
   });
 
-  /** Park the missing-periods check. Its success clears whatever sync error
-   *  is showing — the poller's included — so letting it settle would race the
-   *  poller's error off the button (a bug of its own; not asserted here). */
-  function holdInventoryCheck(api: AppApi): void {
-    vi.spyOn(api, 'getDataInventory').mockReturnValue(new Promise<DataInventoryResult>(() => undefined));
-  }
-
   it('surfaces an auto-sync failure on the sync button and to screen readers', async () => {
     const api = new AppApi();
     const asCostApi: CostApi = api;
     vi.spyOn(asCostApi, 'getAutoSyncStatus').mockResolvedValue({ state: 'error', message: 'Rate exceeded', lastRun: null });
-    holdInventoryCheck(api);
     await bootApp(api);
 
-    await waitFor(() => { expect(headerButton('Data sync').getAttribute('title')).toBe('Sync error — Rate exceeded'); });
+    await waitFor(() => { expect(syncButtonTitle()).toBe('Sync error — Rate exceeded'); });
     expect(syncErrorAnnouncement()).toBe('Sync error: Rate exceeded');
   });
 
@@ -613,9 +686,128 @@ describe('App shell — sync status', () => {
     api.getSyncStatus = (syncId) => Promise.resolve(syncId === 'hourly'
       ? { status: 'failed', error: new Error('AccessDenied: hourly bucket'), lastSync: null }
       : IDLE);
-    holdInventoryCheck(api);
     await bootApp(api);
-    await waitFor(() => { expect(headerButton('Data sync').getAttribute('title')).toBe('Sync error — AccessDenied: hourly bucket'); });
+    await waitFor(() => { expect(syncButtonTitle()).toBe('Sync error — AccessDenied: hourly bucket'); });
+  });
+
+  const GCP_SIGN_IN = `GCP credentials are missing or expired. Run: ${GCLOUD_ADC_LOGIN_COMMAND}`;
+
+  /** A closed month with no local data, `monthsAgo` before the current one. */
+  function gap(monthsAgo: number): DataInventoryResult['periods'][number] {
+    return { period: periodAgo(monthsAgo), files: [], totalSize: 0, localStatus: 'missing' };
+  }
+
+  it('keeps the poller\'s error on the sync button when a missing-periods check passes', async () => {
+    const api = new AppApi();
+    const asCostApi: CostApi = api;
+    vi.spyOn(asCostApi, 'getAutoSyncStatus').mockResolvedValue({ state: 'error', message: 'Rate exceeded', lastRun: null });
+    let inventory = inventoryOf([gap(1)]);
+    vi.spyOn(api, 'getDataInventory').mockImplementation(() => Promise.resolve(inventory));
+    const user = await bootApp(api);
+    await waitFor(() => { expect(syncAnnouncement()).toBe('1 billing period not synced'); });
+    await waitFor(() => { expect(syncButtonTitle()).toBe('Sync error — Rate exceeded'); });
+
+    // Every view change checks again. A passing check says nothing about the
+    // sync, so the poller's error stays until the poller itself clears it.
+    inventory = inventoryOf([gap(1), gap(2)]);
+    await user.click(headerButton('Explorer'));
+    await waitFor(() => { expect(syncAnnouncement()).toBe('2 billing periods not synced'); });
+    expect(syncButtonTitle()).toBe('Sync error — Rate exceeded');
+    expect(syncErrorAnnouncement()).toBe('Sync error: Rate exceeded');
+  });
+
+  it('shows the missing-periods check\'s own error first, and the poller\'s once that check passes', async () => {
+    const api = new AppApi();
+    const asCostApi: CostApi = api;
+    vi.spyOn(asCostApi, 'getAutoSyncStatus').mockResolvedValue({ state: 'error', message: 'Rate exceeded', lastRun: null });
+    const inventory = vi.spyOn(api, 'getDataInventory').mockRejectedValue(new Error(GCP_SIGN_IN));
+    const user = await bootApp(api);
+    // The popover's Retry re-runs the check, so its error is the one shown.
+    await waitFor(() => { expect(syncButtonTitle()).toBe(`Sync error — ${GCP_SIGN_IN}`); });
+
+    await user.click(headerButton('Data sync'));
+    inventory.mockResolvedValue(inventoryOf([]));
+    await user.click(await screen.findByRole('button', { name: 'Retry' }));
+
+    await waitFor(() => { expect(syncButtonTitle()).toBe('Sync error — Rate exceeded'); });
+  });
+
+  it('keeps a Google sign-in error from the missing-periods check through the sync polls, until a check passes', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = new AppApi();
+    const asCostApi: CostApi = api;
+    const polls = vi.spyOn(asCostApi, 'getAutoSyncStatus');
+    const inventory = vi.spyOn(api, 'getDataInventory').mockRejectedValue(new Error(GCP_SIGN_IN));
+    const user = await bootApp(api);
+    await waitFor(() => { expect(syncButtonTitle()).toBe(`Sync error — ${GCP_SIGN_IN}`); });
+
+    // Two idle polls find the sync itself fine; the check, run again while it
+    // fails, still fails.
+    const pollsBefore = polls.mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+    expect(polls.mock.calls.length).toBeGreaterThanOrEqual(pollsBefore + 2);
+    expect(syncButtonTitle()).toBe(`Sync error — ${GCP_SIGN_IN}`);
+
+    // The sign-in remedy is still offered; a check passing is what clears it.
+    await user.click(headerButton('Data sync'));
+    expect(await screen.findByRole('button', { name: 'Open Google Sign-in' })).toBeDefined();
+    inventory.mockResolvedValue(inventoryOf([]));
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => { expect(syncButtonTitle()).toBe('Data sync'); });
+  });
+
+  it('ignores a missing-periods check that finishes after a newer one', async () => {
+    const api = new AppApi();
+    const checks: { resolve: (inventory: DataInventoryResult) => void; reject: (err: Error) => void }[] = [];
+    vi.spyOn(api, 'getDataInventory').mockImplementation(() => new Promise<DataInventoryResult>((resolve, reject) => { checks.push({ resolve, reject }); }));
+    const user = await bootApp(api);
+    await waitFor(() => { expect(checks.length).toBeGreaterThan(0); });
+    const started = checks.length;
+    // A view change checks again while the first check is still out.
+    await user.click(headerButton('Explorer'));
+    await waitFor(() => { expect(checks).toHaveLength(started + 1); });
+    const [stale] = checks;
+    const latest = checks.at(-1);
+    if (stale === undefined || latest === undefined) throw new Error('no checks recorded');
+
+    latest.resolve(inventoryOf([gap(1)]));
+    await waitFor(() => { expect(syncButtonTitle()).toBe('1 billing period not synced'); });
+    // The first check fails late, with credentials that have since been fixed.
+    await act(async () => {
+      stale.reject(new Error(GCP_SIGN_IN));
+      await new Promise((resolve) => { setTimeout(resolve, 0); });
+    });
+
+    expect(syncButtonTitle()).toBe('1 billing period not synced');
+  });
+
+  it('keeps checking while the missing-periods check fails, so a sign-in renewed elsewhere clears without a Retry', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = new AppApi();
+    const inventory = vi.spyOn(api, 'getDataInventory').mockRejectedValue(new Error(GCP_SIGN_IN));
+    await bootApp(api);
+    await waitFor(() => { expect(syncButtonTitle()).toBe(`Sync error — ${GCP_SIGN_IN}`); });
+
+    // Signed in from the Data & Sync tab or a terminal; no sync runs.
+    inventory.mockResolvedValue(inventoryOf([]));
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+
+    await waitFor(() => { expect(syncButtonTitle()).toBe('Data sync'); });
+  });
+
+  it('checks again once a sync starts, so a sign-in renewed outside the app clears', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = new AppApi();
+    const inventory = vi.spyOn(api, 'getDataInventory').mockRejectedValue(new Error(GCP_SIGN_IN));
+    await bootApp(api);
+    await waitFor(() => { expect(syncButtonTitle()).toBe(`Sync error — ${GCP_SIGN_IN}`); });
+
+    // Signed in from a terminal; the next scheduled sync starts downloading.
+    inventory.mockResolvedValue(inventoryOf([]));
+    api.getSyncStatus = syncingDaily(10, 3);
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+
+    await waitFor(() => { expect(syncButtonTitle()).toBe('Syncing…'); });
   });
 
   it('counts closed months with no or outdated local data as not synced', async () => {
@@ -635,10 +827,7 @@ describe('App shell — sync status', () => {
     expect(await screen.findByText('2 periods not synced')).toBeDefined();
   });
 
-  const GAPS = inventoryOf([
-    { period: periodAgo(6), files: [], totalSize: 0, localStatus: 'missing' },
-    { period: periodAgo(1), files: [], totalSize: 0, localStatus: 'missing' },
-  ]);
+  const GAPS = inventoryOf([gap(6), gap(1)]);
 
   it('only counts months inside the daily retention window', async () => {
     // The fixture provider keeps 90 days: the six-month-old gap is out of scope.
@@ -736,6 +925,21 @@ describe('App shell — data sharing banner', () => {
 
     await waitFor(() => { expect(disable).toHaveBeenCalledOnce(); });
     expect(await screen.findByRole('button', { name: 'Stop sharing' })).toBeDefined();
+  });
+
+  it('moves the debug panel down when the banner makes the header taller', async () => {
+    installManualResizeObservers();
+    // The banner adds a row to the header.
+    stubOffsetHeight(el => (within(el).queryByText('Sharing your data') === null ? 60 : 96));
+    const user = await bootApp(new SharingApi());
+    await screen.findByRole('button', { name: 'Stop sharing' });
+    await user.click(headerButton('Debug panel'));
+    // Measured when the header mounted, before the first sharing poll.
+    expect(await debugPanelTop()).toBe('60px');
+
+    ManualResizeObserver.resizeAll();
+
+    expect(await debugPanelTop()).toBe('96px');
   });
 });
 

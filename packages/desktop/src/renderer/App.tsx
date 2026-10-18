@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, Profiler } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, Profiler } from 'react';
 import { CostTrends, MissingTags, Savings, Baselines, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, SharingActiveBanner, SettingsShell, SETTINGS_TABS, isSettingsTabId, WorkspacesView, WorkspaceChip, ConfirmModal, ReleaseNotes, useModalLayerCount } from '@costgoblin/ui';
 import type { NavItem, SettingsTabId } from '@costgoblin/ui';
 import type { CostApi, DataSharingStatus, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus, RollupStatus, BaselineRecomputeStatus, WorkspacesInfo } from '@costgoblin/core/browser';
@@ -321,13 +321,14 @@ function useSyncPolling(
   api: CostApi,
   setupCheck: SetupCheck,
 ): {
-  syncError: string | null;
-  setSyncError: React.Dispatch<React.SetStateAction<string | null>>;
+  /** The sync's own failure (auto-sync, or a tier's download) as of the last
+   *  poll. Only the poll sets or clears it. */
+  pollError: string | null;
   syncActivity: SyncActivity;
   syncFilesRemaining: number;
   syncTiers: readonly SyncTier[];
 } {
-  const [syncError, setSyncError] = useState<string | null>(null);
+  const [pollError, setPollError] = useState<string | null>(null);
   const [syncActivity, setSyncActivity] = useState<SyncActivity>('idle');
   const [syncFilesRemaining, setSyncFilesRemaining] = useState(0);
   const [syncTiers, setSyncTiers] = useState<readonly SyncTier[]>([]);
@@ -348,15 +349,13 @@ function useSyncPolling(
         setSyncTiers(SYNC_TIER_LABELS.map((t, i) => ({ id: t.id, label: t.label, status: tiers[i] ?? daily })));
         const tuple: SyncStatusTuple = [autoStatus, daily, hourly, costOpt];
         const errorMsg = extractSyncError(tuple);
+        setPollError(errorMsg);
         if (errorMsg !== null) {
-          setSyncError(errorMsg);
           setSyncActivity('idle');
           return;
         }
-        const activity = resolveSyncActivity(tuple);
-        setSyncActivity(activity);
+        setSyncActivity(resolveSyncActivity(tuple));
         setSyncFilesRemaining(countFilesRemaining([daily, hourly, costOpt]));
-        setSyncError(activity === 'downloading' ? null : (prev => (prev?.includes('AWS credentials') ? prev : null)));
       } catch { /* transient */ }
     }
     tick().catch(() => undefined);
@@ -365,7 +364,7 @@ function useSyncPolling(
     return () => { cancelled = true; clearInterval(timer); };
   }, [api, setupCheck, syncActivity]);
 
-  return { syncError, setSyncError, syncActivity, syncFilesRemaining, syncTiers };
+  return { pollError, syncActivity, syncFilesRemaining, syncTiers };
 }
 
 /** Poll publisher-side sharing status app-wide so the activity banner can show
@@ -498,7 +497,15 @@ function AppShell(): React.JSX.Element {
   const [setupCheck, setSetupCheck] = useState<SetupCheck>({ status: 'checking' });
   const [splashStep, setSplashStep] = useState('Connecting...');
   const [viewsConfig, setViewsConfig] = useState<ViewsConfig | null>(null);
-  const { syncError, setSyncError, syncActivity, syncFilesRemaining, syncTiers } = useSyncPolling(api, setupCheck);
+  const { pollError, syncActivity, syncFilesRemaining, syncTiers } = useSyncPolling(api, setupCheck);
+  // The missing-periods check's own failure, most often expired credentials.
+  // Only that check sets or clears it, so neither source wipes the other's
+  // error, and a sign-in error stays up until a check passes.
+  const [inventoryError, setInventoryError] = useState<string | null>(null);
+  // One indicator, two sources. The check's error goes first: the popover's
+  // Retry re-runs that check, so it is the error Retry can clear. The poller's
+  // shows once the check passes.
+  const syncError = inventoryError ?? pollError;
   const { sharingStatus, setSharingStatus } = useDataSharingPolling(api, setupCheck);
   const [stoppingSharing, setStoppingSharing] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
@@ -529,15 +536,16 @@ function AppShell(): React.JSX.Element {
   const memoryMB = useMemoryMB();
   const autoOpenRef = useMemo<{ current: AutoOpenMemory }>(() => ({ current: INITIAL_AUTO_OPEN_MEMORY }), []);
   const initialViewSetRef = useRef(false);
-  const headerRef = useRef<HTMLDivElement>(null);
   const [headerHeight, setHeaderHeight] = useState(72);
 
-  // Track the actual rendered header height so the debug panel can sit
-  // flush below it without guessing with a magic top offset.
-  useLayoutEffect(() => {
-    const el = headerRef.current;
+  // Track the actual rendered header height so the debug panel and the
+  // settings rail sit flush below it (the sharing banner makes it taller)
+  // instead of guessing with a magic top offset. A ref callback, not a mount
+  // effect: the header only renders once the splash is gone, and React calls
+  // this when it attaches (the cleanup runs when it detaches).
+  const measureHeader = useCallback((el: HTMLDivElement | null) => {
     if (el === null) return undefined;
-    const update = () => { setHeaderHeight(el.offsetHeight); };
+    const update = (): void => { setHeaderHeight(el.offsetHeight); };
     update();
     const observer = new ResizeObserver(update);
     observer.observe(el);
@@ -752,10 +760,17 @@ function AppShell(): React.JSX.Element {
       });
   }
 
+  // Numbers each missing-periods check so that only the latest one writes: a
+  // slow check started before a sign-in must not overwrite a newer result.
+  const inventoryCheckRef = useRef(0);
+
   const checkMissingPeriods = useCallback(async (): Promise<void> => {
     if (setupCheck.status !== 'ready') return;
+    inventoryCheckRef.current += 1;
+    const check = inventoryCheckRef.current;
     try {
       const [inv, config] = await Promise.all([api.getDataInventory(), api.getConfig()]);
+      if (check !== inventoryCheckRef.current) return;
       const retentionDays = config.providers[0]?.sync.daily.retentionDays ?? 365;
       const now = new Date();
       const cutoff = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000);
@@ -771,19 +786,31 @@ function AppShell(): React.JSX.Element {
         p.localStatus === 'missing' || (p.localStatus === 'stale' && p.period < currentPeriod)).length;
       setMissingPeriods(missing);
       setCurrentMonthUpdating(inWindow.some(p => p.localStatus === 'stale' && p.period === currentPeriod));
-      setSyncError(null);
+      setInventoryError(null);
     } catch (err: unknown) {
-      // Most common cause is expired AWS credentials — surface the message on
-      // the sync indicator. Swallowed silently before, which left the user on a
+      if (check !== inventoryCheckRef.current) return;
+      // Most common cause is expired credentials — surface the message on the
+      // sync indicator. Swallowed silently before, which left the user on a
       // screen that looked fine while sync was completely broken.
-      setSyncError(err instanceof Error ? err.message : String(err));
+      setInventoryError(err instanceof Error ? err.message : String(err));
     }
-  }, [api, setupCheck, setSyncError]);
+  }, [api, setupCheck]);
 
   // Re-check on view / settings-tab change (leaving the Data & Sync tab after a
-  // download must refresh the missing-periods badge) and on demand from the
-  // sync popover's recheck button.
-  useEffect(() => { checkMissingPeriods().catch(() => undefined); }, [checkMissingPeriods, view, settingsTab]);
+  // download must refresh the missing-periods badge), whenever the sync's
+  // activity changes (a download starting means the bucket is reachable again,
+  // which clears a sign-in renewed outside the app; one ending changes what is
+  // missing), and on demand from the sync popover's recheck button.
+  useEffect(() => { checkMissingPeriods().catch(() => undefined); }, [checkMissingPeriods, view, settingsTab, syncActivity]);
+
+  // While the check's error stands, run it again at the poller's idle pace:
+  // a sign-in renewed elsewhere (a terminal, the Data & Sync tab's own
+  // sign-in) then clears without a Retry, and a one-off failure doesn't stick.
+  useEffect(() => {
+    if (inventoryError === null) return undefined;
+    const timer = setInterval(() => { checkMissingPeriods().catch(() => undefined); }, 10_000);
+    return () => { clearInterval(timer); };
+  }, [inventoryError, checkMissingPeriods]);
 
   function handleNavClick(id: string) {
     const inSettings = settingsTab !== null;
@@ -1063,7 +1090,7 @@ function AppShell(): React.JSX.Element {
           missingPeriods={missingPeriods}
         />
         {/* Title bar + nav */}
-        <div ref={headerRef} className="sticky top-0 z-50 bg-bg-primary/80 backdrop-blur-sm border-b border-border [-webkit-app-region:drag]">
+        <div ref={measureHeader} className="sticky top-0 z-50 bg-bg-primary/80 backdrop-blur-sm border-b border-border [-webkit-app-region:drag]">
         {sharingStatus?.enabled === true && (
           <SharingActiveBanner status={sharingStatus} onStop={handleStopSharing} stopping={stoppingSharing} />
         )}
