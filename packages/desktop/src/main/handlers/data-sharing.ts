@@ -265,7 +265,7 @@ export function registerDataSharingHandlers(app: AppContext): void {
       createdAt: new Date().toISOString(),
       publisher: identity.publicKey,
       label,
-      configBundle: serializeConfigBundle(await buildCurrentBundle(app)),
+      configBundle: serializeConfigBundle(await buildCurrentBundle(app, { brokenViews: 'skip' })),
       enrichment: await readEnrichment(),
       files,
     };
