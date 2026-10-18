@@ -17,6 +17,7 @@ Covers `packages/core/src/query/`, `packages/core/src/normalize/`, `packages/cor
 - Built-in columns are COALESCEd to `''` and a missing account becomes `'(no account)'`, but a tag column is NULL when the tag is absent.
 - `NOT`, `NOT IN` and `!=` over a tag expression drop untagged rows, from queries and from stored rollups alike. Exclusions and their previews must share one NULL-safe expression.
 - SQL built from a list must handle the empty list, because `IN ()` doesn't parse.
+- `''` names the group with no value, and results read NULL as `''` (`toStr`), so a tag's untagged (NULL) and empty-valued rows must be one group. A filter on `''` goes through `missingValueSql`, since `field = ''` drops the NULL rows. Elsewhere, group, count, sort and match a tag as `COALESCE(col, '')`, or sum the rows that read alike: a raw GROUP BY returns two `''` rows, and JS that keeps the first, overwrites by key or lets a top-N page cut one of them loses cost. The aggregated table's own GROUP BY (`packages/desktop/src/main/handlers/aggregated-table.ts`) is a known open case (#738); flag new ones.
 - JS reads NULL as 0, and a NULL ratio (say, percent change from a zero baseline) drops the row when compared with a threshold. COALESCE skips NULL, not 0.
 
 ## Cost semantics
