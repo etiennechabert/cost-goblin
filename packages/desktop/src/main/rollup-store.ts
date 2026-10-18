@@ -472,7 +472,10 @@ export class RollupStore {
  *  still validates. Logged, not thrown: see `invalidate`. */
 async function removeRollupTree(dir: string): Promise<void> {
   try {
-    await rm(join(dir, MANIFEST_FILE), { force: true });
+    await rm(join(dir, MANIFEST_FILE), { force: true }).catch((err: unknown) => {
+      // ENOTDIR: `dir` is a stray file, so no manifest can outlive it.
+      if (!(err instanceof Error && 'code' in err && err.code === 'ENOTDIR')) throw err;
+    });
     await rm(dir, { recursive: true, force: true });
   } catch (err: unknown) {
     logger.warn(`rollup: could not remove the invalidated rollup — ${err instanceof Error ? err.message : String(err)}`);

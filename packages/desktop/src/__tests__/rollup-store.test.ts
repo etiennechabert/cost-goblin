@@ -3,7 +3,7 @@ import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
-import { mkdtemp, readFile, rm, stat, readdir } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, readdir, writeFile } from 'node:fs/promises';
 import { buildRollupPartitionQuery, logger, rollupGrainColumns, type DimensionsConfig, type CostScopeConfig, type ProviderName, type RollupStatus, asDimensionId, asProviderName } from '@costgoblin/core';
 import { RollupStore, type RollupShape } from '../main/rollup-store.js';
 import type { RawRow } from '../main/duckdb-client.js';
@@ -248,8 +248,8 @@ describe('RollupStore', () => {
     await failRemovalOf(rollupDir, 'EBUSY');
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
 
-    // Same callers as above: a rejection would go unhandled and skip the
-    // cache clear and re-warm they chain on it.
+    // Callers fire and forget it (`void invalidate().then(...)`): a rejection
+    // would go unhandled and skip the cache clear and re-warm they chain on it.
     await expect(store.invalidate()).resolves.toBeUndefined();
     expect(store.isReady()).toBe(false);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('EBUSY'));
@@ -276,7 +276,7 @@ describe('RollupStore', () => {
     expect(store.isReady()).toBe(false);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('EPERM'));
 
-    // Deleting partitions under a manifest that stays would leave it vouching
+    // Removing partitions under a manifest that stays would leave it vouching
     // for files that are gone. Left whole, the rollup reloads valid only
     // where it still matches the shape and etags.
     await expect(stat(join(rollupDir, 'daily-2026-01', 'rollup.parquet'))).resolves.toBeDefined();
@@ -284,6 +284,18 @@ describe('RollupStore', () => {
     expect([...(await reloaded.loadAndValidate(shape, etags)).validPeriods]).toEqual(['2026-01']);
 
     vi.mocked(rm).mockReset();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('invalidate() still clears a stray file sitting where the rollup directory goes', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'cg-rollup-rm-'));
+    await mkdir(join(dir, 'aws'));
+    // Left there, every partition build would fail creating its directory.
+    await writeFile(join(dir, 'aws', 'rollup'), 'not a directory');
+    const store = new RollupStore({ dataDir: dir, providerName, runQuery });
+
+    await expect(store.invalidate()).resolves.toBeUndefined();
+    await expect(stat(join(dir, 'aws', 'rollup'))).rejects.toThrow();
     await rm(dir, { recursive: true, force: true });
   });
 });
