@@ -89,12 +89,12 @@ class PeriodGroupsApi extends MockCostApi {
   }
 }
 
-function renderWidget(api: MockCostApi) {
+function renderWidget(api: MockCostApi, spec: WidgetSpec = SPEC) {
   return render(
     <CostApiProvider value={api}>
       <PaletteProvider>
         <PriceVolumeWidget
-          spec={SPEC}
+          spec={spec}
           dateRange={CURRENT}
           previousDateRange={PREVIOUS}
           compareEnabled
@@ -180,6 +180,26 @@ describe('PriceVolumeWidget pairing', () => {
 
     act(() => { api.release(); });
     await expectBar('RDS — Rate +$20.00');
+  });
+
+  it('adds up the groups that read as the same value', async () => {
+    // An untagged NULL group and an empty-value group both read as '', and
+    // a keyed '' request returns both.
+    const team = (value: string, usage: number): AggregatedTableRow => (
+      { values: { tag_team: value }, cost: usage * 10, listCost: usage * 10, usageAmount: usage, rowCount: 1 }
+    );
+    // Both are in the current top rows; the previous period is asked for
+    // '' and answers with both.
+    const api = new PeriodGroupsApi(
+      [team('platform', 50), team('', 10), team('', 5)],
+      [team('platform', 50), team('data', 40), team('ops', 30), team('', 8), team('', 4)],
+      3,
+    );
+    renderWidget(api, { id: 'pv-team', type: 'priceVolume', size: 'large', groupBy: asDimensionId('tag_team') });
+
+    // 15 units against 12, not each side's last row (5 against 4).
+    await expectBar('— Volume +$30.00');
+    expect(api.keyedRequests(PREVIOUS)).toEqual([[{ tag_team: '' }]]);
   });
 
   it('shows the error when asking for the groups a period left out fails', async () => {

@@ -133,9 +133,25 @@ function leftOut(rows: readonly AggGroupRow[], other: PeriodTop): string[] {
   return [...new Set(rows.map(r => r.name))].filter(name => !listed.has(name));
 }
 
+/** Rows by name. Groups that read the same add up: a tag's untagged (NULL)
+ *  group and its empty-value group both read as ''. */
+function byName(rows: readonly AggGroupRow[]): Map<string, AggGroupRow> {
+  const map = new Map<string, AggGroupRow>();
+  for (const r of rows) {
+    const seen = map.get(r.name);
+    map.set(r.name, seen === undefined ? r : {
+      name: r.name,
+      cost: seen.cost + r.cost,
+      listCost: seen.listCost + r.listCost,
+      usageAmount: seen.usageAmount + r.usageAmount,
+    });
+  }
+  return map;
+}
+
 function pairByName(current: readonly AggGroupRow[], previous: readonly AggGroupRow[]): AggGroupPair[] {
-  const currentByName = new Map(current.map(r => [r.name, r]));
-  const previousByName = new Map(previous.map(r => [r.name, r]));
+  const currentByName = byName(current);
+  const previousByName = byName(previous);
   const names = new Set([...currentByName.keys(), ...previousByName.keys()]);
   return [...names].map(name => ({
     name,
