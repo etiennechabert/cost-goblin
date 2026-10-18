@@ -58,6 +58,8 @@ const SPEC: WidgetSpec = {
   enabledColumns: ['service', 'cost', 'list_cost', 'usage_amount', 'region'],
 };
 const CONFIGURED = ['Service', 'Cost', 'List', 'Usage', 'Region'];
+// The columns the view leaves out, in their usual order.
+const OTHERS = ['Date', 'Account', 'Charge category', 'Service category', 'SKU meter', 'Operation', 'Team', 'Resource', 'Description'];
 
 function renderTable(spec: WidgetSpec = SPEC, api: ColumnsApi = new ColumnsApi()) {
   const user = userEvent.setup();
@@ -148,6 +150,22 @@ describe('TableWidget — showing and hiding columns', () => {
     await expectHeaders(CONFIGURED);
   });
 
+  it('keeps the order through Show all and Hide all', async () => {
+    const { user } = renderTable();
+    await expectHeaders(CONFIGURED);
+    await openPicker(user);
+
+    await user.click(screen.getByRole('button', { name: 'Show all' }));
+    await expectHeaders([...CONFIGURED, ...OTHERS]);
+
+    await user.click(screen.getByRole('button', { name: 'Hide all' }));
+    expect(await screen.findByText(/All columns are hidden/)).not.toBeNull();
+
+    await toggle(user, 'Region');
+    await toggle(user, 'Service');
+    await expectHeaders(['Service', 'Region']);
+  });
+
   it('keeps a configured column the table cannot list yet', async () => {
     // Tag columns come from the overview. Until it loads, the widget doesn't
     // know Team, and toggling another column mustn't drop it.
@@ -173,10 +191,7 @@ describe('TableWidget — column order', () => {
 
     await openPicker(user);
 
-    expect(pickerLabels()).toEqual([
-      ...CONFIGURED,
-      'Date', 'Account', 'Charge category', 'Service category', 'SKU meter', 'Operation', 'Team', 'Resource', 'Description',
-    ]);
+    expect(pickerLabels()).toEqual([...CONFIGURED, ...OTHERS]);
   });
 
   it('reorders the table by dragging a column in the picker, without querying again', async () => {

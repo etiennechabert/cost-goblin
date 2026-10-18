@@ -229,11 +229,16 @@ export function TableWidget({
     return ids;
   }, [dimensions]);
 
+  const orderedColumnSpecs = useMemo(
+    () => applyColumnOrder(allColumnSpecs, columnOrder),
+    [allColumnSpecs, columnOrder],
+  );
+
   // The picker lists the columns in the table's order, so a drag lands where
   // it is dropped.
   const allTableColumns = useMemo(
-    () => applyColumnOrder(allColumnSpecs, columnOrder).map(s => specToTableColumn(s, activeDimIds)),
-    [allColumnSpecs, columnOrder, activeDimIds],
+    () => orderedColumnSpecs.map(s => specToTableColumn(s, activeDimIds)),
+    [orderedColumnSpecs, activeDimIds],
   );
 
   const deltaColumn = useMemo<TableColumn<AggregatedTableRow> | null>(() => {
@@ -264,15 +269,13 @@ export function TableWidget({
   );
 
   const visibleTableColumns = useMemo(() => {
-    const enabled = allColumnSpecs.filter(c => enabledSet.has(c.key));
-    const ordered = applyColumnOrder(enabled, columnOrder);
-    const cols = ordered.map(s => specToTableColumn(s, activeDimIds));
+    const cols = orderedColumnSpecs.filter(c => enabledSet.has(c.key)).map(s => specToTableColumn(s, activeDimIds));
     if (deltaColumn !== null) {
       const costIdx = cols.findIndex(c => c.id === 'cost');
       cols.splice(costIdx + 1, 0, deltaColumn);
     }
     return cols;
-  }, [allColumnSpecs, enabledSet, columnOrder, activeDimIds, deltaColumn]);
+  }, [orderedColumnSpecs, enabledSet, activeDimIds, deltaColumn]);
 
   const hiddenColumns = useMemo(
     () => allColumnSpecs.filter(c => !enabledSet.has(c.key)).map(c => c.key),
