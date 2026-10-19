@@ -570,3 +570,20 @@ describe('workspacePaths', () => {
     });
   });
 });
+
+describe('readAppStateSync — palette', () => {
+  it('keeps every palette the settings offer and drops an unknown one', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'cg-app-state-'));
+    try {
+      const file = join(dir, 'app-state.json');
+      for (const palette of ['standard', 'vivid', 'colorblind']) {
+        await writeFile(file, JSON.stringify({ palette }));
+        expect(readAppStateSync(file).palette).toBe(palette);
+      }
+      await writeFile(file, JSON.stringify({ palette: 'sepia' }));
+      expect(readAppStateSync(file).palette).toBeUndefined();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

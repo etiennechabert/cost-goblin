@@ -7,11 +7,12 @@ import type { DimensionId } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
 import { dimensionLabelFor } from './widget.js';
 import { useAggregatedGroups } from '../hooks/use-aggregated-groups.js';
+import { filtersEmptyGroup } from '../lib/agg-column.js';
 import { buildPareto } from '../lib/concentration.js';
 
 const ROW_LIMIT = 1000;
 
-export function ParetoWidget({ spec, dateRange, previousDateRange, granularity, globalFilters, dimensions, onSetFilter }: WidgetCommonProps) {
+export function ParetoWidget({ spec, dateRange, granularity, globalFilters, dimensions, onSetFilter }: WidgetCommonProps) {
   const [groupByOverride, setGroupByOverride] = useState<DimensionId | undefined>(undefined);
   const specGroupBy = spec.type === 'pareto' ? spec.groupBy : undefined;
   const effectiveGroupBy = groupByOverride ?? specGroupBy;
@@ -19,8 +20,6 @@ export function ParetoWidget({ spec, dateRange, previousDateRange, granularity, 
   const { status, error, rows, distinctTotal } = useAggregatedGroups({
     groupBy: effectiveGroupBy,
     dateRange,
-    previousDateRange,
-    comparePrev: false,
     granularity,
     globalFilters,
     rowLimit: ROW_LIMIT,
@@ -70,7 +69,7 @@ export function ParetoWidget({ spec, dateRange, previousDateRange, granularity, 
       model={model}
       title={title}
       subtitle={subtitle}
-      onBarClick={(name) => { onSetFilter(effectiveGroupBy, asTagValue(name)); }}
+      onBarClick={(name) => { if (name !== '' || filtersEmptyGroup(effectiveGroupBy)) onSetFilter(effectiveGroupBy, asTagValue(name)); }}
     />
   );
 }

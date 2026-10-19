@@ -21,7 +21,7 @@ const dateRangeSchema = z.object({
 }).optional();
 
 const filtersSchema = z.record(z.string(), z.array(z.string())).optional()
-  .describe('Filter map: dimension ID -> array of values to include');
+  .describe('Filter map: dimension ID -> array of values to include. An empty string "" includes the rows with no value (an untagged resource, an empty field).');
 
 const formatSchema = z.enum(['markdown', 'json', 'csv']).optional().describe(
   'Response format. "markdown" (default) for human-readable tables. ' +
@@ -143,7 +143,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
         dateRange: dateRangeSchema,
         filters: filtersSchema,
         deltaThreshold: z.number().optional().describe('Min absolute delta to include (default $1)'),
-        percentThreshold: z.number().optional().describe('Min % change to include (default 5%)'),
+        percentThreshold: z.number().optional().describe('Min % change to include (default 5%). An entity with no previous-period cost (new spend or a new credit) always passes, shown as +100% / -100%'),
         limit: z.number().optional().describe('Max rows per section (default 15)'),
         format: formatSchema,
       },
@@ -213,7 +213,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
         dateRange: dateRangeSchema,
         filters: filtersSchema,
         groupByColumns: z.array(z.string()).optional()
-          .describe('Columns to GROUP BY for aggregation (e.g. ["service", "region"]). Omit for raw rows.'),
+          .describe('Columns to GROUP BY for aggregation (e.g. ["service", "region"]); a tag dimension is accepted by its ID or SQL Column from list_dimensions. Omit for raw rows.'),
         sort: z.object({
           column: z.string(),
           direction: z.enum(['asc', 'desc']),
@@ -236,7 +236,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
     {
       description: describeTool('Run an ad-hoc SELECT query. A "costs" CTE is pre-defined with the dataset for the given date range (default: last 60 days). Write: SELECT ... FROM costs WHERE ... At most `limit` rows (default 100, max 500) are returned, even when the query has its own LIMIT; a note says when more rows exist.'),
       inputSchema: {
-        sql: z.string().describe('SQL query (SELECT/WITH only). A "costs" CTE with columns: usage_date, account_id, account_name, region, service, service_code, service_category, charge_category, pricing_category, commitment_status, operation, sku_meter, description, resource_id, usage_amount, cost, list_cost, plus tag columns.'),
+        sql: z.string().describe('SQL query (SELECT/WITH only). A "costs" CTE with columns: usage_date, account_id, account_name, region, service, service_code, service_category, charge_category, pricing_category, commitment_status, operation, sku_meter, description, resource_id, usage_amount, cost, list_cost, plus one column per tag dimension, named as list_dimensions\' SQL Column (tag_<key>_<hash>, not the tag_<key> id).'),
         dateRange: dateRangeSchema,
         limit: z.number().int().min(1).optional().describe('Max rows returned (integer, default 100, values above 500 are clamped to 500). The cap always applies, even when the query has its own LIMIT; page with LIMIT/OFFSET inside the query.'),
         format: formatSchema,

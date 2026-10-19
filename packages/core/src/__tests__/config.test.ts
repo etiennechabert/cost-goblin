@@ -1,4 +1,6 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadConfig, loadDimensions, loadOrgTree, ConfigValidationError } from '../config/index.js';
 import { validateConfig, validateDimensions, validateOrgTree } from '../config/validator.js';
@@ -7,7 +9,7 @@ import { logger } from '../logger/logger.js';
 import { dimensionsConfigToYaml } from '../config/dimensions-serialize.js';
 import type { AwsProviderConfig, DimensionsConfig, GcpProviderConfig, ProviderConfig } from '../types/config.js';
 import { OU_PATH_SOURCE_KEY } from '../types/config.js';
-import { asDimensionId } from '../types/branded.js';
+import { asDimensionId, tagSqlColumn } from '../types/branded.js';
 
 const fixturesDir = join(import.meta.dirname, '..', '__fixtures__', 'config');
 
@@ -68,6 +70,26 @@ describe('loadOrgTree', () => {
     expect(sre?.name).toBe('SRE');
     expect(sre?.virtual).toBeUndefined();
     expect(sre?.children).toHaveLength(2);
+  });
+
+  it('reads a missing org-tree.yaml as an empty tree', async () => {
+    await expect(loadOrgTree(join(fixturesDir, 'no-such-org-tree.yaml'))).resolves.toEqual({ tree: [] });
+  });
+
+  // Write-only: the read fails with EACCES. It used to read as an empty tree,
+  // so owner rollups lost the tree and exports left it out without a word.
+  // Root reads it anyway, so the case can't be built there.
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('rejects an org-tree.yaml it cannot read', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'cg-org-tree-'));
+    try {
+      const path = join(dir, 'org-tree.yaml');
+      await writeFile(path, 'tree: []\n');
+      await chmod(path, 0o200);
+
+      await expect(loadOrgTree(path)).rejects.toMatchObject({ code: 'EACCES' });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -408,6 +430,98 @@ describe('validateDimensions', () => {
       tags: [{ tagName: 'user_team', label: 'Team' }],
     });
     expect(dims.tags[0]?.tagName).toBe('team');
+  });
+
+  it('accepts tag keys that differ only by case (they get distinct SQL columns)', () => {
+    const dims = validateDimensions({
+      builtIn: [],
+      tags: [{ tagName: 'STAGE', label: 'Stage' }, { tagName: 'stage', label: 'stage' }],
+    });
+    expect(dims.tags.map(t => t.tagName)).toEqual(['STAGE', 'stage']);
+  });
+
+  it('rejects two tag keys whose SQL columns collide anyway', () => {
+    // Same lowercase slug and same 32-bit hash (found by brute force), so
+    // DuckDB would read both tags from one column.
+    expect(tagSqlColumn({ tagName: 'CoStCEntEReNVIRonment' })).toBe(tagSqlColumn({ tagName: 'CostCEntEREnviROnment' }));
+    expect(() => validateDimensions({
+      builtIn: [],
+      tags: [
+        { tagName: 'CoStCEntEReNVIRonment', label: 'A' },
+        { tagName: 'CostCEntEREnviROnment', label: 'B' },
+      ],
+    })).toThrow(/"CostCEntEREnviROnment" collides with tags\[0\] "CoStCEntEReNVIRonment"/);
+  });
+
+  // Keys that differ only by punctuation share a dimension id (`tag_cost_center`),
+  // and every id lookup resolves to the first tag, so the second dimension
+  // would silently show the first one's data in every widget.
+  describe('tags sharing a dimension id', () => {
+    afterEach(() => { vi.restoreAllMocks(); });
+
+    const costCenter = { tagName: 'cost-center', label: 'Cost Center' };
+    const costUnderscore = { tagName: 'cost_center', label: 'Cost center (new)' };
+
+    it('loads, disabling the later tag and warning with both keys', () => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+      const dims = validateDimensions({ builtIn: [], tags: [costCenter, costUnderscore] });
+      expect(dims.tags).toEqual([costCenter, { ...costUnderscore, enabled: false }]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      const message = String(warn.mock.calls[0]?.[0]);
+      expect(message).toContain('tags[1] (tag "cost_center")');
+      expect(message).toContain('tags[0] (tag "cost-center")');
+      expect(message).toContain('tag_cost_center');
+    });
+
+    it('disables every later tag of a group, keeping the first: the one id lookups resolve to', () => {
+      vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+      const dims = validateDimensions({
+        builtIn: [],
+        tags: [
+          { ...costCenter, enabled: false },
+          costUnderscore,
+          { tagName: 'team', label: 'Team' },
+          { tagName: 'cost center', label: 'CC' },
+        ],
+      });
+      expect(dims.tags.map(t => t.enabled)).toEqual([false, false, undefined, false]);
+    });
+
+    it('loads a later tag that is already disabled as-is, without a warning', () => {
+      const warn = vi.spyOn(logger, 'warn');
+      const tags = [costCenter, { ...costUnderscore, enabled: false }];
+      expect(validateDimensions({ builtIn: [], tags }).tags).toEqual(tags);
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('disables a resource tag named ou_path declared after the OU Path dimension', () => {
+      vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+      const dims = validateDimensions({
+        builtIn: [],
+        tags: [{ label: 'OU', accountTagFallback: OU_PATH_SOURCE_KEY }, { tagName: 'ou_path', label: 'ou_path' }],
+      });
+      expect(dims.tags.map(t => t.enabled)).toEqual([undefined, false]);
+    });
+
+    it('is refused when saving, naming both keys', () => {
+      expect(() => validateDimensions({ builtIn: [], tags: [costCenter, costUnderscore] }, { tagIdCollisions: 'reject' }))
+        .toThrow(/tags\[1\] \(tag "cost_center"\) has the same dimension id, tag_cost_center, as tags\[0\] \(tag "cost-center"\)/);
+    });
+
+    it('is refused when saving even if the later tag is disabled', () => {
+      expect(() => validateDimensions(
+        { builtIn: [], tags: [costCenter, { ...costUnderscore, enabled: false }] },
+        { tagIdCollisions: 'reject' },
+      )).toThrow(ConfigValidationError);
+    });
+
+    it('leaves configs without a shared id alone, in both modes', () => {
+      const warn = vi.spyOn(logger, 'warn');
+      const tags = [{ tagName: 'STAGE', label: 'Stage' }, { tagName: 'stage', label: 'stage' }, costCenter];
+      expect(validateDimensions({ builtIn: [], tags }).tags).toEqual(tags);
+      expect(validateDimensions({ builtIn: [], tags }, { tagIdCollisions: 'reject' }).tags).toEqual(tags);
+      expect(warn).not.toHaveBeenCalled();
+    });
   });
 
   it('accepts a legitimately-named built-in column', () => {

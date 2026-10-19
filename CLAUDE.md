@@ -15,13 +15,20 @@ costgoblin/
     core/                   # @costgoblin/core — pure TypeScript, no framework deps
     desktop/                # Electron shell — imports @costgoblin/core
     ui/                     # @costgoblin/ui — shared React components
+    mcp/                    # @costgoblin/mcp — opt-in local MCP server exposing cost tools to AI assistants
     web-backend/            # (Future) server — imports @costgoblin/core
+  e2e/                      # Playwright suites, one CI shard per file
+  workers/signup/           # Cloudflare Worker behind costgoblin.com's launch-notification form (own lockfile)
+  scripts/                  # ci/ policy tests, build/ packaging, aws-exports/ template, gcp-focus-exporter/ (own lockfile)
+  docs/                     # costgoblin.com website (incl. the GDPR privacy.html) and design docs
+  .gitar/                   # Gitar AI-review config: review guidance, rules, risk and auto-apply policy
 ```
 
 **Package dependency rules:**
 - `core` has ZERO dependency on `desktop`, `ui`, or any framework
 - `ui` depends on `core` (for types only — never imports query/sync logic directly)
-- `desktop` depends on `core` and `ui`
+- `mcp` depends on `core` only
+- `desktop` depends on `core`, `ui` and `mcp`
 - `web-backend` (future) depends on `core` only
 
 ## Commands
@@ -64,6 +71,8 @@ Follow this sequence for EVERY feature:
 10. After pushing & opening the PR — close the review loop (see "After pushing"):
     - Run `/code-review xhigh --fix` yourself (via the `Skill` tool), review the fixes it applies, and re-run npm run check
     - Address every sentry[bot] review comment on the PR
+    - Reply to every gitar-bot[bot] finding, whether you agree with it or not
+    - Read SonarCloud's new issues on the PR (even when its gate passes) and fix the valid ones
 ```
 
 ## TypeScript Rules — STRICTLY ENFORCED
@@ -119,6 +128,8 @@ type QueryState<T> =
 
 ## Testing Approach
 
+In Vitest, a `vi.fn(impl)` from a `vi.mock` factory is reset with `mockReset()` in `afterEach`: since Vitest 3, `vi.restoreAllMocks()` only restores `vi.spyOn` spies, so an override or an unused `…Once` leaks into the next test.
+
 ### Layer 1: Core Logic (Vitest)
 Pure functions: config loader, tag normalizer, alias resolver, org tree traversal, cost math.
 No I/O, no DuckDB. Tests run in milliseconds.
@@ -127,10 +138,12 @@ No I/O, no DuckDB. Tests run in milliseconds.
 Real DuckDB queries against synthetic fixture Parquet files in `packages/core/src/__fixtures__/synthetic/`.
 Shared DuckDB instance created once per test suite. Fixtures are small (~1000 rows), queries complete in milliseconds.
 Provider-shape coverage uses the committed FOCUS 1.2 samples in `packages/core/src/__fixtures__/focus-1-2/` (AWS/Azure/GCP native export shapes, materialized to Parquet at test time).
+Main-process IPC handlers (`packages/desktop/src/main/handlers/`) are tested at this layer through `helpers/ipc-harness.ts`: a real `createAppContext` over a temp workspace (copies of the fixture configs, optionally of the synthetic tree) with its own in-process DuckDB, and the fake `ipcMain`/`dialog`/`app` of `helpers/electron-fake.ts` (`vi.mock('electron', async () => (await import('./helpers/electron-fake.js')).fakeElectronModule)`).
 
 ### Layer 3: React Components (Vitest + React Testing Library)
 Components tested against `MockCostApi` (implements `CostApi` interface with fixture data).
 No Electron, no DuckDB, no file system.
+The desktop renderer's own React files (`packages/desktop/src/renderer/`) are tested the same way in the `desktop-renderer` vitest project (jsdom; `packages/desktop/src/__tests__/*.test.tsx`). `renderer-setup.ts` installs typed fakes of the preload bridges from `helpers/renderer-bridges.ts`, and `window.costgoblin` is a `MockCostApi`.
 
 ### Layer 4: Electron E2E (Playwright)
 Full app launch pinned to fixture data via `COSTGOBLIN_DATA_DIR` / `COSTGOBLIN_CONFIG_DIR` env vars (see `e2e/helpers.ts`).
@@ -140,7 +153,9 @@ The window is hidden by default (`COSTGOBLIN_HEADLESS=1`, set by `launchApp`) so
 
 **No cloud credentials:** every launch goes through `launchElectron` in `e2e/helpers.ts` — the only `_electron` use in `e2e/` — which strips all cloud-SDK env vars from the runner's env, points AWS/GCP credential discovery (SDKs and the gcloud/aws CLIs) at an empty per-launch sandbox, and refuses to spawn if the merged env re-adds a cloud var or overrides a pin. `packages/core/src/e2e-harness/cloud-sandbox.ts` documents which variable blocks which lookup; its rules are keyed on the provider type union, so a new provider type fails `tsc` until its SDK is covered. It covers *ambient* credentials only: a credential a config names itself (a GCP `keyFile`) is used as named, and the fixture configs name none. The policy test in `e2e-cloud-sandbox.test.ts` fails on any other `_electron` use; `expectCloudSandboxed(app)` asserts the live main-process env and the sandbox's contents. Tear down with `closeApp`/`finishCoverage`, which delete the sandbox, not a bare `app.close()`.
 
-**Coverage-attach ordering:** suites that *collect coverage* must open the app with `launchAppWithCoverage()`, or `attachCoverage(await app.firstWindow())` when they build their own launch. (`csp-verification` and `sandbox-verification` deliberately collect none and just call `launchApp`.) Never await anything between `firstWindow()` and the attach — a late attach silently skews the shard rather than failing: code that ran only before the attach is missing from V8's report, which the audit's v8-to-istanbul conversion reads as covered (inflating toward 100%) and the published one does not. See the `attachCoverage` doc comment in `e2e/helpers.ts`. The run fails on *gross* inflation (>25 function-less files holding >30% of hits — `auditCoverageReport` in `packages/core/src/e2e-coverage/audit.ts`, which `e2e/collect-coverage.ts` calls); a partial late attach still slips through, so the ordering is a rule to follow, not one the tooling can fully police.
+**Coverage-attach ordering:** suites that *collect coverage* must open the app with `launchAppWithCoverage()`, or `attachCoverage(await app.firstWindow())` when they build their own launch. (`csp-verification` and `sandbox-verification` deliberately collect no renderer coverage and just call `launchApp`.) Never await anything between `firstWindow()` and the attach — a late attach silently skews the shard rather than failing: code that ran only before the attach is missing from V8's report, which the audit's v8-to-istanbul conversion reads as covered (inflating toward 100%) and the published one does not. See the `attachCoverage` doc comment in `e2e/helpers.ts`. The run fails on *gross* inflation (>25 function-less files holding >30% of hits — `auditCoverageReport` in `packages/core/src/e2e-coverage/audit.ts`, which `e2e/collect-coverage.ts` calls); a partial late attach still slips through, so the ordering is a rule to follow, not one the tooling can fully police.
+
+**Main process:** every launch is also measured in the main process, with no attach step: `launchElectron` sets `NODE_V8_COVERAGE` to `MAIN_V8_DIR` (`$TMPDIR/costgoblin-e2e-v8/main`), so Node records block coverage from the bundle's first line and writes `coverage-<pid>-<time>-<thread>.json` as the app exits. A launch `closeApp` has to SIGKILL writes no exit dump, so `closeApp` first flushes one with `v8.takeCoverage()` (two dumps per launch). That is what puts the IPC handlers and the rest of `packages/desktop/src/main` (plus the core/mcp code they bundle) in the e2e report, and why the verification shards upload coverage too. `e2e/collect-coverage.ts` converts the dumps' `out/main/*.js` entries with the same `addBundleEntry` (`isMainBundleUrl`, `parseNodeCoverageDump`, `dumpEntryFreshness` in `packages/core/src/e2e-coverage/main-process.ts`), skips a dump older than the bundle it measured (the bundle path never changes between builds), and audits the main report separately from the renderer's so neither dilutes the other's share. The two are written as separate files, `coverage-e2e/lcov.info` (renderer) and `coverage-e2e/lcov-main.info`, and CI's merge requires each from the shards that must produce it — the renderer one from the seven covered suites, the main one from all ten — so neither can hide the other going missing. Separate files also mean separate lcov records: a file bundled into both carries branch ids from two different ASTs, which one record would count twice.
 
 **Statement lines only:** after the audit (which reads the raw report its thresholds were measured on), the collector aligns every e2e file with the lines the unit report can list — `restrictToStatementLines` in `packages/core/src/e2e-coverage/executable-lines.ts`, whose doc comments explain why Sonar needs it: the bundle's AST starts a few statements on other lines than vitest's transform, and a statement line the bundle has no code for is published as `DA:0` (not dropped), so e2e-only dead code still counts against its file. An executed statement the bundle starts a line early has its count moved, within its own span, to the line vitest starts it on; branches are published only on lines vitest lists a `BRDA` for (vite's preload wrapper injects one the source has no trace of). It reproduces vitest's own pipeline, so `vite` and `ast-v8-to-istanbul` are root devDependencies that the `overrides` force vitest and @vitest/coverage-v8 to share (`$vite`, `$ast-v8-to-istanbul`) — bump them at the root; Dependabot holds back their majors.
 
@@ -223,7 +238,7 @@ So the lifecycle is: tag `v0.2.6` released → first PR bumps both to `0.2.7` �
 
 ## After pushing — close the review loop
 
-A development cycle isn't done when the code is pushed. Once the changes are pushed and the PR is open, run BOTH of the following before considering the work finished.
+A development cycle isn't done when the code is pushed. Once the changes are pushed and the PR is open, do ALL of the following before considering the work finished. Re-check the bots after every push: each one reviews the new head again.
 
 ### 1. `/code-review xhigh --fix`
 
@@ -252,11 +267,57 @@ gh api -X POST repos/etiennechabert/cost-goblin/pulls/comments/<id>/reactions -f
 ```
 Keep replies professional and free of any AI attribution (see global git rules).
 
+### 3. Gitar review
+
+Gitar (`gitar-bot[bot]`) also reviews every PR: one summary comment on the PR, plus an inline comment per finding. **Reply to every Gitar finding, whether you agree with it or not**: an unanswered finding can't be told apart from an ignored one.
+
+For each inline `gitar-bot[bot]` finding:
+1. **Verify it against the actual code**, as for Sentry.
+2. **If valid**: fix it, run `npm run check`, push, and reply on the thread with what changed and the commit SHA. Gitar marks a finding it sees fixed ("✅ Fixed … in <sha>"); reply anyway.
+3. **If you disagree**: reply explaining precisely why, citing the code paths that disprove it.
+4. **Answer its "Was this helpful? React with 👍 / 👎" footer**: 👍 (`+1`) on a valid finding, 👎 (`-1`) on a wrong one. React on the summary comment too.
+
+Gitar reads replies on its threads ("Reply for a change"), so keep them to what was done and why. Don't post `gitar …` commands (e.g. `gitar auto-apply:on`, which lets it commit to the branch) or add the `gitar-managed` label unless the user asks.
+
+```bash
+gh api repos/etiennechabert/cost-goblin/pulls/<pr>/comments --jq '.[] | select(.user.login=="gitar-bot[bot]") | {id, path, line, body}'
+gh api repos/etiennechabert/cost-goblin/issues/<pr>/comments --jq '.[] | select(.user.login=="gitar-bot[bot]") | {id, body}'
+gh api -X POST repos/etiennechabert/cost-goblin/pulls/<pr>/comments/<id>/replies -f body="…"
+gh api -X POST repos/etiennechabert/cost-goblin/pulls/comments/<id>/reactions -f content='+1'    # inline finding; or -1
+gh api -X POST repos/etiennechabert/cost-goblin/issues/comments/<id>/reactions -f content='+1'   # summary comment; or -1
+```
+
+**Make each lesson stick.** On the free open-source plan, Gitar carries nothing learned in one PR's threads over to the next PR. When a finding shows a mistake that could recur, record it in the same PR:
+- A valid finding of a general kind → add the check, in one line, to the matching `.gitar/review/` guide. If it's also a rule for writing code here, add it to this file too.
+- A false positive Gitar will raise again → add a line to that guide's "Intentional, don't flag" list.
+- No room under the byte budget → cut a guide line that restates this file (Gitar loads it too) or that no finding has needed, rather than dropping the lesson.
+
+**Check against the guides before pushing.** `.gitar/review/` holds what Gitar reviews against (SQL and cost math, security and privacy, sync and config, UI and tests). Read the guide for each area you touched, so the finding never has to be raised.
+
+**Gitar can commit to the branch:** when someone ticks a suggestion's "Apply fix" box, replies `gitar fix`, turns on auto-apply, or adds the `gitar-managed` label. It also pushes a repair when one of its own commits breaks CI. If the remote branch moved, `git pull --ff-only` before pushing.
+
+**Editing `.gitar/`.** Gitar filters these files before each review, so put every instruction under a heading that matches it. On #716 a "flag this" note inside the "Don't comment on" list was dropped and never reached the reviewer. `npm run check` (`scripts/ci/gitar-config.test.mjs`) fails when a `.gitar/` file names a path or identifier that no longer exists, or when `review/` plus `instructions/` grow past 32 KB. See `.gitar/README.md` for what each file does.
+
+### 4. SonarCloud findings
+
+SonarCloud analyzes every PR, and the `sonarcloud` job fails when its quality gate does (most often on the 80% coverage-on-new-code condition). **Read the new issues even when the gate passes**: the gate only rates them, so code smells, bugs and security hotspots on new code can sit behind a green check. The API is public:
+
+```bash
+curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=etiennechabert_cost-goblin&pullRequest=<pr>" | jq '.projectStatus | {status, conditions: [.conditions[] | {metricKey, status, actualValue, errorThreshold}]}'
+curl -s "https://sonarcloud.io/api/issues/search?componentKeys=etiennechabert_cost-goblin&pullRequest=<pr>&resolved=false&ps=100" | jq '.issues[] | {severity, rule, component, line, message}'
+curl -s "https://sonarcloud.io/api/hotspots/search?projectKey=etiennechabert_cost-goblin&pullRequest=<pr>" | jq '.hotspots[] | {vulnerabilityProbability, component, line, message}'
+```
+
+- Fix every valid issue in the PR like any other review finding, then `npm run check` and push.
+- Cognitive complexity (`typescript:S3776`): the project threshold is **25**, not Sonar's default 15, because the strict TypeScript rules force flat guard chains the metric over-counts. A function at or under 25 needs no refactor even when Sonar flags it "…to the 15 allowed" (SonarCloud's profile still says 15).
+- A false positive can only be marked in SonarCloud's UI, which needs the maintainer's login. Leave the code as is and list the issue with your reason in the PR description or your summary.
+
 ## Key Architecture Decisions
 
 - **Tag normalization at query time** — aliases applied via SQL, not during sync. Changing aliases takes effect immediately.
 - **FOCUS 1.2 is the core schema** — the AWS source is the FOCUS 1.2 Data Export (Parquet); providers are receivers that deliver FOCUS Parquet into per-month `raw/{tier}-{YYYY-MM}/` dirs. Queries read the downloaded Parquet as-is (no repartitioning); per-month dirs give file-level date filter pushdown.
 - **No SQLite** — all state is YAML (user config) or JSON (app state). DuckDB is the only database.
+- **Only a missing config file is "absent"** — a YAML config that exists but doesn't load (a YAML or validation error, EACCES) is reported, never written over with defaults, and nothing runs as if it were absent: queries fail rather than run without cost-scope.yaml, and config bundles fail naming the file, except the LAN data share, which leaves out (and logs) a views.yaml that doesn't load (`buildCurrentBundle`'s `brokenViews: 'skip'`). Never `.catch(() => undefined)` a config load.
 - **CostApi interface is the boundary** — UI codes against the interface, never calls DuckDB directly. Enables mock testing and future web mode.
 - **Dark mode default, light mode available** — two chart color palettes (standard + Okabe-Ito colorblind-safe), togglable.
 
@@ -277,11 +338,12 @@ Keep replies professional and free of any AI attribution (see global git rules).
 - TanStack Table (headless table with virtual scrolling)
 - No animation library — Tailwind utilities for CSS motion, hand-rolled rAF where JS is needed. JS-driven motion must gate on `useReducedMotion` (`packages/ui/src/hooks/use-reduced-motion.ts`); CSS motion should use Tailwind's `motion-reduce:` variant.
 - Lucide React (icons)
+- Rows that are tidied or sorted from their own text, with React keys taken from it (the tag editor's alias rules), stay pinned while the user types and re-sort only once focus leaves the list. Re-keying a row unmounts the focused input, or the button that focus or a click is heading to.
 
 ## What NOT To Do
 
 - Do NOT skip `npm run check`. Every change must pass before moving on.
-- Do NOT consider a pushed change "done" until `/code-review xhigh --fix` has been run on it and every `sentry[bot]` comment is addressed.
+- Do NOT consider a pushed change "done" until `/code-review xhigh --fix` has been run on it, every `sentry[bot]` and `gitar-bot[bot]` comment is answered, and SonarCloud's new issues are triaged.
 - Do NOT add `any`, `@ts-ignore`, or `eslint-disable` to make code compile.
 - Do NOT write tests after implementation. Write them before or alongside.
 - Do NOT import from `core` into `ui` for anything except types.

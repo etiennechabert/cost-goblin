@@ -32,6 +32,7 @@ import {
   type DimensionsConfig,
   type ViewsConfig,
   type CostScopeConfig,
+  type CostScopePreviewRange,
   type CostScopePreviewResult,
   type ExplorerFilterValue,
   type ExplorerOverviewResult,
@@ -68,8 +69,10 @@ import {
   type WorkspacesInfo,
   type ExplorerPreferences,
   type ExplorerPreferencesUpdate,
+  type UIPreferences,
 } from '@costgoblin/core/browser';
-import { DEFAULT_COST_SCOPE, DEFAULT_EXPLORER_HIDDEN_COLUMNS, computeRollupEstimate } from '@costgoblin/core/browser';
+import { DEFAULT_COST_SCOPE, DEFAULT_EXPLORER_HIDDEN_COLUMNS, computeRollupEstimate, tagSqlColumn } from '@costgoblin/core/browser';
+import { daysBetween } from '../lib/dates.js';
 
 const MOCK_PEER_HOST = 'mock-peer.local';
 
@@ -489,7 +492,7 @@ export class MockCostApi implements CostApi {
   updateAwsProfile(): Promise<void> { return Promise.resolve(); }
   getSavingsPreferences(): Promise<{ hiddenActionTypes: readonly string[] }> { return Promise.resolve({ hiddenActionTypes: [] }); }
   saveSavingsPreferences(): Promise<void> { return Promise.resolve(); }
-  getUIPreferences(): Promise<{ theme: 'dark' | 'light'; palette: 'standard' | 'colorblind' }> { return Promise.resolve({ theme: 'dark', palette: 'standard' }); }
+  getUIPreferences(): Promise<UIPreferences> { return Promise.resolve({ theme: 'dark', palette: 'standard' }); }
   saveUIPreferences(): Promise<void> { return Promise.resolve(); }
   syncOrgAccounts(): Promise<{ accounts: readonly never[]; orgId: string; syncedAt: string }> { return Promise.resolve({ accounts: [], orgId: 'mock', syncedAt: new Date().toISOString() }); }
   getOrgSyncResult(): Promise<null> { return Promise.resolve(null); }
@@ -509,6 +512,8 @@ export class MockCostApi implements CostApi {
     const hasResourceId = candidate.builtIn.some(d => d.field === 'resource_id' && enabled(d));
     const probeLineItems = 2_100_000;
     const probeGrainRows = hasResourceId ? 1_840_000 : 92_000;
+    // The handler reports tags under their SQL column, as the rollup stores them.
+    const teamColumn = tagSqlColumn({ tagName: 'team' });
     // leaveOneOutGrainRows = grain with that dim removed. With resource_id
     // enabled it dominates (removing it collapses the grain ~20×); the others
     // are near-redundant (loo ≈ full grain → ≈ ×1).
@@ -516,13 +521,13 @@ export class MockCostApi implements CostApi {
       ? [
           { column: 'account_id', cardinality: 14, leaveOneOutGrainRows: 1_800_000 },
           { column: 'service', cardinality: 38, leaveOneOutGrainRows: 1_780_000 },
-          { column: 'tag_team', cardinality: 22, leaveOneOutGrainRows: 1_820_000 },
+          { column: teamColumn, cardinality: 22, leaveOneOutGrainRows: 1_820_000 },
           { column: 'resource_id', cardinality: 1_820_000, leaveOneOutGrainRows: 92_000 },
         ]
       : [
           { column: 'account_id', cardinality: 14, leaveOneOutGrainRows: 84_000 },
           { column: 'service', cardinality: 38, leaveOneOutGrainRows: 66_000 },
-          { column: 'tag_team', cardinality: 22, leaveOneOutGrainRows: 88_000 },
+          { column: teamColumn, cardinality: 22, leaveOneOutGrainRows: 88_000 },
         ];
     return Promise.resolve(computeRollupEstimate({
       probePeriod: '2026-04',
@@ -546,17 +551,30 @@ export class MockCostApi implements CostApi {
   setAutoPruneEnabled(): Promise<void> { return Promise.resolve(); }
   pruneNow(): Promise<PruneResult> { return Promise.resolve({ deleted: [] }); }
   getViewsConfig(): Promise<ViewsConfig> { return Promise.resolve(MOCK_VIEWS_CONFIG); }
-  saveViewsConfig(): Promise<void> { return Promise.resolve(); }
+  /** Every config `saveViewsConfig` was asked to persist, oldest first. */
+  readonly savedViewsConfigs: ViewsConfig[] = [];
+  saveViewsConfig(config: ViewsConfig): Promise<void> {
+    this.savedViewsConfigs.push(config);
+    return Promise.resolve();
+  }
   resetViewsConfig(): Promise<ViewsConfig> { return Promise.resolve(MOCK_VIEWS_CONFIG); }
   revealViewsFolder(): Promise<void> { return Promise.resolve(); }
   getCostScope(): Promise<CostScopeConfig> { return Promise.resolve(DEFAULT_COST_SCOPE); }
-  saveCostScope(): Promise<void> { return Promise.resolve(); }
-  previewCostScope(): Promise<CostScopePreviewResult> {
+  /** Every config `saveCostScope` was asked to persist, oldest first. */
+  readonly savedCostScopes: CostScopeConfig[] = [];
+  saveCostScope(config: CostScopeConfig): Promise<void> {
+    this.savedCostScopes.push(config);
+    return Promise.resolve();
+  }
+  /** The period of every preview requested, oldest first. */
+  readonly costScopePreviewRanges: CostScopePreviewRange[] = [];
+  previewCostScope(config: CostScopeConfig, range: CostScopePreviewRange): Promise<CostScopePreviewResult> {
+    this.costScopePreviewRanges.push(range);
     return Promise.resolve({
-      windowDays: 30,
-      startDate: '2026-03-20',
-      endDate: '2026-04-18',
-      perRule: [],
+      windowDays: daysBetween(range.start, range.end),
+      startDate: range.start,
+      endDate: range.end,
+      perRule: config.rules.filter(r => r.enabled).map(r => ({ ruleId: r.id, excludedCost: 0, excludedRows: 0 })),
       combined: { excludedCost: 0, excludedRows: 0 },
       unscopedTotalCost: 0,
       scopedTotalCost: 0,

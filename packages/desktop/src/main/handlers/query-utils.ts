@@ -6,8 +6,11 @@ import {
   getDescendantTagValues,
   listLocalMonths,
   logger,
+  meetsTrendThresholds,
   sqlStringLiteral,
   tagDimColumn,
+  tagSqlColumnsById,
+  trendPercentChange,
 } from '@costgoblin/core';
 import type {
   CostResult,
@@ -40,15 +43,30 @@ export function rawGlobLiteral(dataDir: string, provider: string, subPath: strin
   return sqlStringLiteral(`${dataDir}/${provider}/raw/${subPath}`);
 }
 
-/** The grain column a dimension id resolves to (built-in `field` or tag column),
- *  mirroring builder.ts resolveField. Used to gate a query against the rollup
- *  grain — an unknown/disabled dim returns its raw id, which won't be in-grain. */
+/** `COALESCE(col, '') AS col` for each tag column, for a SELECT list. */
+export function tagSelectItems(tagSqlColumns: ReadonlyMap<string, string>): string[] {
+  return [...tagSqlColumns.values()].map(c => `COALESCE(${c}, '') AS ${c}`);
+}
+
+/** A result row's tag values keyed by tag id: the renderer speaks ids, the
+ *  row is keyed by SQL column. A non-string value reads as ''. */
+export function tagValuesById(row: RawRow, tagSqlColumns: ReadonlyMap<string, string>): Record<string, string> {
+  const tags: Record<string, string> = {};
+  for (const [id, column] of tagSqlColumns) {
+    const v = row[column];
+    tags[id] = typeof v === 'string' ? v : '';
+  }
+  return tags;
+}
+
+/** The grain column a dimension id resolves to (built-in `field` or the tag's
+ *  `tagSqlColumn`), mirroring builder.ts resolveField. Used to gate a query
+ *  against the rollup grain — an unknown/disabled dim returns its raw id,
+ *  which won't be in-grain. */
 export function columnForDimension(dimensions: DimensionsConfig, dimId: string): string {
   const builtIn = dimensions.builtIn.find(d => d.name === dimId);
   if (builtIn !== undefined) return builtIn.field;
-  const tag = dimensions.tags.find(t => tagDimColumn(t) === dimId);
-  if (tag !== undefined) return tagDimColumn(tag);
-  return dimId;
+  return tagSqlColumnsById(dimensions.tags).get(dimId) ?? dimId;
 }
 
 /** Resolve the rollup source for a dashboard query, or undefined to use raw.
@@ -191,10 +209,7 @@ export function mergeTrendRowsByEntity(rows: readonly TrendRow[]): TrendRow[] {
     currentCost: asDollars(d.currentCost),
     previousCost: asDollars(d.previousCost),
     delta: asDollars(d.delta),
-    percentChange: (() => {
-      if (d.previousCost === 0) return d.currentCost === 0 ? 0 : 100;
-      return (d.delta / d.previousCost) * 100;
-    })(),
+    percentChange: trendPercentChange(d.currentCost, d.previousCost),
   })).sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
 }
 
@@ -261,8 +276,7 @@ export function buildTrendResult(rows: RawRow[], deltaThreshold: number, percent
     const delta = toNum(row['delta']);
     const percentChange = toNum(row['percent_change']);
 
-    if (Math.abs(delta) < deltaThreshold) continue;
-    if (Math.abs(percentChange) < percentThreshold) continue;
+    if (!meetsTrendThresholds({ currentCost, previousCost, delta, percentChange }, deltaThreshold, percentThreshold)) continue;
 
     const trendRow: TrendRow = {
       entity: asEntityRef(entity),

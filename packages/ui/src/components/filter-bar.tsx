@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Dimension, DimensionId, FilterMap, TagValue } from '@costgoblin/core/browser';
 import { asTagValue } from '@costgoblin/core/browser';
-import { getDimensionId } from '../lib/dimensions.js';
+import { EMPTY_VALUE_LABEL, getDimensionId } from '../lib/dimensions.js';
 import { focusOnMount } from '../lib/focus-on-mount.js';
 import { formatDollars } from './format.js';
 
@@ -170,7 +170,7 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
     if (active.length === 1) {
       const first = active[0];
       if (first === undefined) return dim.label;
-      return `${dim.label}: ${labelMap[first] ?? first}`;
+      return `${dim.label}: ${first === '' ? EMPTY_VALUE_LABEL : (labelMap[first] ?? first)}`;
     }
     return `${dim.label} \u00b7 ${String(active.length)}`;
   }

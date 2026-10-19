@@ -2,7 +2,7 @@ import type { BuiltInDimension, DimensionsConfig, TagDimension } from '../types/
 import type { CostQueryParams, DailyCostsParams, DateRange, FilterMap, TrendQueryParams, MissingTagsParams, EntityDetailParams } from '../types/query.js';
 import { DEFAULT_PLACEHOLDER_PATTERNS } from '../types/query.js';
 import type { DimensionId, ProviderName } from '../types/branded.js';
-import { tagDimColumn } from '../types/branded.js';
+import { tagDimColumn, tagSqlColumn } from '../types/branded.js';
 import { OU_PATH_SOURCE_KEY } from '../types/config.js';
 import type { CostMetric, CostScopeConfig, ExclusionRule, MarketplaceAttributionConfig, MarketplaceAttributionRule } from '../types/cost-scope.js';
 import { DEFAULT_COST_METRIC } from '../types/cost-scope.js';
@@ -12,6 +12,7 @@ import { QueryBuilder, type ParameterizedQuery } from './parameterized.js';
 import { assertBillingPeriod, assertDateString, assertHourString, assertSafeColumnIdentifier, assertTier, isSafeColumnIdentifier, SecurityError } from './identifier-validator.js';
 import { rollupGrainColumns, rollupGrainDimensions } from '../rollup/grain.js';
 import { sqlEscapeString, sqlStringLiteral } from './sql-escape.js';
+import { previousTrendPeriod, trendPercentChangeSql } from './trend-change.js';
 
 /** Label for rows whose SubAccountId is NULL. FOCUS allows a null SubAccountId
  *  and GCP emits it for charges not tied to a project (account-level taxes,
@@ -97,9 +98,11 @@ export function tryResolveField(dimensionId: DimensionId, dimensions: Dimensions
     return { fieldExpr, rawField: builtIn.field, dim: builtIn };
   }
 
+  // The id is matched case-sensitively here (JS), but the column comes from
+  // tagSqlColumn: DuckDB would read `tag_STAGE` and `tag_stage` as one column.
   const tag = dimensions.tags.find(d => tagDimColumn(d) === dimensionId);
   if (tag !== undefined) {
-    const rawField = tagDimColumn(tag);
+    const rawField = tagSqlColumn(tag);
     return { fieldExpr: buildAliasSqlCase(rawField, tag), rawField, dim: tag };
   }
 
@@ -129,7 +132,7 @@ export function resolveField(dimensionId: DimensionId, dimensions: DimensionsCon
   );
 }
 
-function buildSingleFilterClause(
+function buildValueMatchClause(
   resolved: ResolvedDimension,
   values: readonly string[],
   accountReverseMap: ReadonlyMap<string, readonly string[]> | undefined,
@@ -147,10 +150,26 @@ function buildSingleFilterClause(
   return `${resolved.fieldExpr} IN (${list})`;
 }
 
+/** The rows a filter's values keep. '' is the value of the group of rows with
+ *  none, so it keeps all of them (missingValueSql): a tag the resource lacks
+ *  is NULL, which `= ''` would drop. */
+function buildSingleFilterClause(
+  resolved: ResolvedDimension,
+  values: readonly string[],
+  accountReverseMap: ReadonlyMap<string, readonly string[]> | undefined,
+  qb: QueryBuilder,
+): string {
+  const present = values.filter(v => v !== '');
+  if (present.length === values.length) return buildValueMatchClause(resolved, values, accountReverseMap, qb);
+  const missing = missingValueSql(resolved);
+  if (present.length === 0) return missing;
+  return `(${buildValueMatchClause(resolved, present, accountReverseMap, qb)} OR ${missing})`;
+}
+
 /** One parameterized WHERE clause per non-empty filter entry. Dimension ids
  *  resolve through `resolveField` (unknown ids throw SecurityError), account
- *  display names expand to their ids via `accountReverseMap`, and every value
- *  is bound on `qb`. */
+ *  display names expand to their ids via `accountReverseMap`, every value is
+ *  bound on `qb`, and '' keeps the rows with no value (NULL or ''). */
 export function buildFilterClauses(
   filters: FilterMap,
   dimensions: DimensionsConfig,
@@ -191,28 +210,50 @@ function tryExpandAccountIds(
   return `${rawField} IN (${list})`;
 }
 
-/** Build the SQL fragment for a single condition within a rule. Returns null
- *  when the condition should be skipped (empty values, unknown dimension). */
+/** Rows with no value for the dimension: NULL (a tag the resource lacks) or ''
+ *  (buildSource coalesces a missing built-in field to ''), read off the
+ *  normalized/aliased expression the app displays and filters on. For the
+ *  account, also NO_ACCOUNT_SENTINEL, which stands in for a NULL
+ *  SubAccountId; checked on the raw column, where no normalize rule can have
+ *  reshaped it. Never NULL. */
+function missingValueSql(resolved: ResolvedDimension): string {
+  const empty = `COALESCE(${resolved.fieldExpr}, '') = ''`;
+  if (resolved.rawField !== 'account_id') return empty;
+  return `(${empty} OR ${resolved.rawField} = '${NO_ACCOUNT_SENTINEL}')`;
+}
+
+/** SQL for one rule condition: true when the row's value is one of the
+ *  condition's values or, with `matchMissing`, when it has none. Never NULL:
+ *  `x IN (…)` is NULL when x is, and an exclusion's `NOT (NULL)` drops the row
+ *  instead of keeping it — every untagged row, for a rule on a tag. Returns
+ *  null when the condition should be skipped (nothing to match, unknown
+ *  dimension). */
 function buildConditionSql(
   cond: ExclusionRule['conditions'][number],
   dimensions: DimensionsConfig,
   accountReverseMap: ReadonlyMap<string, readonly string[]> | undefined,
   qb: QueryBuilder | undefined,
 ): string | null {
-  if (cond.values.length === 0) return null;
+  const matchMissing = cond.matchMissing === true;
+  if (cond.values.length === 0 && !matchMissing) return null;
   const resolved = tryResolveField(cond.dimensionId, dimensions);
   if (resolved === null) return null;
-  const expanded = tryExpandAccountIds(cond.values, resolved.rawField, accountReverseMap, qb);
-  if (expanded !== null) return expanded;
-  const normalizedValues = cond.values.map(v => normalizeRuleValue(v, resolved.dim));
-  const list = buildSqlList(normalizedValues, qb);
-  return `${resolved.fieldExpr} IN (${list})`;
+  const parts: string[] = [];
+  if (cond.values.length > 0) {
+    const membership = tryExpandAccountIds(cond.values, resolved.rawField, accountReverseMap, qb)
+      ?? `${resolved.fieldExpr} IN (${buildSqlList(cond.values.map(v => normalizeRuleValue(v, resolved.dim)), qb)})`;
+    parts.push(`COALESCE(${membership}, FALSE)`);
+  }
+  if (matchMissing) parts.push(missingValueSql(resolved));
+  const sql = parts.join(' OR ');
+  // Parenthesized: the rule ANDs its conditions, and AND binds tighter than OR.
+  return parts.length > 1 ? `(${sql})` : sql;
 }
 
 /** Build the positive match expression for a single rule (AND of conditions,
  *  OR within each condition's values). Used both for NOT-exclusion in queries
- *  and for the positive preview queries. Returns null when the rule has no
- *  valid conditions (all empty values). */
+ *  and for the positive preview queries. Never NULL (see buildConditionSql).
+ *  Returns null when the rule has no valid conditions. */
 export function buildRuleMatchExpr(
   rule: ExclusionRule,
   dimensions: DimensionsConfig,
@@ -228,60 +269,23 @@ export function buildRuleMatchExpr(
   return conditionSqls.join(' AND ');
 }
 
-/** Try to merge a single-condition rule into the merged map. Returns true if
- *  it was merged (or skipped as invalid); false if it should fall through to
- *  multi-condition handling. */
-function tryMergeSingleConditionRule(
-  rule: ExclusionRule,
-  dimensions: DimensionsConfig,
-  accountReverseMap: ReadonlyMap<string, readonly string[]> | undefined,
-  merged: Map<string, { resolved: ResolvedDimension; values: string[] }>,
-): boolean {
-  if (rule.conditions.length !== 1) return false;
-  const cond = rule.conditions[0];
-  if (cond === undefined || cond.values.length === 0) return true;
-  const resolved = tryResolveField(cond.dimensionId, dimensions);
-  if (resolved === null) return true;
-  if (resolved.rawField === 'account_id' && accountReverseMap !== undefined) return false;
-  const normalizedValues = cond.values.map(v => normalizeRuleValue(v, resolved.dim));
-  const existing = merged.get(cond.dimensionId);
-  if (existing === undefined) {
-    merged.set(cond.dimensionId, { resolved, values: [...normalizedValues] });
-  } else {
-    existing.values.push(...normalizedValues);
-  }
-  return true;
-}
-
-function buildExclusionClauses(
+/** The WHERE clauses that drop every row an enabled rule matches: one
+ *  `NOT (…)` per enabled rule that resolves to SQL. Every query path builds
+ *  its exclusions here. Live queries bind values on `qb`; the DDL builders
+ *  (DuckDB can't prepare DDL) and the Explorer's literal WHERE pass none, which
+ *  inlines them as escaped literals. */
+export function buildExclusionClauses(
   rules: readonly ExclusionRule[],
   dimensions: DimensionsConfig,
-  accountReverseMap: ReadonlyMap<string, readonly string[]> | undefined,
-  qb: QueryBuilder,
+  accountReverseMap?: ReadonlyMap<string, readonly string[]>,
+  qb?: QueryBuilder,
 ): string[] {
-  const singleConditionByDim = new Map<string, { resolved: ResolvedDimension; values: string[] }>();
-  const multiConditionRules: ExclusionRule[] = [];
-
+  const clauses: string[] = [];
   for (const rule of rules) {
     if (!rule.enabled) continue;
-    if (!tryMergeSingleConditionRule(rule, dimensions, accountReverseMap, singleConditionByDim)) {
-      multiConditionRules.push(rule);
-    }
-  }
-
-  const clauses: string[] = [];
-
-  for (const [, { resolved, values }] of singleConditionByDim) {
-    const list = buildSqlList(values, qb);
-    clauses.push(`${resolved.fieldExpr} NOT IN (${list})`);
-  }
-
-  for (const rule of multiConditionRules) {
     const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap, qb);
-    if (matchExpr === null) continue;
-    clauses.push(`NOT (${matchExpr})`);
+    if (matchExpr !== null) clauses.push(`NOT (${matchExpr})`);
   }
-
   return clauses;
 }
 
@@ -298,7 +302,7 @@ function buildTagSelect(
   t: DimensionsConfig['tags'][number],
   needsOrgJoin: boolean,
 ): string {
-  const colName = tagDimColumn(t);
+  const colName = tagSqlColumn(t);
   const valueExpr = buildTagValueExpr(t, needsOrgJoin, colName);
   const wrapped = applyPathSegment(valueExpr, t.pathSegment);
   return `${wrapped} AS ${colName}`;
@@ -445,7 +449,7 @@ function buildRawTagSelects(dimensions: DimensionsConfig): string[] {
     if (t.accountTagFallback === undefined) continue;
     if (t.tagName === undefined || t.tagName.length === 0) continue;
     const tagKey = sqlEscapeString(t.tagName);
-    const colName = tagDimColumn(t);
+    const colName = tagSqlColumn(t);
     selects.push(`element_at(src.Tags, '${tagKey}')[1] AS raw_${colName}`);
   }
   return selects;
@@ -485,7 +489,7 @@ function buildFromClause(
   const fallbackSelects = dimensions.tags
     .filter(t => t.accountTagFallback !== undefined)
     .map(t => {
-      const colName = tagDimColumn(t);
+      const colName = tagSqlColumn(t);
       const fallback = t.accountTagFallback ?? '';
       if (fallback === OU_PATH_SOURCE_KEY) {
         return `ouPath AS fallback_${colName}`;
@@ -792,13 +796,7 @@ export function buildTrendQuery(
     // period, so the source needs to cover months from both spans. The previous
     // span ends the day before `startDate`.
     const currentPeriods = computePeriodsInRange(params.dateRange);
-    const dayMs = 24 * 60 * 60 * 1000;
-    const startMs = new Date(`${startDate}T00:00:00Z`).getTime();
-    const endMs = new Date(`${endDate}T00:00:00Z`).getTime();
-    const durationDays = Math.round((endMs - startMs) / dayMs) + 1;
-    const prevEndIso = new Date(startMs - dayMs).toISOString().slice(0, 10);
-    const prevStartIso = new Date(startMs - durationDays * dayMs).toISOString().slice(0, 10);
-    const previousPeriods = computePeriodsInRange({ start: prevStartIso, end: prevEndIso });
+    const previousPeriods = computePeriodsInRange(previousTrendPeriod(params.dateRange));
     const required = [...new Set([...currentPeriods, ...previousPeriods])].sort((a, b) => a.localeCompare(b));
     const branches = resolveProviderBranches(providers, required);
     source = buildSource({ dataDir, tier: 'daily', dimensions, orgAccountsPath, providers: branches, costMetric, marketplaceAttribution: costScope?.marketplaceAttribution });
@@ -844,10 +842,7 @@ export function buildTrendQuery(
       current_cost,
       previous_cost,
       current_cost - previous_cost AS delta,
-      CASE
-        WHEN previous_cost = 0 THEN NULL
-        ELSE (current_cost - previous_cost) / previous_cost * 100
-      END AS percent_change
+      ${trendPercentChangeSql('current_cost', 'previous_cost')} AS percent_change
     FROM agg
     WHERE ABS(current_cost - previous_cost) >= ${deltaThresholdPlaceholder}
     ORDER BY ABS(current_cost - previous_cost) DESC
@@ -1182,20 +1177,10 @@ export function buildEntityDetailQuery(
   const { qb, filterClauses, exclusionClauses, source } = setupQuery(params, tier, opts);
   const dimResolved = resolveField(params.dimension, opts.dimensions);
 
-  // Same display-name collision treatment for the entity selector itself: if
-  // the user clicked into "sre default" we need to match every underlying id,
-  // not just one.
-  const entityClause = (() => {
-    if (dimResolved.rawField === 'account_id' && opts.accountReverseMap !== undefined) {
-      const ids = opts.accountReverseMap.get(String(params.entity));
-      if (ids !== undefined && ids.length > 0) {
-        const placeholders = ids.map(id => qb.addParam(id)).join(', ');
-        return `${dimResolved.rawField} IN (${placeholders})`;
-      }
-    }
-    const entityPlaceholder = qb.addParam(String(params.entity));
-    return `${dimResolved.fieldExpr} = ${entityPlaceholder}`;
-  })();
+  // The entity is a filter on its own value: a display name shared by several
+  // accounts ("sre default") matches every underlying id, and '' (the group
+  // with no value) every row with none.
+  const entityClause = buildSingleFilterClause(dimResolved, [String(params.entity)], opts.accountReverseMap, qb);
 
   const whereConditions = [
     buildDateRangeWhere(qb, params.dateRange),
@@ -1237,15 +1222,7 @@ export function buildMaterializeBaseQuery(
   opts: QueryContextOptions,
 ): string {
   const { dataDir, dimensions, orgAccountsPath, providers, accountReverseMap, costScope } = opts;
-  const exclusionClauses: string[] = [];
-  if (costScope !== undefined) {
-    for (const rule of costScope.rules) {
-      if (!rule.enabled) continue;
-      const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
-      if (matchExpr === null) continue;
-      exclusionClauses.push(`NOT (${matchExpr})`);
-    }
-  }
+  const exclusionClauses = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap);
   const costMetric = costScope?.costMetric ?? DEFAULT_COST_METRIC;
   const branches = resolveProviderBranches(providers, computePeriodsInRange(dateRange));
   const source = buildSource({ dataDir, tier, dimensions, orgAccountsPath, providers: branches, costMetric, marketplaceAttribution: costScope?.marketplaceAttribution, includeRawTags: true, slim: true });
@@ -1309,15 +1286,7 @@ export function buildRollupPartitionQuery(
     includeRawTags: false, slim: true,
   });
 
-  const exclusionClauses: string[] = [];
-  if (costScope !== undefined) {
-    for (const rule of costScope.rules) {
-      if (!rule.enabled) continue;
-      const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
-      if (matchExpr === null) continue;
-      exclusionClauses.push(`NOT (${matchExpr})`);
-    }
-  }
+  const exclusionClauses = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap);
 
   const start = `${period}-01`;
   const end = periodUpperBound(period);
@@ -1382,15 +1351,7 @@ export function buildGrainProbeQuery(
     includeRawTags: false, slim: true,
   });
 
-  const exclusionClauses: string[] = [];
-  if (costScope !== undefined) {
-    for (const rule of costScope.rules) {
-      if (!rule.enabled) continue;
-      const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
-      if (matchExpr === null) continue;
-      exclusionClauses.push(`NOT (${matchExpr})`);
-    }
-  }
+  const exclusionClauses = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap);
 
   const start = `${period}-01`;
   const end = periodUpperBound(period);

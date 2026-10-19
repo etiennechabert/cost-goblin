@@ -180,10 +180,12 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-e2e-${{ matrix.shard }}
-          path: coverage-e2e/lcov.info
+          path: |
+            coverage-e2e/lcov.info
+            coverage-e2e/lcov-main.info
           if-no-files-found: ignore
       # A report the collector rejected is written under .rejected and NEVER as
-      # lcov.info, so it cannot reach the merge step below. Keep it anyway: the
+      # lcov.info / lcov-main.info, so it cannot reach the merge step below. Keep it anyway: the
       # ::error:: annotation gives the file count and share, this gives the
       # per-file breakdown needed to see WHICH files were fabricated. The
       # artifact name deliberately sits outside the `coverage-e2e-*` pattern the
@@ -193,7 +195,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rejected-coverage-${{ matrix.shard }}
-          path: coverage-e2e/lcov.info.rejected
+          path: |
+            coverage-e2e/lcov.info.rejected
+            coverage-e2e/lcov-main.info.rejected
           if-no-files-found: ignore
       - name: Upload Playwright report
         if: always()
@@ -305,27 +309,39 @@ jobs:
           E2E_RESULT: ${{ needs.test-e2e.result }}
         run: |
           set -euo pipefail
-          # Shards expected to upload coverage. navigation-, csp- and
-          # sandbox-verification deliberately collect none. Keep in sync with
-          # the shard names passed to finishCoverage(app, page, '<shard>') in
-          # e2e/*.test.ts.
-          expected="views-core views-config views-defaults stress gcp-provider workspaces clickability"
+          # Each shard uploads up to two reports (see e2e/collect-coverage.ts),
+          # and each is required separately, so neither can hide the other
+          # going missing. lcov.info is the renderer: keep this list in sync
+          # with the shard names passed to finishCoverage(app, page, '<shard>')
+          # in e2e/*.test.ts. lcov-main.info is the main process, which every
+          # shard measures (launchElectron sets NODE_V8_COVERAGE) — navigation-,
+          # csp- and sandbox-verification deliberately harvest no renderer
+          # coverage, so they upload only that one.
+          renderer="views-core views-config views-defaults stress gcp-provider workspaces clickability"
+          main="$renderer navigation-verification csp-verification sandbox-verification"
           missing=0
           mkdir -p coverage-e2e
           : > coverage-e2e/lcov.info
-          for shard in $expected; do
-            f="coverage-e2e-shards/coverage-e2e-$shard/lcov.info"
-            if [ -s "$f" ]; then
-              # printf guards the record boundary even if a shard's file
-              # arrives without its trailing newline.
-              cat "$f" >> coverage-e2e/lcov.info
-              printf '\n' >> coverage-e2e/lcov.info
-              echo "merged: $shard"
-            else
-              echo "::warning::E2E coverage shard '$shard' is missing or empty."
-              missing=1
-            fi
-          done
+          merge() { # <report file> <shard>...
+            local report=$1
+            shift
+            for shard in "$@"; do
+              f="coverage-e2e-shards/coverage-e2e-$shard/$report"
+              if [ -s "$f" ]; then
+                # printf guards the record boundary even if a shard's file
+                # arrives without its trailing newline.
+                cat "$f" >> coverage-e2e/lcov.info
+                printf '\n' >> coverage-e2e/lcov.info
+                echo "merged: $shard ($report)"
+              else
+                echo "::warning::E2E coverage shard '$shard' has no $report, or it is empty."
+                missing=1
+              fi
+            done
+          }
+          # Unquoted on purpose: each list splits into its shard names.
+          merge lcov.info $renderer
+          merge lcov-main.info $main
           if [ "$missing" = 1 ] && [ "$E2E_RESULT" = "success" ]; then
             echo "::error::test-e2e succeeded but at least one coverage shard is missing/empty — the coverage pipeline is broken."
             exit 1

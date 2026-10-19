@@ -26,3 +26,11 @@ const DIM_TO_COLUMN: ReadonlyMap<string, string> = new Map(
 export function dimToColumnKey(dimId: string): string {
   return DIM_TO_COLUMN.get(dimId) ?? dimId;
 }
+
+/** Whether a filter on '' keeps the group a dimension's column shows empty,
+ *  which it does when the column holds the field the dimension filters. The
+ *  Account column holds names while the account filter matches ids: an
+ *  account with a blank name still has an id, so that group can't be kept. */
+export function filtersEmptyGroup(dimId: string): boolean {
+  return dimToColumnKey(dimId) === dimId;
+}

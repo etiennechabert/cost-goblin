@@ -3,15 +3,15 @@ import { originStore } from '../query-log.js';
 import {
   asDimensionId,
   dimensionIdSet,
+  buildExclusionClauses,
   buildSource,
-  buildRuleMatchExpr,
   computePeriodsInRange,
   logger,
   resolveField,
   tagDimColumn,
+  tagSqlColumnsById,
 } from '@costgoblin/core';
 import type {
-  ExclusionRule,
   ExplorerBaseParams,
   ExplorerFilterMap,
   ExplorerFilterValue,
@@ -23,82 +23,29 @@ import type {
   ExplorerRowsParams,
   ExplorerRowsResult,
   ExplorerSampleRow,
-  ExplorerSort,
   ExplorerDailyRow,
   ExplorerTagColumn,
   DimensionsConfig,
   ProviderSourceSpec,
   AggregatedTableParams,
-  AggregatedTableRow,
   AggregatedTableResult,
 } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
 import { type AppContext, prefsPath } from './context.js';
-import { buildAccountReverseMap, columnForDimension, resolveRollupSource, toNum, toStr } from './query-utils.js';
+import { buildAccountReverseMap, columnForDimension, resolveRollupSource, tagSelectItems, tagValuesById, toNum, toStr } from './query-utils.js';
+import { parseRowKeys, queryAggregatedRows } from './aggregated-table.js';
+import type { RunSql } from './aggregated-table.js';
+import { appendRowFilters, explorerGroupBy, explorerOrderBy } from './explorer-columns.js';
+import { buildExplorerFilterPredicate } from './explorer-filters.js';
 import { readExplorerPreferences, writeExplorerPreferences } from './explorer-prefs.js';
 import { resolveScopeMetric } from './explorer-scope.js';
 import { resolveExplorerDateRange } from './query-windows.js';
 
 const MAX_ROW_LIMIT = 1000;
 
-const SORTABLE_SCALAR_COLUMNS: ReadonlySet<string> = new Set([
-  'usage_date',
-  'usage_hour',
-  'account_id',
-  'account_name',
-  'region',
-  'service',
-  'service_code',
-  'service_category',
-  'charge_category',
-  'pricing_category',
-  'commitment_status',
-  'operation',
-  'sku_meter',
-  'description',
-  'resource_id',
-  'usage_amount',
-  'cost',
-  'list_cost',
-]);
-
 function clampRowLimit(n: number): number {
   if (!Number.isFinite(n) || n <= 0) return 500;
   return Math.min(Math.floor(n), MAX_ROW_LIMIT);
-}
-
-function buildExplorerFilterPredicate(
-  filters: ExplorerFilterMap,
-  dimensions: DimensionsConfig,
-  accountReverseMap: ReadonlyMap<string, readonly string[]>,
-): string | null {
-  const conditions = Object.entries(filters)
-    .filter(([, values]) => values.length > 0)
-    .map(([dimId, values]) => ({
-      dimensionId: asDimensionId(dimId),
-      values,
-    }));
-  if (conditions.length === 0) return null;
-  const synthetic: ExclusionRule = {
-    id: '_explorer_filters',
-    name: '_explorer_filters',
-    enabled: true,
-    builtIn: false,
-    conditions,
-  };
-  return buildRuleMatchExpr(synthetic, dimensions, accountReverseMap);
-}
-
-function buildOrderBy(
-  sort: ExplorerSort | undefined,
-  tagColumnIds: ReadonlySet<string>,
-): string {
-  if (sort === undefined) return 'ABS(cost) DESC';
-  const dir = sort.direction === 'asc' ? 'ASC' : 'DESC';
-  if (SORTABLE_SCALAR_COLUMNS.has(sort.column) || tagColumnIds.has(sort.column)) {
-    return `${sort.column} ${dir}`;
-  }
-  return 'ABS(cost) DESC';
 }
 
 /** Everything the overview / rows / filter-values handlers compute up front.
@@ -114,67 +61,10 @@ interface QueryContext {
   readonly windowDays: number;
   readonly tier: 'daily' | 'hourly';
   readonly tagColumns: readonly ExplorerTagColumn[];
-  readonly tagIdSet: ReadonlySet<string>;
+  /** Tag id → SQL column; see tagSqlColumnsById. */
+  readonly tagSqlColumns: ReadonlyMap<string, string>;
   readonly dimensions: DimensionsConfig;
   readonly accountMap: ReadonlyMap<string, string>;
-}
-
-function classifyExclusionRule(
-  rule: ExclusionRule,
-  dimensions: DimensionsConfig,
-  accountReverseMap: ReadonlyMap<string, readonly string[]>,
-  singleByDim: Map<string, { fieldExpr: string; values: string[] }>,
-): ExclusionRule | null {
-  if (rule.conditions.length !== 1) return rule;
-
-  const cond = rule.conditions[0];
-  if (cond === undefined || cond.values.length === 0) return null;
-
-  const key = cond.dimensionId;
-  const existing = singleByDim.get(key);
-  if (existing !== undefined) {
-    existing.values.push(...cond.values.map(v => v.replaceAll("'", "''")));
-    return null;
-  }
-
-  const probe: ExclusionRule = { ...rule, conditions: [cond] };
-  const expr = buildRuleMatchExpr(probe, dimensions, accountReverseMap);
-  if (expr === null) return null;
-
-  const inIdx = expr.indexOf(' IN (');
-  if (inIdx === -1) return rule;
-
-  const fieldExpr = expr.slice(0, inIdx);
-  singleByDim.set(key, { fieldExpr, values: cond.values.map(v => v.replaceAll("'", "''")) });
-  return null;
-}
-
-function buildExclusionClauses(
-  costScope: { rules: readonly ExclusionRule[] } | undefined,
-  dimensions: DimensionsConfig,
-  accountReverseMap: ReadonlyMap<string, readonly string[]>,
-): string[] {
-  if (costScope === undefined) return [];
-
-  const singleByDim = new Map<string, { fieldExpr: string; values: string[] }>();
-  const multiRules: ExclusionRule[] = [];
-
-  for (const rule of costScope.rules) {
-    if (!rule.enabled) continue;
-    const multi = classifyExclusionRule(rule, dimensions, accountReverseMap, singleByDim);
-    if (multi !== null) multiRules.push(multi);
-  }
-
-  const clauses: string[] = [];
-  for (const [, { fieldExpr, values }] of singleByDim) {
-    const list = values.map(v => `'${v}'`).join(', ');
-    clauses.push(`${fieldExpr} NOT IN (${list})`);
-  }
-  for (const rule of multiRules) {
-    const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
-    if (matchExpr !== null) clauses.push(`NOT (${matchExpr})`);
-  }
-  return clauses;
 }
 
 interface BuildFreshSourceOptions {
@@ -194,14 +84,14 @@ interface BuildFreshSourceOptions {
 
 async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source: string; whereStr: string }> {
   const { app, params, startStr, endStr, startHour, endHour, tier, periods, providers, dimensions, filterPredicate, accountReverseMap } = opts;
-  const { ctx, getCostScope, getOrgAccountsPath } = app;
+  const { ctx, getQueryCostScope, getOrgAccountsPath } = app;
   const orgPath = await getOrgAccountsPath();
   const applyCostScope = params.applyCostScope === true;
   // Marketplace re-attribution fixes which service a cost belongs to (a data
   // quality fix, not an exclusion), so it follows its own toggle and applies
   // regardless of the "Apply Cost Scope" checkbox — otherwise the Explorer and
   // its filter dropdowns would disagree with the dashboard on Bedrock spend.
-  const fullScope = await getCostScope().catch(() => undefined);
+  const fullScope = await getQueryCostScope();
   const scopeForExclusions = applyCostScope ? fullScope : undefined;
   // When the caller applies the cost scope but doesn't override the metric
   // (every dashboard widget — only the Explorer view sets it explicitly),
@@ -221,9 +111,9 @@ async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source
   const source = buildSource({
     dataDir: ctx.dataDir, tier, dimensions, orgAccountsPath: orgPath,
     providers: branches,
-    costMetric: metric, marketplaceAttribution: fullScope?.marketplaceAttribution,
+    costMetric: metric, marketplaceAttribution: fullScope.marketplaceAttribution,
   });
-  const exclusions = buildExclusionClauses(scopeForExclusions, dimensions, accountReverseMap);
+  const exclusions = scopeForExclusions === undefined ? [] : buildExclusionClauses(scopeForExclusions.rules, dimensions, accountReverseMap);
 
   // When the histogram drag-zoom emits hour bounds, swap the day-level
   // BETWEEN for an hour-level filter so the rest of the Explorer (overview,
@@ -266,8 +156,8 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
     id: tagDimColumn(t),
     label: t.label,
   }));
-  const tagIdSet = new Set(tagColumns.map(t => t.id));
-  const shared = { providers, startStr, endStr, windowDays, tier, tagColumns, tagIdSet, dimensions, accountMap } as const;
+  const tagSqlColumns = tagSqlColumnsById(dimensions.tags);
+  const shared = { providers, startStr, endStr, windowDays, tier, tagColumns, tagSqlColumns, dimensions, accountMap } as const;
 
   if (periods.length === 0) {
     return { empty: true, source: '', whereStr: '', ...shared };
@@ -286,42 +176,6 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
     tier, periods, providers, dimensions, filterPredicate, accountReverseMap,
   });
   return { empty: false, source, whereStr, ...shared };
-}
-
-function appendRowFilters(
-  baseWhere: string,
-  rowFilters: Record<string, string> | undefined,
-  tagIdSet: ReadonlySet<string>,
-): string {
-  if (rowFilters === undefined) return baseWhere;
-  const extra: string[] = [];
-  for (const [col, val] of Object.entries(rowFilters)) {
-    if (val.length === 0) continue;
-    if (!SORTABLE_SCALAR_COLUMNS.has(col) && !tagIdSet.has(col)) continue;
-    const escaped = val.replaceAll("'", "''");
-    const colExpr = col === 'usage_date' ? `usage_date::VARCHAR` : col;
-    extra.push(`${colExpr} = '${escaped}'`);
-  }
-  if (extra.length === 0) return baseWhere;
-  const joined = extra.join(' AND ');
-  if (baseWhere.length === 0) return `WHERE ${joined}`;
-  return `${baseWhere} AND ${joined}`;
-}
-
-const AGG_SORT_COLUMNS: Record<string, (dir: string) => string> = {
-  cost: (dir) => `SUM(cost) ${dir}`,
-  list_cost: (dir) => `SUM(list_cost) ${dir}`,
-  usage_amount: (dir) => `SUM(usage_amount) ${dir}`,
-  row_count: (dir) => `COUNT(*) ${dir}`,
-};
-
-function resolveAggregatedSort(sort: ExplorerSort | undefined, groupByColumns: readonly string[]): string {
-  if (sort === undefined) return 'SUM(cost) DESC';
-  const dir = sort.direction === 'asc' ? 'ASC' : 'DESC';
-  const fn = AGG_SORT_COLUMNS[sort.column];
-  if (fn !== undefined) return fn(dir);
-  if (groupByColumns.includes(sort.column)) return `${sort.column} ${dir}`;
-  return 'SUM(cost) DESC';
 }
 
 /** The dashboard Table widget hits the overview with the GLOBAL cost scope and
@@ -363,7 +217,7 @@ function readOverviewDaily(result: PromiseSettledResult<RawRow[]>): readonly Exp
 }
 
 export function registerExplorerHandlers(app: AppContext): void {
-  const { ctx, runQuery, rollupStore, getAccountReverseMap, getQueryDimensions } = app;
+  const { ctx, runQuery, runPreparedQuery, rollupStore, getAccountReverseMap, getQueryDimensions } = app;
 
   const explorerPrefsPath = () => prefsPath(ctx.stateDir, 'explorer-preferences');
 
@@ -486,10 +340,8 @@ export function registerExplorerHandlers(app: AppContext): void {
 
     if (qc.empty) return { sampleRows: [], tagColumns: qc.tagColumns };
 
-    const tagSelectSql = qc.tagColumns.length > 0
-      ? qc.tagColumns.map(t => `COALESCE(${t.id}, '') AS ${t.id}`).join(',\n          ')
-      : null;
-    const orderBy = buildOrderBy(params.sort, qc.tagIdSet);
+    const tagSelects = tagSelectItems(qc.tagSqlColumns);
+    const orderBy = explorerOrderBy(params.sort, qc.tagSqlColumns);
     // Hourly tier exposes `usage_hour` as a TIMESTAMP in the source — cast
     // to VARCHAR so it survives IPC cleanly. Daily has no usage_hour
     // column, so emit a literal empty string.
@@ -502,7 +354,7 @@ export function registerExplorerHandlers(app: AppContext): void {
         charge_category, operation, sku_meter, description, resource_id,
         CAST(usage_amount AS DOUBLE) AS usage_amount,
         CAST(cost AS DOUBLE) AS cost,
-        CAST(list_cost AS DOUBLE) AS list_cost${tagSelectSql === null ? '' : `,\n        ${tagSelectSql}`}
+        CAST(list_cost AS DOUBLE) AS list_cost${tagSelects.length === 0 ? '' : `,\n        ${tagSelects.join(',\n        ')}`}
       FROM ${qc.source}
       ${qc.whereStr}
       ORDER BY ${orderBy}
@@ -512,31 +364,24 @@ export function registerExplorerHandlers(app: AppContext): void {
     let sampleRows: readonly ExplorerSampleRow[] = [];
     try {
       const rows = await runQuery(sampleSql);
-      sampleRows = rows.map(r => {
-        const tags: Record<string, string> = {};
-        for (const t of qc.tagColumns) {
-          const v = r[t.id];
-          tags[t.id] = typeof v === 'string' ? v : '';
-        }
-        return {
-          date: toStr(r['usage_date']),
-          hour: toStr(r['usage_hour']),
-          accountId: toStr(r['account_id']),
-          accountName: toStr(r['account_name']),
-          region: toStr(r['region']),
-          service: toStr(r['service']),
-          serviceCategory: toStr(r['service_category']),
-          chargeCategory: toStr(r['charge_category']),
-          operation: toStr(r['operation']),
-          skuMeter: toStr(r['sku_meter']),
-          description: toStr(r['description']),
-          resourceId: toStr(r['resource_id']),
-          usageAmount: toNum(r['usage_amount']),
-          cost: toNum(r['cost']),
-          listCost: toNum(r['list_cost']),
-          tags,
-        };
-      });
+      sampleRows = rows.map(r => ({
+        date: toStr(r['usage_date']),
+        hour: toStr(r['usage_hour']),
+        accountId: toStr(r['account_id']),
+        accountName: toStr(r['account_name']),
+        region: toStr(r['region']),
+        service: toStr(r['service']),
+        serviceCategory: toStr(r['service_category']),
+        chargeCategory: toStr(r['charge_category']),
+        operation: toStr(r['operation']),
+        skuMeter: toStr(r['sku_meter']),
+        description: toStr(r['description']),
+        resourceId: toStr(r['resource_id']),
+        usageAmount: toNum(r['usage_amount']),
+        cost: toNum(r['cost']),
+        listCost: toNum(r['list_cost']),
+        tags: tagValuesById(r, qc.tagSqlColumns),
+      }));
     } catch (err) {
       logger.warn(`explorer: sample query failed: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -544,82 +389,25 @@ export function registerExplorerHandlers(app: AppContext): void {
     return { sampleRows, tagColumns: qc.tagColumns };
   }));
 
+  // Without keys the queries take no parameters, so they keep the plain path.
+  const runAggregatedSql: RunSql = (sql, bound) => bound.length === 0 ? runQuery(sql) : runPreparedQuery(sql, bound);
+
   ipcMain.handle('explorer:query-aggregated-table', (_event, payload: unknown): Promise<AggregatedTableResult> => originStore.run((payload as AggregatedTableParams).origin ?? null, async () => {
     const params = payload as AggregatedTableParams;
+    const rowKeys = parseRowKeys(params.rowKeys, MAX_ROW_LIMIT);
     const qc = await prepareQueryContext(app, params);
-    const rowLimit = clampRowLimit(params.rowLimit);
 
     if (qc.empty) return { rows: [], totalRows: 0, tagColumns: qc.tagColumns };
 
-    const whereStr = appendRowFilters(qc.whereStr, params.rowFilters, qc.tagIdSet);
-
-    const groupByColumns = params.groupByColumns.filter(
-      col => SORTABLE_SCALAR_COLUMNS.has(col) || qc.tagIdSet.has(col),
-    );
-
-    if (groupByColumns.length === 0) {
-      const sql = `
-        SELECT
-          CAST(SUM(cost) AS DOUBLE) AS cost,
-          CAST(SUM(list_cost) AS DOUBLE) AS list_cost,
-          CAST(SUM(usage_amount) AS DOUBLE) AS usage_amount,
-          CAST(COUNT(*) AS DOUBLE) AS row_count
-        FROM ${qc.source}
-        ${whereStr}
-      `.trim();
-      const rows = await runQuery(sql);
-      const r = rows[0];
-      if (r === undefined) return { rows: [], totalRows: 0, tagColumns: qc.tagColumns };
-      return {
-        rows: [{ values: {}, cost: toNum(r['cost']), listCost: toNum(r['list_cost']), usageAmount: toNum(r['usage_amount']), rowCount: toNum(r['row_count']) }],
-        totalRows: 1,
-        tagColumns: qc.tagColumns,
-      };
-    }
-
-    const selectCols = groupByColumns.map(col => {
-      if (col === 'usage_date') return `usage_date::VARCHAR AS usage_date`;
-      return col;
+    const { rows, totalRows } = await queryAggregatedRows(runAggregatedSql, {
+      source: qc.source,
+      where: appendRowFilters(qc.whereStr, params.rowFilters, qc.tagSqlColumns),
+      groupBy: explorerGroupBy(params.groupByColumns, qc.tagSqlColumns),
+      sort: params.sort,
+      rowLimit: clampRowLimit(params.rowLimit),
+      rowKeys,
     });
-    const orderBy = resolveAggregatedSort(params.sort, groupByColumns);
-
-    const countSql = `
-      SELECT CAST(COUNT(*) AS DOUBLE) AS n FROM (
-        SELECT 1 FROM ${qc.source} ${whereStr}
-        GROUP BY ${groupByColumns.join(', ')}
-      ) AS _cnt
-    `.trim();
-    const dataSql = `
-      SELECT
-        ${selectCols.join(', ')},
-        CAST(SUM(cost) AS DOUBLE) AS cost,
-        CAST(SUM(list_cost) AS DOUBLE) AS list_cost,
-        CAST(SUM(usage_amount) AS DOUBLE) AS usage_amount,
-        CAST(COUNT(*) AS DOUBLE) AS row_count
-      FROM ${qc.source}
-      ${whereStr}
-      GROUP BY ${groupByColumns.join(', ')}
-      ORDER BY ${orderBy}
-      LIMIT ${String(rowLimit)}
-    `.trim();
-
-    const [countResult, dataResult] = await Promise.all([runQuery(countSql), runQuery(dataSql)]);
-    const totalRows = countResult[0] === undefined ? 0 : toNum(countResult[0]['n']);
-    const resultRows: AggregatedTableRow[] = dataResult.map(r => {
-      const values: Record<string, string> = {};
-      for (const col of groupByColumns) {
-        values[col] = toStr(r[col]);
-      }
-      return {
-        values,
-        cost: toNum(r['cost']),
-        listCost: toNum(r['list_cost']),
-        usageAmount: toNum(r['usage_amount']),
-        rowCount: toNum(r['row_count']),
-      };
-    });
-
-    return { rows: resultRows, totalRows, tagColumns: qc.tagColumns };
+    return { rows, totalRows, tagColumns: qc.tagColumns };
   }));
 
   ipcMain.handle('explorer:filter-values', (_event, payload: unknown): Promise<ExplorerFilterValue[]> => originStore.run((payload as ExplorerFilterValuesParams).origin ?? null, async () => {

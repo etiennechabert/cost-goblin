@@ -1,4 +1,5 @@
 import type { DateString, DimensionId, Dollars, EntityRef, HourString, TagValue } from './branded.js';
+import { asDimensionId, asTagValue } from './branded.js';
 
 export type Granularity = 'daily' | 'hourly';
 
@@ -18,6 +19,15 @@ export interface DateRange {
 }
 
 export type FilterMap = Readonly<Partial<Record<DimensionId, readonly TagValue[]>>>;
+
+/** A FilterMap from plain dimension ids and values, as an IPC or MCP payload
+ *  carries them; none is no filters. An id reaches SQL only through
+ *  resolveField, which throws on an unknown one. */
+export function toFilterMap(raw: Readonly<Record<string, readonly string[]>> | undefined): FilterMap {
+  const filters: Partial<Record<DimensionId, readonly TagValue[]>> = {};
+  for (const [id, values] of Object.entries(raw ?? {})) filters[asDimensionId(id)] = values.map(v => asTagValue(v));
+  return filters;
+}
 
 export interface CostQueryParams {
   readonly groupBy: DimensionId;

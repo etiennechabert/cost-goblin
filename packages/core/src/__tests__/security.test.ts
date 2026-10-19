@@ -381,16 +381,19 @@ describe('SQL Injection Prevention', () => {
       expect(result.params).toContain('%malicious%');
     });
 
-    it('handles empty string filter values', () => {
+    it('reads an empty filter value as the rows with no value, binding the others', () => {
       const result = buildCostQuery(
         {
           groupBy: asDimensionId('service'),
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
-          filters: { [asDimensionId('account')]: [asTagValue('')] },
+          filters: { [asDimensionId('account')]: [asTagValue(''), asTagValue("o'brien")] },
         },
         { dataDir: '/data', dimensions, providers },
       );
-      expect(result.params).toContain('');
+      expect(result.sql).toMatch(/COALESCE\(.+, ''\) = ''/);
+      expect(result.params).toContain("o'brien");
+      expect(result.params).not.toContain('');
+      expect(result.sql).not.toContain("o'brien");
     });
   });
 

@@ -4,6 +4,7 @@ import {
   logger,
   asEntityRef,
   asDollars,
+  previousTrendPeriod,
 } from '@costgoblin/core';
 import type {
   TrendQueryParams,
@@ -22,26 +23,21 @@ import {
 import { originStore } from '../query-log.js';
 
 export function registerTrendHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getCostScope, getQueryProviders, runPreparedQuery, rollupStore } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getQueryCostScope, getQueryProviders, runPreparedQuery, rollupStore } = app;
 
   ipcMain.handle('query:trends', (_event, params: TrendQueryParams): Promise<TrendResult> => originStore.run(params.origin ?? null, async () => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
     const accountReverseMap = await getAccountReverseMap();
     const orgPath = await getOrgAccountsPath();
-    const costScope = await getCostScope().catch(() => undefined);
+    const costScope = await getQueryCostScope();
     const providers = await getQueryProviders('daily');
     const empty = providersEmptyForRange(providers, params.dateRange);
     if (empty) return { increases: [], savings: [], totalIncrease: asDollars(0), totalSavings: asDollars(0) };
 
     // Compute the full date range (current + previous period) to check if
     // the materialized base covers both spans.
-    const dayMs = 86_400_000;
-    const startMs = new Date(`${params.dateRange.start}T00:00:00Z`).getTime();
-    const endMs = new Date(`${params.dateRange.end}T00:00:00Z`).getTime();
-    const durationDays = Math.round((endMs - startMs) / dayMs) + 1;
-    const prevStart = new Date(startMs - durationDays * dayMs).toISOString().slice(0, 10);
-    const fullRange = { start: prevStart, end: params.dateRange.end };
+    const fullRange = { start: previousTrendPeriod(params.dateRange).start, end: params.dateRange.end };
     // Coverage must include the previous-period span (fullRange), or trends
     // under-reports previous_cost. resolveRollupSource checks every touched month.
     const matSource = resolveRollupSource(rollupStore, providers, fullRange, 'daily', [

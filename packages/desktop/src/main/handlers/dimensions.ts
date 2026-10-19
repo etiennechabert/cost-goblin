@@ -2,7 +2,7 @@ import { ipcMain } from 'electron';
 import { applyNormalizationRule, buildGrainProbeQuery, buildSource, computeRollupEstimate, dimensionsConfigToYaml, emptyRollupEstimate, generateAliasSuggestions, isStringRecord, rollupGrainColumns, rollupGrainDimensions, sqlEscapeString } from '@costgoblin/core';
 import type { AliasSuggestion, ColumnValuesPreview, DimensionsConfig, NormalizationRule, RollupGrainEstimate } from '@costgoblin/core';
 import { type AppContext, loadOrgAccountsMap } from './context.js';
-import { parseDimensionsPayload, parseDimensionsSavePayload } from './dimensions-payload.js';
+import { parseDimensionsPayload, parseDimensionsRewritePayload, parseDimensionsSavePayload, withAcceptedAliasSuggestion } from './dimensions-payload.js';
 import { applyNormalizeAndStrip, mergeValuesByLabel, NO_STRIP_ISSUES, parsePreviewStripPatterns, type ValueCostPair } from './dimensions-preview.js';
 import { rawGlobLiteral, toNum, toStr } from './query-utils.js';
 import { tagDiscoverySince } from './query-windows.js';
@@ -53,7 +53,7 @@ function filterUncoveredSuggestions(
 }
 
 export function registerDimensionsHandlers(app: AppContext): void {
-  const { ctx, getConfig, getDimensions, getQueryDimensions, getCostScope, getFirstProviderName, getQueryProviders, getOrgAccountsPath, getAccountReverseMap, getRegionMap, signatureForDimensions, invalidateDimensions, rollupStore, runQuery } = app;
+  const { ctx, getConfig, getDimensions, getQueryDimensions, getQueryCostScope, getFirstProviderName, getQueryProviders, getOrgAccountsPath, getAccountReverseMap, getRegionMap, signatureForDimensions, invalidateDimensions, rollupStore, runQuery } = app;
 
   ipcMain.handle('dimensions:discover-tags', async (): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }> => {
     const config = await getConfig();
@@ -167,7 +167,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
     // re-attribution (Bedrock etc.), instead of raw x_ServiceCode. `field`
     // is already a buildSource output alias (validated against ALLOWED above).
     const period = latest.replace(/^daily-/, '');
-    const costScope = await getCostScope().catch(() => undefined);
+    const costScope = await getQueryCostScope();
     const orgAccountsPath = await getOrgAccountsPath();
     // Probe ONLY the provider whose latest month was just listed — handing
     // the same period to every provider's branch would emit zero-match globs
@@ -178,7 +178,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
       orgAccountsPath,
       providers: [{ name: firstProvider.name, periods: [period] }],
       costMetric: 'billed',
-      marketplaceAttribution: costScope?.marketplaceAttribution,
+      marketplaceAttribution: costScope.marketplaceAttribution,
     });
 
     const distinctSql = `SELECT COUNT(DISTINCT ${field}) AS n FROM ${source} WHERE ${field} IS NOT NULL AND ${field} != ''`;
@@ -214,8 +214,11 @@ export function registerDimensionsHandlers(app: AppContext): void {
   // renderer payload (or an edited draft) can never persist a dimensions.yaml
   // that fails the next load — it is rejected here, visibly, instead.
   async function saveDimensionsConfig(payload: unknown): Promise<void> {
-    // Persisting: over-limit nameStripPatterns are rejected, not dropped.
-    const config = parseDimensionsSavePayload(payload);
+    // Persisting: over-limit nameStripPatterns and tag-id clashes are rejected.
+    await writeDimensionsConfig(parseDimensionsSavePayload(payload));
+  }
+
+  async function writeDimensionsConfig(config: DimensionsConfig): Promise<void> {
     const yaml = await import('yaml');
     const fs = await import('node:fs/promises');
     await fs.writeFile(ctx.dimensionsPath, yaml.stringify(dimensionsConfigToYaml(config)));
@@ -254,7 +257,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
     const grainColumns = rollupGrainColumns(dims);
     const grainDims = rollupGrainDimensions(dims);
 
-    const costScope = await getCostScope().catch(() => undefined);
+    const costScope = await getQueryCostScope();
     const orgAccountsPath = await getOrgAccountsPath();
     const accountReverseMap = await getAccountReverseMap();
     // Probe the first provider only — its latest month was listed above, and
@@ -357,20 +360,10 @@ export function registerDimensionsHandlers(app: AppContext): void {
   });
 
   ipcMain.handle('dimensions:accept-suggestion', async (_event, tagName: string, canonical: string, aliases: string[]): Promise<void> => {
-    const config = await getDimensions();
-    const tagIndex = config.tags.findIndex(t => t.tagName === tagName);
-    if (tagIndex === -1) return;
-    const tag = config.tags[tagIndex];
-    if (tag === undefined) return;
-
-    const existing = tag.aliases ?? {};
-    const updatedAliases: Record<string, readonly string[]> = { ...existing, [canonical]: aliases };
-    const updatedTags = [
-      ...config.tags.slice(0, tagIndex),
-      { ...tag, aliases: updatedAliases },
-      ...config.tags.slice(tagIndex + 1),
-    ];
-    await saveDimensionsConfig({ ...config, tags: updatedTags });
+    const updated = withAcceptedAliasSuggestion(await getDimensions(), tagName, canonical, aliases);
+    if (updated === null) return;
+    // A write-back of the loaded config: a tag-id clash it already had isn't refused.
+    await writeDimensionsConfig(parseDimensionsRewritePayload(updated));
   });
 }
 

@@ -315,6 +315,10 @@ jobs:
             artifacts/dist-win-x64/latest.yml \
             artifacts/dist-win-arm64/latest.yml
 
+          # The GCP exporter folder, which the exporter README and the website
+          # download into Cloud Shell instead of cloning the whole repository.
+          bash .github/scripts/pack-gcp-exporter.sh upload/gcp-focus-exporter.tar.gz
+
           echo "Staged release assets:"
           ls -la upload/
 

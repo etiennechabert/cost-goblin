@@ -1,5 +1,5 @@
 import type { BuiltInDimension, DimensionsConfig } from '../types/config.js';
-import { tagDimColumn } from '../types/branded.js';
+import { tagSqlColumn } from '../types/branded.js';
 import { assertSafeColumnIdentifier } from '../query/identifier-validator.js';
 
 function isEnabled(d: { readonly enabled?: boolean | undefined }): boolean {
@@ -36,7 +36,7 @@ export function rollupGrainColumns(dims: DimensionsConfig): string[] {
     if (d.field === 'provider') continue;
     for (const c of builtInGrainColumns(d)) cols.add(c);
   }
-  for (const t of dims.tags) if (isEnabled(t)) cols.add(tagDimColumn(t));
+  for (const t of dims.tags) if (isEnabled(t)) cols.add(tagSqlColumn(t));
   const rest = [...cols].filter(c => c !== 'usage_date').sort((a, b) => a.localeCompare(b));
   return ['usage_date', ...rest];
 }
@@ -71,7 +71,7 @@ export function rollupGrainDimensions(dims: DimensionsConfig): { column: string;
   }
   for (const t of dims.tags) {
     if (!isEnabled(t)) continue;
-    const col = tagDimColumn(t);
+    const col = tagSqlColumn(t);
     add(col, [col]);
   }
   return out;

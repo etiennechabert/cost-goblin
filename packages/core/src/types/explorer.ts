@@ -10,7 +10,8 @@ export type ExplorerSortDirection = 'asc' | 'desc';
 
 /** Column id is either a built-in dimension column (e.g. `cost`, `service`,
  *  `usage_date`) or a tag column (e.g. `tag_team`). The handler maps it to
- *  the underlying SQL expression. */
+ *  the underlying SQL expression. The aggregated table also sorts by
+ *  `abs_cost`, the size of a group's cost, so a credit ranks with spend. */
 export interface ExplorerSort {
   readonly column: string;
   readonly direction: ExplorerSortDirection;
@@ -110,6 +111,11 @@ export interface AggregatedTableParams extends ExplorerBaseParams {
   readonly sort?: ExplorerSort;
   readonly rowLimit: number;
   readonly rowFilters?: Readonly<Record<string, string>> | undefined;
+  /** Only these groups: each key is a row's `values` from another result,
+   *  e.g. the current period's rows when fetching their previous-period
+   *  costs. A key matches the group with that value on every group-by
+   *  column; an empty list matches none. `rowLimit` still caps the rows. */
+  readonly rowKeys?: readonly Readonly<Record<string, string>>[] | undefined;
 }
 
 export interface AggregatedTableRow {

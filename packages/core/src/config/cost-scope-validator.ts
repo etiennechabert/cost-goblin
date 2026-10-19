@@ -35,15 +35,22 @@ function validateCondition(raw: unknown, ctx: string, liveDimensionIds?: Readonl
     assertString(v, `${ctx}.values[${String(i)}]`);
     return v;
   });
-  if (values.length === 0) {
-    throw new ConfigValidationError(`${ctx}.values must have at least one entry`);
+  const matchMissing = raw['matchMissing'] === true;
+  if (values.length === 0 && !matchMissing) {
+    throw new ConfigValidationError(`${ctx}.values must have at least one entry unless matchMissing is true`);
   }
   // Persisted rules (cost-scope.yaml and every baseline basis routed through
   // validateCostScope) may reference CUR-era dimension ids. Without the
   // rename, buildConditionSql silently drops the condition at query time:
   // a single-condition rule stops excluding, and a multi-condition rule
   // loses one AND-leg and excludes MORE than the user asked for.
-  return { dimensionId: asDimensionId(migrateLegacyDimensionId(raw['dimensionId'], liveDimensionIds)), values };
+  return {
+    dimensionId: asDimensionId(migrateLegacyDimensionId(raw['dimensionId'], liveDimensionIds)),
+    values,
+    // Key only when set, so a condition without it stays shape-equal to the
+    // seed and legacy conditions that mergeBuiltInExclusionRules compares.
+    ...(matchMissing ? { matchMissing } : {}),
+  };
 }
 
 function validateRule(raw: unknown, ctx: string, liveDimensionIds?: ReadonlySet<string>): ExclusionRule {

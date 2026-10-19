@@ -3,9 +3,11 @@ import type { Dirent } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import {
   classifyPackPath,
+  describePeerConnectError,
+  describeUnavailableSource,
   encodeSharingKey,
   fetchFile,
-  fetchManifest,
+  fetchManifestFromAny,
   isSafePackPath,
   logger,
   parseConfigBundle,
@@ -48,6 +50,7 @@ import type {
 } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 import { applyBundleSectionsToDisk, buildCurrentBundle } from './bundle-io.js';
+import { peerManifestError } from './bundle-sections.js';
 import { applyPulledEnrichment, enrichmentConsent, summarizePeerEnrichment } from '../peer-enrichment.js';
 import {
   clearSharedSource,
@@ -118,22 +121,15 @@ const SHARING_IDLE_TIMEOUT_MS = 30 * 60_000;
  *  preview (no download) and pull (download). */
 async function connect(payload: SharingKeyPayload): Promise<{ endpoint: PeerEndpoint; signed: SignedPackManifest }> {
   const psk = Buffer.from(payload.psk, 'base64url');
-  let endpoint: PeerEndpoint | null = null;
-  let signed: SignedPackManifest | null = null;
-  let lastError: unknown = null;
-  for (const host of payload.hosts) {
-    try {
-      const candidate: PeerEndpoint = { host, port: payload.port, psk };
-      signed = parseSignedManifest(await fetchManifest(candidate));
-      endpoint = candidate;
-      break;
-    } catch (err: unknown) {
-      lastError = err;
-    }
+  // All addresses at once: from another network only one (e.g. Tailscale) may
+  // route, and the dead ones would otherwise each stall a timeout first.
+  const reached = await fetchManifestFromAny(payload.hosts.map((host): PeerEndpoint => ({ host, port: payload.port, psk })));
+  if (reached.status === 'unreachable') {
+    throw new Error(`Could not reach the shared source. ${describePeerConnectError(reached.errors, process.platform)}`);
   }
-  if (endpoint === null || signed === null) {
-    throw new Error(`Could not reach the shared source. ${errorMessage(lastError)}`);
-  }
+  if (reached.status === 'unavailable') throw new Error(describeUnavailableSource(reached.file));
+  const { endpoint } = reached;
+  const signed = parseSignedManifest(reached.manifest);
   if (!verifyManifestSignature(signed)) {
     throw new Error('Snapshot signature is invalid — refusing to import.');
   }
@@ -233,6 +229,9 @@ export function registerDataSharingHandlers(app: AppContext): void {
    *  a signed manifest. Rebuilt on each request so a peer always sees fresh
    *  data (fine at fixture scale; large datasets are a future optimization). */
   async function buildLocalManifest(identity: IdentityKeyPair, label: string): Promise<PackManifest> {
+    // First: a config file that doesn't load fails the manifest, before every
+    // Parquet file is read and hashed for nothing.
+    const configBundle = serializeConfigBundle(await buildCurrentBundle(app, { brokenViews: 'skip' }));
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
     // Single-provider semantics (#516 phase 2): the export root is the FIRST
@@ -272,7 +271,7 @@ export function registerDataSharingHandlers(app: AppContext): void {
       createdAt: new Date().toISOString(),
       publisher: identity.publicKey,
       label,
-      configBundle: serializeConfigBundle(await buildCurrentBundle(app)),
+      configBundle,
       enrichment: await readEnrichment(),
       files,
     };
@@ -331,8 +330,13 @@ export function registerDataSharingHandlers(app: AppContext): void {
         },
       },
       {
-        getManifest: async () =>
-          serializeSignedManifest(signManifest(await buildLocalManifest(identity, secret.label), identity.privateKey)),
+        getManifest: async () => {
+          try {
+            return serializeSignedManifest(signManifest(await buildLocalManifest(identity, secret.label), identity.privateKey));
+          } catch (err: unknown) {
+            throw peerManifestError(err);
+          }
+        },
         readFile: async (p) => {
           const path = await import('node:path');
           // `p` is already string-validated by isSafePackPath, but a symlink in

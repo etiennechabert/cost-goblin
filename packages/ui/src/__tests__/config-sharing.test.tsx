@@ -206,6 +206,15 @@ describe('ShareConfigDialog', () => {
     expect(screen.queryByText(/Auto-stops/)).toBeNull();
   });
 
+  it('suggests Tailscale for a teammate on another network once sharing', async () => {
+    const api = new MockCostApi();
+    const user = userEvent.setup();
+    renderWithApi(api, <ShareConfigDialog onClose={() => undefined} />);
+
+    await user.click(await screen.findByText('Start sharing'));
+    expect(await screen.findByText(/Teammate on another network\? Connect both computers to Tailscale/)).toBeDefined();
+  });
+
   it('surfaces publish errors', async () => {
     const api = new MockCostApi();
     api.publishConfigBundle = () => Promise.resolve({ status: 'error', message: 'AccessDenied: no s3:PutObject' });

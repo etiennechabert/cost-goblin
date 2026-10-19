@@ -1,11 +1,10 @@
 import { useCallback, useMemo, useState } from 'react';
-import { getColor } from '../lib/palette.js';
 import { CollapsedChart } from './collapsed-chart.js';
 import { useContainerWidth } from '../lib/use-container-width.js';
 import { formatDollars, truncate } from './format.js';
 import type { Dimension } from '@costgoblin/core/browser';
 import { getDimensionId, getDimensionLabel } from '../lib/dimensions.js';
-import { usePalette } from '../hooks/use-palette.js';
+import { useSeriesColors } from '../hooks/use-palette.js';
 
 export interface TopNBar {
   readonly name: string;
@@ -53,7 +52,6 @@ function TopNBarChartInner({
   previousCosts,
   width,
 }: Omit<TopNBarChartProps, 'collapsed'> & { width: number }) {
-  const { palette } = usePalette();
   const [localHovered, setLocalHovered] = useState<string | null>(null);
   const hoveredName = externalHoveredName ?? localHovered;
 
@@ -61,6 +59,8 @@ function TopNBarChartInner({
     () => [...data].sort((a, b) => b.cost - a.cost).slice(0, topN),
     [data, topN],
   );
+
+  const seriesColor = useSeriesColors(sliced);
 
   const max = sliced.length > 0 ? sliced[0]?.cost ?? 0 : 0;
   const barAreaWidth = Math.max(width - LABEL_WIDTH - RIGHT_GUTTER, 40);
@@ -123,12 +123,12 @@ function TopNBarChartInner({
           <div className="flex h-full items-center justify-center text-xs text-text-muted">No data</div>
         ) : (
           <ul className="flex flex-col" style={{ gap: ROW_GAP }}>
-            {sliced.map((row, i) => {
+            {sliced.map((row) => {
               const isHovered = hoveredName === row.name;
               const isDimmed = hoveredName !== null && !isHovered;
               const ratio = max > 0 ? row.cost / max : 0;
               const barW = Math.max(ratio * barAreaWidth, 1);
-              const color = getColor(i, palette);
+              const color = seriesColor(row.name);
 
               const prevCost = previousCosts?.get(row.name);
               const delta = prevCost !== undefined && prevCost > 0

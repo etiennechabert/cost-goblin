@@ -84,6 +84,8 @@ export function BundleSummaryCard({ summary }: Readonly<{ summary: ConfigBundleS
 // ---------------------------------------------------------------------------
 // Share data on the local network (peer-to-peer, TLS-PSK). Lets a teammate
 // with zero AWS access pull this machine's data + config from one pasted key.
+// Across networks it rides on Tailscale: its address is just another interface
+// address, so the key lists it and nothing here needs to know about it.
 // ---------------------------------------------------------------------------
 
 function lastPullSummary(status: DataSharingStatus): string {
@@ -137,7 +139,7 @@ function ShareDataSection(): React.JSX.Element {
           <Network size={16} className="text-text-secondary" />
           <div>
             <p className="text-sm font-medium text-text-primary">Share data on this network</p>
-            <p className="text-xs text-text-muted">Teammates without S3 access paste your key to pull your data — encrypted, peer-to-peer.</p>
+            <p className="text-xs text-text-muted">Teammates without S3 access paste your key to pull your data — encrypted, peer-to-peer, on the same network or over Tailscale.</p>
           </div>
         </div>
         {enabled ? (
@@ -176,6 +178,11 @@ function ShareDataSection(): React.JSX.Element {
           </div>
           <p className="text-xs text-text-muted">
             Reachable at <span className="font-mono">{status.hosts.join(', ')}:{status.port}</span> · fingerprint <span className="font-mono">{status.fingerprint}</span>. Re-share if this machine&apos;s IP changes.
+          </p>
+          {/* No "Tailscale detected" variant: 100.64.0.0/10 is also what
+              corporate tunnels like Zscaler's take, so the range can't tell. */}
+          <p className="text-xs text-text-muted">
+            Teammate on another network? Connect both computers to Tailscale before copying the key — it picks up the Tailscale address on its own.
           </p>
           <div className="flex items-center gap-2 rounded-md bg-bg-tertiary/40 px-2.5 py-1.5">
             <span className={`inline-block h-2 w-2 rounded-full ${status.lastServedAt === null ? 'bg-text-muted' : 'bg-positive animate-pulse'}`} aria-hidden="true" />
@@ -502,7 +509,7 @@ function AddSharedSourceSection({ onPulled, onBusyChange }: Readonly<{
         {stored === null ? 'Sharing key from a teammate' : 'Or a key from someone else'}
       </label>
       <p className="text-xs text-text-muted">
-        Your teammate creates this by clicking <span className="font-medium text-text-secondary">Start sharing</span> in their CostGoblin (under <span className="font-medium text-text-secondary">Share configuration…</span>). Their app needs to stay open on the same network while you connect.
+        Your teammate creates this by clicking <span className="font-medium text-text-secondary">Start sharing</span> in their CostGoblin (under <span className="font-medium text-text-secondary">Share configuration…</span>). Their app needs to stay open while you connect, on the same network as you — or, if you&apos;re remote, with both of you on Tailscale.
       </p>
       <textarea
         id="cg-add-source-key"
@@ -914,7 +921,7 @@ export function ImportConfigPanel({ onApplied, onClose, onBusyChange, onDoneChan
 
           <div className="flex items-center gap-3" aria-hidden="true">
             <div className="h-px flex-1 bg-border" />
-            <span className="text-xs text-text-muted">or pull from a teammate on your network</span>
+            <span className="text-xs text-text-muted">or pull from a teammate&apos;s CostGoblin</span>
             <div className="h-px flex-1 bg-border" />
           </div>
           </>

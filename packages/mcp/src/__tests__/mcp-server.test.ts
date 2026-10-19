@@ -3,6 +3,7 @@ import { DuckDBInstance } from '@duckdb/node-api';
 import { existsSync, realpathSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
+import { createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,7 +12,9 @@ import {
   loadConfig,
   loadDimensions,
   loadCostScope,
+  tagSqlColumn,
 } from '@costgoblin/core';
+import type { CostScopeConfig } from '@costgoblin/core';
 import type { McpContext, RawRow } from '../context.js';
 import { createMcpHttpServer, MCP_MIN_TOKEN_LENGTH } from '../http-server.js';
 import type { McpHttpServer } from '../http-server.js';
@@ -101,6 +104,17 @@ function runSqlJson(text: string): RunSqlJson {
     rowsMeta: isRecord(rowsField) ? rowsField['value'] : undefined,
     notes,
   };
+}
+
+/** A port nothing listens on right now (bound to 0, then released). A fixed
+ *  port collides with this suite running in another checkout at the same time. */
+async function freePort(): Promise<number> {
+  const probe = createNetServer();
+  await new Promise<void>((resolve) => { probe.listen(0, '127.0.0.1', resolve); });
+  const address = probe.address();
+  await new Promise<void>((resolve) => { probe.close(() => { resolve(); }); });
+  if (address === null || typeof address === 'string') throw new Error('no port');
+  return address.port;
 }
 
 // ---------- MCP HTTP client ----------
@@ -220,7 +234,11 @@ describe('MCP server E2E', () => {
   let conn: DuckDBConn;
   let server: McpHttpServer;
   let client: McpClient;
-  const port = 19599; // avoid conflict with running dev server
+  let port: number;
+  // What beforeAll set up, undone in reverse by afterAll. A beforeAll that
+  // fails part-way registers only what it created, so its own error is the
+  // one reported.
+  const teardown: (() => unknown)[] = [];
   // Production tokens are 43 chars (32 random bytes, base64url); the server
   // refuses to start with fewer than MCP_MIN_TOKEN_LENGTH.
   const TEST_TOKEN = 'test-secret-token-0123456789abcdefghij';
@@ -231,9 +249,12 @@ describe('MCP server E2E', () => {
   let outsideDir: string;
   const CANARY = 'CANARY-MCP-E2E-SECRET-594';
   let ctx: McpContext;
+  // Swapped by the cost-scope test, which must restore it.
+  let loadScope: () => Promise<CostScopeConfig>;
 
   beforeAll(async () => {
     scratchDir = realpathSync(await mkdtemp(join(tmpdir(), 'cg-mcp-e2e-'))).replaceAll('\\', '/');
+    teardown.push(() => rm(scratchDir, { recursive: true, force: true }));
     outsideDir = `${scratchDir}/outside`;
     const spillDir = `${scratchDir}/spill`;
     await mkdir(outsideDir, { recursive: true });
@@ -242,7 +263,9 @@ describe('MCP server E2E', () => {
     await writeFile(`${outsideDir}/adc.json`, JSON.stringify({ type: 'authorized_user', client_secret: CANARY }));
 
     db = await DuckDBInstance.create();
+    teardown.push(() => { db.closeSync(); });
     conn = await db.connect();
+    teardown.push(() => { conn.disconnectSync(); });
     // Every tool in this suite runs on a sandboxed, locked instance — the same
     // configuration the desktop app gives its dedicated MCP worker.
     for (const stmt of buildDuckDbSandboxStatements({
@@ -258,6 +281,7 @@ describe('MCP server E2E', () => {
     const config = await loadConfig(join(CONFIG_DIR, 'costgoblin.yaml'));
     const dimensions = await loadDimensions(join(CONFIG_DIR, 'dimensions.yaml'));
     const costScope = await loadCostScope(join(CONFIG_DIR, 'cost-scope.yaml'));
+    loadScope = () => Promise.resolve(costScope);
 
     const accountMap = new Map<string, string>([
       ['100000000000', 'Acme Corp Main'],
@@ -291,7 +315,7 @@ describe('MCP server E2E', () => {
       getConfig: () => Promise.resolve(config),
       getDimensions: () => Promise.resolve(dimensions),
       getQueryDimensions: () => Promise.resolve(dimensions),
-      getCostScope: () => Promise.resolve(costScope),
+      getCostScope: () => loadScope(),
       getAccountMap: () => Promise.resolve(accountMap),
       getAccountReverseMap: () => Promise.resolve(reverseMap),
       getOrgAccountsPath: () => Promise.resolve(undefined),
@@ -300,16 +324,15 @@ describe('MCP server E2E', () => {
       now: () => Date.now(),
     };
 
+    port = await freePort();
     server = await createMcpHttpServer(ctx, { port, authToken: TEST_TOKEN });
+    teardown.push(() => server.close());
     client = await createMcpClient(port, TEST_TOKEN);
+    teardown.push(() => client.close());
   }, 30_000);
 
   afterAll(async () => {
-    await client.close();
-    await server.close();
-    conn.disconnectSync();
-    db.closeSync();
-    await rm(scratchDir, { recursive: true, force: true });
+    for (const undo of teardown.reverse()) await undo();
   });
 
   const mcpUrl = (): string => `http://127.0.0.1:${String(port)}/mcp`;
@@ -414,6 +437,14 @@ describe('MCP server E2E', () => {
     expect(text).toContain('region');
     expect(text).toContain('team');
     expect(text).toContain('environment');
+  });
+
+  it('list_dimensions gives the run_sql column for each dimension', async () => {
+    const { text } = await client.callTool('list_dimensions');
+    expect(text).toContain('SQL Column');
+    // A tag's id and its column differ: the column is what the costs table has.
+    expect(text).toContain(tagSqlColumn({ tagName: 'team' }));
+    expect(text).toContain('account_id');
   });
 
   // ---------- get_filter_values ----------
@@ -877,7 +908,7 @@ describe('MCP server E2E', () => {
     ['an empty token', ''],
     ['a 16-char token', 'x'.repeat(16)],
   ])('refuses to start with %s and never listens', async (_label, authToken) => {
-    const shortPort = 19598;
+    const shortPort = await freePort();
     await expect(createMcpHttpServer(ctx, { port: shortPort, authToken })).rejects.toThrow(/at least 32 characters/);
     expect(await probeHealth(shortPort)).toBe('ECONNREFUSED');
   });
@@ -997,6 +1028,25 @@ describe('MCP server E2E', () => {
     });
     expect(isError).toBe(true);
     expect(text).toContain('Error');
+  });
+
+  // Each used to answer without the user's metric and exclusion rules, as if
+  // those were the real costs.
+  it.each([
+    ['query_costs', { groupBy: 'service' }],
+    ['get_filter_values', { dimensionId: 'service' }],
+    ['explore_data', {}],
+    ['run_sql', { sql: 'SELECT SUM(cost) AS total FROM costs' }],
+  ])('%s reports a cost scope that does not load instead of answering without it', async (tool, args) => {
+    const loaded = loadScope;
+    loadScope = () => Promise.reject(new Error("Couldn't load cost-scope.yaml: costScope.rules must be an array"));
+    try {
+      const { text, isError } = await client.callTool(tool, { ...args, dateRange: { start: '2026-01-01', end: '2026-01-31' } });
+      expect(isError).toBe(true);
+      expect(text).toBe("Error: Couldn't load cost-scope.yaml: costScope.rules must be an array");
+    } finally {
+      loadScope = loaded;
+    }
   });
 
   // ---------- Health endpoint ----------

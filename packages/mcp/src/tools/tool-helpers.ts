@@ -2,7 +2,6 @@ import {
   asDimensionId,
   asDollars,
   asDateString,
-  asTagValue,
   assertDateString,
   computePeriodsInRange,
   daysBefore,
@@ -18,10 +17,8 @@ import type {
   DimensionId,
   DimensionsConfig,
   Dollars,
-  FilterMap,
   ProviderSourceSpec,
   QueryContextOptions,
-  TagValue,
 } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
 import { redactHome, toSingleLine } from '../formatters/neutralize.js';
@@ -70,17 +67,7 @@ export function toDimensionId(raw: string): DimensionId {
   return asDimensionId(raw);
 }
 
-export function toFilterMap(raw: Record<string, readonly string[]> | undefined): FilterMap {
-  if (raw === undefined) {
-    const empty: Partial<Record<DimensionId, readonly TagValue[]>> = {};
-    return empty;
-  }
-  const result: Partial<Record<DimensionId, readonly TagValue[]>> = {};
-  for (const [key, values] of Object.entries(raw)) {
-    result[asDimensionId(key)] = values.map(v => asTagValue(v));
-  }
-  return result;
-}
+export { toFilterMap } from '@costgoblin/core';
 
 export function toDollars(n: number): Dollars {
   return asDollars(n);
@@ -109,7 +96,7 @@ export async function buildQueryContextOpts(
   const dimensions = await ctx.getQueryDimensions();
   const accountReverseMap = await ctx.getAccountReverseMap();
   const orgPath = await ctx.getOrgAccountsPath();
-  const costScope = await ctx.getCostScope().catch(() => undefined);
+  const costScope = await ctx.getCostScope();
   const providers = await getQueryProviders(ctx, tier);
 
   // Empty only when NO provider has a month intersecting the range.

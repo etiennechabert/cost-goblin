@@ -18,6 +18,9 @@ export interface DataTableColumnMeta {
   readonly truncate?: boolean | undefined;
   readonly dimId?: string | null | undefined;
   readonly clickable?: boolean | undefined;
+  /** Shown for an empty value in a clickable column, which then filters on
+   *  '' too. Without it an empty cell stays blank and inert. */
+  readonly emptyLabel?: string | undefined;
 }
 
 /** The TanStack v9 feature set every DataTable is built with. v9 bundles no
@@ -59,6 +62,7 @@ export function toColumnDefs<TData extends RowData>(
         truncate: col.truncate,
         dimId: col.dimId,
         clickable: col.clickable,
+        emptyLabel: col.emptyLabel,
       },
       enableSorting: col.sortable !== false,
     };

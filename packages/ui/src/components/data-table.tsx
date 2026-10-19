@@ -518,17 +518,18 @@ function TableCell<TData extends RowData>({ cell, row, onCellClick }: Readonly<{
   const rawValue = cell.getValue();
   const dimId = meta?.dimId;
   const titleText = meta?.truncate === true && typeof rawValue === 'string' ? rawValue : undefined;
+  const emptyLabel = rawValue === '' ? meta?.emptyLabel : undefined;
 
-  if (onCellClick !== undefined && meta?.clickable === true && dimId !== undefined && dimId !== null && rawValue !== undefined && rawValue !== null && rawValue !== '') {
+  if (onCellClick !== undefined && meta?.clickable === true && dimId !== undefined && dimId !== null && rawValue !== undefined && rawValue !== null && (rawValue !== '' || emptyLabel !== undefined)) {
     return (
       <td className={classes} title={titleText}>
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); onCellClick(row.original, cell.column.id, rawValue); }}
           className="text-accent hover:underline cursor-pointer text-left"
-          title={`Add "${typeof rawValue === 'string' ? rawValue : ''}" to filter`}
+          title={`Add "${emptyLabel ?? (typeof rawValue === 'string' ? rawValue : '')}" to filter`}
         >
-          {display}
+          {emptyLabel === undefined ? display : <span className="italic text-text-muted">{emptyLabel}</span>}
         </button>
       </td>
     );

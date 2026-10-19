@@ -35,7 +35,7 @@ export const SETTINGS_TABS: readonly SettingsTabMeta[] = [
     id: 'general',
     label: 'General',
     Icon: Settings2,
-    keywords: ['appearance', 'theme', 'dark mode', 'light mode', 'palette', 'colorblind', 'default dashboard', 'updates', 'version'],
+    keywords: ['appearance', 'theme', 'dark mode', 'light mode', 'palette', 'vivid', 'colorblind', 'default dashboard', 'updates', 'version'],
   },
   {
     id: 'workspaces',

@@ -37,6 +37,12 @@ export function formatBytes(bytes: number): string {
   return `${value.toFixed(digits)} ${label}`;
 }
 
+/** A 0..1 fraction as an unsigned share, "10.9%". formatPercent is for signed
+ *  changes. */
+export function formatShare(fraction: number): string {
+  return `${(fraction * 100).toFixed(1)}%`;
+}
+
 export function formatPercent(value: number): string {
   const sign = value >= 0 ? '+' : '';
   return `${sign}${value.toFixed(1)}%`;
@@ -61,6 +67,16 @@ export function formatRelativeTime(value: string | Date, now: number = Date.now(
     day: 'numeric',
     year: 'numeric',
   });
+}
+
+/** "Sep 15" for a YYYY-MM-DD day, built from the calendar date like formatDate
+ *  so no timezone can shift it. */
+export function formatShortDate(date: string): string {
+  const [year, month, day] = date.split('-').map(Number);
+  if (year === undefined || month === undefined || day === undefined) {
+    return date;
+  }
+  return new Date(year, month - 1, day).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 export function formatDate(date: string): string {
