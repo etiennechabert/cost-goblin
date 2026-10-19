@@ -239,7 +239,7 @@ GCP's billing data reaches CostGoblin through its native **FOCUS BigQuery export
 - **Composable views** — drag-and-drop widget builder with 9 widget types (pie, bar, stacked bar, line, treemap, heatmap, bubble, table, summary)
 - **Cost Scope** — configure cost metrics (effective, billed, list price, contracted) and exclusion rules
 - **MCP server** — Model Context Protocol integration for querying cost data from AI assistants (opt-in, off by default: enable it under Settings → AI Assistant; clients authenticate with an `Authorization: Bearer` token). Tool results carry values that anyone who can tag your cloud resources or edit a shared config file can write, so treat them as untrusted input: markdown and CSV output escape `|` and line breaks to keep tables intact, but that does not stop prompt injection. Set your AI client to require approval before it runs tools with side effects.
-- **Dark/light mode** — theme toggle with two chart color palettes (standard + Okabe-Ito colorblind-safe)
+- **Dark/light mode** — theme toggle with three chart color palettes (standard, vivid, colorblind-safe), each tuned for both themes; a series keeps its color across every chart, and a chart's top series never share a hue family
 - **Update notifications** — release builds check GitHub Releases once at launch and prompt when a new version is out; download and install are one click each, never unconfirmed. Turn the launch check off under Settings → General or with `COSTGOBLIN_DISABLE_UPDATE_CHECK=1` (see [Install](#install))
 - **CSV export** — export any view for reporting
 - **Works offline** — once synced, no internet needed
@@ -301,6 +301,7 @@ CostGoblin is free and open source — kept that way with the help of companies 
 
 - **[Sentry](https://sentry.io)** — error monitoring, via their [open-source program](https://sentry.io/for/open-source/)
 - **[SonarCloud](https://sonarcloud.io)** — code quality & static analysis
+- **[Gitar](https://gitar.ai)** — AI code review, via their [free plan for open source](https://gitar.ai/pricing)
 - **[GitHub](https://github.com)** — repository hosting & CI
 - **[Cloudflare](https://www.cloudflare.com)** — website hosting & CDN
 

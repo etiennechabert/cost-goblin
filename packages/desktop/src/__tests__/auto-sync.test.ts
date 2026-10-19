@@ -1,9 +1,18 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { LocalSyncStateError } from '@costgoblin/core';
-import { runOnce, getAutoSyncStatus, type AutoSyncDeps, type AutoSyncProvider } from '../main/auto-sync.js';
+import {
+  runOnce,
+  getAutoSyncStatus,
+  startAutoSync,
+  stopAutoSync,
+  triggerAutoSyncNow,
+  MAX_AUTO_SYNC_INTERVAL_MINUTES,
+  type AutoSyncDeps,
+  type AutoSyncProvider,
+} from '../main/auto-sync.js';
 import { parseSyncId, resolveProvider, resolveSyncId, syncStatusKey } from '../main/sync-id.js';
 
 describe('sync-id (composite syncId convention)', () => {
@@ -451,5 +460,250 @@ describe('auto-sync runOnce (multi-provider orchestration)', () => {
       expect(status.providerErrors).toBeUndefined();
     }
     expect(calls.inventory).toEqual([]);
+  });
+});
+
+describe('auto-sync scheduler (startAutoSync)', () => {
+  const MINUTE_MS = 60_000;
+  const HOUR_MS = 60 * MINUTE_MS;
+  const DAY_MS = 24 * HOUR_MS;
+  const DAILY_MINUTES = 24 * 60;
+  // The "Monthly" option in scheduler-controls.tsx. Its 2,592,000,000 ms is
+  // longer than a Node timer holds (2^31 - 1 ms), as is the 31-day maximum;
+  // vitest's fake timers fire such a timer after 1 ms, as Node does.
+  const MONTHLY_MINUTES = 43_200;
+  const FIRST_PASS_DELAY_MS = 5_000;
+  const provider: AutoSyncProvider = { name: 'aws-a', sync: { daily: { retentionDays: 365 } } };
+
+  let base: string;
+  let prefsFile: string;
+  // Passes started (getPrefsPath is a pass's first, synchronous step), and
+  // passes that got past their prefs reads to the config.
+  let started: number;
+  let configReads: number;
+  // getConfig waits on this, so a test can hold a pass mid-run.
+  let heldPass: Promise<void>;
+  let releasePass: () => void;
+
+  function schedulerDeps(): AutoSyncDeps {
+    return {
+      now: () => Date.now(),
+      getPrefsPath: () => {
+        started += 1;
+        return Promise.resolve(prefsFile);
+      },
+      getConfig: async () => {
+        configReads += 1;
+        await heldPass;
+        return { providers: [provider] };
+      },
+      getInventory: () => Promise.resolve({ periods: [] }),
+      syncPeriods: (_provider, files) => Promise.resolve({ filesDownloaded: files.length }),
+      getLocalPeriods: () => Promise.resolve([]),
+      deletePeriods: () => Promise.resolve(),
+    };
+  }
+
+  function holdNextPass(): void {
+    heldPass = new Promise<void>((resolve) => { releasePass = () => { resolve(); }; });
+  }
+
+  // One real event-loop turn (setImmediate is left unfaked): every microtask
+  // queued before it, such as a released pass and the re-arm after it, has run.
+  function settle(): Promise<void> {
+    return new Promise((resolve) => { setImmediate(resolve); });
+  }
+
+  // A pass reads the prefs file for real, which no fake clock can hurry: turn
+  // the real event loop until `done` holds, giving up after two real seconds.
+  async function realTurnsUntil(done: () => boolean): Promise<void> {
+    const deadline = performance.now() + 2_000;
+    while (!done() && performance.now() < deadline) await settle();
+  }
+
+  // Wait for pass `n` to read the config. Unless the test holds it there, the
+  // rest of that pass and the scheduler's re-arm are microtasks, so they have
+  // run by the time this returns.
+  async function passesReach(n: number): Promise<void> {
+    await realTurnsUntil(() => configReads >= n);
+    expect({ started, configReads }).toEqual({ started: n, configReads: n });
+  }
+
+  function reportedNextRun(): string | null {
+    const status = getAutoSyncStatus();
+    return status.state === 'idle' ? status.nextRun : null;
+  }
+
+  // Walk a just-started schedule through `cycles` passes after its first:
+  // each lands exactly one interval after the previous one ended (when that
+  // pass's status said it would) and not a tick sooner.
+  async function expectPassEvery(intervalMs: number, cycles: number): Promise<void> {
+    await vi.advanceTimersByTimeAsync(FIRST_PASS_DELAY_MS);
+    await passesReach(1);
+    for (let pass = 1; pass <= cycles; pass++) {
+      const promised = reportedNextRun();
+      // An overflowed timer fires every millisecond: a schedule armed with one
+      // has run dozens of passes by the end of this first second.
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(started).toBe(pass);
+      await vi.advanceTimersByTimeAsync(intervalMs - 1_001);
+      expect(started).toBe(pass);
+      await vi.advanceTimersByTimeAsync(1);
+      await passesReach(pass + 1);
+      expect(new Date(Date.now()).toISOString()).toBe(promised);
+    }
+  }
+
+  beforeEach(() => {
+    base = mkdtempSync(join(tmpdir(), 'cg-auto-sync-schedule-'));
+    prefsFile = join(base, 'app-preferences.json');
+    writeFileSync(prefsFile, JSON.stringify({ autoSync: true, autoPrune: false }));
+    started = 0;
+    configReads = 0;
+    heldPass = Promise.resolve();
+    releasePass = () => undefined;
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'], now: Date.UTC(2026, 0, 1) });
+  });
+
+  afterEach(async () => {
+    stopAutoSync();
+    releasePass();
+    // runOnce joins a pass still in flight: none runs on into the next test.
+    await runOnce(schedulerDeps());
+    vi.useRealTimers();
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  it.each([
+    // Fits in one timer: the control case.
+    { label: 'Daily', minutes: DAILY_MINUTES, intervalMs: DAY_MS },
+    { label: 'Monthly', minutes: MONTHLY_MINUTES, intervalMs: MONTHLY_MINUTES * MINUTE_MS },
+    // Clamped to the 31-day maximum.
+    { label: 'capped 62-day', minutes: 2 * MAX_AUTO_SYNC_INTERVAL_MINUTES, intervalMs: MAX_AUTO_SYNC_INTERVAL_MINUTES * MINUTE_MS },
+  ])('runs a $label schedule once per interval, not continuously', async ({ minutes, intervalMs }) => {
+    startAutoSync(schedulerDeps(), minutes);
+    await expectPassEvery(intervalMs, 2);
+  });
+
+  it('counts the interval from an out-of-band pass, as that pass reported', async () => {
+    const monthMs = MONTHLY_MINUTES * MINUTE_MS;
+    startAutoSync(schedulerDeps(), MONTHLY_MINUTES);
+    await vi.advanceTimersByTimeAsync(FIRST_PASS_DELAY_MS);
+    await passesReach(1);
+
+    // Ten days on, a credential recovery runs a pass out of band.
+    await vi.advanceTimersByTimeAsync(10 * DAY_MS);
+    triggerAutoSyncNow();
+    await passesReach(2);
+    const promised = reportedNextRun();
+
+    // A month from the first pass comes and goes without another...
+    await vi.advanceTimersByTimeAsync(monthMs - 10 * DAY_MS);
+    expect(started).toBe(2);
+    // ...which lands a month after the out-of-band one.
+    await vi.advanceTimersByTimeAsync(10 * DAY_MS - 1);
+    expect(started).toBe(2);
+    await vi.advanceTimersByTimeAsync(1);
+    await passesReach(3);
+    expect(new Date(Date.now()).toISOString()).toBe(promised);
+  });
+
+  it('folds a pass falling due mid-run into the pass running', async () => {
+    startAutoSync(schedulerDeps(), DAILY_MINUTES);
+    await vi.advanceTimersByTimeAsync(FIRST_PASS_DELAY_MS);
+    await passesReach(1);
+
+    // An out-of-band pass is still going when the daily one falls due.
+    await vi.advanceTimersByTimeAsync(DAY_MS - MINUTE_MS);
+    holdNextPass();
+    triggerAutoSyncNow();
+    await passesReach(2);
+    await vi.advanceTimersByTimeAsync(2 * MINUTE_MS);
+    expect(started).toBe(2);
+    // The schedule waits on that pass, no timer spinning in the meantime.
+    expect(vi.getTimerCount()).toBe(0);
+
+    // It stands in for the daily pass: the next is a day after it ends.
+    releasePass();
+    await settle();
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(DAY_MS - 1);
+    expect(started).toBe(2);
+    await vi.advanceTimersByTimeAsync(1);
+    await passesReach(3);
+  });
+
+  it('leaves only the new schedule when restarted mid-pass', async () => {
+    holdNextPass();
+    startAutoSync(schedulerDeps(), DAILY_MINUTES);
+    await vi.advanceTimersByTimeAsync(FIRST_PASS_DELAY_MS);
+    await passesReach(1);
+
+    // The interval changes while that pass is still running.
+    startAutoSync(schedulerDeps(), 7 * DAILY_MINUTES);
+    releasePass();
+    await settle();
+    // The old pass ended without arming anything: the new schedule's first
+    // pass is the only timer.
+    expect(vi.getTimerCount()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(FIRST_PASS_DELAY_MS);
+    await passesReach(2);
+    await vi.advanceTimersByTimeAsync(7 * DAY_MS - 1);
+    expect(started).toBe(2);
+    await vi.advanceTimersByTimeAsync(1);
+    await passesReach(3);
+    expect(vi.getTimerCount()).toBe(1);
+  });
+
+  it('keeps going when the wall clock is set back past the last pass', async () => {
+    startAutoSync(schedulerDeps(), DAILY_MINUTES);
+    await vi.advanceTimersByTimeAsync(FIRST_PASS_DELAY_MS);
+    await passesReach(1);
+
+    // A year back (an NTP correction, say). Pending timers keep their delays,
+    // as Node's do. The next pass may slip one interval while the schedule
+    // re-anchors, but it must not wait for the clock to catch up.
+    vi.setSystemTime(Date.now() - 365 * DAY_MS);
+    await vi.advanceTimersByTimeAsync(2 * DAY_MS);
+    await passesReach(2);
+  });
+
+  it('keeps to the wall clock across a machine sleep', async () => {
+    startAutoSync(schedulerDeps(), DAILY_MINUTES);
+    await vi.advanceTimersByTimeAsync(FIRST_PASS_DELAY_MS);
+    await passesReach(1);
+
+    // Two hours awake, then twenty asleep: the wall clock moves on while
+    // pending timers, like Node's, don't count the time asleep.
+    await vi.advanceTimersByTimeAsync(2 * HOUR_MS);
+    vi.setSystemTime(Date.now() + 20 * HOUR_MS);
+    // The pass is due two (wall-clock) hours after waking, and runs then
+    // rather than a full day of awake time after the last one.
+    await vi.advanceTimersByTimeAsync(2 * HOUR_MS - 1);
+    expect(started).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await passesReach(2);
+  });
+
+  it('counts a pass that found both toggles off toward the interval', async () => {
+    startAutoSync(schedulerDeps(), DAILY_MINUTES);
+    await vi.advanceTimersByTimeAsync(FIRST_PASS_DELAY_MS);
+    await passesReach(1);
+
+    // Both toggles go off without a restart: the next pass stops after
+    // reading the prefs.
+    writeFileSync(prefsFile, JSON.stringify({ autoSync: false, autoPrune: false }));
+    await vi.advanceTimersByTimeAsync(DAY_MS);
+    expect(started).toBe(2);
+    await realTurnsUntil(() => vi.getTimerCount() === 1);
+
+    // A day before the next, not a re-run at the next timer turn.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(started).toBe(2);
+    await vi.advanceTimersByTimeAsync(DAY_MS - 1_001);
+    expect(started).toBe(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(started).toBe(3);
   });
 });

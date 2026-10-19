@@ -3,8 +3,8 @@ import { originStore } from '../query-log.js';
 import {
   asDimensionId,
   dimensionIdSet,
+  buildExclusionClauses,
   buildSource,
-  buildRuleMatchExpr,
   computePeriodsInRange,
   logger,
   resolveField,
@@ -12,7 +12,6 @@ import {
   tagSqlColumnsById,
 } from '@costgoblin/core';
 import type {
-  ExclusionRule,
   ExplorerBaseParams,
   ExplorerFilterMap,
   ExplorerFilterValue,
@@ -29,13 +28,15 @@ import type {
   DimensionsConfig,
   ProviderSourceSpec,
   AggregatedTableParams,
-  AggregatedTableRow,
   AggregatedTableResult,
 } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
 import { type AppContext, prefsPath } from './context.js';
 import { buildAccountReverseMap, columnForDimension, resolveRollupSource, tagSelectItems, tagValuesById, toNum, toStr } from './query-utils.js';
-import { aggregatedOrderBy, appendRowFilters, explorerGroupBy, explorerOrderBy, groupBySelectList, groupByValues } from './explorer-columns.js';
+import { parseRowKeys, queryAggregatedRows } from './aggregated-table.js';
+import type { RunSql } from './aggregated-table.js';
+import { appendRowFilters, explorerGroupBy, explorerOrderBy } from './explorer-columns.js';
+import { buildExplorerFilterPredicate } from './explorer-filters.js';
 import { readExplorerPreferences, writeExplorerPreferences } from './explorer-prefs.js';
 import { resolveScopeMetric } from './explorer-scope.js';
 import { resolveExplorerDateRange } from './query-windows.js';
@@ -45,28 +46,6 @@ const MAX_ROW_LIMIT = 1000;
 function clampRowLimit(n: number): number {
   if (!Number.isFinite(n) || n <= 0) return 500;
   return Math.min(Math.floor(n), MAX_ROW_LIMIT);
-}
-
-function buildExplorerFilterPredicate(
-  filters: ExplorerFilterMap,
-  dimensions: DimensionsConfig,
-  accountReverseMap: ReadonlyMap<string, readonly string[]>,
-): string | null {
-  const conditions = Object.entries(filters)
-    .filter(([, values]) => values.length > 0)
-    .map(([dimId, values]) => ({
-      dimensionId: asDimensionId(dimId),
-      values,
-    }));
-  if (conditions.length === 0) return null;
-  const synthetic: ExclusionRule = {
-    id: '_explorer_filters',
-    name: '_explorer_filters',
-    enabled: true,
-    builtIn: false,
-    conditions,
-  };
-  return buildRuleMatchExpr(synthetic, dimensions, accountReverseMap);
 }
 
 /** Everything the overview / rows / filter-values handlers compute up front.
@@ -88,64 +67,6 @@ interface QueryContext {
   readonly accountMap: ReadonlyMap<string, string>;
 }
 
-function classifyExclusionRule(
-  rule: ExclusionRule,
-  dimensions: DimensionsConfig,
-  accountReverseMap: ReadonlyMap<string, readonly string[]>,
-  singleByDim: Map<string, { fieldExpr: string; values: string[] }>,
-): ExclusionRule | null {
-  if (rule.conditions.length !== 1) return rule;
-
-  const cond = rule.conditions[0];
-  if (cond === undefined || cond.values.length === 0) return null;
-
-  const key = cond.dimensionId;
-  const existing = singleByDim.get(key);
-  if (existing !== undefined) {
-    existing.values.push(...cond.values.map(v => v.replaceAll("'", "''")));
-    return null;
-  }
-
-  const probe: ExclusionRule = { ...rule, conditions: [cond] };
-  const expr = buildRuleMatchExpr(probe, dimensions, accountReverseMap);
-  if (expr === null) return null;
-
-  const inIdx = expr.indexOf(' IN (');
-  if (inIdx === -1) return rule;
-
-  const fieldExpr = expr.slice(0, inIdx);
-  singleByDim.set(key, { fieldExpr, values: cond.values.map(v => v.replaceAll("'", "''")) });
-  return null;
-}
-
-function buildExclusionClauses(
-  costScope: { rules: readonly ExclusionRule[] } | undefined,
-  dimensions: DimensionsConfig,
-  accountReverseMap: ReadonlyMap<string, readonly string[]>,
-): string[] {
-  if (costScope === undefined) return [];
-
-  const singleByDim = new Map<string, { fieldExpr: string; values: string[] }>();
-  const multiRules: ExclusionRule[] = [];
-
-  for (const rule of costScope.rules) {
-    if (!rule.enabled) continue;
-    const multi = classifyExclusionRule(rule, dimensions, accountReverseMap, singleByDim);
-    if (multi !== null) multiRules.push(multi);
-  }
-
-  const clauses: string[] = [];
-  for (const [, { fieldExpr, values }] of singleByDim) {
-    const list = values.map(v => `'${v}'`).join(', ');
-    clauses.push(`${fieldExpr} NOT IN (${list})`);
-  }
-  for (const rule of multiRules) {
-    const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
-    if (matchExpr !== null) clauses.push(`NOT (${matchExpr})`);
-  }
-  return clauses;
-}
-
 interface BuildFreshSourceOptions {
   readonly app: AppContext;
   readonly params: ExplorerBaseParams;
@@ -163,14 +84,14 @@ interface BuildFreshSourceOptions {
 
 async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source: string; whereStr: string }> {
   const { app, params, startStr, endStr, startHour, endHour, tier, periods, providers, dimensions, filterPredicate, accountReverseMap } = opts;
-  const { ctx, getCostScope, getOrgAccountsPath } = app;
+  const { ctx, getQueryCostScope, getOrgAccountsPath } = app;
   const orgPath = await getOrgAccountsPath();
   const applyCostScope = params.applyCostScope === true;
   // Marketplace re-attribution fixes which service a cost belongs to (a data
   // quality fix, not an exclusion), so it follows its own toggle and applies
   // regardless of the "Apply Cost Scope" checkbox — otherwise the Explorer and
   // its filter dropdowns would disagree with the dashboard on Bedrock spend.
-  const fullScope = await getCostScope().catch(() => undefined);
+  const fullScope = await getQueryCostScope();
   const scopeForExclusions = applyCostScope ? fullScope : undefined;
   // When the caller applies the cost scope but doesn't override the metric
   // (every dashboard widget — only the Explorer view sets it explicitly),
@@ -190,9 +111,9 @@ async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source
   const source = buildSource({
     dataDir: ctx.dataDir, tier, dimensions, orgAccountsPath: orgPath,
     providers: branches,
-    costMetric: metric, marketplaceAttribution: fullScope?.marketplaceAttribution,
+    costMetric: metric, marketplaceAttribution: fullScope.marketplaceAttribution,
   });
-  const exclusions = buildExclusionClauses(scopeForExclusions, dimensions, accountReverseMap);
+  const exclusions = scopeForExclusions === undefined ? [] : buildExclusionClauses(scopeForExclusions.rules, dimensions, accountReverseMap);
 
   // When the histogram drag-zoom emits hour bounds, swap the day-level
   // BETWEEN for an hour-level filter so the rest of the Explorer (overview,
@@ -296,7 +217,7 @@ function readOverviewDaily(result: PromiseSettledResult<RawRow[]>): readonly Exp
 }
 
 export function registerExplorerHandlers(app: AppContext): void {
-  const { ctx, runQuery, rollupStore, getAccountReverseMap, getQueryDimensions } = app;
+  const { ctx, runQuery, runPreparedQuery, rollupStore, getAccountReverseMap, getQueryDimensions } = app;
 
   const explorerPrefsPath = () => prefsPath(ctx.stateDir, 'explorer-preferences');
 
@@ -468,71 +389,25 @@ export function registerExplorerHandlers(app: AppContext): void {
     return { sampleRows, tagColumns: qc.tagColumns };
   }));
 
+  // Without keys the queries take no parameters, so they keep the plain path.
+  const runAggregatedSql: RunSql = (sql, bound) => bound.length === 0 ? runQuery(sql) : runPreparedQuery(sql, bound);
+
   ipcMain.handle('explorer:query-aggregated-table', (_event, payload: unknown): Promise<AggregatedTableResult> => originStore.run((payload as AggregatedTableParams).origin ?? null, async () => {
     const params = payload as AggregatedTableParams;
+    const rowKeys = parseRowKeys(params.rowKeys, MAX_ROW_LIMIT);
     const qc = await prepareQueryContext(app, params);
-    const rowLimit = clampRowLimit(params.rowLimit);
 
     if (qc.empty) return { rows: [], totalRows: 0, tagColumns: qc.tagColumns };
 
-    const whereStr = appendRowFilters(qc.whereStr, params.rowFilters, qc.tagSqlColumns);
-
-    const groupBy = explorerGroupBy(params.groupByColumns, qc.tagSqlColumns);
-
-    if (groupBy.length === 0) {
-      const sql = `
-        SELECT
-          CAST(SUM(cost) AS DOUBLE) AS cost,
-          CAST(SUM(list_cost) AS DOUBLE) AS list_cost,
-          CAST(SUM(usage_amount) AS DOUBLE) AS usage_amount,
-          CAST(COUNT(*) AS DOUBLE) AS row_count
-        FROM ${qc.source}
-        ${whereStr}
-      `.trim();
-      const rows = await runQuery(sql);
-      const r = rows[0];
-      if (r === undefined) return { rows: [], totalRows: 0, tagColumns: qc.tagColumns };
-      return {
-        rows: [{ values: {}, cost: toNum(r['cost']), listCost: toNum(r['list_cost']), usageAmount: toNum(r['usage_amount']), rowCount: toNum(r['row_count']) }],
-        totalRows: 1,
-        tagColumns: qc.tagColumns,
-      };
-    }
-
-    const groupByList = groupBy.map(g => g.column).join(', ');
-    const orderBy = aggregatedOrderBy(params.sort, groupBy);
-
-    const countSql = `
-      SELECT CAST(COUNT(*) AS DOUBLE) AS n FROM (
-        SELECT 1 FROM ${qc.source} ${whereStr}
-        GROUP BY ${groupByList}
-      ) AS _cnt
-    `.trim();
-    const dataSql = `
-      SELECT
-        ${groupBySelectList(groupBy)},
-        CAST(SUM(cost) AS DOUBLE) AS cost,
-        CAST(SUM(list_cost) AS DOUBLE) AS list_cost,
-        CAST(SUM(usage_amount) AS DOUBLE) AS usage_amount,
-        CAST(COUNT(*) AS DOUBLE) AS row_count
-      FROM ${qc.source}
-      ${whereStr}
-      GROUP BY ${groupByList}
-      ORDER BY ${orderBy}
-      LIMIT ${String(rowLimit)}
-    `.trim();
-
-    const [countResult, dataResult] = await Promise.all([runQuery(countSql), runQuery(dataSql)]);
-    const totalRows = countResult[0] === undefined ? 0 : toNum(countResult[0]['n']);
-    const resultRows: AggregatedTableRow[] = dataResult.map(r => ({
-      values: groupByValues(r, groupBy),
-      cost: toNum(r['cost']),
-      listCost: toNum(r['list_cost']),
-      usageAmount: toNum(r['usage_amount']),
-      rowCount: toNum(r['row_count']),
-    }));
-
-    return { rows: resultRows, totalRows, tagColumns: qc.tagColumns };
+    const { rows, totalRows } = await queryAggregatedRows(runAggregatedSql, {
+      source: qc.source,
+      where: appendRowFilters(qc.whereStr, params.rowFilters, qc.tagSqlColumns),
+      groupBy: explorerGroupBy(params.groupByColumns, qc.tagSqlColumns),
+      sort: params.sort,
+      rowLimit: clampRowLimit(params.rowLimit),
+      rowKeys,
+    });
+    return { rows, totalRows, tagColumns: qc.tagColumns };
   }));
 
   ipcMain.handle('explorer:filter-values', (_event, payload: unknown): Promise<ExplorerFilterValue[]> => originStore.run((payload as ExplorerFilterValuesParams).origin ?? null, async () => {

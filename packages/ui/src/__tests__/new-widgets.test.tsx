@@ -47,11 +47,11 @@ describe('new analysis widgets', () => {
       expect(screen.getByText(/Cumulative spend/)).toBeDefined();
     });
     // The header shows before the container is measured; the chart body
-    // (here its x-axis label) mounts only after the mocked ResizeObserver
+    // (here its hover area) mounts only after the mocked ResizeObserver
     // reports a width. Without this wait, whether the body ever rendered
     // depended on how fast the runner was.
     await waitFor(() => {
-      expect(screen.getByText(/^day \d+$/)).toBeDefined();
+      expect(screen.getByTestId('burndown-hit-area')).toBeDefined();
     });
   });
 

@@ -19,7 +19,7 @@ import type { BackfillCaseResult, BackfillRequest } from '../aws-setup/backfill.
 import type { AliasSuggestion } from '../normalize/similarity.js';
 import type { ViewsConfig } from './views.js';
 import type { GcpIdentityResult } from './gcp-identity.js';
-import type { CostScopeConfig, CostScopePreviewResult } from './cost-scope.js';
+import type { CostScopeConfig, CostScopePreviewRange, CostScopePreviewResult } from './cost-scope.js';
 import type { TelemetryPreferences, TelemetryStatus, TelemetryOutboxEntry } from '../telemetry/types.js';
 import type {
   ApplyConfigBundleParams,
@@ -70,9 +70,16 @@ export interface SavingsPreferences {
   readonly hiddenActionTypes: readonly string[];
 }
 
+/** The chart palettes a user can pick (ui-preferences.json `palette`). */
+export type ChartPalette = 'standard' | 'vivid' | 'colorblind';
+
+export function isChartPalette(value: unknown): value is ChartPalette {
+  return value === 'standard' || value === 'vivid' || value === 'colorblind';
+}
+
 export interface UIPreferences {
   readonly theme: 'dark' | 'light';
-  readonly palette: 'standard' | 'colorblind';
+  readonly palette: ChartPalette;
   readonly defaultViewId?: string | undefined;
   readonly performance?: PerformanceSettings | undefined;
 }
@@ -390,15 +397,24 @@ export interface CostApi {
    *  month, so it needs data on disk — returns an empty estimate otherwise. */
   estimateRollupGrain(candidate: DimensionsConfig): Promise<RollupGrainEstimate>;
   /** User-defined dashboard views. Read-modify-write through `saveViewsConfig`.
-   *  `resetViewsConfig` overwrites the file with the seed (Cost Overview) view. */
+   *  `resetViewsConfig` overwrites the file with the seed (Cost Overview) view.
+   *  `getViewsConfig` writes the seed views only when views.yaml doesn't
+   *  exist; one that fails to parse or validate is left as it is and the call
+   *  rejects with why. */
   getViewsConfig(): Promise<ViewsConfig>;
   saveViewsConfig(config: ViewsConfig): Promise<void>;
   resetViewsConfig(): Promise<ViewsConfig>;
   /** Reveal `views.yaml` in the OS file manager (Finder / Explorer). */
   revealViewsFolder(): Promise<void>;
+  /** Writes the defaults only when cost-scope.yaml doesn't exist; one that
+   *  fails to parse or validate is left as it is and the call rejects with
+   *  why. Every cost query rejects the same way until it loads, rather than
+   *  run without the user's metric and exclusion rules. */
   getCostScope(): Promise<CostScopeConfig>;
   saveCostScope(config: CostScopeConfig): Promise<void>;
-  previewCostScope(config: CostScopeConfig): Promise<CostScopePreviewResult>;
+  /** Exclusion tallies, daily histogram and sample line items of `config`
+   *  over `range` (the period picked on the Cost Scope preview). */
+  previewCostScope(config: CostScopeConfig, range: CostScopePreviewRange): Promise<CostScopePreviewResult>;
   revealCostScopeFolder(): Promise<void>;
   /** Daily histogram + aggregate totals for the Explorer. Independent of
    *  sort so the histogram doesn't re-fetch when the user reorders a

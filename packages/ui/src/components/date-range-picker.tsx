@@ -88,15 +88,24 @@ export interface DateRange {
 interface DateRangePickerProps {
   readonly value: DateRange;
   readonly granularity: Granularity;
-  readonly onChange: (range: DateRange, granularity: Granularity) => void;
+  /** `lastNDays` is set when a "Last N days" preset was picked, so a consumer
+   *  can keep that window relative (e.g. to a lag it lets the user edit). */
+  readonly onChange: (range: DateRange, granularity: Granularity, lastNDays?: number) => void;
+  /** For views that only read the daily tier: hides the Daily/Hourly toggle,
+   *  and the presets that default to hourly (Last 7 days) pick daily. */
   readonly hideHourly?: boolean;
   readonly lagDays?: number;
   readonly compareEnabled?: boolean;
   readonly onCompareChange?: ((enabled: boolean) => void) | undefined;
 }
 
+/** The "Last N days" presets' window: through the newest day `lagDays` allows. */
+export function lastNDaysRange(days: number, lagDays: number): DateRange {
+  return { start: daysAgo(days + lagDays), end: daysAgo(lagDays) };
+}
+
 export function getDefaultDateRange(lagDays: number = DEFAULT_LAG_DAYS): DateRange {
-  return { start: daysAgo(30 + lagDays), end: daysAgo(lagDays) };
+  return lastNDaysRange(30, lagDays);
 }
 
 export function DateRangePicker({ value, granularity, onChange, hideHourly, lagDays = DEFAULT_LAG_DAYS, compareEnabled, onCompareChange }: DateRangePickerProps) {
@@ -111,9 +120,7 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
   const latestDate = daysAgo(lagDays);
 
   function getPresetRange(preset: Preset): DateRange {
-    if (preset.type === 'days') {
-      return { start: daysAgo(preset.days + lagDays), end: latestDate };
-    }
+    if (preset.type === 'days') return lastNDaysRange(preset.days, lagDays);
     return preset.getRange();
   }
 
@@ -152,7 +159,7 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
     const range = getPresetRange(preset);
     // Picking a preset is an explicit "back to whole-day mode" gesture —
     // don't carry a previous drag's hour bounds onto the new window.
-    onChange(range, resolveGranularity(range, preset.granularity));
+    onChange(range, resolveGranularity(range, preset.granularity), preset.type === 'days' ? preset.days : undefined);
     setDraftRange(undefined);
     setShowCustom(false);
     setOpen(false);
@@ -188,13 +195,6 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
     const range = getPresetRange(preset);
     return value.start === range.start && value.end === range.end && granularity === resolveGranularity(range, preset.granularity);
   }
-
-  const sections = hideHourly === true
-    ? PRESETS.map(s => ({
-        section: s.section,
-        items: s.items.filter(p => p.granularity !== 'hourly'),
-      })).filter(s => s.items.length > 0)
-    : PRESETS;
 
   return (
     <div className="flex items-center gap-2">
@@ -242,7 +242,7 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
       </PopoverTrigger>
       <PopoverContent className="w-72 p-0" align="end">
         <div className="flex flex-col">
-          {sections.map(({ section, items }) => (
+          {PRESETS.map(({ section, items }) => (
             <div key={section}>
               <div className="px-3 pt-2.5 pb-1">
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">{section}</span>

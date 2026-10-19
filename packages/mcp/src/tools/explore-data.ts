@@ -97,7 +97,7 @@ export async function exploreData(
 
   const orgPath = await ctx.getOrgAccountsPath();
   // Mirror the dashboards: the active Cost Scope's metric backs `cost`.
-  const scopeMetric = await ctx.getCostScope().then(cs => cs.costMetric).catch(() => 'effective' as const);
+  const scopeMetric = (await ctx.getCostScope()).costMetric;
   const allProviders = await getQueryProviders(ctx, 'daily');
   const required = computePeriodsInRange(dateRange);
   // Per-provider month intersection; providers with nothing in range are

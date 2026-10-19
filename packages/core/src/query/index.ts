@@ -12,6 +12,7 @@ export {
   buildMaterializeBaseQuery,
   buildRollupPartitionQuery,
   buildGrainProbeQuery,
+  buildExclusionClauses,
   buildFilterClauses,
   buildRuleMatchExpr,
   computePeriodsInRange,
@@ -24,6 +25,9 @@ export {
 export type { QueryContextOptions, BuildSourceOptions, ProviderSourceSpec, ProviderSourceBranch, BaselineDiscoveryParams, ResolvedDimension } from './builder.js';
 
 export { costExprFor } from './cost-metric.js';
+
+export { isNewTrend, meetsTrendThresholds, previousTrendPeriod, trendPercentChange } from './trend-change.js';
+export type { TrendChange } from './trend-change.js';
 
 export { QUERY_CANCELLED_MESSAGE } from './cancellation.js';
 

@@ -8,10 +8,10 @@ import { ParentSize } from '@visx/responsive';
 import { localPoint } from '@visx/event';
 import { TooltipWithBounds, useTooltip } from '@visx/tooltip';
 import { curveMonotoneX } from '@visx/curve';
-import { getColor } from '../lib/palette.js';
+import type { SeriesColors } from '../lib/palette.js';
 import { TOOLTIP_STYLES } from '../lib/tooltip-styles.js';
 import { formatDollars } from './format.js';
-import { usePalette } from '../hooks/use-palette.js';
+import { useSeriesColors } from '../hooks/use-palette.js';
 
 export interface LineSeriesPoint {
   readonly date: string;
@@ -43,14 +43,14 @@ interface TooltipPayload {
 
 interface LineSvgProps {
   readonly series: readonly LineSeries[];
+  readonly seriesColor: SeriesColors;
   readonly visible: readonly LineSeries[];
   readonly previousSeries?: readonly LineSeries[] | undefined;
   readonly width: number;
   readonly height: number;
 }
 
-function LineSvg({ series, visible, previousSeries, width, height }: LineSvgProps) {
-  const { palette } = usePalette();
+function LineSvg({ series, seriesColor, visible, previousSeries, width, height }: LineSvgProps) {
   const {
     showTooltip, hideTooltip, tooltipData, tooltipLeft, tooltipTop, tooltipOpen,
   } = useTooltip<TooltipPayload>();
@@ -92,12 +92,6 @@ function LineSvg({ series, visible, previousSeries, width, height }: LineSvgProp
     nice: true,
   }), [maxY, innerH]);
 
-  const seriesColorIndex = useMemo(() => {
-    const m = new Map<string, number>();
-    series.forEach((s, i) => m.set(s.name, i));
-    return m;
-  }, [series]);
-
   const handleMove = useCallback((event: React.MouseEvent<SVGRectElement>) => {
     const point = localPoint(event);
     if (point === null) return;
@@ -116,9 +110,7 @@ function LineSvg({ series, visible, previousSeries, width, height }: LineSvgProp
     const entries = visible
       .map((s) => {
         const p = s.points.find(x2 => x2.date === nearest);
-        const colorIdx = seriesColorIndex.get(s.name) ?? 0;
-        const color = getColor(colorIdx, palette);
-        return p === undefined ? null : { name: s.name, cost: p.cost, color };
+        return p === undefined ? null : { name: s.name, cost: p.cost, color: seriesColor(s.name) };
       })
       .filter((e): e is { name: string; cost: number; color: string } => e !== null);
     showTooltip({
@@ -126,7 +118,7 @@ function LineSvg({ series, visible, previousSeries, width, height }: LineSvgProp
       tooltipLeft: point.x,
       tooltipTop: point.y,
     });
-  }, [innerW, sortedDates, visible, xScale, showTooltip, seriesColorIndex, palette]);
+  }, [innerW, sortedDates, visible, xScale, showTooltip, seriesColor]);
 
   return (
     <div className="relative" style={{ width, height }}>
@@ -171,8 +163,7 @@ function LineSvg({ series, visible, previousSeries, width, height }: LineSvgProp
             })}
           />
           {previousSeries?.map((s) => {
-            const colorIdx = seriesColorIndex.get(s.name) ?? 0;
-            const color = getColor(colorIdx, palette);
+            const color = seriesColor(s.name);
             return (
               <LinePath<LineSeriesPoint>
                 key={`prev-${s.name}`}
@@ -188,8 +179,7 @@ function LineSvg({ series, visible, previousSeries, width, height }: LineSvgProp
             );
           })}
           {visible.map((s) => {
-            const colorIdx = seriesColorIndex.get(s.name) ?? 0;
-            const color = getColor(colorIdx, palette);
+            const color = seriesColor(s.name);
             return (
               <LinePath<LineSeriesPoint>
                 key={s.name}
@@ -231,7 +221,12 @@ function LineSvg({ series, visible, previousSeries, width, height }: LineSvgProp
 }
 
 export function LineChart({ series, previousSeries, title, subtitle, height = 320, onSeriesClick }: LineChartProps) {
-  const { palette } = usePalette();
+  // Hiding a series leaves the others' colors alone: rank every series.
+  const seriesTotals = useMemo(
+    () => series.map(s => ({ name: s.name, cost: s.points.reduce((sum, p) => sum + p.cost, 0) })),
+    [series],
+  );
+  const seriesColor = useSeriesColors(seriesTotals);
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
   const visible = useMemo(
     () => series.filter(s => !hidden.has(s.name)),
@@ -263,15 +258,14 @@ export function LineChart({ series, previousSeries, title, subtitle, height = 32
         <ParentSize>
           {({ width, height: h }) => (
             width > 10 && h > 10 ? (
-              <LineSvg series={series} visible={visible} previousSeries={visiblePrev} width={width} height={h} />
+              <LineSvg series={series} seriesColor={seriesColor} visible={visible} previousSeries={visiblePrev} width={width} height={h} />
             ) : null
           )}
         </ParentSize>
       </div>
       <div className="mt-2 flex flex-wrap gap-2 shrink-0">
         {series.map((s) => {
-          const colorIdx = series.findIndex(x => x.name === s.name);
-          const color = getColor(colorIdx, palette);
+          const color = seriesColor(s.name);
           const off = hidden.has(s.name);
           return (
             <button

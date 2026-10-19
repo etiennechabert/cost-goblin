@@ -7,7 +7,7 @@ export function ShareTab(): React.JSX.Element {
     <div className="flex max-w-3xl flex-col gap-6 p-6">
       <div>
         <h2 className="text-xl font-semibold text-text-primary">Share configuration</h2>
-        <p className="mt-1 text-sm text-text-secondary">Send your configuration to a teammate — as a file, an S3 beacon, or over the local network.</p>
+        <p className="mt-1 text-sm text-text-secondary">Send your configuration to a teammate — as a file, an S3 beacon, or peer-to-peer.</p>
       </div>
       <ShareConfigPanel />
     </div>

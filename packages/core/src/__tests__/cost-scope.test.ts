@@ -120,7 +120,7 @@ describe('exclusion clauses', () => {
     expect(sql).not.toContain('NOT (');
   });
 
-  it('enabled rule with one condition produces NOT IN clause', () => {
+  it('enabled rule with one condition produces a NULL-safe NOT clause', () => {
     const result = buildCostQuery(
       baseParams,
       { dataDir: '/data', dimensions, providers: [{ name: PROVIDER }], costScope: {
@@ -129,12 +129,12 @@ describe('exclusion clauses', () => {
       } },
       5,
     );
-    // Single-condition rules are merged into `dim NOT IN (...)` form
-    expect(result.sql).toContain('service_code NOT IN ($');
+    // COALESCE: a NULL IN-result must read as "no match", or NOT (…) drops the row.
+    expect(result.sql).toMatch(/NOT \(COALESCE\(service_code IN \(\$\d+\), FALSE\)\)/);
     expect(result.params).toContain('AWSSupportEnterprise');
   });
 
-  it('rule with multiple values uses NOT IN list', () => {
+  it('rule with multiple values uses an IN list', () => {
     const result = buildCostQuery(
       baseParams,
       { dataDir: '/data', dimensions, providers: [{ name: PROVIDER }], costScope: {
@@ -143,8 +143,7 @@ describe('exclusion clauses', () => {
       } },
       5,
     );
-    // Single-condition rules merge into `dim NOT IN (...)` form
-    expect(result.sql).toContain('charge_category NOT IN ($');
+    expect(result.sql).toMatch(/NOT \(COALESCE\(charge_category IN \(\$\d+, \$\d+\), FALSE\)\)/);
     expect(result.params).toContain('Purchase');
     expect(result.params).toContain('Tax');
   });
@@ -161,8 +160,7 @@ describe('exclusion clauses', () => {
       } },
       5,
     );
-    expect(result.sql).toContain('NOT (service IN ($');
-    expect(result.sql).toContain('AND service_category IN ($');
+    expect(result.sql).toMatch(/NOT \(COALESCE\(service IN \(\$\d+\), FALSE\) AND COALESCE\(service_category IN \(\$\d+\), FALSE\)\)/);
     expect(result.params).toContain('EC2');
     expect(result.params).toContain('Compute');
   });
@@ -176,10 +174,9 @@ describe('exclusion clauses', () => {
       } },
       5,
     );
-    // Tag dim resolves via CASE expression with merged NOT IN form
-    expect(sql).toContain('CASE');
+    // Tag dim resolves via its normalize/alias CASE expression
+    expect(sql).toMatch(/NOT \(COALESCE\(CASE .* END IN \(\$\d+\), FALSE\)\)/);
     expect(params).toContain('core-banking');
-    expect(sql).toContain('NOT IN ($');
   });
 
   it('DEFAULT_COST_SCOPE built-in rules are disabled by default — no exclusions', () => {
@@ -257,9 +254,48 @@ describe('exclusion clauses', () => {
       5,
     );
     // Resolvable condition still applies; dangling one is silently dropped.
-    expect(result.sql).toContain('NOT (service IN ($');
+    expect(result.sql).toMatch(/NOT \(COALESCE\(service IN \(\$\d+\), FALSE\)\)/);
     expect(result.params).toContain('EC2');
     expect(result.sql).not.toContain('nonexistent_dim');
+  });
+});
+
+describe('exclusion clauses: matchMissing', () => {
+  function sqlFor(...conditions: ExclusionRule['conditions']): string {
+    return buildQuery({ costMetric: 'effective', rules: [{ id: 'm', name: 'M', enabled: true, builtIn: false, conditions }] });
+  }
+
+  it('matches only the missing values when the condition lists none', () => {
+    expect(sqlFor({ dimensionId: asDimensionId('service'), values: [], matchMissing: true }))
+      .toContain("NOT (COALESCE(service, '') = '')");
+  });
+
+  it('ORs missing values with the listed ones, parenthesized against the rule AND', () => {
+    const sql = sqlFor(
+      { dimensionId: asDimensionId('service'), values: ['EC2'], matchMissing: true },
+      { dimensionId: asDimensionId('service_category'), values: ['Compute'] },
+    );
+    expect(sql).toMatch(/NOT \(\(COALESCE\(service IN \(\$\d+\), FALSE\) OR COALESCE\(service, ''\) = ''\) AND COALESCE\(service_category IN \(\$\d+\), FALSE\)\)/);
+  });
+
+  it('counts the no-account sentinel as the missing account', () => {
+    expect(sqlFor({ dimensionId: asDimensionId('account'), values: [], matchMissing: true }))
+      .toContain("NOT ((COALESCE(account_id, '') = '' OR account_id = '(no account)'))");
+  });
+
+  it('reads a missing tag off the normalized/aliased expression', () => {
+    expect(sqlFor({ dimensionId: asDimensionId('tag_org_team'), values: [], matchMissing: true }))
+      .toMatch(/NOT \(COALESCE\(CASE .* END, ''\) = ''\)/);
+  });
+
+  it('is off unless set: a condition without it never matches missing values', () => {
+    const sql = sqlFor({ dimensionId: asDimensionId('service'), values: ['EC2'] });
+    expect(sql).not.toContain("COALESCE(service, '') = ''");
+  });
+
+  it('skips a condition with neither values nor matchMissing', () => {
+    const sql = sqlFor({ dimensionId: asDimensionId('service'), values: [] });
+    expect(sql).not.toContain('NOT (');
   });
 });
 
@@ -586,6 +622,48 @@ describe('validateCostScope: marketplace attribution', () => {
   });
 });
 
+describe('validateCostScope: matchMissing', () => {
+  const withCondition = (condition: Record<string, unknown>): unknown => ({
+    costMetric: 'effective',
+    rules: [{ id: 'm', name: 'M', enabled: true, conditions: [condition] }],
+  });
+
+  it('accepts a condition with no values when it matches missing values', () => {
+    const cfg = validateCostScope(withCondition({ dimensionId: 'account', values: [], matchMissing: true }));
+    expect(cfg.rules[0]?.conditions[0]).toEqual({ dimensionId: 'account', values: [], matchMissing: true });
+  });
+
+  it('still rejects a condition with neither values nor matchMissing', () => {
+    expect(() => validateCostScope(withCondition({ dimensionId: 'account', values: [] })))
+      .toThrow(/values must have at least one entry unless matchMissing is true/);
+    // Only a literal true counts — a typo'd value does not loosen the check.
+    expect(() => validateCostScope(withCondition({ dimensionId: 'account', values: [], matchMissing: 'yes' })))
+      .toThrow(/unless matchMissing is true/);
+  });
+
+  it('drops the key unless true, keeping conditions shape-equal to seeds', () => {
+    const cfg = validateCostScope(withCondition({ dimensionId: 'service', values: ['EC2'], matchMissing: false }));
+    expect(cfg.rules[0]?.conditions[0]).toEqual({ dimensionId: 'service', values: ['EC2'] });
+    expect(Object.keys(cfg.rules[0]?.conditions[0] ?? {})).not.toContain('matchMissing');
+  });
+
+  it('round-trips through YAML serialization, writing the key only when set', () => {
+    const cfg = validateCostScope({
+      costMetric: 'effective',
+      rules: [{ id: 'm', name: 'M', enabled: true, conditions: [
+        { dimensionId: 'account', values: [], matchMissing: true },
+        { dimensionId: 'service', values: ['EC2'] },
+      ] }],
+    });
+    const yaml = costScopeToYaml(cfg);
+    expect(yaml.rules[0]?.conditions).toEqual([
+      { dimensionId: 'account', values: [], matchMissing: true },
+      { dimensionId: 'service', values: ['EC2'] },
+    ]);
+    expect(validateCostScope(yaml)).toEqual(cfg);
+  });
+});
+
 describe('buildDailyCostsQuery with costScope', () => {
   it('injects exclusion clause in daily costs query', () => {
     const { sql, params } = buildDailyCostsQuery(
@@ -595,8 +673,7 @@ describe('buildDailyCostsQuery with costScope', () => {
         rules: [{ id: 'support', name: 'Support', enabled: true, builtIn: true, conditions: [{ dimensionId: asDimensionId('service_code'), values: ['AWSSupportEnterprise'] }] }],
       } },
     );
-    // Single-condition rules use merged NOT IN form
-    expect(sql).toContain('service_code NOT IN ($');
+    expect(sql).toMatch(/NOT \(COALESCE\(service_code IN \(\$\d+\), FALSE\)\)/);
     expect(params).toContain('AWSSupportEnterprise');
     expect(sql).toContain('BilledCost');
   });

@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
-import { getColor } from '../lib/palette.js';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { formatDollars } from './format.js';
 import { CoinRainLoader } from './coin-rain-loader.js';
-import { usePalette } from '../hooks/use-palette.js';
+import { useSeriesColors } from '../hooks/use-palette.js';
+import type { SeriesColors } from '../lib/palette.js';
 import { useBarDragSelect } from '../hooks/use-bar-drag-select.js';
 import { formatBucketKey } from '../lib/drag-select.js';
 
@@ -57,9 +57,18 @@ export function bucketBars(bars: readonly BarDay[], maxBuckets: number): readonl
   return result;
 }
 
+type Segment = { readonly key: string; readonly value: number; readonly color: string };
+
+/** A day's positive series, largest first. */
+function daySegments(day: BarDay, seriesColor: SeriesColors): Segment[] {
+  return Object.entries(day.breakdown)
+    .filter(([, value]) => value > 0)
+    .map(([key, value]) => ({ key, value, color: seriesColor(key) }))
+    .sort((a, b) => b.value - a.value);
+}
+
 interface TooltipSegmentRowProps {
-  readonly seg: { readonly key: string; readonly value: number; readonly colorIdx: number };
-  readonly palette: readonly string[];
+  readonly seg: Segment;
   readonly isHigh: boolean;
   readonly pct: number;
   readonly delta: number | undefined;
@@ -67,8 +76,7 @@ interface TooltipSegmentRowProps {
   readonly setHoveredSegment: (key: string | null) => void;
 }
 
-function TooltipSegmentRow({ seg, palette, isHigh, pct, delta, highlightRef, setHoveredSegment }: TooltipSegmentRowProps) {
-  const color = getColor(seg.colorIdx, palette);
+function TooltipSegmentRow({ seg, isHigh, pct, delta, highlightRef, setHoveredSegment }: TooltipSegmentRowProps) {
   return (
     <div
       ref={isHigh ? highlightRef : undefined}
@@ -76,7 +84,7 @@ function TooltipSegmentRow({ seg, palette, isHigh, pct, delta, highlightRef, set
       onMouseLeave={() => { setHoveredSegment(null); }}
       className={`pointer-events-auto flex items-center gap-2 rounded py-0.5 px-1 -mx-1 cursor-default ${isHigh ? 'bg-white/10' : ''}`}
     >
-      <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
+      <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: seg.color }} />
       <span className={`truncate flex-1 min-w-0 ${isHigh ? 'text-text-primary font-semibold' : 'text-text-secondary'}`}>{seg.key}</span>
       <span className={`tabular-nums shrink-0 ${isHigh ? 'font-semibold' : ''}`}>
         {formatDollars(seg.value)} <span className="text-text-muted">({pct.toFixed(1)}%)</span>
@@ -91,17 +99,15 @@ function TooltipSegmentRow({ seg, palette, isHigh, pct, delta, highlightRef, set
 }
 
 interface BarSegmentProps {
-  readonly seg: { readonly key: string; readonly value: number; readonly colorIdx: number };
+  readonly seg: Segment;
   readonly segTotal: number;
   readonly highlightedGroup?: string | null | undefined;
-  readonly palette: readonly string[];
   readonly onMouseEnter: () => void;
   readonly onSegmentClick?: ((name: string) => void) | undefined;
 }
 
-function BarSegment({ seg, segTotal, highlightedGroup, palette, onMouseEnter, onSegmentClick }: BarSegmentProps) {
+function BarSegment({ seg, segTotal, highlightedGroup, onMouseEnter, onSegmentClick }: BarSegmentProps) {
   const pct = segTotal > 0 ? (seg.value / segTotal) * 100 : 0;
-  const color = getColor(seg.colorIdx, palette);
   const isHighlighted = highlightedGroup !== null && highlightedGroup !== undefined && highlightedGroup === seg.key;
   const isDimmed = highlightedGroup !== null && highlightedGroup !== undefined && !isHighlighted;
   let opacity = 0.85;
@@ -112,7 +118,7 @@ function BarSegment({ seg, segTotal, highlightedGroup, palette, onMouseEnter, on
   // outline inset so it reads as "selected" the way a pie slice does on hover.
   const baseStyle: React.CSSProperties = {
     height: `${String(pct)}%`,
-    backgroundColor: color,
+    backgroundColor: seg.color,
     opacity,
     filter: isHighlighted ? 'brightness(1.2)' : 'none',
     boxShadow: isHighlighted ? 'inset 0 0 0 1.5px rgba(255,255,255,0.85)' : 'none',
@@ -138,21 +144,18 @@ function BarSegment({ seg, segTotal, highlightedGroup, palette, onMouseEnter, on
   );
 }
 
-type Segment = { readonly key: string; readonly value: number; readonly colorIdx: number };
-
 interface BarColumnProps {
   readonly day: BarDay;
   readonly segments: readonly Segment[];
   readonly segTotal: number;
   readonly barPct: number;
   readonly highlightedGroup?: string | null | undefined;
-  readonly palette: readonly string[];
   readonly onSegmentClick?: ((name: string) => void) | undefined;
   readonly setHoveredDay: (date: string | null) => void;
   readonly setHoveredSegment: (key: string | null) => void;
 }
 
-function BarColumn({ day, segments, segTotal, barPct, highlightedGroup, palette, onSegmentClick, setHoveredDay, setHoveredSegment }: BarColumnProps) {
+function BarColumn({ day, segments, segTotal, barPct, highlightedGroup, onSegmentClick, setHoveredDay, setHoveredSegment }: BarColumnProps) {
   return (
     <div
       className="group relative flex-1 min-w-0"
@@ -169,7 +172,6 @@ function BarColumn({ day, segments, segTotal, barPct, highlightedGroup, palette,
             seg={seg}
             segTotal={segTotal}
             highlightedGroup={highlightedGroup}
-            palette={palette}
             onMouseEnter={() => { setHoveredSegment(seg.key); }}
             onSegmentClick={onSegmentClick}
           />
@@ -180,7 +182,6 @@ function BarColumn({ day, segments, segTotal, barPct, highlightedGroup, palette,
 }
 
 export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expanded, onExpandToggle, title, loading, onSegmentClick, previousTotals, onRangeSelect, onSegmentHover }: StackedBarChartProps) {
-  const { palette } = usePalette();
   const [hoveredDay, setHoveredDay] = useState<string | null>(null);
   const [hoveredSegment, setHoveredSegment] = useState<string | null>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
@@ -216,13 +217,18 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
     onSegmentHoverRef.current?.(hoveredSegment);
   }, [hoveredSegment]);
 
-  const allKeys = new Set<string>();
-  for (const day of days) {
-    for (const key of Object.keys(day.breakdown)) {
-      allKeys.add(key);
+  // Each series' cost over the whole range ranks it for color, the way the
+  // pie and every other widget over the same range rank it.
+  const seriesTotals = useMemo(() => {
+    const totals = new Map<string, number>();
+    for (const day of days) {
+      for (const [name, cost] of Object.entries(day.breakdown)) {
+        totals.set(name, (totals.get(name) ?? 0) + cost);
+      }
     }
-  }
-  const breakdownKeys = [...allKeys];
+    return [...totals].map(([name, cost]) => ({ name, cost }));
+  }, [days]);
+  const seriesColor = useSeriesColors(seriesTotals);
 
   const prevMax = previousTotals === undefined ? 0 : previousTotals.reduce((m, v) => Math.max(m, v), 0);
   const maxCost = Math.max(days.reduce((m, d) => Math.max(m, d.total), 0), prevMax);
@@ -320,10 +326,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
             const totalDelta = compTotal !== undefined && compTotal > 0
               ? ((day.total - compTotal) / compTotal) * 100
               : undefined;
-            const segs = breakdownKeys
-              .map((key, ki) => ({ key, value: day.breakdown[key] ?? 0, colorIdx: ki }))
-              .filter(s => s.value > 0)
-              .sort((a, b) => b.value - a.value);
+            const segs = daySegments(day, seriesColor);
             const segTotal = segs.reduce((sum, s) => sum + s.value, 0);
             return (
               <div className={`absolute top-0 bottom-0 z-20 ${onLeft ? 'right-0 mr-1' : 'left-12 ml-1'}`}>
@@ -359,7 +362,6 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                         <TooltipSegmentRow
                           key={seg.key}
                           seg={seg}
-                          palette={palette}
                           isHigh={isHigh}
                           pct={pct}
                           delta={delta}
@@ -388,14 +390,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
           >
             {days.map((day) => {
               const barPct = maxCost > 0 ? (day.total / maxCost) * 100 : 0;
-              const segments = breakdownKeys
-                .map((key, ki) => ({
-                  key,
-                  value: day.breakdown[key] ?? 0,
-                  colorIdx: ki,
-                }))
-                .filter(s => s.value > 0)
-                .sort((a, b) => b.value - a.value);
+              const segments = daySegments(day, seriesColor);
               const segTotal = segments.reduce((sum, s) => sum + s.value, 0);
 
               return (
@@ -406,7 +401,6 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                   segTotal={segTotal}
                   barPct={barPct}
                   highlightedGroup={focusedKey}
-                  palette={palette}
                   onSegmentClick={onSegmentClick}
                   setHoveredDay={setHoveredDay}
                   setHoveredSegment={setHoveredSegment}

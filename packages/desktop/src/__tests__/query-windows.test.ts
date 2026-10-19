@@ -5,12 +5,34 @@ import { costScopePreviewWindow, resolveExplorerDateRange, tagDiscoverySince } f
 const FIXTURE_NOW_MS = Date.UTC(2026, 2, 2, 12);
 
 describe('costScopePreviewWindow', () => {
-  it('is the 30 days ending lagDays before the injected now', () => {
-    expect(costScopePreviewWindow(FIXTURE_NOW_MS, 2)).toEqual({ windowDays: 30, startDate: '2026-01-30', endDate: '2026-02-28' });
+  it('uses the period picked on the preview, whatever the clock and lag', () => {
+    expect(costScopePreviewWindow({ start: '2026-02-21', end: '2026-02-28' }, FIXTURE_NOW_MS, 2))
+      .toEqual({ windowDays: 8, startDate: '2026-02-21', endDate: '2026-02-28' });
+    expect(costScopePreviewWindow({ start: '2025-01-01', end: '2025-12-31' }, FIXTURE_NOW_MS, 0))
+      .toEqual({ windowDays: 365, startDate: '2025-01-01', endDate: '2025-12-31' });
+  });
+
+  it('falls back to the 30 days ending lagDays before the injected now', () => {
+    expect(costScopePreviewWindow(undefined, FIXTURE_NOW_MS, 2)).toEqual({ windowDays: 30, startDate: '2026-01-30', endDate: '2026-02-28' });
   });
 
   it('follows the lag', () => {
-    expect(costScopePreviewWindow(FIXTURE_NOW_MS, 0)).toEqual({ windowDays: 30, startDate: '2026-02-01', endDate: '2026-03-02' });
+    expect(costScopePreviewWindow(undefined, FIXTURE_NOW_MS, 0)).toEqual({ windowDays: 30, startDate: '2026-02-01', endDate: '2026-03-02' });
+  });
+
+  it('falls back on a malformed or inverted period, so nothing unvalidated reaches the SQL', () => {
+    const fallback = { windowDays: 30, startDate: '2026-01-30', endDate: '2026-02-28' };
+    for (const bad of [
+      null,
+      'last-30-days',
+      { start: '2026-02-01' },
+      { start: "2026-02-01' OR 1=1 --", end: '2026-02-28' },
+      { start: '2026-13-01', end: '2026-12-31' },
+      { start: 20260201, end: 20260228 },
+      { start: '2026-02-28', end: '2026-02-01' },
+    ]) {
+      expect(costScopePreviewWindow(bad, FIXTURE_NOW_MS, 2)).toEqual(fallback);
+    }
   });
 });
 

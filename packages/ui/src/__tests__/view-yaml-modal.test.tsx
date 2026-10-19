@@ -70,6 +70,25 @@ describe('ViewYamlModal', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it('keeps the description through an export and import round trip', async () => {
+    const described: ViewSpec = { ...VIEW, description: 'Where each team spends', builtIn: true };
+    const { unmount } = render(<ViewYamlModal mode="export" view={described} onClose={vi.fn()} />);
+    const exported = screen.getByRole('textbox');
+    if (!(exported instanceof HTMLTextAreaElement)) throw new Error('export text is not a textarea');
+    const yaml = exported.value;
+    expect(yaml).toContain('description: Where each team spends');
+    expect(yaml).not.toContain('builtIn');
+    unmount();
+
+    const user = userEvent.setup();
+    const onImport = vi.fn();
+    render(<ViewYamlModal mode="import" existingIds={new Set()} onImport={onImport} onClose={vi.fn()} />);
+    await user.click(screen.getByRole('textbox'));
+    await user.paste(yaml);
+    await user.click(screen.getByRole('button', { name: 'Import' }));
+    expect(onImport).toHaveBeenCalledWith(expect.objectContaining({ description: 'Where each team spends' }));
+  });
+
   it('announces an import error', async () => {
     const user = userEvent.setup();
     const onImport = vi.fn();

@@ -46,7 +46,7 @@ export function registerSharingHandlers(app: AppContext): void {
 
   ipcMain.handle('sharing:export-bundle', async (): Promise<ExportConfigBundleResult> => {
     try {
-      const bundle = await buildCurrentBundle(app);
+      const bundle = await buildCurrentBundle(app, { brokenViews: 'fail' });
       const result = await dialog.showSaveDialog({
         title: 'Export CostGoblin configuration',
         defaultPath: `costgoblin-config-${new Date().toISOString().slice(0, 10)}.yaml`,
@@ -126,7 +126,7 @@ export function registerSharingHandlers(app: AppContext): void {
       if (target === null) {
         return { status: 'error', message: 'Invalid S3 location — expected s3://bucket/path/to/org-config.yaml' };
       }
-      const body = serializeConfigBundle(await buildCurrentBundle(app));
+      const body = serializeConfigBundle(await buildCurrentBundle(app, { brokenViews: 'fail' }));
 
       const { S3Client, PutObjectCommand } = await import('@aws-sdk/client-s3');
       // Publishing needs s3:PutObject, which day-to-day read-only profiles

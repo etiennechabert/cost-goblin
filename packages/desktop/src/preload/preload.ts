@@ -43,6 +43,7 @@ import type {
   PruneResult,
   ViewsConfig,
   CostScopeConfig,
+  CostScopePreviewRange,
   CostScopePreviewResult,
   ExplorerFilterValue,
   ExplorerFilterValuesParams,
@@ -348,8 +349,8 @@ const api: CostApi = {
   saveCostScope(config: CostScopeConfig): Promise<void> {
     return invoke<undefined>('cost-scope:save-config', config).then(() => undefined);
   },
-  previewCostScope(config: CostScopeConfig): Promise<CostScopePreviewResult> {
-    return invoke<CostScopePreviewResult>('cost-scope:preview', config);
+  previewCostScope(config: CostScopeConfig, range: CostScopePreviewRange): Promise<CostScopePreviewResult> {
+    return invoke<CostScopePreviewResult>('cost-scope:preview', config, range);
   },
   revealCostScopeFolder(): Promise<void> {
     return invoke<undefined>('cost-scope:reveal-folder').then(() => undefined);

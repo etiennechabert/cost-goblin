@@ -21,7 +21,7 @@ const dateRangeSchema = z.object({
 }).optional();
 
 const filtersSchema = z.record(z.string(), z.array(z.string())).optional()
-  .describe('Filter map: dimension ID -> array of values to include');
+  .describe('Filter map: dimension ID -> array of values to include. An empty string "" includes the rows with no value (an untagged resource, an empty field).');
 
 const formatSchema = z.enum(['markdown', 'json', 'csv']).optional().describe(
   'Response format. "markdown" (default) for human-readable tables. ' +
@@ -143,7 +143,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
         dateRange: dateRangeSchema,
         filters: filtersSchema,
         deltaThreshold: z.number().optional().describe('Min absolute delta to include (default $1)'),
-        percentThreshold: z.number().optional().describe('Min % change to include (default 5%)'),
+        percentThreshold: z.number().optional().describe('Min % change to include (default 5%). An entity with no previous-period cost (new spend or a new credit) always passes, shown as +100% / -100%'),
         limit: z.number().optional().describe('Max rows per section (default 15)'),
         format: formatSchema,
       },

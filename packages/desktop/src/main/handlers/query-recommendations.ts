@@ -24,14 +24,14 @@ import {
 import { originStore } from '../query-log.js';
 
 export function registerRecommendationHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getConfig, getCostScope, getQueryProviders, runQuery, runPreparedQuery } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getConfig, getQueryCostScope, getQueryProviders, runQuery, runPreparedQuery } = app;
 
   ipcMain.handle('query:missing-tags', (_event, params: MissingTagsParams): Promise<MissingTagsResult> => originStore.run(params.origin ?? null, async () => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
     const accountReverseMap = await getAccountReverseMap();
     const orgPath = await getOrgAccountsPath();
-    const costScope = await getCostScope().catch(() => undefined);
+    const costScope = await getQueryCostScope();
     logger.info('query:missing-tags', { tagDimension: params.tagDimension });
 
     const providers = await getQueryProviders('daily');
