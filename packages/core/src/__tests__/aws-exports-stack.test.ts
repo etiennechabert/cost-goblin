@@ -171,6 +171,13 @@ describe('the exports stack template', () => {
     expect(at(plain, EXPORTS_STACK_PARAMETERS.costOptimization, 'Default')).toBe('no');
   });
 
+  it('says where to enable Cost Optimization Hub, which the export needs', () => {
+    const description = at(section(template, 'Parameters'), EXPORTS_STACK_PARAMETERS.costOptimization, 'Description');
+    expect(description).toMatch(/Cost Management preferences, Cost Optimization Hub tab/);
+    expect(description).toMatch(/Enable Cost Optimization Hub/);
+    expect(description).toMatch(/Save preferences/);
+  });
+
   it("gives the path CostGoblin's config needs for each tier: the export's own folder", () => {
     expect(exportsStackPath('acme-billing', 'daily')).toBe('s3://acme-billing/costgoblin/daily/costgoblin-daily/');
     expect(exportsStackPath('acme-billing', 'hourly')).toBe('s3://acme-billing/costgoblin/hourly/costgoblin-hourly/');
