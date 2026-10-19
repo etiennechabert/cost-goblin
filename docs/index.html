@@ -2774,9 +2774,10 @@ gcloud storage buckets create <span class="code-dir">gs://your-company-billing</
             <h4>Deploy the exporter</h4>
             <a class="anchor-link" href="#get-started-gcp-exporter" aria-label="Copy link to the step &ldquo;Deploy the exporter&rdquo;"></a>
           </div>
-          <p>A small daily job in <em>your</em> project copies changed billing periods from BigQuery into the bucket. <a href="https://shell.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https%3A%2F%2Fgithub.com%2Fetiennechabert%2Fcost-goblin&amp;cloudshell_working_dir=scripts%2Fgcp-focus-exporter" target="_blank" rel="noopener"><strong>Open in Cloud Shell</strong></a>, set the values at the top of <em>deploy.sh</em>, and run it &mdash; or locally:</p>
+          <p>A small daily job in <em>your</em> project copies changed billing periods from BigQuery into the bucket. <a href="https://shell.cloud.google.com/?show=ide%2Cterminal" target="_blank" rel="noopener"><strong>Open Cloud Shell</strong></a> and paste this into its terminal, set the values at the top of <em>deploy.sh</em>, and run it:</p>
           <div class="code-block">
-cd scripts/gcp-focus-exporter
+curl -fsSL https://github.com/etiennechabert/cost-goblin/releases/latest/download/gcp-focus-exporter.tar.gz | tar xz
+cd gcp-focus-exporter &amp;&amp; cloudshell edit deploy.sh
 <span class="code-file">./deploy.sh</span>   <span class="code-comment"># builds, deploys and schedules the job</span>
           </div>
           <p>It writes <em>gs://your-company-billing/focus/daily/billing_period=YYYY-MM/</em>. Prefer to see every command? The <a href="https://github.com/etiennechabert/cost-goblin/tree/main/scripts/gcp-focus-exporter" target="_blank" rel="noopener">exporter README</a> has the copy-paste version.</p>

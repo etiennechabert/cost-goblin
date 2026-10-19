@@ -128,9 +128,15 @@ pick whichever suits you.
 
 gcloud, Docker and your credentials are already there.
 
-[**Open in Cloud Shell**](https://shell.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https%3A%2F%2Fgithub.com%2Fetiennechabert%2Fcost-goblin&cloudshell_working_dir=scripts%2Fgcp-focus-exporter)
-— it clones the repo and drops you in this directory. Edit the config block at
-the top of `deploy.sh`, then run it.
+[**Open Cloud Shell**](https://shell.cloud.google.com/?show=ide%2Cterminal)
+and paste this into its terminal. It downloads this folder from the latest
+release, rather than the whole repository, and opens `deploy.sh` in the editor:
+
+```bash
+curl -fsSL https://github.com/etiennechabert/cost-goblin/releases/latest/download/gcp-focus-exporter.tar.gz | tar xz && cd gcp-focus-exporter && cloudshell edit deploy.sh
+```
+
+Edit the config block at the top of `deploy.sh`, then run `./deploy.sh`.
 
 ### 2. Locally, if you already have the gcloud CLI
 
@@ -165,11 +171,9 @@ BUCKET=your-company-billing
 LOCATION=EU          # must match the export dataset AND the bucket
 REGION=europe-west1  # a region inside LOCATION
 
-# ---- fetch the exporter ----
-mkdir -p costgoblin-exporter && cd costgoblin-exporter
-BASE=https://raw.githubusercontent.com/etiennechabert/cost-goblin/main/scripts/gcp-focus-exporter
-curl -fsSL -O ${BASE}/export-focus.mjs -O ${BASE}/package.json -O ${BASE}/package-lock.json \
-  -O ${BASE}/Dockerfile -O ${BASE}/cloudbuild.yaml -O ${BASE}/cleanup-policy.json
+# ---- fetch the exporter (this folder, from the latest release) ----
+curl -fsSL https://github.com/etiennechabert/cost-goblin/releases/latest/download/gcp-focus-exporter.tar.gz | tar xz
+cd gcp-focus-exporter
 
 # ---- one-time setup ----
 JOB=costgoblin-focus-exporter
