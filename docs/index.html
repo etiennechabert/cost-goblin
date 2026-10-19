@@ -1979,9 +1979,16 @@
     .get-started-steps a:not(.anchor-link):hover { border-bottom-color: var(--emerald); }
 
     /* The one console a step sends people to (the CloudFormation stack, Cloud
-       Shell) gets a button of its own rather than a link inside a sentence. */
-    .step .step-action { margin: 4px 0 18px 46px; }
-    .provider-modal .step .step-action { margin-left: 0; }
+       Shell) gets a button of its own rather than a link inside a sentence,
+       beside the paragraph that introduces it, or under it when there's no room. */
+    .step .step-lead {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 12px 24px;
+      margin-bottom: 16px;
+    }
+    .step .step-lead p { flex: 1 1 320px; margin-bottom: 0; }
     .get-started-steps a.btn-primary { color: #050505; border-bottom: none; transition: all 0.2s; }
 
     @media (max-width: 768px) {
@@ -2603,8 +2610,9 @@
             <h4>Create the exports with CloudFormation <span class="step-badge">Recommended</span></h4>
             <a class="anchor-link" href="#get-started-aws-cloudformation" aria-label="Copy link to the step &ldquo;Create the exports with CloudFormation&rdquo;"></a>
           </div>
-          <p>One stack creates everything with the settings CostGoblin needs: the S3 bucket and its lifecycle rules, the daily FOCUS 1.2 export (plus, optionally, the hourly and Cost Optimization Hub exports), and a read-only policy for CostGoblin. The setup wizard opens it for you with your answers filled in: on the bucket step, choose <strong>Create one with CloudFormation</strong>. Without the app:</p>
-          <div class="step-action">
+          <p>One stack creates everything with the settings CostGoblin needs: the S3 bucket and its lifecycle rules, the daily FOCUS 1.2 export (plus, optionally, the hourly and Cost Optimization Hub exports), and a read-only policy for CostGoblin.</p>
+          <div class="step-lead">
+          <p>The setup wizard opens it for you with your answers filled in: on the bucket step, choose <strong>Create one with CloudFormation</strong>. Without the app:</p>
             <a class="btn-primary" href="https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?templateURL=https%3A%2F%2Fcostgoblin-templates.s3.eu-central-1.amazonaws.com%2Ftemplates%2Flatest%2Fcostgoblin-exports.yaml&amp;stackName=costgoblin-exports" target="_blank" rel="noopener">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
               Launch the CloudFormation stack
@@ -2786,8 +2794,8 @@ gcloud storage buckets create <span class="code-dir">gs://your-company-billing</
             <h4>Deploy the exporter</h4>
             <a class="anchor-link" href="#get-started-gcp-exporter" aria-label="Copy link to the step &ldquo;Deploy the exporter&rdquo;"></a>
           </div>
+          <div class="step-lead">
           <p>A small daily job in <em>your</em> project copies changed billing periods from BigQuery into the bucket. Open Cloud Shell and paste this into its terminal:</p>
-          <div class="step-action">
             <a class="btn-primary" href="https://shell.cloud.google.com/?show=ide%2Cterminal" target="_blank" rel="noopener">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
               Open Cloud Shell
