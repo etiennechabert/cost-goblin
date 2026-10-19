@@ -138,6 +138,11 @@ curl -fsSL https://github.com/etiennechabert/cost-goblin/releases/latest/downloa
 
 Edit the config block at the top of `deploy.sh`, then run `./deploy.sh`.
 
+Pasting the line again (to update the exporter) replaces `deploy.sh`, values
+included. Note them first, or pass them as variables instead of editing the
+file, since `deploy.sh` reads each one from the environment:
+`FOCUS_TABLE=… BUCKET=… ./deploy.sh`.
+
 ### 2. Locally, if you already have the gcloud CLI
 
 Edit the config block at the top of `deploy.sh` — at minimum `FOCUS_TABLE`,
