@@ -10,7 +10,7 @@
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
@@ -30,11 +30,10 @@ function run(cmd, args, cwd) {
 }
 
 /** Every file under `dir`, as paths relative to it. */
-function filesUnder(dir, prefix = '') {
-  return readdirSync(join(dir, prefix), { withFileTypes: true }).flatMap((entry) => {
-    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
-    return entry.isDirectory() ? filesUnder(dir, rel) : [rel];
-  });
+function filesUnder(dir) {
+  return readdirSync(dir, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => relative(dir, join(entry.parentPath, entry.name)));
 }
 
 describe('pack-gcp-exporter.sh', () => {
@@ -72,6 +71,15 @@ describe('pack-gcp-exporter.sh', () => {
 
   it('keeps deploy.sh executable', () => {
     expect(statSync(join(unpacked, FOLDER, 'deploy.sh')).mode & 0o111).toBe(0o111);
+  });
+
+  // Dated to the commit, not to when it ran: two runs a second apart would
+  // otherwise differ, which the byte comparison below can't catch on its own.
+  it('dates every file to the commit', () => {
+    const committedAt = Number(run('git', ['log', '-1', '--format=%ct', 'HEAD'], repoRoot).trim());
+    for (const file of filesUnder(join(unpacked, FOLDER))) {
+      expect(Math.floor(statSync(join(unpacked, FOLDER, file)).mtimeMs / 1000), file).toBe(committedAt);
+    }
   });
 
   it('builds the same bytes on a re-run', () => {
