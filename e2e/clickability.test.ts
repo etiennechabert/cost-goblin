@@ -714,14 +714,14 @@ test.describe('Clickability (workspace mode)', () => {
     await expect(p.getByRole('heading', { name: 'Cost Overview' })).toBeVisible();
     // Tailwind v4 leaves controls on the arrow cursor (app.css restores the
     // pointer); only a component's own cursor, such as a drag grip's, replaces it.
-    const onArrow = await p.evaluate(() => [...document.querySelectorAll('button')]
+    const onArrow = (): Promise<string[]> => p.evaluate(() => [...document.querySelectorAll('button')]
       .filter(b => !b.disabled && b.getClientRects().length > 0)
       .filter(b => {
         const cursor = getComputedStyle(b).cursor;
         return cursor === 'auto' || (cursor === 'default' && !b.classList.contains('cursor-default'));
       })
       .map(b => b.getAttribute('aria-label') ?? b.textContent.trim()));
-    expect(onArrow).toEqual([]);
+    expect(await onArrow()).toEqual([]);
 
     // A hover tints the button, a press tints it more: the click shows it landed.
     const button = p.getByRole('navigation', { name: 'Dashboards and analysis' }).getByRole('button', { name: 'Baselines' });
@@ -737,5 +737,11 @@ test.describe('Clickability (workspace mode)', () => {
     // Released elsewhere, so nothing is clicked.
     await p.mouse.move(640, 700);
     await p.mouse.up();
+
+    // The settings rail and a settings page with many kinds of control.
+    await openSettings(p);
+    await p.getByRole('navigation', { name: SETTINGS_NAV_LABEL }).getByRole('button', { name: 'Dimensions' }).click();
+    await expect(p.getByRole('heading', { name: 'Dimensions', exact: true })).toBeVisible();
+    expect(await onArrow()).toEqual([]);
   });
 });
