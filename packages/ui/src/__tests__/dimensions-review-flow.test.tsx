@@ -5,6 +5,7 @@ import { asDimensionId, tagSqlColumn } from '@costgoblin/core/browser';
 import type { BuiltInDimension, CostApi, DimensionsConfig, RollupDimEstimate, RollupGrainEstimate, TagDimension } from '@costgoblin/core/browser';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
+import { ModalLayer } from '../hooks/modal-layers.js';
 import { DimensionsView } from '../views/dimensions.js';
 import { setReducedMotion } from './setup.js';
 
@@ -196,6 +197,14 @@ describe('Dimension editor — Disable dimension', () => {
     document.dispatchEvent(new WheelEvent('wheel', { bubbles: true }));
     document.dispatchEvent(new Event('scrollend'));
     expect(scroll).toHaveBeenCalledTimes(3);
+
+    // Nor under a dialog that opened on its own meanwhile.
+    await openRow(user, 'Team');
+    expect(scroll).toHaveBeenCalledTimes(4);
+    const dialog = render(<ModalLayer kind="dialog" />);
+    document.dispatchEvent(new Event('scrollend'));
+    expect(scroll).toHaveBeenCalledTimes(4);
+    dialog.unmount();
   });
 
   it('is not offered for a dimension that cannot be turned off, nor in the Add form', async () => {

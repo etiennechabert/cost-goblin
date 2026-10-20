@@ -126,7 +126,8 @@ const USER_SCROLL_EVENTS = ['wheel', 'touchstart', 'keydown', 'pointerdown'] as 
  *  Content above that grows while the smooth scroll runs (the Rollup impact
  *  panel loading) would leave the editor halfway down: the animation overwrites
  *  Chromium's scroll-anchoring correction. So when the scroll ends, the anchor
- *  is put back at the top, unless the user has started scrolling meanwhile. */
+ *  is put back at the top, unless the user has started scrolling (or a dialog
+ *  has opened) meanwhile. */
 function useRevealOnRequest(containerRef: React.RefObject<HTMLDivElement | null>, revealSeq: number): void {
   const reducedMotion = useReducedMotion();
   useEffect(() => {
@@ -145,6 +146,8 @@ function useRevealOnRequest(containerRef: React.RefObject<HTMLDivElement | null>
     }
     function settle(): void {
       stop();
+      // Not under a dialog that opened on its own meanwhile.
+      if (getModalLayerCount() > 0) return;
       anchor.scrollIntoView({ block: 'start', behavior: 'auto' });
     }
     // Capture, to hear the end of an element scroller's scroll too. Bounded,
