@@ -62,6 +62,11 @@ function builtInPills(): string[] {
   return within(list).getAllByRole('button').map(b => b.textContent);
 }
 
+/** The drop markers: a line along the edge the dragged row will land on,
+ *  green above (moving up), blue below (moving down). */
+const DROP_ABOVE = 'inset 0 3px 0 var(--color-accent, #10b981)';
+const DROP_BELOW = 'inset 0 -3px 0 #3b82f6';
+
 /** Stand-in for the DataTransfer jsdom lacks; the rows write to it. */
 function dataTransfer(): { effectAllowed: string; dropEffect: string; setData: (format: string, data: string) => void } {
   return { effectAllowed: 'none', dropEffect: 'none', setData: vi.fn<(format: string, data: string) => void>() };
@@ -118,12 +123,13 @@ describe('Enabled dimensions — reordering', () => {
     fireEvent.dragStart(rowAt(0), { dataTransfer: transfer });
     expect(transfer.effectAllowed).toBe('move');
     expect(transfer.setData).toHaveBeenCalledWith('text/plain', '0');
-    // The dragged row dims; the row under it shows where it will land.
+    // The dragged row dims; the row under it shows where it will land: below
+    // it, since the dragged row moves down the list.
     expect(rowAt(0).style.opacity).toBe('0.4');
     const target = rowAt(2);
     expect(fireEvent.dragOver(target, { dataTransfer: transfer })).toBe(false);
     expect(transfer.dropEffect).toBe('move');
-    expect(target.style.boxShadow).not.toBe('');
+    expect(target.style.boxShadow).toBe(DROP_BELOW);
 
     // Leaving some other row keeps the marker; leaving the target clears it.
     fireEvent.dragLeave(rowAt(1));
@@ -152,6 +158,23 @@ describe('Enabled dimensions — reordering', () => {
     fireEvent.drop(rowAt(1), { dataTransfer: transfer });
     expect(rowLabels()).toEqual(['Service', 'Charge Category', 'Team']);
     expect(screen.getByText('Saved')).toBeDefined();
+  });
+
+  it('marks the top edge of the row a dragged row moves up onto, where it lands', async () => {
+    renderView({ builtIn: [SERVICE, CHARGE], tags: [TEAM] });
+    await waitForRows(['Service', 'Charge Category', 'Team']);
+    const transfer = dataTransfer();
+    fireEvent.mouseDown(within(rowAt(2)).getByTitle('Drag to reorder'));
+    fireEvent.dragStart(rowAt(2), { dataTransfer: transfer });
+    fireEvent.dragOver(rowAt(1), { dataTransfer: transfer });
+    expect(rowAt(1).style.boxShadow).toBe(DROP_ABOVE);
+    // Moving on to a row above clears the first marker.
+    fireEvent.dragLeave(rowAt(1));
+    fireEvent.dragOver(rowAt(0), { dataTransfer: transfer });
+    expect(rowAt(0).style.boxShadow).toBe(DROP_ABOVE);
+    expect(rowAt(1).style.boxShadow).toBe('');
+    fireEvent.drop(rowAt(0), { dataTransfer: transfer });
+    expect(rowLabels()).toEqual(['Team', 'Service', 'Charge Category']);
   });
 
   it('dropping a row back onto itself changes nothing', async () => {

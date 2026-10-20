@@ -229,7 +229,10 @@ describe('TagEditor — tags sharing a dimension id', () => {
     await openTagEditor(user, 'tag:cost-center');
     await user.type(label(), ' (edited)');
 
-    await user.click(within(banner).getByRole('button', { name: 'Remove "Cost center (new)"' }));
+    // From the keyboard: a click outside an editor with unsaved edits asks to
+    // discard them first (dimensions-click-outside.test.tsx).
+    within(banner).getByRole('button', { name: 'Remove "Cost center (new)"' }).focus();
+    await user.keyboard('{Enter}');
     expect(screen.queryByRole('alert', { hidden: true })).toBeNull();
     expect(screen.getByDisplayValue('Cost Center (edited)')).toBeDefined();
     expect(screen.getByLabelText(/^Resource Tag/, { selector: 'select' })).toHaveProperty('value', 'cost-center');
