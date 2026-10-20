@@ -253,6 +253,19 @@ describe('CustomView — group-bys on a dimension that is not enabled', () => {
     expect(screen.queryByText(STACK)).toBeNull();
   });
 
+  it('reads the summary total grouped by service, which is always enabled', async () => {
+    const api = new ViewApi();
+    // Account is disabled: getDimensions lists only the enabled dimensions.
+    vi.spyOn(api, 'getDimensions').mockResolvedValue([
+      { name: asDimensionId('service'), label: 'Service', field: 'service' },
+      { name: asDimensionId('region'), label: 'Region', field: 'region' },
+    ]);
+    renderView(SUMMARY, api);
+
+    await waitFor(() => { expect(api.costCalls.length).toBeGreaterThan(0); });
+    expect(new Set(api.costCalls.map(c => String(c.groupBy)))).toEqual(new Set(['service']));
+  });
+
   it('shows the dashboard as configured when the dimensions fail to load', async () => {
     class NoDimensionsApi extends ViewApi {
       override getDimensions(): Promise<Dimension[]> {

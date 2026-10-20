@@ -19,7 +19,10 @@ export function SummaryWidget({
   const api = useCostApi();
   const isSummary = spec.type === 'summary';
 
-  const groupBy = asDimensionId('account');
+  // Only the total is read, which no grouping changes. Service is locked on,
+  // so it is always in the rollup; a disabled dimension (Account can be)
+  // would read the raw Parquet.
+  const groupBy = asDimensionId('service');
   const fk = filtersKey(globalFilters);
 
   const cur = useQuery<CostResult | null>(

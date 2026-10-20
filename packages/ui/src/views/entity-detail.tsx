@@ -23,6 +23,7 @@ import type { BarDay, HistogramTab } from '../components/stacked-bar-chart.js';
 import { getDimensionId, getDimensionLabel, isEnvironmentDimension, isOwnerDimension, isProductDimension, isUnitDimension } from '../lib/dimensions.js';
 import { computeBucketedHourRange, computeBucketedRange, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
 import { BaselineMicroBar } from '../components/baseline-micro-bar.js';
+import { enabledGroupBys } from '../widgets/enabled-group-by.js';
 
 interface EntityDetailProps {
   entity: string;
@@ -174,26 +175,43 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
   const productDim = rawDimensions.find(isProductDimension);
   const regionDimId = asDimensionId('region');
 
-  const effectivePie1 = pie1DimId ?? accountDimId;
-  const effectivePie2 = pie2DimId ?? (productDim === undefined ? regionDimId : getDimensionId(productDim));
-  const effectivePie3 = pie3DimId ?? serviceDimId;
+  const wantedPies = [
+    pie1DimId ?? accountDimId,
+    pie2DimId ?? (productDim === undefined ? regionDimId : getDimensionId(productDim)),
+    pie3DimId ?? serviceDimId,
+  ];
+  // getDimensions lists only the enabled dimensions: a default pie on a
+  // disabled one (Account can be) moves to an enabled dimension instead.
+  const shownPies = enabledGroupBys(wantedPies, rawDimensions.map(getDimensionId));
+  const effectivePie1 = shownPies[0] ?? accountDimId;
+  const effectivePie2 = shownPies[1] ?? regionDimId;
+  const effectivePie3 = shownPies[2] ?? serviceDimId;
+  // The pies wait for the dimensions, so none first queries a default it is
+  // about to leave. If they fail to load, the defaults are queried as they are.
+  const dimensionsSettled = dimensionsQuery.status === 'success' || dimensionsQuery.status === 'error';
 
   // Pie queries — same as overview but scoped to this entity via filter
-  const pie1Query = useQuery(
-    () => api.queryCosts({ groupBy: effectivePie1, dateRange, filters: entityFilter, granularity, origin: `entity-detail:pie1:${String(effectivePie1)}` }),
-    [effectivePie1, dateRangeKey, filterKey, granularity, api],
+  const pie1Query = useQuery<CostResult | null>(
+    () => dimensionsSettled
+      ? api.queryCosts({ groupBy: effectivePie1, dateRange, filters: entityFilter, granularity, origin: `entity-detail:pie1:${String(effectivePie1)}` })
+      : Promise.resolve(null),
+    [dimensionsSettled, effectivePie1, dateRangeKey, filterKey, granularity, api],
   );
   const pie1Slices = costRowsToSlices(pie1Query.status === 'success' ? pie1Query.data : null);
 
-  const pie2Query = useQuery(
-    () => api.queryCosts({ groupBy: effectivePie2, dateRange, filters: entityFilter, granularity, origin: `entity-detail:pie2:${String(effectivePie2)}` }),
-    [effectivePie2, dateRangeKey, filterKey, granularity, api],
+  const pie2Query = useQuery<CostResult | null>(
+    () => dimensionsSettled
+      ? api.queryCosts({ groupBy: effectivePie2, dateRange, filters: entityFilter, granularity, origin: `entity-detail:pie2:${String(effectivePie2)}` })
+      : Promise.resolve(null),
+    [dimensionsSettled, effectivePie2, dateRangeKey, filterKey, granularity, api],
   );
   const pie2Slices = costRowsToSlices(pie2Query.status === 'success' ? pie2Query.data : null);
 
-  const pie3Query = useQuery(
-    () => api.queryCosts({ groupBy: effectivePie3, dateRange, filters: entityFilter, granularity, origin: `entity-detail:pie3:${String(effectivePie3)}` }),
-    [effectivePie3, dateRangeKey, filterKey, granularity, api],
+  const pie3Query = useQuery<CostResult | null>(
+    () => dimensionsSettled
+      ? api.queryCosts({ groupBy: effectivePie3, dateRange, filters: entityFilter, granularity, origin: `entity-detail:pie3:${String(effectivePie3)}` })
+      : Promise.resolve(null),
+    [dimensionsSettled, effectivePie3, dateRangeKey, filterKey, granularity, api],
   );
   const pie3Slices = costRowsToSlices(pie3Query.status === 'success' ? pie3Query.data : null);
 
@@ -350,8 +368,10 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
               { dimId: effectivePie1, setDim: setPie1DimId, slices: pie1Slices },
               { dimId: effectivePie2, setDim: setPie2DimId, slices: pie2Slices },
               { dimId: effectivePie3, setDim: setPie3DimId, slices: pie3Slices },
-            ] as const).map(({ dimId, setDim, slices }) => (
-              <div key={dimId} className="min-w-0 flex-1">
+            ] as const).map(({ dimId, setDim, slices }, i) => (
+              // Two pies can share a dimension once a disabled default moves,
+              // so the slot is part of the key.
+              <div key={`${String(i)}:${dimId}`} className="min-w-0 flex-1">
                 <PieChart
                   data={slices}
                   title={(() => {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { asDimensionId } from '@costgoblin/core/browser';
 import type { DimensionId, ViewSpec, WidgetSpec } from '@costgoblin/core/browser';
-import { withEnabledGroupBys } from '../widgets/enabled-group-by.js';
+import { enabledGroupBys, withEnabledGroupBys } from '../widgets/enabled-group-by.js';
 
 const ids = (...names: string[]): DimensionId[] => names.map(asDimensionId);
 
@@ -67,5 +67,20 @@ describe('withEnabledGroupBys', () => {
       ...spec,
       rows: [{ widgets: [{ id: 'top', type: 'topNBar', size: 'large', title: 'Top accounts', groupBy: asDimensionId('service'), topN: 5 }] }],
     });
+  });
+});
+
+describe('enabledGroupBys', () => {
+  it('keeps the enabled group-bys and moves the others to dimensions not already shown', () => {
+    expect(enabledGroupBys(ids('account', 'tag_product', 'service'), ids('service', 'region', 'sku_meter')))
+      .toEqual(ids('region', 'sku_meter', 'service'));
+  });
+
+  it('keeps every group-by before the dimensions load', () => {
+    expect(enabledGroupBys(ids('account', 'service'), [])).toEqual(ids('account', 'service'));
+  });
+
+  it('repeats the first enabled dimension once every one is shown', () => {
+    expect(enabledGroupBys(ids('account', 'region', 'service'), ids('service', 'region'))).toEqual(ids('service', 'region', 'service'));
   });
 });
