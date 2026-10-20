@@ -738,6 +738,12 @@ test.describe('Clickability (workspace mode)', () => {
     await p.mouse.move(640, 700);
     await p.mouse.up();
 
+    // A chart plot that takes a drag selection is a role=button too, and
+    // draws its own selection: no state layer over the whole plot.
+    const plot = p.locator('[role="button"].cursor-crosshair').first();
+    await plot.hover();
+    expect(await plot.evaluate(el => getComputedStyle(el).backgroundImage)).toBe('none');
+
     // The settings rail and a settings page with many kinds of control.
     await openSettings(p);
     await p.getByRole('navigation', { name: SETTINGS_NAV_LABEL }).getByRole('button', { name: 'Dimensions' }).click();

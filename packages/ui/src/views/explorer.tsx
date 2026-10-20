@@ -660,6 +660,8 @@ function Histogram({ days, loading, onRangeSelect }: HistogramProps): React.JSX.
           ref={barsRef}
           role={onRangeSelect === undefined ? undefined : 'button'}
           tabIndex={onRangeSelect === undefined ? undefined : 0}
+          // The plot draws its own drag selection: no app-wide state layer over it.
+          data-feedback="none"
           className={[
             'absolute top-0 right-0 h-full flex items-end outline-none',
             onRangeSelect === undefined ? '' : 'cursor-crosshair select-none',

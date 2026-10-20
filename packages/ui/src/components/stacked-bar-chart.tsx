@@ -380,6 +380,8 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
             ref={barsRef}
             role={onRangeSelect === undefined ? undefined : 'button'}
             tabIndex={onRangeSelect === undefined ? undefined : 0}
+            // The plot draws its own drag selection: no app-wide state layer over it.
+            data-feedback="none"
             className={[
               'absolute left-12 right-0 top-0 bottom-7 flex items-end z-10 outline-none',
               onRangeSelect === undefined ? '' : 'cursor-crosshair select-none',
