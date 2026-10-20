@@ -266,6 +266,16 @@ describe('CustomView — group-bys on a dimension that is not enabled', () => {
     expect(new Set(api.costCalls.map(c => String(c.groupBy)))).toEqual(new Set(['service']));
   });
 
+  it('reads the burndown daily totals grouped by service, for both periods', async () => {
+    const api = new ViewApi();
+    renderView(view([{ id: 'pacing', type: 'burndown', size: 'large' }]), api);
+
+    await waitFor(() => {
+      expect(api.dailyCalls.map(c => c.origin).sort()).toEqual(['widget:burndown', 'widget:burndown/prev']);
+    });
+    expect(api.dailyCalls.map(c => String(c.groupBy))).toEqual(['service', 'service']);
+  });
+
   it('shows the dashboard as configured when the dimensions fail to load', async () => {
     class NoDimensionsApi extends ViewApi {
       override getDimensions(): Promise<Dimension[]> {
