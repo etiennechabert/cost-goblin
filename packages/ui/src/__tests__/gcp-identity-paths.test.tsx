@@ -144,6 +144,19 @@ describe('GcpIdentityPanel — Data Management paths', () => {
   });
 });
 
+describe('GcpIdentityPanel — split accounts warning', () => {
+  it('sends the sign-in direction of a GOOGLE_APPLICATION_CREDENTIALS file to the variable', async () => {
+    const panel = renderPanel(ok({
+      listing: userListing({ status: 'known', email: 'alice@acme.com' }, ENV_FILE),
+      download: gcloud('admin@acme.com'),
+      splitAccounts: { listingAccount: 'alice@acme.com', downloadAccount: 'admin@acme.com' },
+    }));
+    const warning = await within(panel).findByRole('note', { name: 'Credential warning' });
+    expect(warning.textContent).toContain('sign bucket listing in as admin@acme.com: fix or unset GOOGLE_APPLICATION_CREDENTIALS');
+    expect(warning.textContent).not.toContain('gcloud auth application-default login');
+  });
+});
+
 describe('GcpIdentityPanel — wizard line', () => {
   it.each([
     { email: 'ci@acme.iam.gserviceaccount.com', text: 'ci@acme.iam.gserviceaccount.com' },
@@ -156,6 +169,16 @@ describe('GcpIdentityPanel — wizard line', () => {
   it('reports gcloud failing to name its configuration', async () => {
     const panel = renderPanel(ok({ listing: userListing({ status: 'known', email: 'alice@acme.com' }), download: { kind: 'cli-error', message: 'config is corrupt' } }), 'wizard');
     expect(await within(panel).findByText("gcloud couldn't report its configuration: config is corrupt")).toBeDefined();
+  });
+
+  it('sends a split GOOGLE_APPLICATION_CREDENTIALS file to the variable, which signing in again cannot change', async () => {
+    const panel = renderPanel(ok({
+      listing: userListing({ status: 'known', email: 'alice@acme.com' }, ENV_FILE),
+      download: gcloud('admin@acme.com'),
+      splitAccounts: { listingAccount: 'alice@acme.com', downloadAccount: 'admin@acme.com' },
+    }), 'wizard');
+    await waitFor(() => { expect(panel.textContent).toContain('Bucket access is signed in as alice@acme.com — to use admin@acme.com, fix or unset GOOGLE_APPLICATION_CREDENTIALS'); });
+    expect(panel.textContent).not.toContain('gcloud auth application-default login');
   });
 
   it.each([

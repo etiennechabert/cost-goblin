@@ -1,4 +1,4 @@
-import type { CheckConfigBeaconParams, CheckConfigBeaconResult, CostGoblinConfig } from '@costgoblin/core/browser';
+import type { CheckConfigBeaconParams, CheckConfigBeaconResult, CostGoblinConfig, GcpIdentityResult } from '@costgoblin/core/browser';
 import { asBucketPath } from '@costgoblin/core/browser';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
@@ -1527,7 +1527,7 @@ describe('SetupWizard — GCP "Signed in as" panel', () => {
     await user.click(screen.getByText('Choose from my projects'));
     const panel = await screen.findByRole('region', { name: 'Signed in as' });
     await waitFor(() => { expect(panel.textContent).toContain('admin@acme.com'); });
-    expect(panel.textContent).toContain('Bucket access is signed in as alice@acme.com — a different account.');
+    expect(panel.textContent).toContain('Bucket access is signed in as alice@acme.com — to use admin@acme.com, run gcloud auth application-default login');
   });
 
   it('re-reads the identities when the browse step is retried after a sign-in', async () => {
@@ -2322,5 +2322,105 @@ describe('SetupWizard — GCP reader check on Continue', () => {
     api.gcsBucketsResult = { buckets: [{ name: 'acme-focus-export' }] };
     await userClickText(user, 'Retry');
     await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+  });
+});
+
+/** gcloud's configuration is one account and the ADC file the listing mints
+ *  from is another — reproduced live, with the reader's grant held by
+ *  gcloud's account, the one the panel shows. */
+function splitIdentities(listingAccount: string): GcpIdentityResult {
+  return {
+    status: 'ok',
+    identities: {
+      listing: { kind: 'user', file: { path: '/adc.json', origin: 'well-known' }, account: { status: 'known', email: listingAccount } },
+      download: { kind: 'gcloud', account: 'admin@acme.com', configuration: 'admin' },
+      reader: null,
+      splitAccounts: { listingAccount, downloadAccount: 'admin@acme.com' },
+    },
+  };
+}
+
+describe('SetupWizard — GCP bucket access signed in as another account', () => {
+  /** Hub → GCP intro, once the panel has the split on screen. */
+  async function openGcpIntro(api: MockCostApi, user: ReturnType<typeof userEvent.setup>): Promise<void> {
+    api.gcpIdentitiesResult = splitIdentities('alice@acme.com');
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    const panel = await screen.findByRole('region', { name: 'Signed in as' });
+    await waitFor(() => { expect(panel.textContent).toContain('Bucket access is signed in as alice@acme.com'); });
+  }
+
+  it('blames that account, not "your Google account", when the reader check is refused', async () => {
+    const { api, user } = renderWizard();
+    api.gcsBucketsResult = { buckets: [], error: READER_REFUSED };
+    await openGcpIntro(api, user);
+    await user.type(screen.getByLabelText('Google Cloud project'), 'acme-prod{Enter}');
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toMatch(
+        /^Can't read as costgoblin-reader — it doesn't exist in acme-prod, or alice@acme\.com lacks the Token Creator role on it\./,
+      );
+    });
+  });
+
+  it('blames it on the bucket step when the project was picked from the list', async () => {
+    const { api, user } = renderWizard();
+    api.gcsBucketsResult = { buckets: [], error: READER_REFUSED };
+    await openGcpIntro(api, user);
+    await user.click(screen.getByText('Choose from my projects'));
+    await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
+    await userClickText(user, 'Acme Production');
+
+    await waitFor(() => { expect(screen.getByText(/^Can't read as/).textContent).toMatch(/or alice@acme\.com lacks the Token Creator role/); });
+    // Re-read before the listing, as on the intro: the split was on screen.
+    expect(api.gcpIdentitiesRequestedFor).toHaveLength(2);
+  });
+
+  it('names it when listing the buckets without a reader is refused', async () => {
+    const { api, user } = renderWizard();
+    api.gcsBucketsResult = { buckets: [], error: 'alice@acme.com does not have storage.buckets.list access to the Google Cloud project.' };
+    await openGcpIntro(api, user);
+    await openReaderField(user);
+    await user.clear(screen.getByLabelText('Read-only service account'));
+    await user.type(screen.getByLabelText('Google Cloud project'), 'acme-prod{Enter}');
+
+    await waitFor(() => { expect(screen.getByRole('status').textContent).toMatch(/^alice@acme\.com can't list the buckets in acme-prod/); });
+    expect(api.gcsBucketsListedAs).toEqual([undefined]);
+  });
+
+  it('re-reads who is signed in before listing, so a refusal never names the account signed in before the line\'s sign-in', async () => {
+    const { api, user } = renderWizard();
+    api.gcsBucketsResult = { buckets: [], error: READER_REFUSED };
+    await openGcpIntro(api, user);
+    // The user runs the sign-in the line suggests, and picks another account.
+    api.gcpIdentitiesResult = splitIdentities('carol@acme.com');
+    await user.type(screen.getByLabelText('Google Cloud project'), 'acme-prod{Enter}');
+
+    await waitFor(() => { expect(screen.getByRole('alert').textContent).toMatch(/or carol@acme\.com lacks the Token Creator role/); });
+    expect(screen.getByRole('alert').textContent).not.toContain('alice@acme.com');
+  });
+
+  it('drops the line once the sign-in it suggests makes the accounts agree', async () => {
+    const { api, user } = renderWizard();
+    await openGcpIntro(api, user);
+    api.gcpIdentitiesResult = new MockCostApi().gcpIdentitiesResult;
+    api.gcsBucketsResult = { buckets: [{ name: 'acme-focus-export' }] };
+    await user.type(screen.getByLabelText('Google Cloud project'), 'acme-prod{Enter}');
+
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    await waitFor(() => {
+      expect(screen.getByRole('region', { name: 'Signed in as' }).textContent).not.toContain('Bucket access is signed in as');
+    });
+  });
+
+  it('asks gcloud nothing more on a Continue when nothing is split', async () => {
+    const { api, user } = renderWizard();
+    api.gcsBucketsResult = { buckets: [], error: READER_REFUSED };
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await waitFor(() => { expect(api.gcpIdentitiesRequestedFor).toHaveLength(1); });
+    await user.type(screen.getByLabelText('Google Cloud project'), 'acme-prod{Enter}');
+    await waitFor(() => { expect(screen.getByRole('alert').textContent).toMatch(/or your Google account lacks/); });
+    // The panel's fetch would start on a timer: let one pass before saying it didn't.
+    await act(async () => { await new Promise<void>((resolve) => { setTimeout(resolve, 10); }); });
+    expect(api.gcpIdentitiesRequestedFor).toHaveLength(1);
   });
 });
