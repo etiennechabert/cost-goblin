@@ -14,13 +14,13 @@ import type {
 import { DEFAULT_EXPLORER_HIDDEN_COLUMNS, asDateString, asHourString } from '@costgoblin/core/browser';
 import type { SortingState } from '@tanstack/react-table';
 import { useCostApi } from '../hooks/use-cost-api.js';
-import { useLagDays } from '../hooks/use-lag-days.js';
+import { useViewDateRange } from '../hooks/use-view-date-range.js';
 import { useBarDragSelect } from '../hooks/use-bar-drag-select.js';
 import { useHourlyConfigured } from '../hooks/use-hourly-configured.js';
 import { formatDollars } from '../components/format.js';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card.js';
 import { DataTable } from '../components/data-table.js';
-import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
+import { DateRangePicker } from '../components/date-range-picker.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { HourlyHintBanner } from '../components/hourly-hint-banner.js';
 import { getDimensionId } from '../lib/dimensions.js';
@@ -92,12 +92,11 @@ const BASE_COLUMNS: readonly TableColumn<ExplorerSampleRow>[] = [
 
 export function ExplorerView(): React.JSX.Element {
   const api = useCostApi();
-  const lagDays = useLagDays();
+  const { lagDays, dateRange, pickedRange, setDateRange } = useViewDateRange();
   const hourlyConfigured = useHourlyConfigured();
   const [filters, setFilters] = useState<ExplorerFilterMap>({});
   const [sort, setSort] = useState<ExplorerSort | undefined>(undefined);
   const [dimensions, setDimensions] = useState<Dimension[]>([]);
-  const [dateRange, setDateRange] = useState<DateRange>(() => getDefaultDateRange(lagDays));
   const [granularity, setGranularity] = useState<Granularity>('daily');
   const [applyCostScope, setApplyCostScope] = useState(false);
   const [costMetric, setCostMetric] = useState<CostMetric>('effective');
@@ -177,11 +176,13 @@ export function ExplorerView(): React.JSX.Element {
   // Save date range / granularity whenever they change. Skip saves until
   // after preferences have loaded — the prefsLoadedRef flag is set in the
   // mount effect once the initial load completes (or fails). This prevents
-  // redundant writes when restoring persisted values on mount.
+  // redundant writes when restoring persisted values on mount. It runs on
+  // `pickedRange`, not `dateRange`: the default window moving to the cost
+  // scope's lag isn't a change to write.
   useEffect(() => {
     if (!prefsLoadedRef.current) return;
     saveSessionPrefs(dateRange, granularity);
-  }, [dateRange, granularity]);
+  }, [pickedRange, granularity]);
 
   const cancelReadyRef = useRef(false);
   useEffect(() => {

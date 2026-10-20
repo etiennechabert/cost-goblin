@@ -1,7 +1,8 @@
 // Calendar windows the main-process handlers anchor on "now". Pure, and taking
 // `nowMs` explicitly, so they read the injected IpcContext clock (pinned by
 // COSTGOBLIN_NOW in e2e) and never Date.
-import { assertHourString, DEFAULT_LAG_DAYS, daysBefore, trailingWindow } from '@costgoblin/core';
+import { asDateString, asHourString, assertHourString, capDateRange, DEFAULT_LAG_DAYS, daysBefore, trailingWindow } from '@costgoblin/core';
+import type { DateString } from '@costgoblin/core';
 
 const DEFAULT_WINDOW_DAYS = 30;
 const PREVIEW_WINDOW_DAYS = 30;
@@ -35,15 +36,19 @@ function parseDayRange(raw: unknown): ResolvedDateRange | null {
   const start = 'start' in raw && typeof raw.start === 'string' ? parseDate(raw.start) : null;
   const end = 'end' in raw && typeof raw.end === 'string' ? parseDate(raw.end) : null;
   if (start === null || end === null || start.getTime() > end.getTime()) return null;
-  const days = Math.floor((end.getTime() - start.getTime()) / 86_400_000) + 1;
-  return { startStr: toIsoDate(start), endStr: toIsoDate(end), windowDays: days };
+  return { startStr: toIsoDate(start), endStr: toIsoDate(end), windowDays: windowDaysOf(start, end) };
+}
+
+function windowDaysOf(start: Date, end: Date): number {
+  return Math.floor((end.getTime() - start.getTime()) / 86_400_000) + 1;
 }
 
 /** The Explorer's requested range when valid, else the default window ending
- *  at the default lag before `nowMs`. */
+ *  `lagDays` before `nowMs`. */
 export function resolveExplorerDateRange(
   raw: { start?: string | undefined; end?: string | undefined; startHour?: string | undefined; endHour?: string | undefined } | undefined,
   nowMs: number,
+  lagDays: number = DEFAULT_LAG_DAYS,
 ): ResolvedDateRange {
   const base = parseDayRange(raw);
   if (base !== null) {
@@ -60,18 +65,51 @@ export function resolveExplorerDateRange(
     }
     return base;
   }
-  const fallback = trailingWindow(nowMs, DEFAULT_LAG_DAYS, DEFAULT_WINDOW_DAYS);
+  const fallback = trailingWindow(nowMs, lagDays, DEFAULT_WINDOW_DAYS);
   return { startStr: fallback.start, endStr: fallback.end, windowDays: DEFAULT_WINDOW_DAYS };
+}
+
+/** A resolved range with its end capped at the freshness `cutoff` (see core's
+ *  capDateRange); null when it lies entirely after it. */
+export function capResolvedRange(range: ResolvedDateRange, cutoff: DateString): ResolvedDateRange | null {
+  const capped = capDateRange({
+    start: asDateString(range.startStr),
+    end: asDateString(range.endStr),
+    startHour: range.startHour === undefined ? undefined : asHourString(range.startHour),
+    endHour: range.endHour === undefined ? undefined : asHourString(range.endHour),
+  }, cutoff);
+  if (capped === null) return null;
+  if (capped.end === range.endStr) return range;
+  return {
+    startStr: capped.start,
+    endStr: capped.end,
+    windowDays: windowDaysOf(new Date(`${capped.start}T00:00:00Z`), new Date(`${capped.end}T00:00:00Z`)),
+    ...(capped.startHour === undefined ? {} : { startHour: capped.startHour }),
+    ...(capped.endHour === undefined ? {} : { endHour: capped.endHour }),
+  };
+}
+
+export interface PreviewWindow {
+  readonly windowDays: number;
+  readonly startDate: string;
+  readonly endDate: string;
 }
 
 /** The Cost Scope preview's window: the period picked on the preview when
  *  valid, else the last 30 days of billing data ending `lagDays` before
  *  `nowMs`. */
-export function costScopePreviewWindow(requested: unknown, nowMs: number, lagDays: number): { windowDays: number; startDate: string; endDate: string } {
+export function costScopePreviewWindow(requested: unknown, nowMs: number, lagDays: number): PreviewWindow {
   const picked = parseDayRange(requested);
   if (picked !== null) return { windowDays: picked.windowDays, startDate: picked.startStr, endDate: picked.endStr };
   const { start, end } = trailingWindow(nowMs, lagDays, PREVIEW_WINDOW_DAYS);
   return { windowDays: PREVIEW_WINDOW_DAYS, startDate: start, endDate: end };
+}
+
+/** A preview window capped at the freshness `cutoff`; null when it lies
+ *  entirely after it. */
+export function capPreviewWindow(window: PreviewWindow, cutoff: DateString): PreviewWindow | null {
+  const capped = capResolvedRange({ startStr: window.startDate, endStr: window.endDate, windowDays: window.windowDays }, cutoff);
+  return capped === null ? null : { windowDays: capped.windowDays, startDate: capped.startStr, endDate: capped.endStr };
 }
 
 /** First day (YYYY-MM-DD) of the Dimensions resource-tag discovery sample. */

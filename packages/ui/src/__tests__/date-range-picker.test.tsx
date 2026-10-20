@@ -1,6 +1,7 @@
 import { render, screen, cleanup, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, it, expect, vi } from 'vitest';
+import { asDateString } from '@costgoblin/core/browser';
 import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
 import type { DateRange, Granularity } from '../components/date-range-picker.js';
 
@@ -151,5 +152,38 @@ describe('DateRangePicker', () => {
     const calls = onChange.mock.calls;
     const range = calls[calls.length - 1]?.[0] as DateRange;
     expect(range.start <= range.end).toBe(true);
+  });
+});
+
+describe('DateRangePicker calendar periods and the freshness lag', () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  // Fake only Date so userEvent's timers keep running.
+  function renderOn(isoNow: string, lagDays: number) {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(isoNow));
+    const onChange = vi.fn();
+    render(<DateRangePicker value={getDefaultDateRange(lagDays)} granularity="daily" onChange={onChange} hideHourly lagDays={lagDays} />);
+    return { onChange, user: userEvent.setup() };
+  }
+
+  it('stops a period at the newest day the lag allows', async () => {
+    const { onChange, user } = renderOn('2026-10-20T12:00:00Z', 7);
+    await user.click(screen.getByText('Last 30 days'));
+    await user.click(screen.getByText('This month'));
+    expect(onChange.mock.calls[0]?.[0]).toEqual({ start: asDateString('2026-10-01'), end: asDateString('2026-10-13') });
+  });
+
+  it('disables a period that starts after it', async () => {
+    const { onChange, user } = renderOn('2026-10-03T12:00:00Z', 7);
+    await user.click(screen.getByText('Last 30 days'));
+    const thisMonth = screen.getByRole('button', { name: 'This month' });
+    expect(thisMonth).toHaveProperty('disabled', true);
+    expect(thisMonth.getAttribute('title')).toContain('2026-09-26');
+    await user.click(thisMonth);
+    expect(onChange).not.toHaveBeenCalled();
+    // Last month still has its first 26 days.
+    await user.click(screen.getByRole('button', { name: 'Last month' }));
+    expect(onChange.mock.calls[0]?.[0]).toEqual({ start: asDateString('2026-09-01'), end: asDateString('2026-09-26') });
   });
 });

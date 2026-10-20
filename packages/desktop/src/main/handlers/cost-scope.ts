@@ -3,6 +3,7 @@ import { writeFile } from 'node:fs/promises';
 import { stringify } from 'yaml';
 import {
   DEFAULT_LAG_DAYS,
+  freshnessCutoff,
   ConfigValidationError,
   costScopeToYaml,
   dimensionIdSet,
@@ -27,7 +28,7 @@ import type { RawRow } from '../duckdb-client.js';
 import type { AppContext } from './context.js';
 import { loadOrSeedCostScope } from './cost-scope-load.js';
 import { tagSelectItems, tagValuesById, toNum } from './query-utils.js';
-import { costScopePreviewWindow } from './query-windows.js';
+import { capPreviewWindow, costScopePreviewWindow } from './query-windows.js';
 
 const SAMPLE_ROW_LIMIT = 500;
 
@@ -104,7 +105,12 @@ export function registerCostScopeHandlers(app: AppContext): void {
     const config = validateCostScope(payload, dimensionIdSet(dimensions));
     const enabledRules = config.rules.filter(r => r.enabled);
 
-    const { windowDays, startDate: startStr, endDate: endStr } = costScopePreviewWindow(range, ctx.now(), config.lagDays ?? DEFAULT_LAG_DAYS);
+    const lagDays = config.lagDays ?? DEFAULT_LAG_DAYS;
+    const requested = costScopePreviewWindow(range, ctx.now(), lagDays);
+    // A period picked on the preview stops at the draft's freshness lag, as
+    // the dashboards will once it is saved.
+    const window = capPreviewWindow(requested, freshnessCutoff(ctx.now(), lagDays));
+    const { windowDays, startDate: startStr, endDate: endStr } = window ?? requested;
 
     const zero: CostScopePreviewResult = {
       windowDays,
@@ -124,6 +130,7 @@ export function registerCostScopeHandlers(app: AppContext): void {
     // early return as "no months on disk". Months are intersected PER
     // provider: a shared list would hand a provider globs for months it
     // doesn't have, and one zero-match glob fails the whole union.
+    if (window === null) return zero;
     const providers = await getQueryProviders('daily');
     const required = computePeriodsInRange({ start: startStr, end: endStr });
     const branches = providers

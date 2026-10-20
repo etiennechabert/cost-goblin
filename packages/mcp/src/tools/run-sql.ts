@@ -2,9 +2,7 @@ import {
   assertDateString,
   buildSource,
   computePeriodsInRange,
-  DEFAULT_LAG_DAYS,
   logger,
-  trailingWindow,
 } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
 import type { Cell, Column, StructuredResult } from '../formatters/result.js';
@@ -13,10 +11,12 @@ import {
   emptyRangeResult,
   getQueryProviders,
   resolveFormat,
+  resolveToolDateRange,
   structuredToolResult,
   toStr,
   toolError,
   toolResult,
+  withinLagResult,
 } from './tool-helpers.js';
 
 const MAX_LIMIT = 500;
@@ -174,23 +174,12 @@ export function validateRunSqlQuery(sql: string): string | null {
   return null;
 }
 
-/** The explicit range when given (validated), else the trailing 60 days ending
- *  at the default lag before `nowMs`. */
-function resolveDateRange(param: { start: string; end: string } | undefined, nowMs: number): { start: string; end: string } {
-  if (param !== undefined) {
-    assertDateString(param.start);
-    assertDateString(param.end);
-    return param;
-  }
-  return trailingWindow(nowMs, DEFAULT_LAG_DAYS, 60);
-}
-
 /** The `costs` CTE the user's query runs against: the materialized rollup when
  *  it covers the range, else the per-provider Parquet union. Returns null when
  *  no provider has data in range. */
 async function buildCostsCte(ctx: McpContext, dateRange: { start: string; end: string }): Promise<string | null> {
   // Both bounds are interpolated into SQL literals below — assert at the
-  // interpolation site (not just in resolveDateRange), matching how core's
+  // interpolation site (not just in resolveToolDateRange), matching how core's
   // query builder re-asserts before every BETWEEN interpolation.
   assertDateString(dateRange.start);
   assertDateString(dateRange.end);
@@ -266,7 +255,9 @@ export async function runSql(
     return toolError(validationError);
   }
 
-  const dateRange = resolveDateRange(params.dateRange, ctx.now());
+  const range = await resolveToolDateRange(ctx, params.dateRange, 60);
+  if (range.kind === 'within-lag') return withinLagResult(ctx, range, format, 'Query Result');
+  const { dateRange, cappedAt } = range;
   const costsCte = await buildCostsCte(ctx, dateRange);
   if (costsCte === null) {
     return emptyRangeResult(ctx, dateRange, format, `Query Result`);
@@ -310,7 +301,7 @@ export async function runSql(
     notes.push(`*Results truncated to ${String(cap)} rows — narrow the query or page with LIMIT/OFFSET inside it.*`);
   }
 
-  const coverage = await computeDataCoverage(ctx, dateRange);
+  const coverage = await computeDataCoverage(ctx, dateRange, cappedAt);
   const result: StructuredResult = {
     title: `Query Result`,
     coverage,

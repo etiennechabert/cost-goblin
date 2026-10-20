@@ -9,12 +9,12 @@ import type {
 } from '@costgoblin/core/browser';
 import { asDateString, asDimensionId, asEntityRef, asHourString, asTagValue } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
-import { useLagDays } from '../hooks/use-lag-days.js';
+import { useViewDateRange } from '../hooks/use-view-date-range.js';
 import { useQuery } from '../hooks/use-query.js';
 import { useHourlyConfigured } from '../hooks/use-hourly-configured.js';
 import { formatDollars, formatPercent } from '../components/format.js';
-import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
-import type { DateRange, Granularity } from '../components/date-range-picker.js';
+import { DateRangePicker } from '../components/date-range-picker.js';
+import type { Granularity } from '../components/date-range-picker.js';
 import { HourlyHintBanner } from '../components/hourly-hint-banner.js';
 import { PieChart } from '../components/pie-chart.js';
 import type { PieSlice } from '../components/pie-chart.js';
@@ -80,9 +80,8 @@ function handleCsvExport(data: EntityDetailResult, entity: string) {
 
 export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetailProps>) {
   const api = useCostApi();
-  const lagDays = useLagDays();
+  const { lagDays, dateRange, pickedRange, setDateRange } = useViewDateRange();
   const hourlyConfigured = useHourlyConfigured();
-  const [dateRange, setDateRange] = useState<DateRange>(() => getDefaultDateRange(lagDays));
   const [granularity, setGranularity] = useState<Granularity>('daily');
   const [histogramTab, setHistogramTab] = useState<HistogramTab>('service');
   const [histogramExpanded, setHistogramExpanded] = useState(false);
@@ -129,14 +128,15 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
   // values it just read. This view doesn't manage column visibility, so it
   // omits hiddenColumns/columnOrder entirely — the save merges onto the
   // on-disk prefs, leaving the user's curated column set (owned by the
-  // Explorer) untouched.
+  // Explorer) untouched. It runs on `pickedRange`, not `dateRange`: the
+  // default window moving to the cost scope's lag isn't a change to write.
   useEffect(() => {
     if (!prefsLoadedRef.current) return;
     api.saveExplorerPreferences({
       lastUsedDateRange: dateRange,
       lastUsedGranularity: granularity,
     }).catch(() => undefined);
-  }, [dateRange, granularity, api]);
+  }, [pickedRange, granularity, api]);
 
   // Entity detail summary (total, previous, percent change)
   const detailQuery = useQuery(

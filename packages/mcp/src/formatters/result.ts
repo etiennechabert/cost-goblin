@@ -14,6 +14,9 @@ export interface DataCoverage {
   readonly missingPeriods: readonly string[];
   /** Months from the requested range with no data. */
   readonly missingInRange: readonly string[];
+  /** The day the requested range was cut back to by the cost scope's
+   *  freshness lag; absent when it was not cut. */
+  readonly cappedAt?: string;
 }
 
 function lagWord(lagDays: number): string {
@@ -32,6 +35,9 @@ export function dataCoverageBanner(coverage: DataCoverage): string {
   }
   if (coverage.latestDay !== null && coverage.lagDays !== null) {
     parts.push(`Latest day: ${coverage.latestDay} (${lagWord(coverage.lagDays)})`);
+  }
+  if (coverage.cappedAt !== undefined) {
+    parts.push(`Your requested range stops at ${coverage.cappedAt}: the cost scope's freshness lag leaves out the newer days, whose billing data is still being consolidated`);
   }
   if (coverage.missingInRange.length > 0) {
     parts.push(`Missing periods in your requested range: ${coverage.missingInRange.join(', ')}`);

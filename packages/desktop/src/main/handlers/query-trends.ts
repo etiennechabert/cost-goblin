@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import {
   buildTrendQuery,
+  capToFreshnessLag,
   logger,
   asEntityRef,
   asDollars,
@@ -32,12 +33,16 @@ export function registerTrendHandlers(app: AppContext): void {
     const orgPath = await getOrgAccountsPath();
     const costScope = await getQueryCostScope();
     const providers = await getQueryProviders('daily');
-    const empty = providersEmptyForRange(providers, params.dateRange);
-    if (empty) return { increases: [], savings: [], totalIncrease: asDollars(0), totalSavings: asDollars(0) };
+    // Capped before the previous period is derived from it, so both periods
+    // stay the same length.
+    const dateRange = capToFreshnessLag(params.dateRange, ctx.now(), costScope.lagDays);
+    if (dateRange === null || providersEmptyForRange(providers, dateRange)) {
+      return { increases: [], savings: [], totalIncrease: asDollars(0), totalSavings: asDollars(0) };
+    }
 
     // Compute the full date range (current + previous period) to check if
     // the materialized base covers both spans.
-    const fullRange = { start: previousTrendPeriod(params.dateRange).start, end: params.dateRange.end };
+    const fullRange = { start: previousTrendPeriod(dateRange).start, end: dateRange.end };
     // Coverage must include the previous-period span (fullRange), or trends
     // under-reports previous_cost. resolveRollupSource checks every touched month.
     const matSource = resolveRollupSource(rollupStore, providers, fullRange, 'daily', [
@@ -48,7 +53,7 @@ export function registerTrendHandlers(app: AppContext): void {
     const isMat = matSource !== undefined;
 
     const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, providers, accountReverseMap, costScope, materializedSource: matSource };
-    const { sql, params: queryParams } = buildTrendQuery(params, qcOpts);
+    const { sql, params: queryParams } = buildTrendQuery({ ...params, dateRange }, qcOpts);
     logger.info('query:trends', { groupBy: params.groupBy, materialized: isMat });
 
     const rows = await runPreparedQuery(sql, queryParams, isMat);

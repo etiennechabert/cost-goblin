@@ -133,6 +133,31 @@ describe('run_sql costs CTE', () => {
   });
 });
 
+// NOW is 2026-02-25: a 7-day freshness lag leaves Feb 18 as the newest day.
+describe('run_sql and the cost scope freshness lag', () => {
+  const LAG_7 = (): Promise<CostScopeConfig> => Promise.resolve({ costMetric: 'billed', rules: [], lagDays: 7 });
+
+  it('ends the default window at the configured lag', async () => {
+    const { ctx, statements } = harness({ costScope: LAG_7 });
+    await runSql(ctx, { sql: 'SELECT COUNT(*) AS n FROM costs' });
+    expect(statements[0]).toContain("WHERE usage_date BETWEEN '2025-12-21' AND '2026-02-18')");
+  });
+
+  it('cuts a requested range back to the lag and says so', async () => {
+    const { ctx, statements } = harness({ costScope: LAG_7, respond: () => Promise.resolve([{ n: 1 }]) });
+    const text = resultText(await runSql(ctx, { sql: 'SELECT COUNT(*) AS n FROM costs', dateRange: { start: '2026-02-01', end: '2026-02-25' } }));
+    expect(statements[0]).toContain("WHERE usage_date BETWEEN '2026-02-01' AND '2026-02-18')");
+    expect(text).toContain('Your requested range stops at 2026-02-18');
+  });
+
+  it('runs nothing for a range entirely within the lag, naming the newest day it can read', async () => {
+    const { ctx, statements } = harness({ costScope: LAG_7 });
+    const text = resultText(await runSql(ctx, { sql: 'SELECT COUNT(*) AS n FROM costs', dateRange: { start: '2026-02-20', end: '2026-02-25' } }));
+    expect(statements).toEqual([]);
+    expect(text).toContain('Ask for a range ending on or before 2026-02-18');
+  });
+});
+
 describe('run_sql results', () => {
   it('says so when the query returns no rows', async () => {
     const { ctx } = harness({ respond: () => Promise.resolve([]) });

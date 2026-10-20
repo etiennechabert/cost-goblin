@@ -3,23 +3,23 @@ import {
   buildDailyCostsQuery,
   logger,
 } from '@costgoblin/core';
-import type { DateRange, DimensionId } from '@costgoblin/core';
+import type { DimensionId } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
 import type { Cell, Column, StructuredResult } from '../formatters/result.js';
 import {
   buildQueryContextOpts,
   computeDataCoverage,
-  defaultDateRange,
   emptyRangeResult,
   lookupDimension,
   mondayOf,
   resolveFormat,
+  resolveToolDateRange,
   structuredToolResult,
   toDimensionId,
-  toDateRange,
   toFilterMap,
   toNum,
   toStr,
+  withinLagResult,
 } from './tool-helpers.js';
 
 /** One bucket's per-group costs; the key is a day, or a week's Monday after
@@ -106,9 +106,9 @@ export async function queryDailyCosts(
   const groupBy: DimensionId = params.groupBy !== undefined
     ? toDimensionId(params.groupBy)
     : asDimensionId('service');
-  const dateRange: DateRange = params.dateRange !== undefined
-    ? toDateRange(params.dateRange)
-    : defaultDateRange(ctx.now());
+  const range = await resolveToolDateRange(ctx, params.dateRange);
+  if (range.kind === 'within-lag') return withinLagResult(ctx, range, format, 'Daily Costs');
+  const { dateRange, cappedAt } = range;
   const filters = toFilterMap(params.filters);
 
   const { opts, empty } = await buildQueryContextOpts(ctx, dateRange);
@@ -137,7 +137,7 @@ export async function queryDailyCosts(
     ? breakdownRows(bucketByWeek(sortedDays), topGroups, (week) => `w/${week}`)
     : breakdownRows(sortedDays, topGroups, (date) => date);
 
-  const coverage = await computeDataCoverage(ctx, dateRange);
+  const coverage = await computeDataCoverage(ctx, dateRange, cappedAt);
   const result: StructuredResult = {
     title: `${useWeekly ? 'Weekly' : 'Daily'} Costs by ${dimLabel} (${dateRange.start} to ${dateRange.end})`,
     coverage,

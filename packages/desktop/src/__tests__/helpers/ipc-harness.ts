@@ -1,4 +1,4 @@
-import { copyFile, cp, mkdir, mkdtemp, readdir, rm } from 'node:fs/promises';
+import { copyFile, cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -42,6 +42,16 @@ export const FIXTURE_GCP_PROVIDER = 'gcp-main';
 
 /** The day after the synthetic fixture window (Jan–Feb 2026), like e2e's. */
 export const FIXTURE_NOW_MS = Date.parse('2026-03-01T12:00:00Z');
+
+/** A clock under which the default 2-day freshness lag leaves all of the
+ *  synthetic February readable: at FIXTURE_NOW_MS queries stop at Feb 27. */
+export const FEBRUARY_READABLE_NOW_MS = Date.parse('2026-03-02T12:00:00Z');
+
+/** The fixture cost-scope.yaml with its freshness lag set to `lagDays`. */
+export async function setCostScopeLag(ws: TestWorkspace, lagDays: number): Promise<void> {
+  const yaml = await readFile(ws.costScopePath, 'utf-8');
+  await writeFile(ws.costScopePath, `${yaml.trimEnd()}\nlagDays: ${String(lagDays)}\n`);
+}
 
 export type FixtureConfigSet = 'single' | 'multi' | 'none';
 

@@ -119,9 +119,18 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
   const [draftRange, setDraftRange] = useState<DayPickerRange | undefined>(undefined);
   const latestDate = daysAgo(lagDays);
 
+  // Calendar periods stop at the newest day the lag allows, like the queries
+  // they run. One that starts after it (This month, early in the month) has
+  // nothing to show yet: its start comes after its end.
   function getPresetRange(preset: Preset): DateRange {
     if (preset.type === 'days') return lastNDaysRange(preset.days, lagDays);
-    return preset.getRange();
+    const range = preset.getRange();
+    return range.end > latestDate ? { start: range.start, end: latestDate } : range;
+  }
+
+  function isPresetAvailable(preset: Preset): boolean {
+    const range = getPresetRange(preset);
+    return range.start <= range.end;
   }
 
   function resolveGranularity(range: DateRange, preferred: Granularity): Granularity {
@@ -249,16 +258,20 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
               </div>
               {items.map(preset => {
                 const showHint = preset.hint !== undefined && hourlyAvailable;
+                const available = isPresetAvailable(preset);
                 return (
                   <button
                     key={preset.label}
                     type="button"
                     onClick={() => { handlePreset(preset); }}
+                    disabled={!available}
+                    title={available ? undefined : `No data yet: the Data freshness lag leaves out the days after ${latestDate}`}
                     className={[
                       'w-full flex items-center justify-between gap-2 px-3 py-1.5 text-xs transition-colors',
                       isActivePreset(preset)
                         ? 'bg-accent/10 text-accent font-medium border-l-2 border-accent'
                         : 'text-text-secondary hover:bg-bg-tertiary/50 hover:text-text-primary border-l-2 border-transparent',
+                      available ? '' : 'opacity-50 cursor-not-allowed',
                     ].join(' ')}
                   >
                     <span>{preset.label}</span>
