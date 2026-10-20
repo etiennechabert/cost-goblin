@@ -1,6 +1,6 @@
 {
   "name": "@costgoblin/desktop",
-  "version": "0.8.16",
+  "version": "0.8.17",
   "type": "module",
   "main": "out/main/main.js",
   "scripts": {

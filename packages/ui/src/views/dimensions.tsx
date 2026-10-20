@@ -115,18 +115,44 @@ function useClickOutsideDismiss(
  *  scroller's top edge. */
 const EDITOR_CARD_CLASS = 'scroll-mt-4 rounded-xl border border-accent/30 bg-bg-tertiary/10 px-5 py-4 flex flex-col gap-4 outline-none';
 
+/** Input that means the user is scrolling the page themselves. */
+const USER_SCROLL_EVENTS = ['wheel', 'touchstart', 'keydown', 'pointerdown'] as const;
+
 /** Scrolls an editor up to the top of the page and moves focus into it each
  *  time `revealSeq` changes to a non-zero value (each time it is opened). The
  *  element above it, the previous dimension's collapsed row or the list
- *  heading, is what lands at the top, so the user keeps their place in the list. */
+ *  heading, is what lands at the top, so the user keeps their place in the list.
+ *
+ *  Content above that grows while the smooth scroll runs (the Rollup impact
+ *  panel loading) would leave the editor halfway down: the animation overwrites
+ *  Chromium's scroll-anchoring correction. So when the scroll ends, the anchor
+ *  is put back at the top, unless the user has started scrolling meanwhile. */
 function useRevealOnRequest(containerRef: React.RefObject<HTMLDivElement | null>, revealSeq: number): void {
   const reducedMotion = useReducedMotion();
   useEffect(() => {
     const el = containerRef.current;
-    if (revealSeq === 0 || el === null) return;
+    if (revealSeq === 0 || el === null) return undefined;
     const anchor = el.previousElementSibling ?? el;
     anchor.scrollIntoView({ block: 'start', behavior: reducedMotion ? 'auto' : 'smooth' });
     el.focus({ preventScroll: true });
+    // An instant scroll needs no settling: scroll anchoring holds it.
+    if (reducedMotion) return undefined;
+
+    function stop(): void {
+      clearTimeout(timer);
+      document.removeEventListener('scrollend', settle, true);
+      for (const type of USER_SCROLL_EVENTS) document.removeEventListener(type, stop, true);
+    }
+    function settle(): void {
+      stop();
+      anchor.scrollIntoView({ block: 'start', behavior: 'auto' });
+    }
+    // Capture, to hear the end of an element scroller's scroll too. Bounded,
+    // for when the anchor was already in place and no scroll happens.
+    const timer = setTimeout(stop, 2000);
+    document.addEventListener('scrollend', settle, true);
+    for (const type of USER_SCROLL_EVENTS) document.addEventListener(type, stop, true);
+    return stop;
     // Only a new request scrolls: the motion setting is read, not watched.
   }, [containerRef, revealSeq]);
 }

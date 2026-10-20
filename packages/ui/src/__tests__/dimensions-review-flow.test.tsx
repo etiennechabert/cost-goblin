@@ -170,6 +170,32 @@ describe('Dimension editor — Disable dimension', () => {
     await openRow(user, 'Region');
     await user.click(disableButton());
     expect(scroll).toHaveBeenLastCalledWith({ block: 'start', behavior: 'auto' });
+    // An instant scroll needs no settling: scroll anchoring holds it.
+    const calls = scroll.mock.calls.length;
+    document.dispatchEvent(new Event('scrollend'));
+    expect(scroll).toHaveBeenCalledTimes(calls);
+  });
+
+  // The Rollup impact panel loading above the list, while the smooth scroll
+  // runs, used to leave the editor halfway down: the animation overwrites
+  // Chromium's scroll-anchoring correction.
+  it('puts the row back at the top once the smooth scroll ends, unless the user scrolled', async () => {
+    const { scroll, user } = renderView();
+    await openRow(user, 'Charge Category');
+    expect(scroll).toHaveBeenCalledTimes(1);
+    document.dispatchEvent(new Event('scrollend'));
+    expect(scroll).toHaveBeenCalledTimes(2);
+    expect(scroll.mock.contexts[1]).toBe(rowAbove());
+    expect(scroll).toHaveBeenLastCalledWith({ block: 'start', behavior: 'auto' });
+    // Once only: a later scroll is the user's.
+    document.dispatchEvent(new Event('scrollend'));
+    expect(scroll).toHaveBeenCalledTimes(2);
+
+    await openRow(user, 'Region');
+    expect(scroll).toHaveBeenCalledTimes(3);
+    document.dispatchEvent(new WheelEvent('wheel', { bubbles: true }));
+    document.dispatchEvent(new Event('scrollend'));
+    expect(scroll).toHaveBeenCalledTimes(3);
   });
 
   it('is not offered for a dimension that cannot be turned off, nor in the Add form', async () => {
