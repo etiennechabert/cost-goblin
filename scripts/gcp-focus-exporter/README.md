@@ -129,43 +129,38 @@ pick whichever suits you.
 gcloud, Docker and your credentials are already there.
 
 [**Open Cloud Shell**](https://shell.cloud.google.com/?show=ide%2Cterminal)
-and paste this into its terminal, with your own values on the six `export`
-lines. It downloads this folder from the latest release, rather than the whole
-repository, and runs `deploy.sh` with those values:
+and paste this into its terminal. It downloads this folder from the latest
+release, rather than the whole repository, and opens `deploy.sh` in the editor:
 
 ```bash
-export PROJECT_ID=my-project
-export DATASET=gcp_billing_immutable_XXXXXX_eu
-export TABLE=gcp_billing_export_focus_XXXXXX
-export BUCKET=your-company-billing
-export LOCATION=EU
-export REGION=europe-west1
-curl -fsSL https://github.com/etiennechabert/cost-goblin/releases/latest/download/gcp-focus-exporter.tar.gz | tar xz && cd gcp-focus-exporter && FOCUS_TABLE=${PROJECT_ID}.${DATASET}.${TABLE} ./deploy.sh
+curl -fsSL https://github.com/etiennechabert/cost-goblin/releases/latest/download/gcp-focus-exporter.tar.gz | tar xz && cd gcp-focus-exporter && cloudshell edit deploy.sh
 ```
 
-- `PROJECT_ID`: the project holding the billing export dataset. The job runs
-  there too.
-- `DATASET`: the billing export dataset, `gcp_billing_immutable_…` in
-  BigQuery's Explorer.
-- `TABLE`: the FOCUS table inside it, `gcp_billing_export_focus_…`.
+Set the six values under *your settings* at the top of `deploy.sh`:
+
+- `PROJECT_ID`, `DATASET` and `TABLE`: the billing export as BigQuery's
+  Explorer shows it, the project holding it, its `gcp_billing_immutable_…`
+  dataset and the `gcp_billing_export_focus_…` table inside. The job runs in
+  `PROJECT_ID` too; `JOB_PROJECT_ID`, in the optional settings below, runs it
+  elsewhere.
 - `BUCKET`: the bucket from [Before you start](#before-you-start), without `gs://`.
 - `LOCATION`: the dataset's location, which the bucket's must match.
 - `REGION`: where the job runs, a region inside `LOCATION`: `europe-west1`
   for `EU`, `us-central1` for `US`.
 
-`deploy.sh` reads every setting from the environment, so the others at its top
-(`TIERS`, `SCHEDULE`, …) take an `export` line the same way. To run the job in
-another project than the export's, set `PROJECT_ID` to the job's project and
-write the export's project in place of `${PROJECT_ID}` in `FOCUS_TABLE`. To
-update the exporter later, run `cd ~` and paste the same block again.
+Then run `./deploy.sh` in the terminal. It stops before changing anything while
+one of them still holds its example value.
+
+Pasting the line again (to update the exporter) replaces `deploy.sh`, values
+included, so note them first, and paste it from your home directory (`cd ~`).
 
 ### 2. Locally, if you already have the gcloud CLI
 
-Export the same six variables, then run it from a clone of this repository:
+Set the same six values at the top of `deploy.sh`, then:
 
 ```bash
 cd scripts/gcp-focus-exporter
-FOCUS_TABLE=${PROJECT_ID}.${DATASET}.${TABLE} ./deploy.sh
+./deploy.sh
 ```
 
 It enables the APIs, creates the watermark dataset and a service account,
@@ -176,20 +171,23 @@ daily Cloud Scheduler trigger. Re-run it any time to pick up changes.
 
 ### 3. Copy-paste, if you would rather see exactly what runs
 
-Set the five values at the top, then paste the rest into Cloud Shell or any
+Set the six values at the top, then paste the rest into Cloud Shell or any
 terminal with gcloud. Every variable is braced deliberately — in zsh
 (macOS's default shell) an unbraced `$VAR:costgoblin_exporter` is parsed as the
 `:c` history modifier and silently drops the `c`:
 
 ```bash
 # ---- your settings ----
-# PROJECT_ID is the project that RUNS the job. It only differs from the billing
-# export's own project if you keep billing and ops separate.
+# The billing export as BigQuery's Explorer shows it. The job runs in
+# PROJECT_ID too; to run it elsewhere, set PROJECT_ID to that project and write
+# the export's own project at the start of FOCUS_TABLE.
 PROJECT_ID=my-project
-FOCUS_TABLE=${PROJECT_ID}.gcp_billing_immutable_XXXXXX_eu.gcp_billing_export_focus_XXXXXX
+DATASET=gcp_billing_immutable_XXXXXX_eu
+TABLE=gcp_billing_export_focus_XXXXXX
 BUCKET=your-company-billing
 LOCATION=EU          # must match the export dataset AND the bucket
 REGION=europe-west1  # a region inside LOCATION
+FOCUS_TABLE=${PROJECT_ID}.${DATASET}.${TABLE}
 
 # ---- fetch the exporter (this folder, from the latest release) ----
 curl -fsSL https://github.com/etiennechabert/cost-goblin/releases/latest/download/gcp-focus-exporter.tar.gz | tar xz

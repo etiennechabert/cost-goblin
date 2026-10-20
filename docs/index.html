@@ -2795,23 +2795,21 @@ gcloud storage buckets create <span class="code-dir">gs://your-company-billing</
             <a class="anchor-link" href="#get-started-gcp-exporter" aria-label="Copy link to the step &ldquo;Deploy the exporter&rdquo;"></a>
           </div>
           <div class="step-lead">
-          <p>A small daily job in <em>your</em> project copies changed billing periods from BigQuery into the bucket. Open Cloud Shell and paste this into its terminal, with your own values on the six <em>export</em> lines:</p>
+          <p>A small daily job in <em>your</em> project copies changed billing periods from BigQuery into the bucket. Open Cloud Shell and paste this into its terminal:</p>
             <a class="btn-primary" href="https://shell.cloud.google.com/?show=ide%2Cterminal" target="_blank" rel="noopener">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
               Open Cloud Shell
             </a>
           </div>
           <div class="code-block">
-export PROJECT_ID=<span class="code-file">your-project</span>
-export DATASET=<span class="code-file">gcp_billing_immutable_XXXXXX_eu</span>
-export TABLE=<span class="code-file">gcp_billing_export_focus_XXXXXX</span>
-export BUCKET=<span class="code-file">your-company-billing</span>
-export LOCATION=<span class="code-file">EU</span>
-export REGION=<span class="code-file">europe-west1</span>
 curl -fsSL https://github.com/etiennechabert/cost-goblin/releases/latest/download/gcp-focus-exporter.tar.gz | tar xz
-cd gcp-focus-exporter &amp;&amp; FOCUS_TABLE=${PROJECT_ID}.${DATASET}.${TABLE} ./deploy.sh
+cd gcp-focus-exporter &amp;&amp; cloudshell edit deploy.sh
           </div>
-          <p><em>PROJECT_ID</em>, <em>DATASET</em> and <em>TABLE</em> locate the billing export: the project holding it, its <em>gcp_billing_immutable_&hellip;</em> dataset and the <em>gcp_billing_export_focus_&hellip;</em> table in it (BigQuery &rarr; Explorer). <em>LOCATION</em> is that dataset's location, and <em>REGION</em> a region inside it. The script builds, deploys and schedules the job, which writes <em>gs://your-company-billing/focus/daily/billing_period=YYYY-MM/</em>. Hourly data, another schedule, your own machine instead of Cloud Shell, or every command spelled out: see the <a href="https://github.com/etiennechabert/cost-goblin/tree/main/scripts/gcp-focus-exporter" target="_blank" rel="noopener">exporter README</a>.</p>
+          <p>In the editor that opens, set the six values at the top of <em>deploy.sh</em>. <em>PROJECT_ID</em>, <em>DATASET</em> and <em>TABLE</em> locate the billing export as BigQuery's Explorer shows it: the project holding it, its <em>gcp_billing_immutable_&hellip;</em> dataset and the <em>gcp_billing_export_focus_&hellip;</em> table in it. <em>BUCKET</em> is the bucket above, <em>LOCATION</em> the dataset's location, and <em>REGION</em> a region inside it. Then run it:</p>
+          <div class="code-block">
+<span class="code-file">./deploy.sh</span>   <span class="code-comment"># builds, deploys and schedules the job</span>
+          </div>
+          <p>It writes <em>gs://your-company-billing/focus/daily/billing_period=YYYY-MM/</em>. Hourly data, another schedule, your own machine instead of Cloud Shell, or every command spelled out: see the <a href="https://github.com/etiennechabert/cost-goblin/tree/main/scripts/gcp-focus-exporter" target="_blank" rel="noopener">exporter README</a>.</p>
         </div>
 
         <div class="step" id="get-started-gcp-read-access">
