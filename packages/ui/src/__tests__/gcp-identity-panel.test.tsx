@@ -19,6 +19,9 @@ const ADC: GcpCredentialFile = { path: ADC_PATH, origin: 'well-known' };
 const SA = 'costgoblin-reader@acme-billing.iam.gserviceaccount.com';
 const ALICE: GcpAccountLookup = { status: 'known', email: 'alice@acme.com' };
 const SPLIT: GcpSplitAccounts = { listingAccount: 'alice@acme.com', downloadAccount: 'admin@acme.com' };
+/** A service account gcloud activated from a key; Compute Engine's default
+ *  one, so the check isn't the reader address grammar. */
+const CI_SA = '123456789-compute@developer.gserviceaccount.com';
 
 const user = (account: GcpAccountLookup = ALICE, file: GcpCredentialFile = ADC): GcpListingIdentity => ({ kind: 'user', file, account });
 const gcloud = (account: string | null, configuration = 'default'): GcpDownloadIdentity => ({ kind: 'gcloud', account, configuration });
@@ -115,6 +118,17 @@ describe('GcpIdentityPanel — Data Management', () => {
     );
   });
 
+  it('offers only the gcloud switch when downloads run as a service account, which no sign-in can be', async () => {
+    const { panel } = renderPanel(ok({
+      listing: user(),
+      download: gcloud(CI_SA),
+      splitAccounts: { listingAccount: 'alice@acme.com', downloadAccount: CI_SA },
+    }));
+    const warning = await within(panel).findByRole('note', { name: 'Credential warning' });
+    expect(warning.textContent).toContain('To use one account for both, switch downloads to alice@acme.com: run gcloud config set account alice@acme.com');
+    expect(warning.textContent).not.toContain('application-default login');
+  });
+
   it('shows an impersonated ADC as the service account listing runs as', async () => {
     const { panel } = renderPanel(ok({ listing: { kind: 'impersonated', file: ADC, target: SA }, download: gcloud('alice@acme.com') }));
     // The paths, not the warning below them, which names it too.
@@ -208,11 +222,27 @@ describe('GcpIdentityPanel — wizard', () => {
     await waitFor(() => { expect(reported).toHaveBeenLastCalledWith(null); });
   });
 
-  it('hands over no split when the identities cannot be checked', async () => {
+  it('withdraws the split when a re-check cannot check the identities', async () => {
     const reported = vi.fn<(split: GcpSplitAccounts | null) => void>();
-    const { panel } = renderPanel({ status: 'unavailable', reason: 'gcloud timed out' }, { context: 'wizard', onSplitAccounts: reported });
+    const { api, user: events, panel } = renderPanel(
+      ok({ listing: user(), download: gcloud('admin@acme.com'), splitAccounts: SPLIT }),
+      { context: 'wizard', onSplitAccounts: reported },
+    );
+    await waitFor(() => { expect(reported).toHaveBeenLastCalledWith(SPLIT); });
+    api.gcpIdentitiesResult = { status: 'unavailable', reason: 'gcloud timed out' };
+    await events.click(within(panel).getByRole('button', { name: 'Re-check' }));
     await waitFor(() => { expect(panel.textContent).toContain("Couldn't check credentials: gcloud timed out"); });
     expect(reported).toHaveBeenLastCalledWith(null);
+  });
+
+  it('offers no browser sign-in when gcloud runs as a service account, which one cannot be', async () => {
+    const { panel } = renderPanel(ok({
+      listing: user(),
+      download: gcloud(CI_SA),
+      splitAccounts: { listingAccount: 'alice@acme.com', downloadAccount: CI_SA },
+    }), { context: 'wizard' });
+    await waitFor(() => { expect(panel.textContent).toContain('Bucket access is signed in as alice@acme.com — a different account.'); });
+    expect(panel.textContent).not.toContain('application-default login');
   });
 
   it('says what to run when gcloud or bucket access is not signed in', async () => {

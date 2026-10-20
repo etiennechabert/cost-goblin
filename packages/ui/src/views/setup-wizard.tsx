@@ -2622,12 +2622,20 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     reloadGcpProjects();
   }
 
+  /** Before a listing as bucket access: while the panel shows a split, the
+   *  user may just have run the sign-in it suggests. Re-read it, so a refusal
+   *  never names the account signed in before. */
+  function rereadGcpSplit(): void {
+    if (gcpSplit !== null) setGcpIdentityRefresh(n => n + 1);
+  }
+
   /** Enter the GCP browse flow with a typed project ID, never running
    *  `gcloud projects list`. The bucket listing runs while the intro is still
    *  on screen, so a reader that can't be read as is reported there — beside
    *  the field to fix — instead of one step later. Any other outcome (buckets,
    *  a listing denial, a sign-in) is the bucket step's to show. */
   function startGcpFromTypedProject(projectId: string): void {
+    rereadGcpSplit();
     setCollectedPaths(EMPTY_PATHS);
     const project: GcpProjectChoice = { id: projectId, typed: true };
     const reader = gcpReaderFor(project);
@@ -2675,6 +2683,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
       setWizard({ step: 'gcp-bucket', project, source, buckets: [], loading: false, selected: '', error: '' });
       return;
     }
+    rereadGcpSplit();
     setWizard({ step: 'gcp-bucket', project, source, buckets: [], loading: true, selected: '', error: '' });
     api.listGcsBuckets(project.id, gcpReaderFor(project)).then(result => {
       if (stepRequestRef.current !== token) return;
@@ -3142,13 +3151,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
               listingAccount={gcpSplit?.listingAccount}
               onReaderChange={setGcpReader}
               onBrowse={goToGcpProjectStep}
-              onProjectId={(projectId) => {
-                // A Continue after a refusal is its retry, usually after a
-                // sign-in: the panel re-reads, so a second refusal can't name
-                // the account signed in before it.
-                if (wizard.check?.status === 'denied') setGcpIdentityRefresh(n => n + 1);
-                startGcpFromTypedProject(projectId);
-              }}
+              onProjectId={startGcpFromTypedProject}
               onScaffold={handleGcpScaffold}
               onDone={finish}
               onBack={() => { ++stepRequestRef.current; setWizard({ step: 'start' }); }}

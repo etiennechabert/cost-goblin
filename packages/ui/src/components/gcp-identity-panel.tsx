@@ -112,6 +112,14 @@ function AdcRemedy({ file }: Readonly<{ file: GcpCredentialFile | null }>): Reac
   return <>run <Command>{GCLOUD_ADC_LOGIN_COMMAND}</Command></>;
 }
 
+/** Whether a browser sign-in can be this account: never a service account,
+ *  which gcloud runs as after `activate-service-account` with a key. Any
+ *  Google-managed domain, not just the reader address grammar: Compute
+ *  Engine's default account is `…@developer.gserviceaccount.com`. */
+function canSignInAs(account: string): boolean {
+  return !account.toLowerCase().endsWith('.gserviceaccount.com');
+}
+
 /** The wizard's form: the one account the user is working as — gcloud's,
  *  which lists the projects on offer — and a single line only when the setup
  *  would stall: gcloud or bucket access not signed in, or bucket access signed
@@ -131,8 +139,10 @@ function CompactIdentities({ identities }: Readonly<{ identities: GcpIdentities 
       )}
       {splitAccounts !== null && (
         <Detail>
-          Bucket access is signed in as <Principal>{splitAccounts.listingAccount}</Principal> — to use{' '}
-          <Principal>{splitAccounts.downloadAccount}</Principal>, <AdcRemedy file={listing.file} />
+          Bucket access is signed in as <Principal>{splitAccounts.listingAccount}</Principal>
+          {canSignInAs(splitAccounts.downloadAccount)
+            ? <> — to use <Principal>{splitAccounts.downloadAccount}</Principal>, <AdcRemedy file={listing.file} /></>
+            : ' — a different account.'}
         </Detail>
       )}
     </>
@@ -371,8 +381,11 @@ function SplitAccountsWarning({ split, file }: Readonly<{ split: GcpSplitAccount
     <p role="note" aria-label="Credential warning" className="mt-2 rounded-md border border-warning/50 bg-warning/10 px-2.5 py-1.5 text-text-primary break-words">
       Downloads run as <Principal>{split.downloadAccount}</Principal>, but bucket listing runs as{' '}
       <Principal>{split.listingAccount}</Principal> — two different accounts, and each needs its own access. To use one
-      account for both, sign bucket listing in as <Principal>{split.downloadAccount}</Principal>: <AdcRemedy file={file} />{' '}
-      — or switch downloads to <Principal>{split.listingAccount}</Principal>: run{' '}
+      account for both,{' '}
+      {canSignInAs(split.downloadAccount) && (
+        <>sign bucket listing in as <Principal>{split.downloadAccount}</Principal>: <AdcRemedy file={file} /> — or </>
+      )}
+      switch downloads to <Principal>{split.listingAccount}</Principal>: run{' '}
       <Command>{`gcloud config set account ${split.listingAccount}`}</Command> (after{' '}
       <Command>{`${GCLOUD_CLI_LOGIN_COMMAND} ${split.listingAccount}`}</Command> if gcloud never signed in as it).
     </p>
