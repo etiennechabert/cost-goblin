@@ -2805,11 +2805,11 @@ gcloud storage buckets create <span class="code-dir">gs://your-company-billing</
 curl -fsSL https://github.com/etiennechabert/cost-goblin/releases/latest/download/gcp-focus-exporter.tar.gz | tar xz
 cd gcp-focus-exporter &amp;&amp; cloudshell edit deploy.sh
           </div>
-          <p>Set the values at the top of <em>deploy.sh</em> in the editor that opens, then run it:</p>
+          <p>In the editor that opens, set the six values at the top of <em>deploy.sh</em>. <em>PROJECT_ID</em>, <em>DATASET</em> and <em>TABLE</em> locate the billing export as BigQuery's Explorer shows it: the project holding it, its <em>gcp_billing_immutable_&hellip;</em> dataset and the <em>gcp_billing_export_focus_&hellip;</em> table in it. <em>BUCKET</em> is the bucket above, <em>LOCATION</em> the dataset's location, and <em>REGION</em> a region inside it. Then run it:</p>
           <div class="code-block">
 <span class="code-file">./deploy.sh</span>   <span class="code-comment"># builds, deploys and schedules the job</span>
           </div>
-          <p>It writes <em>gs://your-company-billing/focus/daily/billing_period=YYYY-MM/</em>. Rather run it from your own machine, or see every command? The <a href="https://github.com/etiennechabert/cost-goblin/tree/main/scripts/gcp-focus-exporter" target="_blank" rel="noopener">exporter README</a> covers both.</p>
+          <p>It writes <em>gs://your-company-billing/focus/daily/billing_period=YYYY-MM/</em>. Hourly data, another schedule, your own machine instead of Cloud Shell, or every command spelled out: see the <a href="https://github.com/etiennechabert/cost-goblin/tree/main/scripts/gcp-focus-exporter" target="_blank" rel="noopener">exporter README</a>.</p>
         </div>
 
         <div class="step" id="get-started-gcp-read-access">

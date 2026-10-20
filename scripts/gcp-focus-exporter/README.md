@@ -136,17 +136,27 @@ release, rather than the whole repository, and opens `deploy.sh` in the editor:
 curl -fsSL https://github.com/etiennechabert/cost-goblin/releases/latest/download/gcp-focus-exporter.tar.gz | tar xz && cd gcp-focus-exporter && cloudshell edit deploy.sh
 ```
 
-Edit the config block at the top of `deploy.sh`, then run `./deploy.sh`.
+Set the six values under *your settings* at the top of `deploy.sh`:
+
+- `PROJECT_ID`, `DATASET` and `TABLE`: the billing export as BigQuery's
+  Explorer shows it, the project holding it, its `gcp_billing_immutable_…`
+  dataset and the `gcp_billing_export_focus_…` table inside. The job runs in
+  `PROJECT_ID` too; `JOB_PROJECT_ID`, in the optional settings below, runs it
+  elsewhere.
+- `BUCKET`: the bucket from [Before you start](#before-you-start), without `gs://`.
+- `LOCATION`: the dataset's location, which the bucket's must match.
+- `REGION`: where the job runs, a region inside `LOCATION`: `europe-west1`
+  for `EU`, `us-central1` for `US`.
+
+Then run `./deploy.sh` in the terminal. It stops before changing anything while
+one of them still holds its example value.
 
 Pasting the line again (to update the exporter) replaces `deploy.sh`, values
-included. Note them first, or pass them as variables instead of editing the
-file, since `deploy.sh` reads each one from the environment:
-`FOCUS_TABLE=… BUCKET=… ./deploy.sh`.
+included, so note them first, and paste it from your home directory (`cd ~`).
 
 ### 2. Locally, if you already have the gcloud CLI
 
-Edit the config block at the top of `deploy.sh` — at minimum `FOCUS_TABLE`,
-`BUCKET` and `PROJECT_ID` — then:
+Set the same six values at the top of `deploy.sh`, then:
 
 ```bash
 cd scripts/gcp-focus-exporter
@@ -161,20 +171,23 @@ daily Cloud Scheduler trigger. Re-run it any time to pick up changes.
 
 ### 3. Copy-paste, if you would rather see exactly what runs
 
-Set the five values at the top, then paste the rest into Cloud Shell or any
+Set the six values at the top, then paste the rest into Cloud Shell or any
 terminal with gcloud. Every variable is braced deliberately — in zsh
 (macOS's default shell) an unbraced `$VAR:costgoblin_exporter` is parsed as the
 `:c` history modifier and silently drops the `c`:
 
 ```bash
 # ---- your settings ----
-# PROJECT_ID is the project that RUNS the job. It only differs from the billing
-# export's own project if you keep billing and ops separate.
+# The billing export as BigQuery's Explorer shows it. The job runs in
+# PROJECT_ID too; to run it elsewhere, set PROJECT_ID to that project and write
+# the export's own project at the start of FOCUS_TABLE.
 PROJECT_ID=my-project
-FOCUS_TABLE=${PROJECT_ID}.gcp_billing_immutable_XXXXXX_eu.gcp_billing_export_focus_XXXXXX
+DATASET=gcp_billing_immutable_XXXXXX_eu
+TABLE=gcp_billing_export_focus_XXXXXX
 BUCKET=your-company-billing
 LOCATION=EU          # must match the export dataset AND the bucket
 REGION=europe-west1  # a region inside LOCATION
+FOCUS_TABLE=${PROJECT_ID}.${DATASET}.${TABLE}
 
 # ---- fetch the exporter (this folder, from the latest release) ----
 curl -fsSL https://github.com/etiennechabert/cost-goblin/releases/latest/download/gcp-focus-exporter.tar.gz | tar xz

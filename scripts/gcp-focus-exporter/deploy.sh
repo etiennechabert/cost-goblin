@@ -8,7 +8,8 @@
 # ${REPO} image repository's cleanup policy, which is (re)set on every run and
 # deletes all but its five newest images.
 #
-#   ./deploy.sh
+#   1. Set the six values under "your settings" below.
+#   2. ./deploy.sh
 #
 # No local install needed: this runs happily in Cloud Shell, which already has
 # gcloud, Docker and your credentials. The README has a one-line download of
@@ -24,21 +25,37 @@ set -euo pipefail
 # build context. Anchor to this script's own directory instead.
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-# --- edit these ------------------------------------------------------------
+# --- your settings: set these six, then run ./deploy.sh --------------------
 
-# Project that hosts the job. Defaults to the project of the billing export
-# table, so the common single-project setup needs no value here.
-PROJECT_ID="${PROJECT_ID:-}"
+# The FOCUS billing export, as BigQuery's Explorer shows it: the project that
+# holds it, its gcp_billing_immutable_<BILLING_ACCOUNT_ID>_<location> dataset,
+# and the gcp_billing_export_focus_<BILLING_ACCOUNT_ID> table inside. The job
+# runs in this project too (JOB_PROJECT_ID below runs it elsewhere).
+PROJECT_ID=your-project
+DATASET=gcp_billing_immutable_XXXXXX_eu
+TABLE=gcp_billing_export_focus_XXXXXX
 
-# The Google-managed FOCUS export table: project.dataset.table.
-# Find it under BigQuery -> gcp_billing_immutable_<BILLING_ACCOUNT_ID>_<location>.
-FOCUS_TABLE="${FOCUS_TABLE:-CHANGE_ME.gcp_billing_immutable_XXXXXX_eu.gcp_billing_export_focus_XXXXXX}"
+# Destination bucket (no gs://). Each tier gets its own folder beneath PREFIX,
+# so CostGoblin is pointed at gs://<BUCKET>/<PREFIX>/daily (and .../hourly, if
+# you publish it).
+BUCKET=your-company-billing
 
-# Destination bucket (no gs://) and key prefix. Each tier gets its own folder
-# beneath the prefix, so CostGoblin is pointed at
-# gs://${BUCKET}/${PREFIX}/daily  (and .../hourly, if you publish it)
-BUCKET="${BUCKET:-}"
-PREFIX="${PREFIX:-focus}"
+# MUST match the billing export dataset's location, and the bucket's. BigQuery
+# refuses to EXPORT DATA across locations.
+LOCATION=EU
+
+# Cloud Run jobs are regional; pick a region inside LOCATION.
+REGION=europe-west1
+
+# --- optional: the defaults suit almost everyone ---------------------------
+
+# The project the job runs in, when it is not PROJECT_ID: organisations that
+# keep the billing export in a dedicated billing project and run jobs in an
+# ops project. Empty runs it in PROJECT_ID.
+JOB_PROJECT_ID=
+
+# Key prefix in the bucket; each tier is a folder beneath it.
+PREFIX=focus
 
 # Which grains to publish: "daily", "hourly", or "daily,hourly".
 #
@@ -48,14 +65,7 @@ PREFIX="${PREFIX:-focus}"
 # exists: keep a year of daily and a fortnight of hourly, not a year of hourly.
 # Add "hourly" only if you actually want intraday charts, and give it a short
 # retentionDays in costgoblin.yaml when you do.
-TIERS="${TIERS:-daily}"
-
-# MUST match the billing export dataset's location, and the bucket's. BigQuery
-# refuses to EXPORT DATA across locations.
-LOCATION="${LOCATION:-EU}"
-
-# Cloud Run jobs are regional; pick a region inside ${LOCATION}.
-REGION="${REGION:-europe-west1}"
+TIERS=daily
 
 # Artifact Registry repository (in ${REGION}) that holds the exporter's image.
 # Created if missing, with a cleanup policy keeping the 5 most recent images.
@@ -63,14 +73,14 @@ REGION="${REGION:-europe-west1}"
 # applies to every image in the repository, not just the exporter's.
 # A dedicated repository rather than `gcloud run deploy --source`'s shared
 # `cloud-run-source-deploy`, which keeps every build forever.
-REPO="${REPO:-costgoblin}"
+REPO=costgoblin
 
 # Service account the image is BUILT as. Cloud Build's default is the project's
 # Compute Engine default service account, which organisations commonly strip of
 # its automatic Editor grant (the iam.automaticIamGrantsForDefaultServiceAccounts
 # policy) — leaving it unable to read its own build source. A dedicated builder
 # with three narrow grants works either way and widens nothing project-wide.
-BUILD_SA_NAME="${BUILD_SA_NAME:-costgoblin-builder}"
+BUILD_SA_NAME=costgoblin-builder
 
 # How often to check for changed periods.
 #
@@ -80,34 +90,46 @@ BUILD_SA_NAME="${BUILD_SA_NAME:-costgoblin-builder}"
 # through the month. Twice daily ("0 6,18 * * *") is a reasonable step up;
 # hourly multiplies month-end scan cost for no real freshness gain. For a
 # number right now, run the job on demand instead of raising the schedule.
-SCHEDULE="${SCHEDULE:-0 6 * * *}"
+SCHEDULE="0 6 * * *"
 
 # ---------------------------------------------------------------------------
 
-JOB_NAME="${JOB_NAME:-costgoblin-focus-exporter}"
-SA_NAME="${SA_NAME:-costgoblin-exporter}"
-SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
-STATE_DATASET="${STATE_DATASET:-costgoblin_exporter}"
-STATE_TABLE="${PROJECT_ID}.${STATE_DATASET}.export_state"
+JOB_NAME=costgoblin-focus-exporter
+SA_NAME=costgoblin-exporter
+STATE_DATASET=costgoblin_exporter
 
-if [[ "${FOCUS_TABLE}" == CHANGE_ME.* ]]; then
-  echo "ERROR: set FOCUS_TABLE to your billing export table first (see the top of this file)." >&2
+# Checked before anything runs: a setting left at its example value would
+# deploy against a project, dataset or bucket that does not exist, after
+# switching gcloud's active project and creating the service accounts.
+unset_settings=""
+if [[ -z "${PROJECT_ID}" || "${PROJECT_ID}" == your-project ]]; then unset_settings+=" PROJECT_ID"; fi
+if [[ -z "${DATASET}" || "${DATASET}" == *XXXXXX* ]]; then unset_settings+=" DATASET"; fi
+if [[ -z "${TABLE}" || "${TABLE}" == *XXXXXX* ]]; then unset_settings+=" TABLE"; fi
+if [[ -z "${BUCKET}" || "${BUCKET}" == your-company-billing ]]; then unset_settings+=" BUCKET"; fi
+if [[ -z "${LOCATION}" ]]; then unset_settings+=" LOCATION"; fi
+if [[ -z "${REGION}" ]]; then unset_settings+=" REGION"; fi
+if [[ -n "${unset_settings}" ]]; then
+  echo "ERROR: set${unset_settings} at the top of deploy.sh first." >&2
+  exit 1
+fi
+# BigQuery's table Details shows the full project.dataset.table ID, which is
+# easy to paste whole into TABLE.
+if [[ "${DATASET}" == *.* || "${TABLE}" == *.* ]]; then
+  echo "ERROR: DATASET and TABLE take the names alone (gcp_billing_immutable_..., gcp_billing_export_focus_...), not a project.dataset.table ID." >&2
+  exit 1
+fi
+if [[ "${BUCKET}" == gs://* ]]; then
+  echo "ERROR: BUCKET takes the bucket's name alone, without gs://." >&2
   exit 1
 fi
 
-# FOCUS_TABLE is project.dataset.table. Both halves are needed below: the
-# dataset ACL has to be granted in the project that OWNS the billing export,
-# which is not necessarily the project running the job.
-BILLING_PROJECT="$(printf '%s' "${FOCUS_TABLE}" | cut -d. -f1)"
-BILLING_DATASET="$(printf '%s' "${FOCUS_TABLE}" | cut -d. -f2)"
-PROJECT_ID="${PROJECT_ID:-${BILLING_PROJECT}}"
+FOCUS_TABLE="${PROJECT_ID}.${DATASET}.${TABLE}"
+# The dataset ACL is granted in the project that holds the billing export.
+# From here on, PROJECT_ID is the project the job runs in.
+BILLING_PROJECT="${PROJECT_ID}"
+BILLING_DATASET="${DATASET}"
+PROJECT_ID="${JOB_PROJECT_ID:-${PROJECT_ID}}"
 
-if [[ -z "${BUCKET}" ]]; then
-  echo "ERROR: set BUCKET to the destination bucket (no gs://)." >&2
-  exit 1
-fi
-
-# Recomputed here: the defaults above are evaluated before PROJECT_ID resolves.
 SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 STATE_TABLE="${PROJECT_ID}.${STATE_DATASET}.export_state"
 
