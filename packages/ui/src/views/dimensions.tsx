@@ -59,6 +59,10 @@ function useClickOutsideDismiss(
   discardConfirm: boolean,
   setDiscardConfirm: (v: boolean) => void,
 ): void {
+  // A ref, not a local of the effect: the effect re-subscribes on every render
+  // of the parent (an inline onCancel), which may land between the press and
+  // the click.
+  const pressedOutsideRef = useRef(false);
   useEffect(() => {
     function isOutside(e: MouseEvent): boolean {
       if (containerRef.current === null) return false;
@@ -75,13 +79,12 @@ function useClickOutsideDismiss(
     // was released, and the click meant to open one of them was lost. The press
     // must be outside too: a text selection dragged out of the editor ends in a
     // click on an element around both.
-    let pressedOutside = false;
-    function onMouseDown(e: MouseEvent): void { pressedOutside = isOutside(e); }
+    function onMouseDown(e: MouseEvent): void { pressedOutsideRef.current = isOutside(e); }
     function onClick(e: MouseEvent): void {
       // A click from the keyboard has no press of its own: don't let it reuse
       // one from an earlier drag.
-      const pressed = pressedOutside;
-      pressedOutside = false;
+      const pressed = pressedOutsideRef.current;
+      pressedOutsideRef.current = false;
       if (!pressed || !isOutside(e)) return;
       if (isDirty) {
         // Captured before React sees it: the click must not go on to open
@@ -121,17 +124,21 @@ function useRevealOnRequest(containerRef: React.RefObject<HTMLDivElement | null>
   }, [containerRef, revealSeq]);
 }
 
+/** What an editor's Disable does, and the label of the dimension it opens
+ *  next (undefined after the last one). */
+interface DisableAction { run: () => void; next: string | undefined }
+
 /** Turns the dimension off from its open editor, so the user can drop one
  *  right after looking at its values instead of scrolling up to its pill. The
  *  editor's unsaved edits go with it, so it asks first when there are any. */
-function DisableDimensionButton({ isDirty, onDisable }: Readonly<{ isDirty: boolean; onDisable: () => void }>): React.JSX.Element {
+function DisableDimensionButton({ isDirty, action }: Readonly<{ isDirty: boolean; action: DisableAction }>): React.JSX.Element {
   const [confirming, setConfirming] = useState(false);
   return (
     <>
       <button
         type="button"
-        onClick={() => { if (isDirty) setConfirming(true); else onDisable(); }}
-        title="Turn this dimension off and move on to the next one"
+        onClick={() => { if (isDirty) setConfirming(true); else action.run(); }}
+        title={action.next === undefined ? 'Turn this dimension off' : `Turn this dimension off and open ${action.next}`}
         className="inline-flex items-center gap-1.5 rounded-md border border-border px-4 py-1.5 text-xs font-medium text-text-secondary hover:border-text-muted hover:text-text-primary transition-colors"
       >
         <EyeOff size={13} />
@@ -144,7 +151,7 @@ function DisableDimensionButton({ isDirty, onDisable }: Readonly<{ isDirty: bool
           confirmLabel="Disable"
           cancelLabel="Keep editing"
           destructive
-          onConfirm={() => { setConfirming(false); onDisable(); }}
+          onConfirm={() => { setConfirming(false); action.run(); }}
           onCancel={() => { setConfirming(false); }}
         />
       )}
@@ -442,7 +449,7 @@ function BuiltInEditor({ dim, onSave, onCancel, onDisable, revealSeq, accountTag
   onSave: (edited: EditingBuiltIn) => void;
   onCancel: () => void;
   /** Undefined for a dimension that can't be turned off. */
-  onDisable: (() => void) | undefined;
+  onDisable: DisableAction | undefined;
   /** See useRevealOnRequest; 0 = opened from its own row. */
   revealSeq: number;
   accountTagKeys: readonly string[];
@@ -743,7 +750,7 @@ function BuiltInEditor({ dim, onSave, onCancel, onDisable, revealSeq, accountTag
             Cancel
           </button>
         </div>
-        {onDisable !== undefined && <DisableDimensionButton isDirty={isDirty} onDisable={onDisable} />}
+        {onDisable !== undefined && <DisableDimensionButton isDirty={isDirty} action={onDisable} />}
       </div>
       {discardConfirm && (
         <ConfirmModal
@@ -1212,7 +1219,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, onDisable, revealSeq, idCo
   onCancel: () => void;
   onRemove: (() => void) | undefined;
   /** Undefined for a tag that isn't in the list yet (the Add form). */
-  onDisable: (() => void) | undefined;
+  onDisable: DisableAction | undefined;
   /** See useRevealOnRequest; 0 = opened from its own row. */
   revealSeq: number;
   /** Why this tag can't be saved because another tag already has its
@@ -1516,7 +1523,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, onDisable, revealSeq, idCo
           </button>
         </div>
         <div className="flex items-center gap-2">
-          {onDisable !== undefined && <DisableDimensionButton isDirty={isDirty} onDisable={onDisable} />}
+          {onDisable !== undefined && <DisableDimensionButton isDirty={isDirty} action={onDisable} />}
           {onRemove !== undefined && (
             <button type="button" onClick={onRemove} className="rounded-md px-4 py-1.5 text-xs font-medium text-negative hover:bg-negative-muted transition-colors">
               Remove Dimension
@@ -2115,7 +2122,7 @@ function GripHandle({ attrs }: Readonly<{ attrs: React.HTMLAttributes<HTMLButton
  *  controls sit above that layer, and their wrapper lets a click between or
  *  beside them fall through to it. */
 const ROW_CARD_CLASS = 'relative w-full rounded-xl border border-border bg-bg-secondary/50 px-5 py-3 flex items-center justify-between transition-colors hover:border-accent/40 hover:bg-bg-tertiary/60';
-const ROW_OPEN_CLASS = "flex flex-col gap-1 text-left flex-1 min-w-0 cursor-pointer outline-none after:absolute after:inset-0 after:rounded-xl after:content-[''] focus-visible:after:ring-2 focus-visible:after:ring-accent/60";
+const ROW_OPEN_CLASS = "flex flex-col gap-1 text-left flex-1 min-w-0 cursor-pointer outline-none after:absolute after:inset-0 after:rounded-xl after:content-[''] focus-visible:after:outline-2 focus-visible:after:outline-accent";
 const ROW_CONTROLS_CLASS = 'pointer-events-none relative z-10 flex items-center gap-3 shrink-0';
 
 /** Marks, on the row a dragged one is over, the edge it will land on: a drop
@@ -2186,6 +2193,7 @@ export function DimensionsView(): React.JSX.Element {
   // next dimension after a Disable) scrolls into view. The counter makes a
   // second request for the editor already open scroll back to it.
   const [reveal, setReveal] = useState<{ key: string; seq: number } | null>(null);
+  const listHeadingRef = useRef<HTMLHeadingElement | null>(null);
   // Lazy-load the tag-discovery scan — it hits DuckDB. Fires when the user
   // opens Add Dimension (needs unmapped-tag suggestions), expands Resource
   // Tags, or edits a tag dim (TagEditor needs context for suggestions).
@@ -2472,6 +2480,9 @@ export function DimensionsView(): React.JSX.Element {
       setEditingBuiltInIdx(null);
       setEditingIdx(null);
       setReveal(null);
+      // The focused Disable button goes with the editor: keep the keyboard
+      // user in the list rather than back at the top of the page.
+      listHeadingRef.current?.focus({ preventScroll: true });
     } else {
       openRow(following, true);
     }
@@ -2565,6 +2576,10 @@ export function DimensionsView(): React.JSX.Element {
     return row === undefined ? undefined : () => { openRow(row, true); };
   };
   const revealSeqFor = (key: string): number => (reveal?.key === key ? reveal.seq : 0);
+  const disableAction = (orderIdx: number): DisableAction => ({
+    run: () => { disableAndAdvance(orderIdx); },
+    next: orderedRows[orderIdx + 1]?.dim.label,
+  });
 
 
 
@@ -2746,7 +2761,7 @@ export function DimensionsView(): React.JSX.Element {
           its type-specific editor. */}
       {config !== null && orderedRows.length > 0 && (
         <div className="flex flex-col gap-3">
-          <h3 className="text-sm font-medium text-text-secondary">
+          <h3 ref={listHeadingRef} tabIndex={-1} className="text-sm font-medium text-text-secondary outline-none">
             {'Enabled dimensions '}
             <span className="text-text-muted ml-2 font-normal text-xs">click to configure · drag or use arrows to reorder</span>
           </h3>
@@ -2778,7 +2793,7 @@ export function DimensionsView(): React.JSX.Element {
                     }}
                     onSave={(edited) => { handleSaveBuiltIn(row.idx, edited); }}
                     onCancel={() => { setEditingBuiltInIdx(null); }}
-                    onDisable={LOCKED_DIMENSIONS.has(d.name) ? undefined : () => { disableAndAdvance(orderIdx); }}
+                    onDisable={LOCKED_DIMENSIONS.has(d.name) ? undefined : disableAction(orderIdx)}
                     revealSeq={revealSeqFor(row.key)}
                     accountTagKeys={accountTagKeys}
                   />
@@ -2832,7 +2847,7 @@ export function DimensionsView(): React.JSX.Element {
                   onSave={(edited) => { handleSaveTag(row.idx, edited); }}
                   onCancel={() => { setEditingIdx(null); }}
                   onRemove={() => { handleRemoveTag(row.idx); }}
-                  onDisable={() => { disableAndAdvance(orderIdx); }}
+                  onDisable={disableAction(orderIdx)}
                   revealSeq={revealSeqFor(row.key)}
                   idConflict={(edited) => tagIdConflict(edited, row.idx)}
                   availableTags={unmappedTagKeys}

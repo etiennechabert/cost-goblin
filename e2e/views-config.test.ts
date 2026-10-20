@@ -253,6 +253,12 @@ test.describe('Dimensions', () => {
     await expect(label).toHaveValue('SKU Meter');
     await expect(page.getByRole('button', { name: 'Charge Category', exact: true })).toHaveAttribute('title', 'Click to enable');
     await expect(label).toBeInViewport();
+    // In the viewport is not enough: the page scrolls under the sticky header.
+    await expect.poll(async () => {
+      const header = await page.locator('.sticky.top-0.z-50').first().boundingBox();
+      const field = await label.boundingBox();
+      return header !== null && field !== null && field.y >= header.y + header.height;
+    }).toBe(true);
 
     await page.getByRole('button', { name: 'Discard' }).click();
     await expect(page.getByText('Saved', { exact: true })).toBeVisible();

@@ -564,7 +564,9 @@ function AppShell(): React.JSX.Element {
   // The page scrolls under the sticky header: keep anything scrolled into view
   // (an editor opened from elsewhere on the page) clear of it.
   useLayoutEffect(() => {
-    document.documentElement.style.scrollPaddingTop = `${String(headerHeight)}px`;
+    const root = document.documentElement;
+    root.style.scrollPaddingTop = `${String(headerHeight)}px`;
+    return () => { root.style.scrollPaddingTop = ''; };
   }, [headerHeight]);
 
   useEffect(() => {

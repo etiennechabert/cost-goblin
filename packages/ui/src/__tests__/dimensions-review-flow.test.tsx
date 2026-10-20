@@ -109,6 +109,7 @@ describe('Dimension editor — Disable dimension', () => {
     await openRow(user, 'Region');
     // Opened from its own row: already where the user looks.
     expect(scroll).not.toHaveBeenCalled();
+    expect(disableButton().getAttribute('title')).toBe('Turn this dimension off and open Charge Category');
 
     await user.click(disableButton());
     expect(pillTitle('Region')).toBe('Click to enable');
@@ -124,10 +125,13 @@ describe('Dimension editor — Disable dimension', () => {
     expect(screen.getByLabelText('Display Label')).toHaveProperty('value', 'Team');
     await user.click(disableButton());
     expect(screen.getByLabelText('Display Label')).toHaveProperty('value', 'Environment');
-    // The last dimension has no next one: the editor just closes.
+    // The last dimension has no next one: the editor just closes, and the
+    // focus stays in the list.
+    expect(disableButton().getAttribute('title')).toBe('Turn this dimension off');
     await user.click(disableButton());
     expect(screen.queryByLabelText('Display Label')).toBeNull();
     expect(rowLabels()).toEqual(['Service']);
+    expect(document.activeElement).toBe(screen.getByRole('heading', { name: /^Enabled dimensions/ }));
 
     await user.click(await screen.findByRole('button', { name: /Apply & rebuild/ }));
     await waitFor(() => { expect(save).toHaveBeenCalledTimes(1); });

@@ -87,6 +87,15 @@ describe('Dimension editor — click outside', () => {
     expect(screen.queryByLabelText(STRIP_PATTERNS)).toBeNull();
   });
 
+  it('still closes when the page re-renders between the press and the click', async () => {
+    const { rerender } = await openEditor();
+    const outside = screen.getByRole('button', { name: 'Page behind' });
+    fireEvent.mouseDown(outside);
+    rerender(false);
+    fireEvent.click(outside);
+    expect(screen.queryByLabelText(STRIP_PATTERNS)).toBeNull();
+  });
+
   it('opens the row clicked while another editor is open', async () => {
     const { user } = await openEditor();
     await user.click(screen.getByRole('button', { name: /charge_category/ }));
