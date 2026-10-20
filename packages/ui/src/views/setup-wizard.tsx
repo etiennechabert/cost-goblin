@@ -1,4 +1,4 @@
-import type { BackfillTier, ConfigBundleSummary, ExportFileVersioning, GcpProject, GcsDownloadCheckResult, GcsFolderKind, ProviderConfig } from '@costgoblin/core/browser';
+import type { BackfillTier, ConfigBundleSummary, ExportFileVersioning, GcpProject, GcpSplitAccounts, GcsDownloadCheckResult, GcsFolderKind, ProviderConfig } from '@costgoblin/core/browser';
 import { backfillCase, backfillCaseText, DEFAULT_READER_ACCOUNT_ID, DEFAULT_RETENTION_DAYS, exportsStackPath, exportsStackQuickCreateUrl, GCP_PROJECT_ID_RULES, gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isGcpImpersonationError, isGcpNetworkError, isValidGcpProjectId, isValidS3BucketName, isValidWorkspaceName, parseProviderName, resolveReaderInput, SERVICE_ACCOUNT_EMAIL_RULE } from '@costgoblin/core/browser';
 import { Check, Loader2, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -451,11 +451,13 @@ function readerSummary(input: ReturnType<typeof resolveReaderInput>): string | u
  * edited. Hand-editing survives as the escape hatch for setups the wizard
  * can't browse at all.
  */
-function GcpIntroStep({ state, reader, onReaderChange, onBrowse, onProjectId, onScaffold, onDone, onBack }: Readonly<{
+function GcpIntroStep({ state, reader, listingAccount, onReaderChange, onBrowse, onProjectId, onScaffold, onDone, onBack }: Readonly<{
   state: Extract<WizardStep, { step: 'gcp' }>;
   /** The read-only service account to browse and sync as: a full address,
    *  or a bare account name completed with the project; '' for none. */
   reader: string;
+  /** See `GcpReaderDenied`. */
+  listingAccount: string | undefined;
   onReaderChange: (reader: string) => void;
   /** Opens the `gcloud projects list` picker. */
   onBrowse: () => void;
@@ -573,7 +575,9 @@ function GcpIntroStep({ state, reader, onReaderChange, onBrowse, onProjectId, on
             </button>
           )}
         </div>
-        {denial !== undefined && <GcpReaderDenied reader={denial.reader} project={denial.project} message={denial.message} />}
+        {denial !== undefined && (
+          <GcpReaderDenied reader={denial.reader} project={denial.project} listingAccount={listingAccount} message={denial.message} />
+        )}
         <div id="gcp-reader-field" hidden={!readerOpen} className="flex flex-col gap-1.5">
           <label htmlFor="gcp-reader" className="text-xs text-text-muted">
             Read-only service account
@@ -650,18 +654,24 @@ function readerDenialFor(
  *  missing Token Creator grant identically, so the line names both; the
  *  rewritten message — the grant command and the raw denial — is one click
  *  away. */
-function GcpReaderDenied({ reader, project, message, onRetry }: Readonly<{
+function GcpReaderDenied({ reader, project, listingAccount, message, onRetry }: Readonly<{
   reader: string;
   project: string | undefined;
+  /** The account the reader is minted from — bucket access (ADC) — when the
+   *  "Signed in as" panel knows it isn't gcloud's, the account it shows:
+   *  "your Google account" would point at the shown one, which may well hold
+   *  the grant. Undefined otherwise, where those words can't mislead. */
+  listingAccount: string | undefined;
   message: string;
   /** The bucket step's re-list; the intro's Continue already re-checks. */
   onRetry?: (() => void) | undefined;
 }>) {
   return (
     <div role="alert" className="text-left">
-      <p className="text-xs text-negative">
+      <p className="text-xs text-negative break-words">
         Can&apos;t read as <code>{accountName(reader)}</code> — it doesn&apos;t exist
-        {project === undefined ? '' : <> in <code>{project}</code></>}, or your Google account lacks
+        {project === undefined ? '' : <> in <code>{project}</code></>}, or{' '}
+        {listingAccount === undefined ? 'your Google account' : <code>{listingAccount}</code>} lacks
         the Token Creator role on it.
       </p>
       <details className="mt-1">
@@ -774,15 +784,18 @@ function GcpError({ message, mode, onRetry }: Readonly<{
  *  the wizard's place. `role="alert"` for the same reason it uses one: this
  *  panel is inserted already-populated, and a polite region added that way is
  *  inconsistently announced. */
-function GcpBucketListDenied({ reader, project, message, detailsOpen, onToggleDetails, onRetry }: Readonly<{
+function GcpBucketListDenied({ reader, listingAccount, project, message, detailsOpen, onToggleDetails, onRetry }: Readonly<{
   /** The service account that was refused; undefined for the user's own login. */
   reader: string | undefined;
+  /** That login, when it isn't gcloud's account — see `GcpReaderDenied`. */
+  listingAccount: string | undefined;
   project: string;
   message: string;
   detailsOpen: boolean;
   onToggleDetails: (open: boolean) => void;
   onRetry: () => void;
 }>) {
+  const refused = reader === undefined ? listingAccount : accountName(reader);
   return (
     // A status, not an alert: with the recommended read-only service account
     // this denial is the normal path, so it reads as one line pointing at the
@@ -792,8 +805,8 @@ function GcpBucketListDenied({ reader, project, message, detailsOpen, onToggleDe
     // is the live region (`<output>`, whose role is status), so opening Details
     // announces nothing over it.
     <div>
-      <output className="block text-xs text-text-secondary">
-        {reader === undefined ? 'Your account' : <code className="text-text-secondary">{accountName(reader)}</code>}{' '}
+      <output className="block text-xs text-text-secondary break-words">
+        {refused === undefined ? 'Your account' : <code className="text-text-secondary">{refused}</code>}{' '}
         can&apos;t list the buckets in <code className="text-text-secondary">{project}</code> — enter the bucket name below.
       </output>
       <details
@@ -1024,10 +1037,12 @@ function GcpProjectStep({ state, onSelect, onTyped, onManual, onBack, onRetry }:
 }
 
 /** Step 2b-ii — pick the bucket. Sister of `BucketStep`, against GCS. */
-function GcpBucketStep({ state, reader, onSelect, onSkip, onBack, onRetry }: Readonly<{
+function GcpBucketStep({ state, reader, listingAccount, onSelect, onSkip, onBack, onRetry }: Readonly<{
   state: Extract<WizardStep, { step: 'gcp-bucket' }>;
   /** Who the listing ran as — the full address, or undefined for the ADC login. */
   reader: string | undefined;
+  /** See `GcpReaderDenied`. */
+  listingAccount: string | undefined;
   onSelect: (bucket: string) => void;
   onSkip?: (() => void) | undefined;
   onBack: () => void;
@@ -1056,6 +1071,7 @@ function GcpBucketStep({ state, reader, onSelect, onSkip, onBack, onRetry }: Rea
     errorPanel = (
       <GcpBucketListDenied
         reader={reader}
+        listingAccount={listingAccount}
         project={deniedProject}
         message={state.error}
         detailsOpen={detailsOpen}
@@ -1065,7 +1081,9 @@ function GcpBucketStep({ state, reader, onSelect, onSkip, onBack, onRetry }: Rea
     );
   } else if (reader !== undefined && isGcpImpersonationError(new Error(state.error))) {
     // The project picker reaches here without the intro's reader check.
-    errorPanel = <GcpReaderDenied reader={reader} project={state.project?.id} message={state.error} onRetry={onRetry} />;
+    errorPanel = (
+      <GcpReaderDenied reader={reader} project={state.project?.id} listingAccount={listingAccount} message={state.error} onRetry={onRetry} />
+    );
   } else {
     errorPanel = <GcpError message={state.error} mode="adc" onRetry={onRetry} />;
   }
@@ -2488,6 +2506,9 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   const [providerNameEdited, setProviderNameEdited] = useState(false);
   // Re-reads the "Signed in as" panel when a GCP step's Retry runs.
   const [gcpIdentityRefresh, setGcpIdentityRefresh] = useState(0);
+  // What that panel found when listing and downloads are two different
+  // accounts: the refusals name the account the listing ran as.
+  const [gcpSplit, setGcpSplit] = useState<GcpSplitAccounts | null>(null);
   useEffect(() => {
     api.getConfig().then(config => {
       const names = config.providers.map(p => String(p.name));
@@ -3118,9 +3139,16 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
             <GcpIntroStep
               state={wizard}
               reader={gcpReader}
+              listingAccount={gcpSplit?.listingAccount}
               onReaderChange={setGcpReader}
               onBrowse={goToGcpProjectStep}
-              onProjectId={startGcpFromTypedProject}
+              onProjectId={(projectId) => {
+                // A Continue after a refusal is its retry, usually after a
+                // sign-in: the panel re-reads, so a second refusal can't name
+                // the account signed in before it.
+                if (wizard.check?.status === 'denied') setGcpIdentityRefresh(n => n + 1);
+                startGcpFromTypedProject(projectId);
+              }}
               onScaffold={handleGcpScaffold}
               onDone={finish}
               onBack={() => { ++stepRequestRef.current; setWizard({ step: 'start' }); }}
@@ -3140,6 +3168,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
             <GcpBucketStep
               state={wizard}
               reader={gcpReaderFor(wizard.project)}
+              listingAccount={gcpSplit?.listingAccount}
               onSelect={(bucket) => { gcpBrowseTo(wizard.project, wizard.source, bucket, ''); }}
               // Per-tier Configure came for this one tier; ✕ is the way out.
               onSkip={wizard.source === 'daily' || gcpSourceMode !== undefined ? undefined : handleGcpSkip}
@@ -3238,7 +3267,12 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
               without one. */}
           {isGcpStep(wizard) && (
             <div className="mt-5">
-              <GcpIdentityPanel context="wizard" refreshKey={gcpIdentityRefresh} providerName={gcpSourceMode === undefined ? undefined : initialProviderName} />
+              <GcpIdentityPanel
+                context="wizard"
+                refreshKey={gcpIdentityRefresh}
+                providerName={gcpSourceMode === undefined ? undefined : initialProviderName}
+                onSplitAccounts={setGcpSplit}
+              />
             </div>
           )}
         </CardContent>

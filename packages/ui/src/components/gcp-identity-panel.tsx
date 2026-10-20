@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { GCLOUD_ADC_LOGIN_COMMAND, GCLOUD_CLI_LOGIN_COMMAND } from '@costgoblin/core/browser';
 import type {
   GcpAccountLookup,
@@ -26,17 +26,27 @@ import { useQuery } from '../hooks/use-query.js';
  *  shows both paths, each impersonating the provider's reader when it names
  *  one — as one line when nothing needs action, with the paths behind
  *  Details. */
-export function GcpIdentityPanel({ providerName, context, refreshKey = 0 }: Readonly<{
+export function GcpIdentityPanel({ providerName, context, refreshKey = 0, onSplitAccounts }: Readonly<{
   /** Whose `keyFile` / `impersonateServiceAccount` to apply. Omitted in the
    *  wizard, where no provider exists yet. */
   providerName?: string | undefined;
   context: 'wizard' | 'provider';
   /** Bump to re-read, e.g. after a sign-in the parent ran. */
   refreshKey?: number;
+  /** Told when listing and downloads run as two different people, so the
+   *  wizard's refusals can name the account refused. Null whenever that isn't
+   *  known for sure: while checking, after a failed check, once unmounted. */
+  onSplitAccounts?: ((split: GcpSplitAccounts | null) => void) | undefined;
 }>): React.JSX.Element {
   const api = useCostApi();
   const [recheck, setRecheck] = useState(0);
   const query = useQuery(() => api.getGcpIdentities(providerName), [providerName, refreshKey, recheck]);
+  const split = query.status === 'success' && query.data.status === 'ok' ? query.data.identities.splitAccounts : null;
+  useEffect(() => {
+    if (onSplitAccounts === undefined) return undefined;
+    onSplitAccounts(split);
+    return () => { onSplitAccounts(null); };
+  }, [split, onSplitAccounts]);
 
   return (
     <section
@@ -105,7 +115,9 @@ function AdcRemedy({ file }: Readonly<{ file: GcpCredentialFile | null }>): Reac
 /** The wizard's form: the one account the user is working as — gcloud's,
  *  which lists the projects on offer — and a single line only when the setup
  *  would stall: gcloud or bucket access not signed in, or bucket access signed
- *  in as someone else. */
+ *  in as someone else. That line signs bucket access in as gcloud's account,
+ *  the one shown: switching gcloud instead would move downloads and the
+ *  project list too. */
 function CompactIdentities({ identities }: Readonly<{ identities: GcpIdentities }>): React.JSX.Element {
   const { listing, splitAccounts } = identities;
   const adcFile = listing.kind === 'not-signed-in' || listing.kind === 'unreadable' ? listing.file : undefined;
@@ -119,7 +131,8 @@ function CompactIdentities({ identities }: Readonly<{ identities: GcpIdentities 
       )}
       {splitAccounts !== null && (
         <Detail>
-          Bucket access is signed in as <Principal>{splitAccounts.listingAccount}</Principal> — a different account.
+          Bucket access is signed in as <Principal>{splitAccounts.listingAccount}</Principal> — to use{' '}
+          <Principal>{splitAccounts.downloadAccount}</Principal>, <AdcRemedy file={listing.file} />
         </Detail>
       )}
     </>

@@ -1,6 +1,6 @@
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
   GcpAccountLookup,
   GcpCredentialFile,
@@ -8,6 +8,7 @@ import type {
   GcpIdentities,
   GcpIdentityResult,
   GcpListingIdentity,
+  GcpSplitAccounts,
 } from '@costgoblin/core/browser';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
@@ -17,6 +18,7 @@ const ADC_PATH = '/Users/test/.config/gcloud/application_default_credentials.jso
 const ADC: GcpCredentialFile = { path: ADC_PATH, origin: 'well-known' };
 const SA = 'costgoblin-reader@acme-billing.iam.gserviceaccount.com';
 const ALICE: GcpAccountLookup = { status: 'known', email: 'alice@acme.com' };
+const SPLIT: GcpSplitAccounts = { listingAccount: 'alice@acme.com', downloadAccount: 'admin@acme.com' };
 
 const user = (account: GcpAccountLookup = ALICE, file: GcpCredentialFile = ADC): GcpListingIdentity => ({ kind: 'user', file, account });
 const gcloud = (account: string | null, configuration = 'default'): GcpDownloadIdentity => ({ kind: 'gcloud', account, configuration });
@@ -25,13 +27,17 @@ function ok(identities: Partial<GcpIdentities> & Pick<GcpIdentities, 'listing' |
   return { status: 'ok', identities: { reader: null, splitAccounts: null, ...identities } };
 }
 
-function renderPanel(result: GcpIdentityResult, props: { providerName?: string; context?: 'wizard' | 'provider' } = {}) {
+function renderPanel(result: GcpIdentityResult, props: {
+  providerName?: string;
+  context?: 'wizard' | 'provider';
+  onSplitAccounts?: (split: GcpSplitAccounts | null) => void;
+} = {}) {
   const api = new MockCostApi();
   api.gcpIdentitiesResult = result;
   const userEvents = userEvent.setup();
   render(
     <CostApiProvider value={api}>
-      <GcpIdentityPanel providerName={props.providerName} context={props.context ?? 'provider'} />
+      <GcpIdentityPanel providerName={props.providerName} context={props.context ?? 'provider'} onSplitAccounts={props.onSplitAccounts} />
     </CostApiProvider>,
   );
   return { api, user: userEvents, panel: screen.getByRole('region', { name: /^Signed in as/ }) };
@@ -169,13 +175,38 @@ describe('GcpIdentityPanel — wizard', () => {
     expect(panel.textContent).not.toContain(SA);
   });
 
-  it('adds one line when bucket access is signed in as someone else', async () => {
-    const { panel } = renderPanel(ok({
-      listing: user(),
-      download: gcloud('admin@acme.com'),
-      splitAccounts: { listingAccount: 'alice@acme.com', downloadAccount: 'admin@acme.com' },
-    }), { context: 'wizard' });
-    await waitFor(() => { expect(panel.textContent).toContain('Bucket access is signed in as alice@acme.com — a different account.'); });
+  it('adds one line when bucket access is signed in as someone else, with the sign-in that matches it to gcloud', async () => {
+    // Toward gcloud's account: it is the one the wizard shows, and lists
+    // projects as.
+    const { panel } = renderPanel(ok({ listing: user(), download: gcloud('admin@acme.com'), splitAccounts: SPLIT }), { context: 'wizard' });
+    await waitFor(() => {
+      expect(panel.textContent).toContain('Bucket access is signed in as alice@acme.com — to use admin@acme.com, run gcloud auth application-default login');
+    });
+  });
+
+  it('hands the split to the wizard once the check settles', async () => {
+    const reported = vi.fn<(split: GcpSplitAccounts | null) => void>();
+    renderPanel(ok({ listing: user(), download: gcloud('admin@acme.com'), splitAccounts: SPLIT }), { context: 'wizard', onSplitAccounts: reported });
+    await waitFor(() => { expect(reported).toHaveBeenLastCalledWith(SPLIT); });
+  });
+
+  it('withdraws the split while it re-checks, so no refusal names an account that may have just changed', async () => {
+    const reported = vi.fn<(split: GcpSplitAccounts | null) => void>();
+    const { api, user: events, panel } = renderPanel(
+      ok({ listing: user(), download: gcloud('admin@acme.com'), splitAccounts: SPLIT }),
+      { context: 'wizard', onSplitAccounts: reported },
+    );
+    await waitFor(() => { expect(reported).toHaveBeenLastCalledWith(SPLIT); });
+    vi.spyOn(api, 'getGcpIdentities').mockReturnValue(new Promise<GcpIdentityResult>(() => undefined));
+    await events.click(within(panel).getByRole('button', { name: 'Re-check' }));
+    await waitFor(() => { expect(reported).toHaveBeenLastCalledWith(null); });
+  });
+
+  it('hands over no split when the identities cannot be checked', async () => {
+    const reported = vi.fn<(split: GcpSplitAccounts | null) => void>();
+    const { panel } = renderPanel({ status: 'unavailable', reason: 'gcloud timed out' }, { context: 'wizard', onSplitAccounts: reported });
+    await waitFor(() => { expect(panel.textContent).toContain("Couldn't check credentials: gcloud timed out"); });
+    expect(reported).toHaveBeenLastCalledWith(null);
   });
 
   it('says what to run when gcloud or bucket access is not signed in', async () => {
