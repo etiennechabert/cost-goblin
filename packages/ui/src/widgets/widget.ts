@@ -22,6 +22,11 @@ const DIMENSION_FALLBACK_CHAINS: ReadonlyMap<DimensionId, readonly DimensionId[]
   [asDimensionId('service_category'), [asDimensionId('service'), asDimensionId('sku_meter')]],
 ]);
 
+/** The group-by of a query read only for its totals, which no grouping
+ *  changes. Service is locked on, so it is always in the rollup grain; a
+ *  dimension the user can disable (Account) would read the raw Parquet. */
+export const TOTALS_GROUP_BY: DimensionId = asDimensionId('service');
+
 // Fallback candidates are built-in canonical columns — always queryable regardless of enabled state.
 export function getDimensionFallbacks(dimId: DimensionId): readonly DimensionId[] {
   return DIMENSION_FALLBACK_CHAINS.get(dimId) ?? [];

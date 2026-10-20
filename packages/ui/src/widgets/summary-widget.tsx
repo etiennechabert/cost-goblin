@@ -3,10 +3,9 @@ import { useQuery } from '../hooks/use-query.js';
 
 import { SummaryCard } from '../components/summary-card.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
-import { asDimensionId } from '@costgoblin/core/browser';
 import type { CostResult } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
-import { filtersKey, hasSufficientCoverage } from './widget.js';
+import { filtersKey, hasSufficientCoverage, TOTALS_GROUP_BY } from './widget.js';
 
 export function SummaryWidget({
   dateRange,
@@ -19,7 +18,7 @@ export function SummaryWidget({
   const api = useCostApi();
   const isSummary = spec.type === 'summary';
 
-  const groupBy = asDimensionId('account');
+  const groupBy = TOTALS_GROUP_BY;
   const fk = filtersKey(globalFilters);
 
   const cur = useQuery<CostResult | null>(

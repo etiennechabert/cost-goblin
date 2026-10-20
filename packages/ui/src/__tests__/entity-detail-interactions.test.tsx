@@ -294,6 +294,35 @@ describe('EntityDetail — pies and histogram tabs', () => {
     expect(api.dailyCalls.at(-1)?.origin).toBe('entity-detail:histogram:tag_product');
   });
 
+  it('moves a default pie off a disabled dimension, and never queries it', async () => {
+    const api = new DetailApi();
+    // Account is disabled: getDimensions lists only the enabled dimensions.
+    vi.spyOn(api, 'getDimensions').mockResolvedValue([
+      { name: asDimensionId('service'), label: 'Service', field: 'service' },
+      { name: asDimensionId('region'), label: 'Region', field: 'region' },
+      { name: asDimensionId('sku_meter'), label: 'SKU Meter', field: 'sku_meter' },
+    ]);
+    const { user } = renderDetail(api);
+
+    await waitFor(() => {
+      expect(api.costCalls.filter(c => c.origin?.startsWith('entity-detail:pie') === true).map(c => c.origin).sort()).toEqual([
+        'entity-detail:pie1:sku_meter', 'entity-detail:pie2:region', 'entity-detail:pie3:service',
+      ]);
+    });
+    const pickers = screen.getAllByRole('combobox', { name: 'Group by dimension' });
+    expect(pickers.map(p => (p instanceof HTMLSelectElement ? p.value : ''))).toEqual(['sku_meter', 'region', 'service']);
+
+    // Picking the moved pie's dimension in another pie leaves the moved pie where it is.
+    const third = pickers[2];
+    if (third === undefined) throw new Error('no third pie picker');
+    const pie1Calls = api.costCalls.filter(c => c.origin?.startsWith('entity-detail:pie1') === true).length;
+    await user.selectOptions(third, 'sku_meter');
+    await waitFor(() => { expect(api.costCalls.some(c => c.origin === 'entity-detail:pie3:sku_meter')).toBe(true); });
+    const after = screen.getAllByRole('combobox', { name: 'Group by dimension' });
+    expect(after.map(p => (p instanceof HTMLSelectElement ? p.value : ''))).toEqual(['sku_meter', 'region', 'sku_meter']);
+    expect(api.costCalls.filter(c => c.origin?.startsWith('entity-detail:pie1') === true)).toHaveLength(pie1Calls);
+  });
+
   it('keeps the histogram on service when the owner and product tags are missing', async () => {
     const api = new DetailApi();
     vi.spyOn(api, 'getDimensions').mockResolvedValue([

@@ -39,6 +39,7 @@ import { DateRangePicker } from '../components/date-range-picker.js';
 import type { DateRange, Granularity } from '../components/date-range-picker.js';
 import { WIDGET_REGISTRY } from '../widgets/registry.js';
 import { widgetFlexBasis } from '../widgets/widget.js';
+import { withEnabledGroupBys } from '../widgets/enabled-group-by.js';
 import { LazyWidgetSlot, WidgetSchedulerProvider } from '../hooks/widget-load-scheduler.js';
 
 /** Reserve roughly a widget's eventual height while its slot is deferred, so
@@ -126,7 +127,7 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
   // view received an explicit `initialFilter` (drill-through, saved state).
   // Re-mounting the view (navigation, reload) re-applies defaults — that's
   // the "always re-apply on open" contract.
-  const defaultsAppliedRef = useRef(initialFilter !== undefined);
+  const [defaultsApplied, setDefaultsApplied] = useState(initialFilter !== undefined);
   const [hourlyHint, setHourlyHint] = useState(false);
 
   // Urgent: the filter bar and the default filters below wait on this, and as
@@ -137,14 +138,23 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
     () => [...rawDimensions].sort((a, b) => priorityFor(a) - priorityFor(b)),
     [rawDimensions],
   );
+  // getDimensions lists only the enabled dimensions, built-ins first, in
+  // config order. A widget grouped by any other moves to one of these.
+  const enabledIds = useMemo(() => rawDimensions.map(getDimensionId), [rawDimensions]);
+  const shownSpec = useMemo(() => withEnabledGroupBys(spec, enabledIds), [spec, enabledIds]);
+  // The widgets wait for the dimensions, so none first queries a group-by it
+  // is about to leave (a disabled dimension is read from the raw Parquet), or
+  // without the default filters.
+  const dimensionsSettled = dimensionsQuery.status === 'success' || dimensionsQuery.status === 'error';
 
-  useEffect(() => {
-    if (defaultsAppliedRef.current) return;
-    if (dimensionsQuery.status !== 'success') return;
+  // Seeded while rendering, not in an effect: the widgets mount in the commit
+  // the dimensions arrive in, and an effect would run after their first
+  // queries had gone out without the defaults.
+  if (!defaultsApplied && dimensionsQuery.status === 'success') {
+    setDefaultsApplied(true);
     const defaults = defaultsFromDimensions(dimensionsQuery.data);
-    defaultsAppliedRef.current = true;
     if (Object.keys(defaults).length > 0) setFilters(defaults);
-  }, [dimensionsQuery]);
+  }
 
   const previousDateRange = useMemo(
     () => previousRangeFor(dateRange),
@@ -306,17 +316,18 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
         <HourlyHintBanner onDismiss={() => { setHourlyHint(false); }} />
       )}
 
-      {dimensionsQuery.status === 'loading' && !gate.blocked && (
+      {!dimensionsSettled && !gate.blocked && (
         <div className="text-sm text-text-secondary">Loading...</div>
       )}
 
-      {gate.blocked && rollupStatus !== undefined ? (
+      {gate.blocked && rollupStatus !== undefined && (
         <RollupBuildingOverlay status={rollupStatus} pendingMonths={gate.pendingMonths} />
-      ) : (
+      )}
+      {!gate.blocked && dimensionsSettled && (
       <WidgetSchedulerProvider>
-        {spec.rows.map((row, rowIdx) => {
+        {shownSpec.rows.map((row, rowIdx) => {
           // Flat display order across rows = load priority (top-left first).
-          const offset = spec.rows.slice(0, rowIdx).reduce((n, r) => n + r.widgets.length, 0);
+          const offset = shownSpec.rows.slice(0, rowIdx).reduce((n, r) => n + r.widgets.length, 0);
           return (
             <div key={row.widgets.map(w => w.id).join('-')} className="flex gap-4 items-stretch min-w-0">
               {row.widgets.map((w, colIdx) => {
