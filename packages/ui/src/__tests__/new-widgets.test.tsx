@@ -1,10 +1,11 @@
 import { render, screen, waitFor, cleanup } from '@testing-library/react';
-import { afterEach, describe, it, expect } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect } from 'vitest';
 import { asDimensionId } from '@costgoblin/core/browser';
 import type { ViewSpec } from '@costgoblin/core/browser';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CustomView } from '../views/custom-view.js';
+import { setReducedMotion } from './setup.js';
 
 const VIEW: ViewSpec = {
   id: 'new-widgets',
@@ -26,6 +27,12 @@ const VIEW: ViewSpec = {
 };
 
 afterEach(cleanup);
+
+// Hold the widgets' coin-rain loaders still: animated, each sets state every
+// frame, which keeps restarting the transition useQuery commits a result in,
+// and on a loaded CI runner the result only lands after ~5 s, the whole test
+// budget. setup.ts restores the preference after each test.
+beforeEach(() => { setReducedMotion(true); });
 
 function renderView(spec: ViewSpec = VIEW) {
   return render(

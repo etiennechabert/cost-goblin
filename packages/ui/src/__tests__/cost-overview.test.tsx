@@ -1,10 +1,11 @@
 import { render, screen, waitFor, cleanup } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { afterEach, describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { PaletteProvider } from '../hooks/use-palette.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostOverview } from '../views/cost-overview.js';
+import { setReducedMotion } from './setup.js';
 
 function renderOverview() {
   const api = new MockCostApi();
@@ -23,6 +24,12 @@ function renderOverview() {
 }
 
 afterEach(cleanup);
+
+// Hold the widgets' coin-rain loaders still: animated, each sets state every
+// frame, which keeps restarting the transition useQuery commits a result in,
+// and on a loaded CI runner the result only lands after ~5 s, the whole test
+// budget. setup.ts restores the preference after each test.
+beforeEach(() => { setReducedMotion(true); });
 
 describe('CostOverview', () => {
   it('shows loading state initially', () => {

@@ -8,6 +8,7 @@ import { PaletteProvider } from '../hooks/use-palette.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CustomView } from '../views/custom-view.js';
 import { daysAgo, daysBetween } from '../lib/dates.js';
+import { setReducedMotion } from './setup.js';
 
 
 const SPEC: ViewSpec = {
@@ -32,6 +33,12 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
+
+// Hold the widgets' coin-rain loaders still: animated, each sets state every
+// frame, which keeps restarting the transition useQuery commits a result in,
+// and on a loaded CI runner the result only lands after ~5 s, the whole test
+// budget. setup.ts restores the preference after each test.
+beforeEach(() => { setReducedMotion(true); });
 
 function renderView(spec: ViewSpec = SPEC) {
   return render(
