@@ -231,6 +231,42 @@ describe('CustomView — filtering from widgets', () => {
   });
 });
 
+describe('CustomView — group-bys on a dimension that is not enabled', () => {
+  // The mock's enabled dimensions, in order: provider, account, service,
+  // region, resource_id, then the team/env/product tags.
+  const STACK = 'tag_aws_cloudformation_stack_name';
+  const PIES = view([
+    { id: 'stack', type: 'pie', size: 'medium', groupBy: asDimensionId(STACK) },
+    { id: 'svc', type: 'pie', size: 'medium', groupBy: asDimensionId('service') },
+    { id: 'reg', type: 'pie', size: 'medium', groupBy: asDimensionId('region') },
+  ]);
+
+  it('groups by the first enabled dimension the view does not show, and never queries the other', async () => {
+    const { api } = renderView(PIES);
+
+    await waitFor(() => {
+      expect(new Set(api.costCalls.map(c => String(c.groupBy)))).toEqual(new Set(['provider', 'service', 'region']));
+    });
+    await waitFor(() => {
+      expect(document.querySelector('[data-widget-id="stack"] button')?.textContent).toBe('Provider');
+    }, { timeout: 5000 });
+    expect(screen.queryByText(STACK)).toBeNull();
+  });
+
+  it('shows the dashboard as configured when the dimensions fail to load', async () => {
+    class NoDimensionsApi extends ViewApi {
+      override getDimensions(): Promise<Dimension[]> {
+        return Promise.reject(new Error('dimensions.yaml is broken'));
+      }
+    }
+    const { api } = renderView(PIES, new NoDimensionsApi());
+
+    await waitFor(() => {
+      expect(new Set(api.costCalls.map(c => String(c.groupBy)))).toEqual(new Set([STACK, 'service', 'region']));
+    });
+  });
+});
+
 describe('CustomView — filter bar', () => {
   it('orders chips by dimension concept and pre-applies dimension defaults', async () => {
     const api = new ViewApi();
