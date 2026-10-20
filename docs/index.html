@@ -1978,6 +1978,19 @@
 
     .get-started-steps a:not(.anchor-link):hover { border-bottom-color: var(--emerald); }
 
+    /* The one console a step sends people to (the CloudFormation stack, Cloud
+       Shell) gets a button of its own rather than a link inside a sentence,
+       beside the paragraph that introduces it, or under it when there's no room. */
+    .step .step-lead {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 12px 24px;
+      margin-bottom: 16px;
+    }
+    .step .step-lead p { flex: 1 1 320px; margin-bottom: 0; }
+    .get-started-steps a.btn-primary { color: #050505; border-bottom: none; transition: all 0.2s; }
+
     @media (max-width: 768px) {
       .provider-modal { padding: 16px 8px; }
       .provider-modal-panel { padding: 20px 16px; }
@@ -2597,9 +2610,16 @@
             <h4>Create the exports with CloudFormation <span class="step-badge">Recommended</span></h4>
             <a class="anchor-link" href="#get-started-aws-cloudformation" aria-label="Copy link to the step &ldquo;Create the exports with CloudFormation&rdquo;"></a>
           </div>
-          <p>One stack creates everything with the settings CostGoblin needs: the S3 bucket and its lifecycle rules, the daily FOCUS 1.2 export (plus, optionally, the hourly and Cost Optimization Hub exports), and a read-only policy for CostGoblin. The setup wizard opens it for you with your answers filled in: on the bucket step, choose <strong>Create one with CloudFormation</strong>. Without the app:</p>
+          <p>One stack creates everything with the settings CostGoblin needs: the S3 bucket and its lifecycle rules, the daily FOCUS 1.2 export (plus, optionally, the hourly and Cost Optimization Hub exports), and a read-only policy for CostGoblin.</p>
+          <div class="step-lead">
+          <p>The setup wizard opens it for you with your answers filled in: on the bucket step, choose <strong>Create one with CloudFormation</strong>. Without the app:</p>
+            <a class="btn-primary" href="https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?templateURL=https%3A%2F%2Fcostgoblin-templates.s3.eu-central-1.amazonaws.com%2Ftemplates%2Flatest%2Fcostgoblin-exports.yaml&amp;stackName=costgoblin-exports" target="_blank" rel="noopener">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+              Launch the CloudFormation stack
+            </a>
+          </div>
           <ol class="step-checklist step-numbered">
-            <li><a href="https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?templateURL=https%3A%2F%2Fcostgoblin-templates.s3.eu-central-1.amazonaws.com%2Ftemplates%2Flatest%2Fcostgoblin-exports.yaml&amp;stackName=costgoblin-exports" target="_blank" rel="noopener"><strong>Launch the stack</strong></a>. It opens CloudFormation in us-east-1, the only region with AWS Data Exports, with the template loaded.</li>
+            <li>The button opens CloudFormation in us-east-1, the only region with AWS Data Exports, with the template loaded.</li>
             <li>Pick a bucket name (leave it empty for <em>costgoblin-billing-&lt;account id&gt;</em>) and the optional exports. If the account already has the <em>AWSServiceRoleForBCMDataExports</em> role, set <strong>CreateDataExportsServiceRole</strong> to <em>no</em>.</li>
             <li>Acknowledge that the stack creates IAM resources, and create it.</li>
             <li>Attach the <strong>ReadAccessPolicyArn</strong> output to the role or user CostGoblin reads with. The other <strong>Outputs</strong> are the paths to point CostGoblin at.</li>
@@ -2774,12 +2794,22 @@ gcloud storage buckets create <span class="code-dir">gs://your-company-billing</
             <h4>Deploy the exporter</h4>
             <a class="anchor-link" href="#get-started-gcp-exporter" aria-label="Copy link to the step &ldquo;Deploy the exporter&rdquo;"></a>
           </div>
-          <p>A small daily job in <em>your</em> project copies changed billing periods from BigQuery into the bucket. <a href="https://shell.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https%3A%2F%2Fgithub.com%2Fetiennechabert%2Fcost-goblin&amp;cloudshell_working_dir=scripts%2Fgcp-focus-exporter" target="_blank" rel="noopener"><strong>Open in Cloud Shell</strong></a>, set the values at the top of <em>deploy.sh</em>, and run it &mdash; or locally:</p>
+          <div class="step-lead">
+          <p>A small daily job in <em>your</em> project copies changed billing periods from BigQuery into the bucket. Open Cloud Shell and paste this into its terminal:</p>
+            <a class="btn-primary" href="https://shell.cloud.google.com/?show=ide%2Cterminal" target="_blank" rel="noopener">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+              Open Cloud Shell
+            </a>
+          </div>
           <div class="code-block">
-cd scripts/gcp-focus-exporter
+curl -fsSL https://github.com/etiennechabert/cost-goblin/releases/latest/download/gcp-focus-exporter.tar.gz | tar xz
+cd gcp-focus-exporter &amp;&amp; cloudshell edit deploy.sh
+          </div>
+          <p>Set the values at the top of <em>deploy.sh</em> in the editor that opens, then run it:</p>
+          <div class="code-block">
 <span class="code-file">./deploy.sh</span>   <span class="code-comment"># builds, deploys and schedules the job</span>
           </div>
-          <p>It writes <em>gs://your-company-billing/focus/daily/billing_period=YYYY-MM/</em>. Prefer to see every command? The <a href="https://github.com/etiennechabert/cost-goblin/tree/main/scripts/gcp-focus-exporter" target="_blank" rel="noopener">exporter README</a> has the copy-paste version.</p>
+          <p>It writes <em>gs://your-company-billing/focus/daily/billing_period=YYYY-MM/</em>. Rather run it from your own machine, or see every command? The <a href="https://github.com/etiennechabert/cost-goblin/tree/main/scripts/gcp-focus-exporter" target="_blank" rel="noopener">exporter README</a> covers both.</p>
         </div>
 
         <div class="step" id="get-started-gcp-read-access">
