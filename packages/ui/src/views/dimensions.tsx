@@ -2109,7 +2109,7 @@ function GripHandle({ attrs }: Readonly<{ attrs: React.HTMLAttributes<HTMLButton
       type="button"
       {...attrs}
       title="Drag to reorder"
-      className="pointer-events-auto flex items-center justify-center text-text-muted hover:text-text-primary cursor-grab active:cursor-grabbing"
+      className="pointer-events-auto flex items-center justify-center rounded-sm text-text-muted hover:text-text-primary cursor-grab active:cursor-grabbing"
     >
       <GripVertical size={16} />
     </button>
@@ -2120,8 +2120,10 @@ function GripHandle({ attrs }: Readonly<{ attrs: React.HTMLAttributes<HTMLButton
  *  anywhere on the card: the open button's ::after covers the whole card (the
  *  card is `relative`), padding and "Built-in" label included. The reorder
  *  controls sit above that layer, and their wrapper lets a click between or
- *  beside them fall through to it. */
-const ROW_CARD_CLASS = 'relative w-full rounded-xl border border-border bg-bg-secondary/50 px-5 py-3 flex items-center justify-between transition-colors hover:border-accent/40 hover:bg-bg-tertiary/60';
+ *  beside them fall through to it. The card, not the button, shows the hover
+ *  and press (`data-feedback="none"` drops the app-wide state layer, which
+ *  would tint only the button's text column). */
+const ROW_CARD_CLASS = 'relative w-full rounded-xl border border-border bg-bg-secondary/50 px-5 py-3 flex items-center justify-between transition-colors hover:border-accent/40 hover:bg-bg-tertiary/60 has-[>button:active]:bg-bg-tertiary';
 const ROW_OPEN_CLASS = "flex flex-col gap-1 text-left flex-1 min-w-0 cursor-pointer outline-none after:absolute after:inset-0 after:rounded-xl after:content-[''] focus-visible:after:outline-2 focus-visible:after:outline-accent";
 const ROW_CONTROLS_CLASS = 'pointer-events-none relative z-10 flex items-center gap-3 shrink-0';
 
@@ -2551,7 +2553,7 @@ export function DimensionsView(): React.JSX.Element {
           disabled={!canUp}
           onClick={(e) => { e.stopPropagation(); applyReorder(orderIdx, orderIdx - 1); }}
           title="Move up"
-          className="flex items-center justify-center text-text-muted hover:text-text-primary disabled:opacity-30 disabled:cursor-not-allowed"
+          className="flex items-center justify-center rounded-sm text-text-muted hover:text-text-primary disabled:opacity-30 disabled:cursor-not-allowed"
         >
           <ChevronUp size={14} />
         </button>
@@ -2560,7 +2562,7 @@ export function DimensionsView(): React.JSX.Element {
           disabled={!canDown}
           onClick={(e) => { e.stopPropagation(); applyReorder(orderIdx, orderIdx + 1); }}
           title="Move down"
-          className="flex items-center justify-center text-text-muted hover:text-text-primary disabled:opacity-30 disabled:cursor-not-allowed"
+          className="flex items-center justify-center rounded-sm text-text-muted hover:text-text-primary disabled:opacity-30 disabled:cursor-not-allowed"
         >
           <ChevronDown size={14} />
         </button>
@@ -2801,7 +2803,7 @@ export function DimensionsView(): React.JSX.Element {
               }
               return (
                 <div key={row.key} {...dnd.row} className={ROW_CARD_CLASS}>
-                  <button type="button" onClick={() => { openRow(row, false); }} className={ROW_OPEN_CLASS}>
+                  <button type="button" data-feedback="none" onClick={() => { openRow(row, false); }} className={ROW_OPEN_CLASS}>
                     <div className="flex items-center gap-3">
                       <span className="text-sm font-medium text-text-primary">{d.label}</span>
                       <span className="text-xs text-text-muted font-mono">{d.field}</span>
@@ -2859,7 +2861,7 @@ export function DimensionsView(): React.JSX.Element {
             }
             return (
               <div key={row.key} {...dnd.row} className={ROW_CARD_CLASS}>
-                <button type="button" onClick={() => { openRow(row, false); }} className={ROW_OPEN_CLASS}>
+                <button type="button" data-feedback="none" onClick={() => { openRow(row, false); }} className={ROW_OPEN_CLASS}>
                   <div className="flex items-center gap-3">
                     <span className="text-sm font-medium text-text-primary">{tag.label}</span>
                     {tag.tagName !== undefined && tag.tagName.length > 0 && (

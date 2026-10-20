@@ -706,4 +706,36 @@ test.describe('Clickability (workspace mode)', () => {
     await expectClickable(p, p.getByRole('button', { name: 'Next baseline (→)' }));
     await p.keyboard.press('Escape');
   });
+
+  test('every button shows the pointer, and a state layer on hover and press', async () => {
+    const { page: p } = launched();
+    await ensureViewMode(p);
+    await p.getByRole('navigation', { name: 'Dashboards and analysis' }).getByRole('button', { name: 'Home' }).click();
+    await expect(p.getByRole('heading', { name: 'Cost Overview' })).toBeVisible();
+    // Tailwind v4 leaves controls on the arrow cursor (app.css restores the
+    // pointer); only a component's own cursor, such as a drag grip's, replaces it.
+    const onArrow = await p.evaluate(() => [...document.querySelectorAll('button')]
+      .filter(b => !b.disabled && b.getClientRects().length > 0)
+      .filter(b => {
+        const cursor = getComputedStyle(b).cursor;
+        return cursor === 'auto' || (cursor === 'default' && !b.classList.contains('cursor-default'));
+      })
+      .map(b => b.getAttribute('aria-label') ?? b.textContent.trim()));
+    expect(onArrow).toEqual([]);
+
+    // A hover tints the button, a press tints it more: the click shows it landed.
+    const button = p.getByRole('navigation', { name: 'Dashboards and analysis' }).getByRole('button', { name: 'Baselines' });
+    const layer = (): Promise<string> => button.evaluate(el => getComputedStyle(el).backgroundImage);
+    await p.mouse.move(640, 700);
+    await expect.poll(layer).toBe('none');
+    await button.hover();
+    await expect.poll(layer).toMatch(/^linear-gradient/);
+    const hovered = await layer();
+    await p.mouse.down();
+    await expect.poll(layer).not.toBe(hovered);
+    expect(await layer()).toMatch(/^linear-gradient/);
+    // Released elsewhere, so nothing is clicked.
+    await p.mouse.move(640, 700);
+    await p.mouse.up();
+  });
 });

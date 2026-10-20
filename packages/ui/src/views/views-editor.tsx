@@ -425,7 +425,7 @@ export function ViewsEditor({ onConfigPersisted, onConfigLoaded }: ViewsEditorPr
                         type="button"
                         onClick={() => { moveRow(rowIdx, -1); }}
                         disabled={rowIdx === 0}
-                        className="p-1 text-text-muted hover:text-text-primary disabled:opacity-30"
+                        className="rounded p-1 text-text-muted hover:text-text-primary disabled:opacity-30"
                         aria-label="Move row up"
                       >
                         ↑
@@ -434,7 +434,7 @@ export function ViewsEditor({ onConfigPersisted, onConfigLoaded }: ViewsEditorPr
                         type="button"
                         onClick={() => { moveRow(rowIdx, 1); }}
                         disabled={rowIdx === selectedView.rows.length - 1}
-                        className="p-1 text-text-muted hover:text-text-primary disabled:opacity-30"
+                        className="rounded p-1 text-text-muted hover:text-text-primary disabled:opacity-30"
                         aria-label="Move row down"
                       >
                         ↓
@@ -442,7 +442,7 @@ export function ViewsEditor({ onConfigPersisted, onConfigLoaded }: ViewsEditorPr
                       <button
                         type="button"
                         onClick={() => { deleteRow(rowIdx); }}
-                        className="p-1 text-text-muted hover:text-negative"
+                        className="rounded p-1 text-text-muted hover:text-negative"
                         aria-label="Delete row"
                       >
                         ✕
