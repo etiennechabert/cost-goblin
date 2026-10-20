@@ -1557,6 +1557,7 @@ function BucketStep({ state, onSelect, onSkip, onBack, onRetry, onCreateExports 
 
 const CLOUDFORMATION_CREATE_URL = 'https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create';
 const SUPPORT_CASE_URL = 'https://support.console.aws.amazon.com/support/home#/case/create';
+const COST_MANAGEMENT_PREFERENCES_URL = 'https://console.aws.amazon.com/costmanagement/home#/settings';
 
 /** The FOCUS exports a backfill covers, as chosen on the step. */
 function backfillTiers(hourly: boolean): BackfillTier[] {
@@ -1687,7 +1688,13 @@ function CreateExportsStep({ state, onChange, onSave, onQuickCreateOpened, onFil
         <label htmlFor="cg-create-coh" className={CHECKBOX_LABEL}>
           <input id="cg-create-coh" type="checkbox" checked={state.costOptimization} onChange={() => { onChange({ costOptimization: !state.costOptimization }); }} className="mt-0.5 accent-accent" />
           <span className="text-sm text-text-primary">Also export Cost Optimization Hub recommendations</span>
-          <span className="col-start-2 block text-xs text-text-muted">Activate Cost Optimization Hub first, or the stack fails.</span>
+          <span className="col-start-2 block text-xs text-text-muted">
+            Enable it first, or the stack fails:{' '}
+            <a href={COST_MANAGEMENT_PREFERENCES_URL} target="_blank" rel="noopener noreferrer" className="text-accent underline underline-offset-2 hover:text-accent-hover">
+              Cost Management preferences
+            </a>{' '}
+            → Cost Optimization Hub tab (in a management account, include all member accounts).
+          </span>
         </label>
         {state.costOptimization && (
           <label htmlFor="cg-create-role" className={`${CHECKBOX_LABEL} ml-6`}>
