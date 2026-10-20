@@ -16,6 +16,7 @@ import {
   buildQueryContextOpts,
   computeDataCoverage,
   emptyRangeResult,
+  isAccountGroupBy,
   lookupDimension,
   resolveEntityName,
   resolveFormat,
@@ -75,9 +76,7 @@ export async function queryTrends(
   let totalIncrease = 0;
   let totalSavings = 0;
 
-  const accountMap = (groupBy === 'account' || groupBy === 'account_id')
-    ? await ctx.getAccountMap()
-    : new Map<string, string>();
+  const accountMap = isAccountGroupBy(groupBy) ? await ctx.getAccountMap() : new Map<string, string>();
 
   for (const row of rows) {
     const rawEntity = toStr(row['entity']);

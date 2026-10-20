@@ -155,6 +155,12 @@ export function resolveEntityName(entity: string, accountMap: Map<string, string
   return accountMap.get(entity) ?? entity;
 }
 
+/** A query grouped by account returns account ids, which the tools show by
+ *  display name (resolveEntityName), merging the ids that share one. */
+export function isAccountGroupBy(groupBy: string): boolean {
+  return groupBy === 'account' || groupBy === 'account_id';
+}
+
 /** The one sink for every tool error. Messages can echo billing values (a
  *  DuckDB conversion error quotes the offending cell) and local paths (Parquet
  *  IO errors), so the message is put on one line and the home directory is
