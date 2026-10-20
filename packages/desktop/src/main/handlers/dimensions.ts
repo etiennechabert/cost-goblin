@@ -144,8 +144,9 @@ export function registerDimensionsHandlers(app: AppContext): void {
     const empty: ColumnValuesPreview = { values: [], distinctCount: 0, period: '', stripIssues: NO_STRIP_ISSUES };
     // Whitelist columns we know are safe to embed in SQL. These match the
     // aliases emitted by buildSource so the query plans identically to what
-    // the rest of the app does.
-    const ALLOWED = new Set(['account_id', 'account_name', 'region', 'service', 'service_code', 'service_category', 'charge_category', 'pricing_category', 'commitment_status', 'operation', 'sku_meter']);
+    // the rest of the app does. Every default built-in's field must be here,
+    // or its editor previews no values at all.
+    const ALLOWED = new Set(['provider', 'account_id', 'account_name', 'region', 'service', 'service_code', 'service_category', 'charge_category', 'pricing_category', 'commitment_status', 'operation', 'sku_meter', 'resource_id']);
     if (!ALLOWED.has(field)) return empty;
 
     const providers = await getQueryProviders('daily');
