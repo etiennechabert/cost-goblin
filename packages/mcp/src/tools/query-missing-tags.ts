@@ -4,24 +4,24 @@ import {
   DEFAULT_PLACEHOLDER_PATTERNS,
   logger,
 } from '@costgoblin/core';
-import type { DateRange, DimensionId } from '@costgoblin/core';
+import type { DimensionId } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
 import { truncateRows, truncateFooter } from '../formatters/cost.js';
 import type { Cell, Column, StructuredResult, Table } from '../formatters/result.js';
 import {
   buildQueryContextOpts,
   computeDataCoverage,
-  defaultDateRange,
   emptyRangeResult,
   resolveEntityName,
   resolveFormat,
+  resolveToolDateRange,
   structuredToolResult,
   toDimensionId,
   toDollars,
-  toDateRange,
   toFilterMap,
   toNum,
   toStr,
+  withinLagResult,
 } from './tool-helpers.js';
 
 export async function queryMissingTags(
@@ -38,9 +38,9 @@ export async function queryMissingTags(
 ): Promise<{ content: [{ type: 'text'; text: string }] }> {
   const format = resolveFormat(params.format);
   const tagDimension: DimensionId = toDimensionId(params.tagDimension);
-  const dateRange: DateRange = params.dateRange !== undefined
-    ? toDateRange(params.dateRange)
-    : defaultDateRange(ctx.now());
+  const range = await resolveToolDateRange(ctx, params.dateRange);
+  if (range.kind === 'within-lag') return withinLagResult(ctx, range, format, `Missing Tags: ${params.tagDimension}`);
+  const { dateRange, cappedAt } = range;
   const filters = toFilterMap(params.filters);
   const minCost = toDollars(params.minCost ?? 10);
   const limit = params.limit ?? 20;
@@ -133,7 +133,7 @@ export async function queryMissingTags(
     notes.push('*No actionable untagged resources above the cost threshold.*');
   }
 
-  const coverage = await computeDataCoverage(ctx, dateRange);
+  const coverage = await computeDataCoverage(ctx, dateRange, cappedAt);
   const result: StructuredResult = {
     title: `Missing Tags: ${params.tagDimension} (${dateRange.start} to ${dateRange.end})`,
     coverage,

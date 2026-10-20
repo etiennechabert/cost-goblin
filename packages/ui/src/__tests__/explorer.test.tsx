@@ -3,6 +3,7 @@ import { userEvent } from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import type {
   CostGoblinConfig,
+  CostScopeConfig,
   ExplorerFilterValue,
   ExplorerFilterValuesParams,
   ExplorerOverviewParams,
@@ -11,7 +12,7 @@ import type {
   ExplorerRowsParams,
   ExplorerRowsResult,
 } from '@costgoblin/core/browser';
-import { asBucketPath, asProviderName, DEFAULT_EXPLORER_HIDDEN_COLUMNS } from '@costgoblin/core/browser';
+import { asBucketPath, asProviderName, DEFAULT_COST_SCOPE, DEFAULT_EXPLORER_HIDDEN_COLUMNS } from '@costgoblin/core/browser';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { ExplorerView } from '../views/explorer.js';
@@ -455,6 +456,30 @@ describe('ExplorerView', () => {
         expect(api.savedExplorerPreferences.at(-1)?.lastUsedDateRange).toEqual(expected);
       });
       expect(api.savedExplorerPreferences.at(-1)?.lastUsedGranularity).toBe('daily');
+    });
+
+    it('moves the default window to the cost scope lag without persisting it', async () => {
+      const api = new ExplorerMockApi();
+      let release: (scope: CostScopeConfig) => void = () => undefined;
+      vi.spyOn(api, 'getCostScope').mockReturnValue(new Promise(resolve => { release = resolve; }));
+      renderExplorer(api);
+      // Prefs are loaded (no saved range) and the first slice ran on the
+      // default lag before the cost scope answers.
+      await waitFor(() => {
+        expect(api.overviewCalls).toHaveLength(1);
+      });
+
+      release({ ...DEFAULT_COST_SCOPE, lagDays: 7 });
+
+      const expected = { start: daysAgo(37), end: daysAgo(7) };
+      await waitFor(() => {
+        expect(api.overviewCalls.at(-1)?.dateRange).toEqual(expected);
+        expect(api.rowsCalls.at(-1)?.dateRange).toEqual(expected);
+      });
+      expect(screen.getByRole('button', { name: /Last 30 days/ })).toBeDefined();
+      // A saved range is restored as-is on the next open: writing this one
+      // would freeze a window the user never picked.
+      expect(api.savedExplorerPreferences.filter(p => 'lastUsedDateRange' in p)).toEqual([]);
     });
   });
 

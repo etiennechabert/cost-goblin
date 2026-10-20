@@ -2,24 +2,24 @@ import {
   buildCostQuery,
   logger,
 } from '@costgoblin/core';
-import type { DateRange, DimensionId } from '@costgoblin/core';
+import type { DimensionId } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
 import { truncateRows, truncateFooter } from '../formatters/cost.js';
 import type { Cell, Column, StructuredResult } from '../formatters/result.js';
 import {
   buildQueryContextOpts,
   computeDataCoverage,
-  defaultDateRange,
   emptyRangeResult,
   lookupDimension,
   resolveEntityName,
   resolveFormat,
+  resolveToolDateRange,
   structuredToolResult,
   toDimensionId,
-  toDateRange,
   toFilterMap,
   toNum,
   toStr,
+  withinLagResult,
 } from './tool-helpers.js';
 
 export async function queryCosts(
@@ -34,9 +34,9 @@ export async function queryCosts(
 ): Promise<{ content: [{ type: 'text'; text: string }] }> {
   const format = resolveFormat(params.format);
   const groupBy: DimensionId = toDimensionId(params.groupBy);
-  const dateRange: DateRange = params.dateRange !== undefined
-    ? toDateRange(params.dateRange)
-    : defaultDateRange(ctx.now());
+  const range = await resolveToolDateRange(ctx, params.dateRange);
+  if (range.kind === 'within-lag') return withinLagResult(ctx, range, format, `Costs by ${params.groupBy}`);
+  const { dateRange, cappedAt } = range;
   const filters = toFilterMap(params.filters);
   const limit = params.limit ?? 15;
 
@@ -105,7 +105,7 @@ export async function queryCosts(
     ...topServices.map((s): Cell => r.serviceCosts[s] ?? 0),
   ]);
 
-  const coverage = await computeDataCoverage(ctx, dateRange);
+  const coverage = await computeDataCoverage(ctx, dateRange, cappedAt);
   const result: StructuredResult = {
     title: `Costs by ${dimLabel} (${dateRange.start} to ${dateRange.end})`,
     coverage,

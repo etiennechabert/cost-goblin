@@ -6,6 +6,7 @@ import {
   buildExclusionClauses,
   buildSource,
   computePeriodsInRange,
+  freshnessCutoff,
   logger,
   resolveField,
   tagDimColumn,
@@ -39,7 +40,7 @@ import { appendRowFilters, explorerGroupBy, explorerOrderBy } from './explorer-c
 import { buildExplorerFilterPredicate } from './explorer-filters.js';
 import { readExplorerPreferences, writeExplorerPreferences } from './explorer-prefs.js';
 import { resolveScopeMetric } from './explorer-scope.js';
-import { resolveExplorerDateRange } from './query-windows.js';
+import { capResolvedRange, resolveExplorerDateRange } from './query-windows.js';
 
 const MAX_ROW_LIMIT = 1000;
 
@@ -132,8 +133,16 @@ async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source
 }
 
 async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams): Promise<QueryContext> {
-  const { getQueryDimensions, getAccountMap, getQueryProviders } = app;
-  const { startStr, endStr, windowDays, startHour, endHour } = resolveExplorerDateRange(params.dateRange, app.ctx.now());
+  const { getQueryDimensions, getAccountMap, getQueryCostScope, getQueryProviders } = app;
+  const nowMs = app.ctx.now();
+  const { lagDays } = await getQueryCostScope();
+  const requested = resolveExplorerDateRange(params.dateRange, nowMs, lagDays);
+  // The freshness lag is part of the cost scope: with "Apply cost scope" off,
+  // the Explorer reads the newest days too.
+  const resolved = params.applyCostScope === true
+    ? capResolvedRange(requested, freshnessCutoff(nowMs, lagDays))
+    : requested;
+  const { startStr, endStr, windowDays, startHour, endHour } = resolved ?? requested;
   // Hour bounds (sub-day drag-zoom) require the hourly tier — that's where
   // usage_hour lives. Promote tier when present, regardless of what
   // params.granularity says.
@@ -159,7 +168,7 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
   const tagSqlColumns = tagSqlColumnsById(dimensions.tags);
   const shared = { providers, startStr, endStr, windowDays, tier, tagColumns, tagSqlColumns, dimensions, accountMap } as const;
 
-  if (periods.length === 0) {
+  if (resolved === null || periods.length === 0) {
     return { empty: true, source: '', whereStr: '', ...shared };
   }
 

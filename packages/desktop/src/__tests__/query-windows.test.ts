@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { costScopePreviewWindow, resolveExplorerDateRange, tagDiscoverySince } from '../main/handlers/query-windows.js';
+import { asDateString } from '@costgoblin/core';
+import { capPreviewWindow, capResolvedRange, costScopePreviewWindow, resolveExplorerDateRange, tagDiscoverySince } from '../main/handlers/query-windows.js';
 
 // The e2e FIXTURE_NOW: the day after the synthetic fixture window (Jan–Feb 2026).
 const FIXTURE_NOW_MS = Date.UTC(2026, 2, 2, 12);
@@ -64,5 +65,41 @@ describe('resolveExplorerDateRange', () => {
     expect(resolveExplorerDateRange({ start: 'nope', end: '2026-01-01' }, FIXTURE_NOW_MS)).toEqual(fallback);
     // Inverted range falls back too.
     expect(resolveExplorerDateRange({ start: '2026-02-10', end: '2026-02-01' }, FIXTURE_NOW_MS)).toEqual(fallback);
+  });
+
+  it('ends the fallback window at the cost scope lag', () => {
+    expect(resolveExplorerDateRange(undefined, FIXTURE_NOW_MS, 7)).toEqual({ startStr: '2026-01-25', endStr: '2026-02-23', windowDays: 30 });
+  });
+});
+
+describe('capResolvedRange', () => {
+  const CUTOFF = asDateString('2026-02-22');
+
+  it('returns a range ending on or before the cutoff as is', () => {
+    const range = { startStr: '2026-02-01', endStr: '2026-02-22', windowDays: 22 };
+    expect(capResolvedRange(range, CUTOFF)).toBe(range);
+  });
+
+  it('moves the end back to the cutoff and recounts the days', () => {
+    expect(capResolvedRange({ startStr: '2026-02-01', endStr: '2026-02-28', windowDays: 28 }, CUTOFF))
+      .toEqual({ startStr: '2026-02-01', endStr: '2026-02-22', windowDays: 22 });
+  });
+
+  it('caps the hour bounds with the day', () => {
+    expect(capResolvedRange({ startStr: '2026-02-21', endStr: '2026-02-24', windowDays: 4, startHour: '2026-02-21 03:00:00', endHour: '2026-02-24 05:00:00' }, CUTOFF))
+      .toEqual({ startStr: '2026-02-21', endStr: '2026-02-22', windowDays: 2, startHour: '2026-02-21 03:00:00', endHour: '2026-02-22 23:00:00' });
+  });
+
+  it('is null for a range after the cutoff', () => {
+    expect(capResolvedRange({ startStr: '2026-02-23', endStr: '2026-02-28', windowDays: 6 }, CUTOFF)).toBeNull();
+  });
+});
+
+describe('capPreviewWindow', () => {
+  it('stops the window at the cutoff, null when it lies entirely after it', () => {
+    const cutoff = asDateString('2026-02-22');
+    expect(capPreviewWindow({ windowDays: 28, startDate: '2026-02-01', endDate: '2026-02-28' }, cutoff))
+      .toEqual({ windowDays: 22, startDate: '2026-02-01', endDate: '2026-02-22' });
+    expect(capPreviewWindow({ windowDays: 4, startDate: '2026-02-25', endDate: '2026-02-28' }, cutoff)).toBeNull();
   });
 });

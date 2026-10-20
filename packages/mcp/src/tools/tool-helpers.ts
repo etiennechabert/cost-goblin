@@ -3,9 +3,11 @@ import {
   asDollars,
   asDateString,
   assertDateString,
+  capDateRange,
   computePeriodsInRange,
   daysBefore,
   DEFAULT_LAG_DAYS,
+  freshnessCutoff,
   listLocalMonths,
   logger,
   sqlStringLiteral,
@@ -56,11 +58,36 @@ export function toDateRange(dr: { start: string; end: string }): DateRange {
   return { start: asDateString(dr.start), end: asDateString(dr.end) };
 }
 
-/** The 30 days ending at the default lag before `nowMs` (the context's
- *  injected clock, never Date). */
-export function defaultDateRange(nowMs: number, lagDays?: number): DateRange {
-  const { start, end } = trailingWindow(nowMs, lagDays ?? DEFAULT_LAG_DAYS, 30);
+/** The `windowDays` days ending `lagDays` (default lag when unset) before
+ *  `nowMs` (the context's injected clock, never Date). */
+export function defaultDateRange(nowMs: number, lagDays?: number, windowDays = 30): DateRange {
+  const { start, end } = trailingWindow(nowMs, lagDays ?? DEFAULT_LAG_DAYS, windowDays);
   return { start: asDateString(start), end: asDateString(end) };
+}
+
+/** The range a tool queries, or why it can't: a range lying entirely within
+ *  the cost scope's freshness lag has nothing to read. */
+export type ToolDateRange =
+  /** `cappedAt`: the cutoff the requested range was cut back to, else null. */
+  | { readonly kind: 'range'; readonly dateRange: DateRange; readonly cappedAt: string | null }
+  | { readonly kind: 'within-lag'; readonly requested: DateRange; readonly cutoff: string };
+
+/** The range asked for (validated), else the `defaultDays` ending at the cost
+ *  scope's freshness lag; capped at that lag either way, as the app's
+ *  dashboards are: the newest days are still being consolidated. */
+export async function resolveToolDateRange(
+  ctx: McpContext,
+  requested: { start: string; end: string } | undefined,
+  defaultDays = 30,
+): Promise<ToolDateRange> {
+  const { lagDays } = await ctx.getCostScope();
+  const nowMs = ctx.now();
+  if (requested === undefined) return { kind: 'range', dateRange: defaultDateRange(nowMs, lagDays, defaultDays), cappedAt: null };
+  const range = toDateRange(requested);
+  const cutoff = freshnessCutoff(nowMs, lagDays);
+  const capped = capDateRange(range, cutoff);
+  if (capped === null) return { kind: 'within-lag', requested: range, cutoff };
+  return { kind: 'range', dateRange: capped, cappedAt: capped === range ? null : cutoff };
 }
 
 export function toDimensionId(raw: string): DimensionId {
@@ -162,6 +189,23 @@ export async function emptyRangeResult(
   return structuredToolResult(result, format);
 }
 
+/** The answer to a range lying entirely within the freshness lag: no query
+ *  runs, and the note says which days can be asked for instead. */
+export async function withinLagResult(
+  ctx: McpContext,
+  range: { readonly requested: DateRange; readonly cutoff: string },
+  format: ResponseFormat,
+  title: string,
+): Promise<{ content: [{ type: 'text'; text: string }] }> {
+  const { requested, cutoff } = range;
+  const result: StructuredResult = {
+    title: `${title} (${requested.start} to ${requested.end})`,
+    coverage: await computeDataCoverage(ctx),
+    notes: [`*No data for ${requested.start} to ${requested.end}: the cost scope's freshness lag leaves out the days after ${cutoff}, whose billing data is still being consolidated. Ask for a range ending on or before ${cutoff}.*`],
+  };
+  return structuredToolResult(result, format);
+}
+
 export function resolveFormat(raw: string | undefined): ResponseFormat {
   if (raw === 'json' || raw === 'csv' || raw === 'markdown') return raw;
   return 'markdown';
@@ -188,9 +232,12 @@ function computeMissingMonthsBetween(available: readonly string[]): string[] {
   return missing;
 }
 
+/** `cappedAt`: the freshness cutoff the requested range was cut back to
+ *  (ToolDateRange), so the banner can say so. */
 export async function computeDataCoverage(
   ctx: McpContext,
   dateRange?: { readonly start: string; readonly end: string },
+  cappedAt: string | null = null,
 ): Promise<DataCoverage> {
   const { computePeriodsInRange } = await import('@costgoblin/core');
   // Coverage must describe the SAME data the query tools return, and those
@@ -208,6 +255,7 @@ export async function computeDataCoverage(
       missingPeriods: [],
       missingInRange: dateRange !== undefined ? computePeriodsInRange(dateRange) : [],
       totalDays: null,
+      ...(cappedAt === null ? {} : { cappedAt }),
     };
   }
   const earliestMonth = available[0];
@@ -259,6 +307,7 @@ export async function computeDataCoverage(
     missingPeriods,
     missingInRange,
     totalDays,
+    ...(cappedAt === null ? {} : { cappedAt }),
   };
 }
 

@@ -17,7 +17,7 @@ import type {
   ViewSpec,
 } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
-import { useLagDays } from '../hooks/use-lag-days.js';
+import { useViewDateRange } from '../hooks/use-view-date-range.js';
 import { useQuery } from '../hooks/use-query.js';
 import {
   CostFocusDispatchProvider,
@@ -35,10 +35,7 @@ import {
 import { FilterBar } from '../components/filter-bar.js';
 import { FilterActiveBanner } from '../components/filter-active-banner.js';
 import { ListMetricBanner } from '../components/list-metric-banner.js';
-import {
-  DateRangePicker,
-  getDefaultDateRange,
-} from '../components/date-range-picker.js';
+import { DateRangePicker } from '../components/date-range-picker.js';
 import type { DateRange, Granularity } from '../components/date-range-picker.js';
 import { WIDGET_REGISTRY } from '../widgets/registry.js';
 import { widgetFlexBasis } from '../widgets/widget.js';
@@ -108,9 +105,8 @@ function previousRangeFor(dr: DateRange): DateRange {
 
 function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: CustomViewProps) {
   const api = useCostApi();
-  const lagDays = useLagDays();
+  const { lagDays, dateRange, pickedRange, setDateRange } = useViewDateRange();
   const hourlyConfigured = useHourlyConfigured();
-  const [dateRange, setDateRange] = useState<DateRange>(() => getDefaultDateRange(lagDays));
 
   // Rollup can't serve the viewed months and is building them (cold build or a
   // cleared rollup) → block with the build overlay; widgets don't mount, so
@@ -190,6 +186,9 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
   // render would otherwise fire, writing those defaults over the shared file.
   // Gating on an async prefs read instead would drop any change the user made
   // while that read was still in flight — a ref flip doesn't re-run the effect.
+  // It runs on and writes `pickedRange`, never the default window: stored, that
+  // would stop following the cost scope's lag (and moving to it once it loads
+  // isn't a change to write either).
   const saveReadyRef = useRef(false);
   const savePendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -201,7 +200,7 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
     savePendingRef.current = setTimeout(() => {
       savePendingRef.current = null;
       api.saveExplorerPreferences({
-        lastUsedDateRange: dateRange,
+        ...(pickedRange === null ? {} : { lastUsedDateRange: pickedRange }),
         lastUsedGranularity: granularity,
         compareEnabled,
       }).catch(() => undefined);
@@ -209,7 +208,7 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
     return () => {
       if (savePendingRef.current !== null) clearTimeout(savePendingRef.current);
     };
-  }, [dateRange, granularity, compareEnabled, api]);
+  }, [pickedRange, granularity, compareEnabled, api]);
 
   // Pre-fetch filter values for all dimensions so dropdowns open instantly.
   // Cache is keyed by date range — invalidated when the range changes.

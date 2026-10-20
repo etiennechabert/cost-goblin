@@ -2,6 +2,7 @@ import { ipcMain } from 'electron';
 import {
   buildMissingTagsQuery,
   buildNonResourceCostQuery,
+  capToFreshnessLag,
   logger,
   asDollars,
 } from '@costgoblin/core';
@@ -35,8 +36,8 @@ export function registerRecommendationHandlers(app: AppContext): void {
     logger.info('query:missing-tags', { tagDimension: params.tagDimension });
 
     const providers = await getQueryProviders('daily');
-    const empty = providersEmptyForRange(providers, params.dateRange);
-    if (empty) {
+    const dateRange = capToFreshnessLag(params.dateRange, ctx.now(), costScope.lagDays);
+    if (dateRange === null || providersEmptyForRange(providers, dateRange)) {
       return {
         rows: [],
         totalRows: 0,
@@ -55,8 +56,8 @@ export function registerRecommendationHandlers(app: AppContext): void {
     // missing-tags / non-resource-cost reference resource_id, line_item_type and
     // raw tags — none in the rollup grain — so they always query raw.
     const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, providers, accountReverseMap, costScope, materializedSource: undefined };
-    const resourceQuery = buildMissingTagsQuery(params, qcOpts);
-    const nonResourceQuery = buildNonResourceCostQuery(params, qcOpts);
+    const resourceQuery = buildMissingTagsQuery({ ...params, dateRange }, qcOpts);
+    const nonResourceQuery = buildNonResourceCostQuery({ ...params, dateRange }, qcOpts);
     const [resourceRows, nonResourceRows] = await Promise.all([
       runPreparedQuery(resourceQuery.sql, resourceQuery.params, false),
       runPreparedQuery(nonResourceQuery.sql, nonResourceQuery.params, false),

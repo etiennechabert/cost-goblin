@@ -8,26 +8,26 @@ import type { Cell, Column, StructuredResult, Table } from '../formatters/result
 import {
   buildQueryContextOpts,
   computeDataCoverage,
-  defaultDateRange,
   emptyRangeResult,
   getQueryProviders,
   resolveFormat,
+  resolveToolDateRange,
   structuredToolResult,
-  toDateRange,
   toNum,
-  toStr,
   toolError,
+  toStr,
+  withinLagResult,
 } from './tool-helpers.js';
-import type { DateRange, FilterMap } from '@costgoblin/core';
+import type { FilterMap } from '@costgoblin/core';
 
 export async function getCostOverview(
   ctx: McpContext,
   params: { dateRange?: { start: string; end: string } | undefined; format?: string | undefined },
 ): Promise<{ content: [{ type: 'text'; text: string }] }> {
   const format = resolveFormat(params.format);
-  const dateRange: DateRange = params.dateRange !== undefined
-    ? toDateRange(params.dateRange)
-    : defaultDateRange(ctx.now());
+  const range = await resolveToolDateRange(ctx, params.dateRange);
+  if (range.kind === 'within-lag') return withinLagResult(ctx, range, format, 'Cost Overview');
+  const { dateRange, cappedAt } = range;
 
   const allProviders = await getQueryProviders(ctx, 'daily');
   const anyData = allProviders.some(p => (p.availablePeriods ?? []).length > 0);
@@ -115,7 +115,7 @@ export async function getCostOverview(
     });
   }
 
-  const coverage = await computeDataCoverage(ctx, dateRange);
+  const coverage = await computeDataCoverage(ctx, dateRange, cappedAt);
   const result: StructuredResult = {
     title: `Cost Overview (${dateRange.start} to ${dateRange.end})`,
     coverage,

@@ -2,7 +2,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { registerQueryHandlers } from '../main/handlers/query.js';
-import { at, createHarness, list, num, str, type Harness, type HarnessOptions } from './helpers/ipc-harness.js';
+import { at, createHarness, FEBRUARY_READABLE_NOW_MS, list, num, setCostScopeLag, str, type Harness, type HarnessOptions } from './helpers/ipc-harness.js';
 
 /** The dashboard query channels — costs, daily costs, entity detail, trends,
  *  filter values, missing tags and savings — run end to end against a real
@@ -111,7 +111,7 @@ describe('query:costs', () => {
 
 describe('query:daily-costs', () => {
   it('builds one entry per day with a per-group breakdown', async () => {
-    const h = await queryApp();
+    const h = await queryApp({ data: 'synthetic', now: () => FEBRUARY_READABLE_NOW_MS });
     const result = await h.ipc.invoke('query:daily-costs', { groupBy: 'service', dateRange: FEBRUARY, filters: {} });
     const days = list(at(result, 'days'));
     expect(days).toHaveLength(28);
@@ -229,6 +229,73 @@ describe('query:filter-values', () => {
     const last = h.app.queryLog.getEntries().at(-1);
     expect(last?.materialized).toBe(true);
     expect(h.db.statements.at(-1)).toContain('rollup.parquet');
+  });
+});
+
+// FIXTURE_NOW_MS is 2026-03-01: a 7-day lag leaves Feb 22 as the newest day.
+describe('the cost scope freshness lag', () => {
+  const LAGGED = { start: '2026-02-01', end: '2026-02-22' };
+  const WITHIN_LAG = { start: '2026-02-25', end: '2026-02-28' };
+
+  async function laggedApp(): Promise<Harness> {
+    const h = await queryApp();
+    await setCostScopeLag(h.ws, 7);
+    return h;
+  }
+
+  it('caps costs at the newest day the lag allows, and reports the range read', async () => {
+    const h = await laggedApp();
+    const capped = await h.ipc.invoke('query:costs', { groupBy: 'service', dateRange: FEBRUARY, filters: {} });
+    const explicit = await h.ipc.invoke('query:costs', { groupBy: 'service', dateRange: LAGGED, filters: {} });
+    expect(at(capped, 'dateRange')).toEqual(LAGGED);
+    expect(num(at(capped, 'totalCost'))).toBeGreaterThan(0);
+    expect(num(at(capped, 'totalCost'))).toBeCloseTo(num(at(explicit, 'totalCost')), 6);
+  });
+
+  it('stops daily costs at the cutoff', async () => {
+    const h = await laggedApp();
+    const days = list(at(await h.ipc.invoke('query:daily-costs', { groupBy: 'service', dateRange: FEBRUARY, filters: {} }), 'days'));
+    expect(days).toHaveLength(22);
+    expect(at(days.at(-1), 'date')).toBe('2026-02-22');
+  });
+
+  it('compares trends and entity detail over the capped period', async () => {
+    const h = await laggedApp();
+    const trend = { groupBy: 'service', filters: {}, deltaThreshold: 0, percentThreshold: 0 };
+    expect(await h.ipc.invoke('query:trends', { ...trend, dateRange: FEBRUARY }))
+      .toEqual(await h.ipc.invoke('query:trends', { ...trend, dateRange: LAGGED }));
+    const detail = { entity: EC2, dimension: 'service', filters: {} };
+    expect(await h.ipc.invoke('query:entity-detail', { ...detail, dateRange: FEBRUARY }))
+      .toEqual(await h.ipc.invoke('query:entity-detail', { ...detail, dateRange: LAGGED }));
+  });
+
+  it('answers a range entirely within the lag with nothing, without querying', async () => {
+    const h = await laggedApp();
+    const before = h.db.statements.length;
+    expect(await h.ipc.invoke('query:costs', { groupBy: 'service', dateRange: WITHIN_LAG, filters: {} })).toEqual({
+      rows: [], totalCost: 0, topServices: [], dateRange: WITHIN_LAG,
+    });
+    expect(await h.ipc.invoke('query:daily-costs', { groupBy: 'service', dateRange: WITHIN_LAG, filters: {} })).toEqual({ days: [], groups: [], totalCost: 0 });
+    expect(await h.ipc.invoke('query:trends', { groupBy: 'service', dateRange: WITHIN_LAG, filters: {}, deltaThreshold: 0, percentThreshold: 0 }))
+      .toEqual({ increases: [], savings: [], totalIncrease: 0, totalSavings: 0 });
+    expect(await h.ipc.invoke('query:entity-detail', { entity: EC2, dimension: 'service', dateRange: WITHIN_LAG, filters: {} }))
+      .toMatchObject({ totalCost: 0, dailyCosts: [], byService: [] });
+    expect(await h.ipc.invoke('query:missing-tags', { dateRange: WITHIN_LAG, filters: {}, minCost: 0, tagDimension: 'tag_team' }))
+      .toMatchObject({ rows: [], totalRows: 0, nonResourceRows: [] });
+    expect(await h.ipc.invoke('query:filter-values', 'service', {}, WITHIN_LAG)).toEqual([]);
+    // The dimension allow-list still runs first.
+    await expect(h.ipc.invoke('query:filter-values', 'service; DROP TABLE x', {}, WITHIN_LAG)).rejects.toThrow('Unknown dimension "service; DROP TABLE x"');
+    expect(h.db.statements).toHaveLength(before);
+  });
+
+  it('leaves the newest days to filter values that bypass the cost scope', async () => {
+    const h = await laggedApp();
+    expect(list(await h.ipc.invoke('query:filter-values', 'service', {}, WITHIN_LAG, { bypassCostScope: true })).length).toBeGreaterThan(0);
+    // Without a range, the scoped values still stop at the cutoff.
+    const total = (values: unknown): number => list(values).reduce<number>((n, v) => n + num(at(v, 'count')), 0);
+    const scopedAllTime = await h.ipc.invoke('query:filter-values', 'service', {});
+    const upToCutoff = await h.ipc.invoke('query:filter-values', 'service', {}, { start: '2025-01-01', end: '2026-02-22' });
+    expect(total(scopedAllTime)).toBeCloseTo(total(upToCutoff), 4);
   });
 });
 
