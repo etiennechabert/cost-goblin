@@ -82,8 +82,12 @@ function useClickOutsideDismiss(
     function onMouseDown(e: MouseEvent): void { pressedOutsideRef.current = isOutside(e); }
     function onClick(e: MouseEvent): void {
       // A click from the keyboard has no press of its own: don't let it reuse
-      // one from an earlier drag.
-      const pressed = pressedOutsideRef.current;
+      // one from an earlier drag. One on a control that opens another editor
+      // (a row, a Rollup impact name) counts as pressed: opening that editor
+      // closes this one, so it must ask first too. Other controls keep the
+      // editor open (the clash banner's Remove).
+      const opensEditor = e.target instanceof Element && e.target.closest('[data-opens-editor]') !== null;
+      const pressed = pressedOutsideRef.current || opensEditor;
       pressedOutsideRef.current = false;
       if (!pressed || !isOutside(e)) return;
       if (isDirty) {
@@ -1846,6 +1850,7 @@ function ImpactDimName({ label, onOpen, className, children }: Readonly<{
       type="button"
       onClick={onOpen}
       title={`Configure ${label}`}
+      data-opens-editor
       className={`${className} cursor-pointer text-left underline-offset-2 hover:underline focus-visible:underline`}
     >
       {children}
@@ -2801,7 +2806,7 @@ export function DimensionsView(): React.JSX.Element {
               }
               return (
                 <div key={row.key} {...dnd.row} className={ROW_CARD_CLASS}>
-                  <button type="button" onClick={() => { openRow(row, false); }} className={ROW_OPEN_CLASS}>
+                  <button type="button" data-opens-editor onClick={() => { openRow(row, false); }} className={ROW_OPEN_CLASS}>
                     <div className="flex items-center gap-3">
                       <span className="text-sm font-medium text-text-primary">{d.label}</span>
                       <span className="text-xs text-text-muted font-mono">{d.field}</span>
@@ -2859,7 +2864,7 @@ export function DimensionsView(): React.JSX.Element {
             }
             return (
               <div key={row.key} {...dnd.row} className={ROW_CARD_CLASS}>
-                <button type="button" onClick={() => { openRow(row, false); }} className={ROW_OPEN_CLASS}>
+                <button type="button" data-opens-editor onClick={() => { openRow(row, false); }} className={ROW_OPEN_CLASS}>
                   <div className="flex items-center gap-3">
                     <span className="text-sm font-medium text-text-primary">{tag.label}</span>
                     {tag.tagName !== undefined && tag.tagName.length > 0 && (
