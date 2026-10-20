@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronUp, ChevronDown, GripVertical, Lock, Database, AlertTriangle } from 'lucide-react';
+import { ChevronUp, ChevronDown, GripVertical, Lock, Database, AlertTriangle, EyeOff } from 'lucide-react';
 import type { BuiltInDimension, ColumnValuesPreview, DimensionsConfig, TagDimension, ConceptType, NormalizationRule, RollupGrainEstimate, RollupSizeBand, StripPatternIssues } from '@costgoblin/core/browser';
 import { asDimensionId, describeTagSource, findTagIdCollisions, hasTagSource, nameStripPatternViolations, OU_PATH_SOURCE_KEY, tagDimColumn, tagSqlColumn } from '@costgoblin/core/browser';
 import { formatBytes } from '../components/format.js';
@@ -46,6 +46,7 @@ import { getModalLayerCount } from '../hooks/modal-layers.js';
 import { useUnsavedChanges } from '../hooks/use-unsaved-changes.js';
 import { useQuery } from '../hooks/use-query.js';
 import { useDebouncedValue } from '../hooks/use-debounced-value.js';
+import { useReducedMotion } from '../hooks/use-reduced-motion.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { ConfirmModal } from '../components/confirm-modal.js';
 import { AliasSuggestions } from '../components/alias-suggestions.js';
@@ -59,21 +60,96 @@ function useClickOutsideDismiss(
   setDiscardConfirm: (v: boolean) => void,
 ): void {
   useEffect(() => {
-    function onDocClick(e: MouseEvent): void {
-      if (containerRef.current === null) return;
-      if (!(e.target instanceof Node)) return;
-      if (containerRef.current.contains(e.target)) return;
+    function isOutside(e: MouseEvent): boolean {
+      if (containerRef.current === null) return false;
+      if (!(e.target instanceof Node)) return false;
+      if (containerRef.current.contains(e.target)) return false;
       // A press inside a modal over the page (the palette's "Reload data?",
       // the release notes) belongs to that modal, not "outside the editor":
       // dismissing here would close the editor, or mount the discard prompt
       // behind the modal the user is working in.
-      if (discardConfirm || getModalLayerCount() > 0) return;
-      if (isDirty) { setDiscardConfirm(true); }
-      else { onCancel(); }
+      return !discardConfirm && getModalLayerCount() === 0;
     }
-    document.addEventListener('mousedown', onDocClick);
-    return () => { document.removeEventListener('mousedown', onDocClick); };
+    // Dismissed on the click, not the press: closing on mousedown collapsed the
+    // editor under the pointer, the rows below it moved up before the button
+    // was released, and the click meant to open one of them was lost. The press
+    // must be outside too: a text selection dragged out of the editor ends in a
+    // click on an element around both.
+    let pressedOutside = false;
+    function onMouseDown(e: MouseEvent): void { pressedOutside = isOutside(e); }
+    function onClick(e: MouseEvent): void {
+      // A click from the keyboard has no press of its own: don't let it reuse
+      // one from an earlier drag.
+      const pressed = pressedOutside;
+      pressedOutside = false;
+      if (!pressed || !isOutside(e)) return;
+      if (isDirty) {
+        // Captured before React sees it: the click must not go on to open
+        // another editor, which would close this one and lose its edits.
+        e.stopPropagation();
+        e.preventDefault();
+        setDiscardConfirm(true);
+      } else {
+        onCancel();
+      }
+    }
+    document.addEventListener('mousedown', onMouseDown, true);
+    document.addEventListener('click', onClick, true);
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown, true);
+      document.removeEventListener('click', onClick, true);
+    };
   }, [containerRef, onCancel, isDirty, discardConfirm, setDiscardConfirm]);
+}
+
+/** An open dimension editor. Focusable (tabIndex -1) so a reveal can move focus
+ *  into it; `scroll-mt` keeps a revealed one off the scroller's top edge. */
+const EDITOR_CARD_CLASS = 'scroll-mt-4 rounded-xl border border-accent/30 bg-bg-tertiary/10 px-5 py-4 flex flex-col gap-4 outline-none';
+
+/** Brings an editor into view and moves focus into it each time `revealSeq`
+ *  changes to a non-zero value: when it was opened from elsewhere on the page
+ *  (a Rollup impact name, or as the next dimension after a Disable) rather than
+ *  from its own row, which is already where the user is looking. */
+function useRevealOnRequest(containerRef: React.RefObject<HTMLDivElement | null>, revealSeq: number): void {
+  const reducedMotion = useReducedMotion();
+  useEffect(() => {
+    const el = containerRef.current;
+    if (revealSeq === 0 || el === null) return;
+    el.scrollIntoView({ block: 'start', behavior: reducedMotion ? 'auto' : 'smooth' });
+    el.focus({ preventScroll: true });
+    // Only a new request scrolls: the motion setting is read, not watched.
+  }, [containerRef, revealSeq]);
+}
+
+/** Turns the dimension off from its open editor, so the user can drop one
+ *  right after looking at its values instead of scrolling up to its pill. The
+ *  editor's unsaved edits go with it, so it asks first when there are any. */
+function DisableDimensionButton({ isDirty, onDisable }: Readonly<{ isDirty: boolean; onDisable: () => void }>): React.JSX.Element {
+  const [confirming, setConfirming] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => { if (isDirty) setConfirming(true); else onDisable(); }}
+        title="Turn this dimension off and move on to the next one"
+        className="inline-flex items-center gap-1.5 rounded-md border border-border px-4 py-1.5 text-xs font-medium text-text-secondary hover:border-text-muted hover:text-text-primary transition-colors"
+      >
+        <EyeOff size={13} />
+        Disable dimension
+      </button>
+      {confirming && (
+        <ConfirmModal
+          title="Disable this dimension?"
+          message="Your unsaved edits to it will be discarded."
+          confirmLabel="Disable"
+          cancelLabel="Keep editing"
+          destructive
+          onConfirm={() => { setConfirming(false); onDisable(); }}
+          onCancel={() => { setConfirming(false); }}
+        />
+      )}
+    </>
+  );
 }
 
 /** Drag/drop is now indexed by position in the unified `order` array,
@@ -361,10 +437,14 @@ function computeEnrichmentWarnings(
   return { regionWarning, accountWarning };
 }
 
-function BuiltInEditor({ dim, onSave, onCancel, accountTagKeys }: Readonly<{
+function BuiltInEditor({ dim, onSave, onCancel, onDisable, revealSeq, accountTagKeys }: Readonly<{
   dim: { name: string; field: string; editing: EditingBuiltIn };
   onSave: (edited: EditingBuiltIn) => void;
   onCancel: () => void;
+  /** Undefined for a dimension that can't be turned off. */
+  onDisable: (() => void) | undefined;
+  /** See useRevealOnRequest; 0 = opened from its own row. */
+  revealSeq: number;
   accountTagKeys: readonly string[];
 }>): React.JSX.Element {
   const isAccountDim = dim.field === 'account_id';
@@ -406,6 +486,7 @@ function BuiltInEditor({ dim, onSave, onCancel, accountTagKeys }: Readonly<{
   );
 
   useClickOutsideDismiss(containerRef, onCancel, isDirty, discardConfirm, setDiscardConfirm);
+  useRevealOnRequest(containerRef, revealSeq);
 
   const preview = valuesQuery.status === 'success' ? valuesQuery.data : null;
 
@@ -561,7 +642,7 @@ function BuiltInEditor({ dim, onSave, onCancel, accountTagKeys }: Readonly<{
   const { regionWarning, accountWarning } = computeEnrichmentWarnings(dim, state, regionInfoQuery, orgQuery);
 
   return (
-    <div ref={containerRef} className="rounded-xl border border-accent/30 bg-bg-tertiary/10 px-5 py-4 flex flex-col gap-4">
+    <div ref={containerRef} tabIndex={-1} className={EDITOR_CARD_CLASS}>
       <div className="grid grid-cols-2 gap-4">
         {labelField}
         {descriptionField}
@@ -662,6 +743,7 @@ function BuiltInEditor({ dim, onSave, onCancel, accountTagKeys }: Readonly<{
             Cancel
           </button>
         </div>
+        {onDisable !== undefined && <DisableDimensionButton isDirty={isDirty} onDisable={onDisable} />}
       </div>
       {discardConfirm && (
         <ConfirmModal
@@ -1124,11 +1206,15 @@ function TagValuePreview({ tagMatch, fallbackValues, missingValueTemplate, norma
   );
 }
 
-function TagEditor({ tag, onSave, onCancel, onRemove, idConflict, availableTags, discoveredTags: discovered, accountTagKeys: acctTags, orgAccounts }: Readonly<{
+function TagEditor({ tag, onSave, onCancel, onRemove, onDisable, revealSeq, idConflict, availableTags, discoveredTags: discovered, accountTagKeys: acctTags, orgAccounts }: Readonly<{
   tag: EditingTag;
   onSave: (tag: EditingTag) => void;
   onCancel: () => void;
   onRemove: (() => void) | undefined;
+  /** Undefined for a tag that isn't in the list yet (the Add form). */
+  onDisable: (() => void) | undefined;
+  /** See useRevealOnRequest; 0 = opened from its own row. */
+  revealSeq: number;
   /** Why this tag can't be saved because another tag already has its
    *  dimension id, or null when the id is free. */
   idConflict: (tag: EditingTag) => string | null;
@@ -1150,6 +1236,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, idConflict, availableTags,
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useClickOutsideDismiss(containerRef, onCancel, isDirty, discardConfirm, setDiscardConfirm);
+  useRevealOnRequest(containerRef, revealSeq);
 
   const tagOptions = state.tagName.length > 0 && !availableTags.includes(state.tagName)
     ? [state.tagName, ...availableTags]
@@ -1195,7 +1282,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, idConflict, availableTags,
   })();
 
   return (
-    <div ref={containerRef} className="rounded-xl border border-accent/30 bg-bg-tertiary/10 px-5 py-4 flex flex-col gap-4">
+    <div ref={containerRef} tabIndex={-1} className={EDITOR_CARD_CLASS}>
       {/* Row 1: Concept + Display Label + Normalization */}
       <div className="grid grid-cols-3 gap-4">
         <label className="flex flex-col gap-1">
@@ -1428,11 +1515,14 @@ function TagEditor({ tag, onSave, onCancel, onRemove, idConflict, availableTags,
             Cancel
           </button>
         </div>
-        {onRemove !== undefined && (
-          <button type="button" onClick={onRemove} className="rounded-md px-4 py-1.5 text-xs font-medium text-negative hover:bg-negative-muted transition-colors">
-            Remove Dimension
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {onDisable !== undefined && <DisableDimensionButton isDirty={isDirty} onDisable={onDisable} />}
+          {onRemove !== undefined && (
+            <button type="button" onClick={onRemove} className="rounded-md px-4 py-1.5 text-xs font-medium text-negative hover:bg-negative-muted transition-colors">
+              Remove Dimension
+            </button>
+          )}
+        </div>
       </div>
       {discardConfirm && (
         <ConfirmModal
@@ -1709,13 +1799,51 @@ function RawOnlyBadge({ cardinality }: Readonly<{ cardinality: number | undefine
   );
 }
 
+/** The enabled dimension a rollup grain column comes from, as its list key and
+ *  label. Several can be views of one column (Region, Country and Continent
+ *  all read `region`) and the grain probe lists the column once, so this is
+ *  the first of them. */
+function columnDimension(config: DimensionsConfig, column: string): { key: string; label: string } | undefined {
+  const b = config.builtIn.find(d => d.enabled !== false && d.field === column);
+  if (b !== undefined) return { key: builtInKey(b.name), label: b.label };
+  const t = config.tags.find(tg => tg.enabled !== false && tagSqlColumn(tg) === column);
+  return t === undefined ? undefined : { key: tagOrderKey(t), label: t.label };
+}
+
 /** Friendly label for a rollup grain column (for the heaviest-dimension list). */
 function columnLabel(config: DimensionsConfig, column: string): string {
+  const enabled = columnDimension(config, column);
+  if (enabled !== undefined) return enabled.label;
   const b = config.builtIn.find(d => d.field === column);
   if (b !== undefined) return b.label;
   const t = config.tags.find(tg => tagSqlColumn(tg) === column);
   if (t !== undefined) return t.label;
   return column;
+}
+
+/** Opens the editor of the dimension behind a rollup grain column; undefined
+ *  when no enabled dimension has it. */
+type ColumnOpener = (column: string) => (() => void) | undefined;
+
+/** A dimension's name in the Rollup impact panel: a link to its editor when
+ *  it has one. */
+function ImpactDimName({ label, onOpen, className, children }: Readonly<{
+  label: string;
+  onOpen: (() => void) | undefined;
+  className: string;
+  children: React.ReactNode;
+}>): React.JSX.Element {
+  if (onOpen === undefined) return <span className={className}>{children}</span>;
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      title={`Configure ${label}`}
+      className={`${className} cursor-pointer text-left underline-offset-2 hover:underline focus-visible:underline`}
+    >
+      {children}
+    </button>
+  );
 }
 
 function ImpactStat({ label, value, hint }: Readonly<{ label: string; value: string; hint?: string }>): React.JSX.Element {
@@ -1762,17 +1890,19 @@ function computeRowRatio(
   return estimate.compressionRate;
 }
 
-function ImpactWarning({ config, outlierDim, rawOnly }: Readonly<{
+function ImpactWarning({ config, outlierDim, rawOnly, openColumn }: Readonly<{
   config: DimensionsConfig;
   outlierDim: RollupDimEstimate | undefined;
   rawOnly: RollupGrainEstimate['rawOnly'];
+  openColumn: ColumnOpener;
 }>): React.JSX.Element | null {
   if (outlierDim !== undefined) {
+    const label = columnLabel(config, outlierDim.column);
     return (
       <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
         <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
         <p className="text-[11px] leading-snug text-text-secondary">
-          <span className="font-medium text-amber-500">{columnLabel(config, outlierDim.column)}</span> alone multiplies the rollup ~×{outlierDim.marginalMultiplier.toFixed(1)} — most of the grain comes from this one dimension. Dimensions work best as filters with a handful of values; the detail table can still show every value when you need it, so keeping this one raw-only keeps dashboards fast.
+          <ImpactDimName label={label} onOpen={openColumn(outlierDim.column)} className="font-medium text-amber-500">{label}</ImpactDimName> alone multiplies the rollup ~×{outlierDim.marginalMultiplier.toFixed(1)} — most of the grain comes from this one dimension. Dimensions work best as filters with a handful of values; the detail table can still show every value when you need it, so keeping this one raw-only keeps dashboards fast.
         </p>
       </div>
     );
@@ -1796,13 +1926,18 @@ function impactReadout(d: RollupDimEstimate): string {
   return `×${d.marginalMultiplier.toFixed(1)}${rows}`;
 }
 
-function ImpactDimRow({ d, config }: Readonly<{ d: RollupDimEstimate; config: DimensionsConfig }>): React.JSX.Element {
+function ImpactDimRow({ d, config, openColumn }: Readonly<{ d: RollupDimEstimate; config: DimensionsConfig; openColumn: ColumnOpener }>): React.JSX.Element {
+  const label = columnLabel(config, d.column);
   return (
     <li className="flex items-center gap-2 text-[11px]">
-      <span className={`flex w-28 shrink-0 items-center gap-1 truncate ${d.outlier ? 'font-medium text-amber-500' : 'text-text-secondary'}`}>
+      <ImpactDimName
+        label={label}
+        onOpen={openColumn(d.column)}
+        className={`flex w-28 shrink-0 items-center gap-1 truncate ${d.outlier ? 'font-medium text-amber-500' : 'text-text-secondary'}`}
+      >
         {d.outlier && <AlertTriangle className="h-3 w-3 shrink-0" />}
-        <span className="truncate">{columnLabel(config, d.column)}</span>
-      </span>
+        <span className="truncate">{label}</span>
+      </ImpactDimName>
       <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-bg-tertiary">
         <span
           className={`block h-full rounded-full ${d.outlier ? 'bg-amber-500/70' : 'bg-accent/60'}`}
@@ -1814,7 +1949,7 @@ function ImpactDimRow({ d, config }: Readonly<{ d: RollupDimEstimate; config: Di
   );
 }
 
-function ImpactDetails({ estimate, matchedCurrent, sizeReduction, rowRatio, rankedDims, outlierDim, config }: Readonly<{
+function ImpactDetails({ estimate, matchedCurrent, sizeReduction, rowRatio, rankedDims, outlierDim, config, openColumn }: Readonly<{
   estimate: RollupGrainEstimate;
   matchedCurrent: RollupGrainEstimate['current'];
   sizeReduction: number;
@@ -1822,6 +1957,7 @@ function ImpactDetails({ estimate, matchedCurrent, sizeReduction, rowRatio, rank
   rankedDims: readonly RollupDimEstimate[];
   outlierDim: RollupDimEstimate | undefined;
   config: DimensionsConfig;
+  openColumn: ColumnOpener;
 }>): React.JSX.Element {
   return (
     <>
@@ -1861,9 +1997,9 @@ function ImpactDetails({ estimate, matchedCurrent, sizeReduction, rowRatio, rank
         <div className="mt-4">
           <span className="text-[10px] uppercase tracking-wider text-text-muted">Per-dimension impact</span>
           <ul className="mt-2 flex flex-col gap-1.5">
-            {rankedDims.map(d => <ImpactDimRow key={d.column} d={d} config={config} />)}
+            {rankedDims.map(d => <ImpactDimRow key={d.column} d={d} config={config} openColumn={openColumn} />)}
           </ul>
-          <ImpactWarning config={config} outlierDim={outlierDim} rawOnly={estimate.rawOnly} />
+          <ImpactWarning config={config} outlierDim={outlierDim} rawOnly={estimate.rawOnly} openColumn={openColumn} />
         </div>
       )}
     </>
@@ -1873,7 +2009,7 @@ function ImpactDetails({ estimate, matchedCurrent, sizeReduction, rowRatio, rank
 /** Cost/benefit summary for the current enabled grain (rollup design §8).
  *  Updates as dims are toggled so the user can weigh the rebuild before it
  *  happens. Numbers are directional (probed from one recent month). */
-function RollupImpactPanel({ estimate, loading, stale, error, config }: Readonly<{ estimate: RollupGrainEstimate | null; loading: boolean; stale: boolean; error: boolean; config: DimensionsConfig }>): React.JSX.Element {
+function RollupImpactPanel({ estimate, loading, stale, error, config, openColumn }: Readonly<{ estimate: RollupGrainEstimate | null; loading: boolean; stale: boolean; error: boolean; config: DimensionsConfig; openColumn: ColumnOpener }>): React.JSX.Element {
   const rankedDims = estimate === null
     ? []
     : [...estimate.dims].sort((a, b) => b.marginalMultiplier - a.marginalMultiplier);
@@ -1922,6 +2058,7 @@ function RollupImpactPanel({ estimate, loading, stale, error, config }: Readonly
         rankedDims={rankedDims}
         outlierDim={outlierDim}
         config={config}
+        openColumn={openColumn}
       />
     );
   }
@@ -1965,12 +2102,27 @@ function GripHandle({ attrs }: Readonly<{ attrs: React.HTMLAttributes<HTMLButton
       type="button"
       {...attrs}
       title="Drag to reorder"
-      className="flex items-center justify-center text-text-muted hover:text-text-primary cursor-grab active:cursor-grabbing"
+      className="pointer-events-auto flex items-center justify-center text-text-muted hover:text-text-primary cursor-grab active:cursor-grabbing"
     >
       <GripVertical size={16} />
     </button>
   );
 }
+
+/** A collapsed row of the enabled-dimensions list opens its editor from
+ *  anywhere on the card: the open button's ::after covers the whole card (the
+ *  card is `relative`), padding and "Built-in" label included. The reorder
+ *  controls sit above that layer, and their wrapper lets a click between or
+ *  beside them fall through to it. */
+const ROW_CARD_CLASS = 'relative w-full rounded-xl border border-border bg-bg-secondary/50 px-5 py-3 flex items-center justify-between transition-colors hover:border-accent/40 hover:bg-bg-tertiary/60';
+const ROW_OPEN_CLASS = "flex flex-col gap-1 text-left flex-1 min-w-0 cursor-pointer outline-none after:absolute after:inset-0 after:rounded-xl after:content-[''] focus-visible:after:ring-2 focus-visible:after:ring-accent/60";
+const ROW_CONTROLS_CLASS = 'pointer-events-none relative z-10 flex items-center gap-3 shrink-0';
+
+/** Marks, on the row a dragged one is over, the edge it will land on: a drop
+ *  puts it above that row when it moves up the list and below it when it moves
+ *  down (applyReorder). Green for up, blue for down. */
+const DROP_ABOVE_SHADOW = 'inset 0 3px 0 var(--color-accent, #10b981)';
+const DROP_BELOW_SHADOW = 'inset 0 -3px 0 #3b82f6';
 
 type OrderedRow =
   | { kind: 'builtIn'; key: string; idx: number; dim: BuiltInDimension }
@@ -2030,6 +2182,10 @@ export function DimensionsView(): React.JSX.Element {
   const [armed, setArmed] = useState<DragRef | null>(null);
   const [dragFrom, setDragFrom] = useState<DragRef | null>(null);
   const [dragOver, setDragOver] = useState<DragRef | null>(null);
+  // An editor opened from elsewhere on the page (a Rollup impact name, or the
+  // next dimension after a Disable) scrolls into view. The counter makes a
+  // second request for the editor already open scroll back to it.
+  const [reveal, setReveal] = useState<{ key: string; seq: number } | null>(null);
   // Lazy-load the tag-discovery scan — it hits DuckDB. Fires when the user
   // opens Add Dimension (needs unmapped-tag suggestions), expands Resource
   // Tags, or edits a tag dim (TagEditor needs context for suggestions).
@@ -2285,6 +2441,42 @@ export function DimensionsView(): React.JSX.Element {
     applyDraft({ ...config, tags });
   }
 
+  /** Opens a row's editor (closing any other); `scrollTo` when it was asked
+   *  for from somewhere other than the row itself. */
+  function openRow(row: OrderedRow, scrollTo: boolean): void {
+    setAddingNew(false);
+    if (row.kind === 'builtIn') {
+      setEditingBuiltInIdx(row.idx);
+      setEditingIdx(null);
+    } else {
+      setEditingIdx(row.idx);
+      setEditingBuiltInIdx(null);
+    }
+    setReveal(cur => (scrollTo ? { key: row.key, seq: (cur?.seq ?? 0) + 1 } : null));
+  }
+
+  /** Disables the dimension at `orderIdx` of the list from its open editor
+   *  and opens the one after it, so a review can go through the list without
+   *  scrolling back up to the pills; closes the editor after the last one. */
+  function disableAndAdvance(orderIdx: number): void {
+    if (config === null) return;
+    const row = resolveOrderedRows(config)[orderIdx];
+    if (row === undefined || (row.kind === 'builtIn' && LOCKED_DIMENSIONS.has(row.dim.name))) return;
+    const next = row.kind === 'builtIn'
+      ? { ...config, builtIn: config.builtIn.map((d, i) => (i === row.idx ? { ...d, enabled: false } : d)) }
+      : { ...config, tags: config.tags.map((t, i) => (i === row.idx ? { ...t, enabled: false } : t)) };
+    applyDraft(next);
+    // The disabled row leaves the list, so the next one takes its place.
+    const following = resolveOrderedRows(next)[orderIdx];
+    if (following === undefined) {
+      setEditingBuiltInIdx(null);
+      setEditingIdx(null);
+      setReveal(null);
+    } else {
+      openRow(following, true);
+    }
+  }
+
   // Quick-add a discovered tag as a dimension
   const [quickAddState, setQuickAddState] = useState<EditingTag | null>(null);
 
@@ -2327,7 +2519,7 @@ export function DimensionsView(): React.JSX.Element {
         },
         style: (() => {
           if (isFrom) return { opacity: 0.4 };
-          if (isOver) return { boxShadow: 'inset 0 2px 0 var(--color-accent, #34d399)' };
+          if (isOver && dragFrom !== null) return { boxShadow: dragFrom.orderIdx > orderIdx ? DROP_ABOVE_SHADOW : DROP_BELOW_SHADOW };
           return undefined;
         })(),
       },
@@ -2342,7 +2534,7 @@ export function DimensionsView(): React.JSX.Element {
     const canUp = orderIdx > 0;
     const canDown = orderIdx < total - 1;
     return (
-      <div className="flex flex-col -space-y-1">
+      <div className="pointer-events-auto flex flex-col -space-y-1">
         <button
           type="button"
           disabled={!canUp}
@@ -2366,6 +2558,13 @@ export function DimensionsView(): React.JSX.Element {
   }
 
   const orderedRows = config === null ? [] : resolveOrderedRows(config);
+
+  const openerForColumn: ColumnOpener = (column) => {
+    const key = config === null ? undefined : columnDimension(config, column)?.key;
+    const row = orderedRows.find(r => r.key === key);
+    return row === undefined ? undefined : () => { openRow(row, true); };
+  };
+  const revealSeqFor = (key: string): number => (reveal?.key === key ? reveal.seq : 0);
 
 
 
@@ -2519,7 +2718,7 @@ export function DimensionsView(): React.JSX.Element {
 
           {/* Rollup cost/benefit for the current draft grain — updates live as
               pills are toggled so the user can weigh the rebuild before applying. */}
-          <RollupImpactPanel estimate={estimate} loading={estimateLoading} stale={estimateStale} error={estimateQuery.status === 'error'} config={config} />
+          <RollupImpactPanel estimate={estimate} loading={estimateLoading} stale={estimateStale} error={estimateQuery.status === 'error'} config={config} openColumn={openerForColumn} />
 
           {/* New-tag-dim form appears inline right after the pill rows so the
               user sees where the new pill will land. */}
@@ -2529,6 +2728,8 @@ export function DimensionsView(): React.JSX.Element {
               onSave={(edited) => { handleAddTag(edited); }}
               onCancel={() => { setAddingNew(false); setQuickAddState(null); }}
               onRemove={undefined}
+              onDisable={undefined}
+              revealSeq={0}
               idConflict={(edited) => tagIdConflict(edited, null)}
               availableTags={unmappedTagKeys}
               discoveredTags={discoveredTags}
@@ -2577,21 +2778,15 @@ export function DimensionsView(): React.JSX.Element {
                     }}
                     onSave={(edited) => { handleSaveBuiltIn(row.idx, edited); }}
                     onCancel={() => { setEditingBuiltInIdx(null); }}
+                    onDisable={LOCKED_DIMENSIONS.has(d.name) ? undefined : () => { disableAndAdvance(orderIdx); }}
+                    revealSeq={revealSeqFor(row.key)}
                     accountTagKeys={accountTagKeys}
                   />
                 );
               }
               return (
-                <div
-                  key={row.key}
-                  {...dnd.row}
-                  className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-3 flex items-center justify-between hover:bg-bg-tertiary/30 transition-colors"
-                >
-                  <button
-                    type="button"
-                    onClick={() => { setEditingBuiltInIdx(row.idx); setEditingIdx(null); setAddingNew(false); }}
-                    className="flex flex-col gap-1 text-left flex-1 min-w-0"
-                  >
+                <div key={row.key} {...dnd.row} className={ROW_CARD_CLASS}>
+                  <button type="button" onClick={() => { openRow(row, false); }} className={ROW_OPEN_CLASS}>
                     <div className="flex items-center gap-3">
                       <span className="text-sm font-medium text-text-primary">{d.label}</span>
                       <span className="text-xs text-text-muted font-mono">{d.field}</span>
@@ -2609,7 +2804,7 @@ export function DimensionsView(): React.JSX.Element {
                       <span className="text-[11px] text-text-muted leading-snug">{d.description}</span>
                     )}
                   </button>
-                  <div className="flex items-center gap-3 shrink-0">
+                  <div className={ROW_CONTROLS_CLASS}>
                     <span className="text-[10px] text-text-muted uppercase tracking-wider">Built-in</span>
                     {arrows}
                     <GripHandle attrs={dnd.grip} />
@@ -2637,6 +2832,8 @@ export function DimensionsView(): React.JSX.Element {
                   onSave={(edited) => { handleSaveTag(row.idx, edited); }}
                   onCancel={() => { setEditingIdx(null); }}
                   onRemove={() => { handleRemoveTag(row.idx); }}
+                  onDisable={() => { disableAndAdvance(orderIdx); }}
+                  revealSeq={revealSeqFor(row.key)}
                   idConflict={(edited) => tagIdConflict(edited, row.idx)}
                   availableTags={unmappedTagKeys}
                   discoveredTags={discoveredTags}
@@ -2646,12 +2843,8 @@ export function DimensionsView(): React.JSX.Element {
               );
             }
             return (
-              <div key={row.key} {...dnd.row} className="w-full rounded-xl border border-border bg-bg-secondary/50 px-5 py-3 flex items-center justify-between hover:bg-bg-tertiary/30 transition-colors">
-                <button
-                  type="button"
-                  onClick={() => { setEditingIdx(row.idx); setAddingNew(false); setEditingBuiltInIdx(null); }}
-                  className="flex flex-col gap-1 text-left flex-1 min-w-0"
-                >
+              <div key={row.key} {...dnd.row} className={ROW_CARD_CLASS}>
+                <button type="button" onClick={() => { openRow(row, false); }} className={ROW_OPEN_CLASS}>
                   <div className="flex items-center gap-3">
                     <span className="text-sm font-medium text-text-primary">{tag.label}</span>
                     {tag.tagName !== undefined && tag.tagName.length > 0 && (
@@ -2684,7 +2877,7 @@ export function DimensionsView(): React.JSX.Element {
                     <span className="text-[11px] text-text-muted leading-snug">{tag.description}</span>
                   )}
                 </button>
-                <div className="flex items-center gap-3 shrink-0">
+                <div className={ROW_CONTROLS_CLASS}>
                   {arrows}
                   <GripHandle attrs={dnd.grip} />
                 </div>

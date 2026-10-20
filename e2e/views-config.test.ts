@@ -231,6 +231,34 @@ test.describe('Dimensions', () => {
     await expect(concept).toBeHidden();
   });
 
+  test('a click anywhere on a row opens it, below an open editor too, and Disable moves on', async () => {
+    const list = page.getByRole('heading', { name: /^Enabled dimensions/ }).locator('xpath=..');
+    const row = (button: RegExp): Locator => list.locator(':scope > div[draggable]').filter({ has: page.getByRole('button', { name: button }) });
+    const label = page.getByLabel('Display Label');
+
+    // The card's right padding, beside its "Built-in" label and reorder controls.
+    const region = row(/^Region\s*region/);
+    const box = await region.boundingBox();
+    if (box === null) throw new Error('Region row not laid out');
+    await region.click({ position: { x: box.width - 6, y: box.height / 2 } });
+    await expect(label).toHaveValue('Region');
+
+    // A row below the open editor: closing the editor must not move the row
+    // out from under the click.
+    await row(/^Charge Category\s*charge_category/).click();
+    await expect(label).toHaveValue('Charge Category');
+
+    // Disable turns it off and opens the next row, scrolled clear of the header.
+    await page.getByRole('button', { name: 'Disable dimension' }).click();
+    await expect(label).toHaveValue('SKU Meter');
+    await expect(page.getByRole('button', { name: 'Charge Category', exact: true })).toHaveAttribute('title', 'Click to enable');
+    await expect(label).toBeInViewport();
+
+    await page.getByRole('button', { name: 'Discard' }).click();
+    await expect(page.getByText('Saved', { exact: true })).toBeVisible();
+    await expect(label).toHaveCount(0);
+  });
+
   test('Add opens editor with tag dropdown', async () => {
     await page.getByRole('button', { name: '+ Add' }).click();
 
