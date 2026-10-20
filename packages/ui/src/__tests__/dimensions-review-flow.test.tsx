@@ -188,7 +188,7 @@ describe('Rollup impact — dimension names', () => {
     const { user } = renderView([dim('region'), dim(tagSqlColumn(TEAM))]);
     await openRow(user, 'Region');
     await user.type(screen.getByLabelText('Description'), 'draft note');
-    const team = await within(impactPanel()).findByRole('button', { name: 'Team' });
+    const team = await within(impactPanel()).findByRole('button', { name: 'Configure Team' });
 
     team.focus();
     await user.keyboard('{Enter}');
@@ -213,14 +213,14 @@ describe('Rollup impact — dimension names', () => {
       dim('usage_type'),
     ]);
     await screen.findByRole('heading', { name: 'Rollup impact' });
-    const region = await within(impactPanel()).findAllByRole('button', { name: 'Region' });
+    const region = await within(impactPanel()).findAllByRole('button', { name: 'Configure Region' });
     // The per-dimension list and the outlier warning both name it.
     expect(region).toHaveLength(2);
     // A column no enabled dimension has stays plain text.
-    expect(within(impactPanel()).queryByRole('button', { name: 'usage_type' })).toBeNull();
+    expect(within(impactPanel()).queryByRole('button', { name: 'Configure usage_type' })).toBeNull();
     expect(within(impactPanel()).getByText('usage_type')).toBeDefined();
 
-    await user.click(within(impactPanel()).getByRole('button', { name: 'Team' }));
+    await user.click(within(impactPanel()).getByRole('button', { name: 'Configure Team' }));
     expect(screen.getByLabelText('Display Label')).toHaveProperty('value', 'Team');
     expect(scroll).toHaveBeenCalledTimes(1);
     expect(scroll.mock.contexts[0]).toBe(openEditor());
