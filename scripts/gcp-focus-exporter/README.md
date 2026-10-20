@@ -129,24 +129,33 @@ pick whichever suits you.
 gcloud, Docker and your credentials are already there.
 
 [**Open Cloud Shell**](https://shell.cloud.google.com/?show=ide%2Cterminal)
-and paste this into its terminal. It downloads this folder from the latest
-release, rather than the whole repository, and opens `deploy.sh` in the editor:
+and paste this into its terminal, with your own values on the four `export`
+lines. It downloads this folder from the latest release, rather than the whole
+repository, and runs `deploy.sh` with those values:
 
 ```bash
-curl -fsSL https://github.com/etiennechabert/cost-goblin/releases/latest/download/gcp-focus-exporter.tar.gz | tar xz && cd gcp-focus-exporter && cloudshell edit deploy.sh
+export FOCUS_TABLE=my-project.gcp_billing_immutable_XXXXXX_eu.gcp_billing_export_focus_XXXXXX
+export BUCKET=your-company-billing
+export LOCATION=EU
+export REGION=europe-west1
+curl -fsSL https://github.com/etiennechabert/cost-goblin/releases/latest/download/gcp-focus-exporter.tar.gz | tar xz && cd gcp-focus-exporter && ./deploy.sh
 ```
 
-Edit the config block at the top of `deploy.sh`, then run `./deploy.sh`.
+- `FOCUS_TABLE`: the billing export table as `project.dataset.table`, the
+  *Table ID* of the `gcp_billing_export_focus_…` table in BigQuery.
+- `BUCKET`: the bucket from [Before you start](#before-you-start), without `gs://`.
+- `LOCATION`: the export dataset's location, which the bucket's must match.
+- `REGION`: where the job runs, a region inside `LOCATION`: `europe-west1`
+  for `EU`, `us-central1` for `US`.
 
-Pasting the line again (to update the exporter) replaces `deploy.sh`, values
-included. Note them first, or pass them as variables instead of editing the
-file, since `deploy.sh` reads each one from the environment:
-`FOCUS_TABLE=… BUCKET=… ./deploy.sh`.
+`deploy.sh` reads every setting from the environment, so the others at its top
+(`PROJECT_ID` when the job runs outside the table's project, `TIERS`,
+`SCHEDULE`, …) take an `export` line the same way. To update the exporter
+later, paste the same block again.
 
 ### 2. Locally, if you already have the gcloud CLI
 
-Edit the config block at the top of `deploy.sh` — at minimum `FOCUS_TABLE`,
-`BUCKET` and `PROJECT_ID` — then:
+Export the same four variables, then run it from a clone of this repository:
 
 ```bash
 cd scripts/gcp-focus-exporter
