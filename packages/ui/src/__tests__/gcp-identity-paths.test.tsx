@@ -144,6 +144,19 @@ describe('GcpIdentityPanel — Data Management paths', () => {
   });
 });
 
+describe('GcpIdentityPanel — split accounts warning', () => {
+  it('sends the sign-in direction of a GOOGLE_APPLICATION_CREDENTIALS file to the variable', async () => {
+    const panel = renderPanel(ok({
+      listing: userListing({ status: 'known', email: 'alice@acme.com' }, ENV_FILE),
+      download: gcloud('admin@acme.com'),
+      splitAccounts: { listingAccount: 'alice@acme.com', downloadAccount: 'admin@acme.com' },
+    }));
+    const warning = await within(panel).findByRole('note', { name: 'Credential warning' });
+    expect(warning.textContent).toContain('sign bucket listing in as admin@acme.com: fix or unset GOOGLE_APPLICATION_CREDENTIALS');
+    expect(warning.textContent).not.toContain('gcloud auth application-default login');
+  });
+});
+
 describe('GcpIdentityPanel — wizard line', () => {
   it.each([
     { email: 'ci@acme.iam.gserviceaccount.com', text: 'ci@acme.iam.gserviceaccount.com' },

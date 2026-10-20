@@ -246,7 +246,7 @@ function Paths({ identities }: Readonly<{ identities: GcpIdentities }>): React.J
           {reader !== null && <Impersonating target={reader} />}
         </dd>
       </dl>
-      {identities.splitAccounts !== null && <SplitAccountsWarning split={identities.splitAccounts} />}
+      {identities.splitAccounts !== null && <SplitAccountsWarning split={identities.splitAccounts} file={listing.file} />}
       {bypassed !== null && (
         <p role="note" aria-label="Credential warning" className="mt-2 rounded-md border border-warning/50 bg-warning/10 px-2.5 py-1.5 text-text-primary break-words">
           Bucket listing reads as <Principal>{bypassed.target}</Principal>, but downloads run as{' '}
@@ -363,13 +363,18 @@ function DownloadIdentity({ identity }: Readonly<{ identity: GcpDownloadIdentity
   }
 }
 
-function SplitAccountsWarning({ split }: Readonly<{ split: GcpSplitAccounts }>): React.JSX.Element {
+/** Both directions, because which account holds the grants is the user's to
+ *  know: switching gcloud alone moved downloads onto the listing account in a
+ *  live case where that was the one without the grant. */
+function SplitAccountsWarning({ split, file }: Readonly<{ split: GcpSplitAccounts; file: GcpCredentialFile | null }>): React.JSX.Element {
   return (
     <p role="note" aria-label="Credential warning" className="mt-2 rounded-md border border-warning/50 bg-warning/10 px-2.5 py-1.5 text-text-primary break-words">
       Downloads run as <Principal>{split.downloadAccount}</Principal>, but bucket listing runs as{' '}
       <Principal>{split.listingAccount}</Principal> — two different accounts, and each needs its own access. To use one
-      account for both, run <Command>{`gcloud config set account ${split.listingAccount}`}</Command> — and if gcloud has
-      never signed in as that account, <Command>{`${GCLOUD_CLI_LOGIN_COMMAND} ${split.listingAccount}`}</Command> first.
+      account for both, sign bucket listing in as <Principal>{split.downloadAccount}</Principal>: <AdcRemedy file={file} />{' '}
+      — or switch downloads to <Principal>{split.listingAccount}</Principal>: run{' '}
+      <Command>{`gcloud config set account ${split.listingAccount}`}</Command> (after{' '}
+      <Command>{`${GCLOUD_CLI_LOGIN_COMMAND} ${split.listingAccount}`}</Command> if gcloud never signed in as it).
     </p>
   );
 }

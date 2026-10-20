@@ -96,17 +96,23 @@ describe('GcpIdentityPanel — Data Management', () => {
     expect(panel.querySelector('details')).toBeNull();
   });
 
-  it('warns when downloads and listing run as different people, with a fix that keeps downloads working', async () => {
+  it('warns when downloads and listing run as different people, with a fix in either direction', async () => {
     const { panel } = renderPanel(ok({
       listing: user(),
       download: gcloud('admin@acme.com', 'acme-admin'),
       splitAccounts: { listingAccount: 'alice@acme.com', downloadAccount: 'admin@acme.com' },
     }));
     const warning = await within(panel).findByRole('note', { name: 'Credential warning' });
-    expect(warning.textContent).toContain('Downloads run as admin@acme.com, but bucket listing runs as alice@acme.com');
-    expect(warning.textContent).toContain('gcloud config set account alice@acme.com');
-    // `config set` alone breaks downloads for an account gcloud never signed in as.
-    expect(warning.textContent).toContain('gcloud auth login alice@acme.com first');
+    // Which account holds the grants is the user's to know: switching gcloud
+    // alone moved downloads onto the listing account, the one without the
+    // grant in a live case. And `config set` alone breaks downloads for an
+    // account gcloud never signed in as.
+    expect(warning.textContent).toBe(
+      'Downloads run as admin@acme.com, but bucket listing runs as alice@acme.com — two different accounts, and each needs '
+      + 'its own access. To use one account for both, sign bucket listing in as admin@acme.com: run gcloud auth '
+      + 'application-default login — or switch downloads to alice@acme.com: run gcloud config set account alice@acme.com '
+      + '(after gcloud auth login alice@acme.com if gcloud never signed in as it).',
+    );
   });
 
   it('shows an impersonated ADC as the service account listing runs as', async () => {
