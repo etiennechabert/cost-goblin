@@ -4,16 +4,12 @@ import { useQuery } from '../hooks/use-query.js';
 import { BurndownChart } from '../components/burndown-chart.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { formatDollars } from '../components/format.js';
-import { asDimensionId } from '@costgoblin/core/browser';
 import type { DailyCostsResult } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
-import { filtersKey } from './widget.js';
+import { filtersKey, TOTALS_GROUP_BY } from './widget.js';
 import { toCumulative, projectPeriodEnd } from '../lib/day-series.js';
 import { daysBetween } from '../lib/dates.js';
 
-// Daily totals are independent of the group-by; query a low-cardinality
-// built-in column purely to obtain the per-day totals cheaply.
-const PACING_GROUP = asDimensionId('account');
 
 export function BurndownWidget({ spec, dateRange, previousDateRange, globalFilters }: WidgetCommonProps) {
   const api = useCostApi();
@@ -24,12 +20,12 @@ export function BurndownWidget({ spec, dateRange, previousDateRange, globalFilte
   // toggle (which constrains the range and emits sub-day buckets) can't distort
   // the cumulative curve.
   const curQuery = useQuery<DailyCostsResult>(
-    () => api.queryDailyCosts({ groupBy: PACING_GROUP, dateRange, filters: globalFilters, granularity: 'daily', origin: 'widget:burndown' }),
+    () => api.queryDailyCosts({ groupBy: TOTALS_GROUP_BY, dateRange, filters: globalFilters, granularity: 'daily', origin: 'widget:burndown' }),
     [dateRange.start, dateRange.end, fk, api],
   );
 
   const prevQuery = useQuery<DailyCostsResult>(
-    () => api.queryDailyCosts({ groupBy: PACING_GROUP, dateRange: previousDateRange, filters: globalFilters, granularity: 'daily', origin: 'widget:burndown/prev' }),
+    () => api.queryDailyCosts({ groupBy: TOTALS_GROUP_BY, dateRange: previousDateRange, filters: globalFilters, granularity: 'daily', origin: 'widget:burndown/prev' }),
     [previousDateRange.start, previousDateRange.end, fk, api],
   );
 

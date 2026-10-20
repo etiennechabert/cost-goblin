@@ -39,7 +39,7 @@ which provisions the same exports.
 | Lifecycle rules | On the bucket | Per prefix (`costgoblin/daily/`, `costgoblin/hourly/`, `costgoblin/cost-optimization/`): 400 d, 60 d, 100 d, each above that tier's default `retentionDays`; noncurrent versions 1 d; incomplete multipart uploads 7 d |
 | Daily FOCUS 1.2 export | `AWS::BCMDataExports::Export` | `SELECT <columns> FROM FOCUS_1_2_AWS`, `TIME_GRANULARITY: DAILY`, `Format`/`Compression: PARQUET`, `Overwrite: OVERWRITE_REPORT`, `RefreshCadence: SYNCHRONOUS`. On by default; `CreateDailyExport: no` skips it for an account with FOCUS exports of its own (AWS allows two per account) |
 | Hourly export (optional) | Same, `TIME_GRANULARITY: HOURLY` | Off by default: it's the large one |
-| Cost Optimization Hub export (optional, off by default) | Same resource, `COST_OPTIMIZATION_RECOMMENDATIONS` with `INCLUDE_ALL_RECOMMENDATIONS: 'TRUE'` | The Hub must be activated first. The export needs the `AWSServiceRoleForBCMDataExports` service-linked role: the stack creates it unless told the account already has it (AWS's template uses a Lambda for that; we use a parameter). AWS [doesn't offer Overwrite](https://docs.aws.amazon.com/cur/latest/userguide/dataexports-create-standard.html) for this export, so the wizard never applies #692's check to it (#695) |
+| Cost Optimization Hub export (optional, off by default) | Same resource, `COST_OPTIMIZATION_RECOMMENDATIONS` with `INCLUDE_ALL_RECOMMENDATIONS: 'TRUE'` | The Hub must be enabled first (Cost Management preferences → Cost Optimization Hub tab); the wizard and the parameter's description say where. The export needs the `AWSServiceRoleForBCMDataExports` service-linked role: the stack creates it unless told the account already has it (AWS's template uses a Lambda for that; we use a parameter). AWS [doesn't offer Overwrite](https://docs.aws.amazon.com/cur/latest/userguide/dataexports-create-standard.html) for this export, so the wizard never applies #692's check to it (#695) |
 | Read access for CostGoblin | `AWS::IAM::ManagedPolicy` (output) | `s3:ListBucket` + `s3:GetObject` on the bucket: exactly what SPEC's *Setup Requirements* list. Attached by an admin, or by the user's SSO permission set. Creating it makes the console ask for the IAM acknowledgement |
 | Cost allocation tags | Not in the stack | Stays a guided manual step: which tags matter is the user's call |
 | Backfill | Support case | See §5 |
@@ -176,7 +176,7 @@ the export.
   `costgoblin/cost-optimization`), with exports named `costgoblin-daily` and so on. Clearer than the
   README's old `focus_daily/` layout; the manual guide moved to the same prefixes so both paths
   match. Existing setups are unaffected: paths are configurable.
-- **Cost Optimization Hub export:** off by default; the user ticks it once the Hub is activated.
+- **Cost Optimization Hub export:** off by default; the user ticks it once the Hub is enabled.
 - **Bucket name:** empty by default, in which case the stack names it
   `costgoblin-billing-<account id>`, so the manual upload needs no typing. The wizard passes a
   name so it can write the config up front.

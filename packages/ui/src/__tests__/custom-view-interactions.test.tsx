@@ -231,6 +231,88 @@ describe('CustomView — filtering from widgets', () => {
   });
 });
 
+describe('CustomView — group-bys on a dimension that is not enabled', () => {
+  // The mock's enabled dimensions, in order: provider, account, service,
+  // region, resource_id, then the team/env/product tags.
+  const STACK = 'tag_aws_cloudformation_stack_name';
+  const PIES = view([
+    { id: 'stack', type: 'pie', size: 'medium', groupBy: asDimensionId(STACK) },
+    { id: 'svc', type: 'pie', size: 'medium', groupBy: asDimensionId('service') },
+    { id: 'reg', type: 'pie', size: 'medium', groupBy: asDimensionId('region') },
+  ]);
+
+  it('groups by the first enabled dimension the view does not show, and never queries the other', async () => {
+    const { api } = renderView(PIES);
+
+    await waitFor(() => {
+      expect(new Set(api.costCalls.map(c => String(c.groupBy)))).toEqual(new Set(['provider', 'service', 'region']));
+    });
+    await waitFor(() => {
+      expect(document.querySelector('[data-widget-id="stack"] button')?.textContent).toBe('Provider');
+    }, { timeout: 5000 });
+    expect(screen.queryByText(STACK)).toBeNull();
+  });
+
+  it('reads the summary total grouped by service, which is always enabled', async () => {
+    const api = new ViewApi();
+    // Account is disabled: getDimensions lists only the enabled dimensions.
+    vi.spyOn(api, 'getDimensions').mockResolvedValue([
+      { name: asDimensionId('service'), label: 'Service', field: 'service' },
+      { name: asDimensionId('region'), label: 'Region', field: 'region' },
+    ]);
+    renderView(SUMMARY, api);
+
+    await waitFor(() => { expect(api.costCalls.length).toBeGreaterThan(0); });
+    expect(new Set(api.costCalls.map(c => String(c.groupBy)))).toEqual(new Set(['service']));
+  });
+
+  it('reads the burndown daily totals grouped by service, for both periods', async () => {
+    const api = new ViewApi();
+    renderView(view([{ id: 'pacing', type: 'burndown', size: 'large' }]), api);
+
+    await waitFor(() => {
+      expect(api.dailyCalls.map(c => c.origin).sort()).toEqual(['widget:burndown', 'widget:burndown/prev']);
+    });
+    expect(api.dailyCalls.map(c => String(c.groupBy))).toEqual(['service', 'service']);
+  });
+
+  it('shows the dashboard as configured when the dimensions fail to load', async () => {
+    class NoDimensionsApi extends ViewApi {
+      override getDimensions(): Promise<Dimension[]> {
+        return Promise.reject(new Error('dimensions.yaml is broken'));
+      }
+    }
+    const { api } = renderView(PIES, new NoDimensionsApi());
+
+    await waitFor(() => {
+      expect(new Set(api.costCalls.map(c => String(c.groupBy)))).toEqual(new Set([STACK, 'service', 'region']));
+    });
+  });
+});
+
+describe('CustomView — rollup build', () => {
+  it('shows the build overlay instead of the widgets while the viewed months are being built', async () => {
+    const api = new ViewApi();
+    render(
+      <PaletteProvider>
+        <CostApiProvider value={api}>
+          <CustomView
+            spec={view([{ id: 'pie', type: 'pie', size: 'medium', groupBy: asDimensionId('service') }])}
+            rollupStatus={{ state: 'computing', done: 0, total: 2, periods: ['2026-02', '2026-03'], active: ['2026-02'] }}
+          />
+        </CostApiProvider>
+      </PaletteProvider>,
+    );
+
+    expect(await screen.findByText('Preparing your cost data')).toBeDefined();
+    // The dimensions have loaded (the filter bar shows), so the widgets would have mounted by now.
+    expect(await screen.findByRole('button', { name: 'Environment' })).toBeDefined();
+    expect(document.querySelector('[data-widget-id]')).toBeNull();
+    expect(screen.queryByText('Loading...')).toBeNull();
+    expect(api.costCalls).toEqual([]);
+  });
+});
+
 describe('CustomView — filter bar', () => {
   it('orders chips by dimension concept and pre-applies dimension defaults', async () => {
     const api = new ViewApi();
@@ -251,6 +333,8 @@ describe('CustomView — filter bar', () => {
       .filter(t => /^(Environment|Product|Team|Business unit|Account|Cost center)/.test(t));
     expect(chips).toEqual(['Environment: prod', 'Product', 'Team', 'Business unit', 'Account', 'Cost center']);
     await waitFor(() => { expect(api.costCalls.at(-1)?.filters).toEqual({ tag_env: ['prod'] }); });
+    // The widgets mount with the defaults already set: none queries without them first.
+    expect(api.costCalls.map(c => c.filters)).toEqual(api.costCalls.map(() => ({ tag_env: ['prod'] })));
   });
 
   it('serves dropdowns from the prefetch, and queries live once another filter narrows them', async () => {

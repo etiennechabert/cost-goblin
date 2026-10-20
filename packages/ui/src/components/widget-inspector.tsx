@@ -205,6 +205,14 @@ export function WidgetInspector({
             onChange={(e) => { setGroupBy(e.target.value); }}
             className="flex-1 bg-transparent border border-border rounded px-2 py-1 text-text-primary"
           >
+            {/* A disabled dimension isn't listed; without its own option the
+                select would show the first one. The dashboard draws such a
+                widget on another dimension until it is enabled again. */}
+            {!dimensions.some(d => getDimensionId(d) === widget.groupBy) && (
+              <option value={widget.groupBy} disabled>
+                {widget.groupBy} (not enabled)
+              </option>
+            )}
             {dimensions.map(d => (
               <option key={getDimensionId(d)} value={getDimensionId(d)}>
                 {getDimensionLabel(d)}
