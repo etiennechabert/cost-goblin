@@ -3,6 +3,7 @@ import { applyNormalizationRule, buildGrainProbeQuery, buildSource, computeRollu
 import type { AliasSuggestion, ColumnValuesPreview, DimensionsConfig, NormalizationRule, RollupGrainEstimate } from '@costgoblin/core';
 import { type AppContext, loadOrgAccountsMap } from './context.js';
 import { parseDimensionsPayload, parseDimensionsRewritePayload, parseDimensionsSavePayload, withAcceptedAliasSuggestion } from './dimensions-payload.js';
+import { DEFAULT_BUILT_INS } from './dimensions-merge.js';
 import { applyNormalizeAndStrip, mergeValuesByLabel, NO_STRIP_ISSUES, parsePreviewStripPatterns, type ValueCostPair } from './dimensions-preview.js';
 import { rawGlobLiteral, toNum, toStr } from './query-utils.js';
 import { tagDiscoverySince } from './query-windows.js';
@@ -51,6 +52,15 @@ function filterUncoveredSuggestions(
   }
   return filtered;
 }
+
+/** The columns the built-in editor's preview may embed in SQL: the default
+ *  built-ins' fields and display fields, all buildSource output aliases, so
+ *  the preview plans like the rest of the app. Derived rather than listed, so
+ *  no built-in's editor is left previewing nothing (Resource and Provider once
+ *  were). */
+const PREVIEW_COLUMNS: ReadonlySet<string> = new Set(
+  DEFAULT_BUILT_INS.flatMap(d => (d.displayField === undefined ? [d.field] : [d.field, d.displayField])),
+);
 
 export function registerDimensionsHandlers(app: AppContext): void {
   const { ctx, getConfig, getDimensions, getQueryDimensions, getQueryCostScope, getFirstProviderName, getQueryProviders, getOrgAccountsPath, getAccountReverseMap, getRegionMap, signatureForDimensions, invalidateDimensions, rollupStore, runQuery } = app;
@@ -142,11 +152,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
     // the parsed list. `opts?.` is safe on any IPC value (null, a number, ...).
     const nameStripPatterns = parsePreviewStripPatterns(opts?.nameStripPatterns);
     const empty: ColumnValuesPreview = { values: [], distinctCount: 0, period: '', stripIssues: NO_STRIP_ISSUES };
-    // Whitelist columns we know are safe to embed in SQL. These match the
-    // aliases emitted by buildSource so the query plans identically to what
-    // the rest of the app does.
-    const ALLOWED = new Set(['account_id', 'account_name', 'region', 'service', 'service_code', 'service_category', 'charge_category', 'pricing_category', 'commitment_status', 'operation', 'sku_meter']);
-    if (!ALLOWED.has(field)) return empty;
+    if (!PREVIEW_COLUMNS.has(field)) return empty;
 
     const providers = await getQueryProviders('daily');
     const firstProvider = providers[0];

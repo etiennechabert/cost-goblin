@@ -5,13 +5,15 @@ import { asDimensionId, tagSqlColumn } from '@costgoblin/core/browser';
 import type { BuiltInDimension, CostApi, DimensionsConfig, RollupDimEstimate, RollupGrainEstimate, TagDimension } from '@costgoblin/core/browser';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
+import { ModalLayer } from '../hooks/modal-layers.js';
 import { DimensionsView } from '../views/dimensions.js';
 import { setReducedMotion } from './setup.js';
 
 /** Reviewing dimensions one by one: an open editor can turn its dimension off,
  *  which opens the next one in the list, and a name in the Rollup impact panel
- *  opens that dimension's editor. An editor opened from elsewhere than its own
- *  row is scrolled into view and takes the focus. */
+ *  opens that dimension's editor. However it was opened, an editor scrolls up
+ *  to the top of the page with the collapsed row above it still in view, and
+ *  takes the focus. */
 
 const SERVICE: BuiltInDimension = { name: asDimensionId('service'), label: 'Service', field: 'service' };
 const REGION: BuiltInDimension = { name: asDimensionId('region'), label: 'Region', field: 'region' };
@@ -81,6 +83,14 @@ function openEditor(): HTMLElement {
   return card;
 }
 
+/** What an opened editor scrolls to the top: the row above it, or the list
+ *  heading above the first row. */
+function rowAbove(): Element {
+  const above = openEditor().previousElementSibling;
+  if (above === null) throw new Error('nothing above the open editor');
+  return above;
+}
+
 function disableButton(): HTMLElement {
   return screen.getByRole('button', { name: 'Disable dimension' });
 }
@@ -107,18 +117,17 @@ describe('Dimension editor — Disable dimension', () => {
     const { save, scroll, user } = renderView();
     await waitFor(() => { expect(rowLabels()).toEqual(['Service', 'Region', 'Charge Category', 'Team', 'Environment']); });
     await openRow(user, 'Region');
-    // Opened from its own row: already where the user looks.
-    expect(scroll).not.toHaveBeenCalled();
     expect(disableButton().getAttribute('title')).toBe('Turn this dimension off and open Charge Category');
 
     await user.click(disableButton());
     expect(pillTitle('Region')).toBe('Click to enable');
     expect(screen.getByLabelText('Display Label')).toHaveProperty('value', 'Charge Category');
     expect(rowLabels()).toEqual(['Service', 'Team', 'Environment']);
-    // The next editor is brought into view and holds the focus.
-    expect(scroll).toHaveBeenCalledTimes(1);
-    expect(scroll.mock.contexts[0]).toBe(openEditor());
-    expect(scroll).toHaveBeenLastCalledWith({ block: 'start', behavior: 'smooth' });
+    // The next editor is brought into view, under the row it now follows,
+    // and holds the focus.
+    expect(scroll).toHaveBeenCalledTimes(2);
+    expect(scroll.mock.contexts[1]).toBe(rowAbove());
+    expect(rowAbove().textContent).toMatch(/^Service/);
     expect(document.activeElement).toBe(openEditor());
 
     await user.click(disableButton());
@@ -141,18 +150,74 @@ describe('Dimension editor — Disable dimension', () => {
     expect(saved?.order).toEqual(['builtin:service']);
   });
 
+  it('scrolls an editor opened from its own row up, keeping the row above it in view', async () => {
+    const { scroll, user } = renderView();
+    await openRow(user, 'Charge Category');
+    expect(scroll).toHaveBeenCalledTimes(1);
+    expect(scroll.mock.contexts[0]).toBe(rowAbove());
+    expect(rowAbove().textContent).toMatch(/^Region/);
+    expect(scroll).toHaveBeenLastCalledWith({ block: 'start', behavior: 'smooth' });
+    expect(document.activeElement).toBe(openEditor());
+
+    // The first row has the list heading above it.
+    await openRow(user, 'Service');
+    expect(scroll).toHaveBeenCalledTimes(2);
+    expect(scroll.mock.contexts[1]).toBe(screen.getByRole('heading', { name: /^Enabled dimensions/ }));
+  });
+
   it('scrolls without animation when the OS asks for reduced motion', async () => {
     setReducedMotion(true);
     const { scroll, user } = renderView();
     await openRow(user, 'Region');
     await user.click(disableButton());
     expect(scroll).toHaveBeenLastCalledWith({ block: 'start', behavior: 'auto' });
+    // An instant scroll needs no settling: scroll anchoring holds it.
+    const calls = scroll.mock.calls.length;
+    document.dispatchEvent(new Event('scrollend'));
+    expect(scroll).toHaveBeenCalledTimes(calls);
+  });
+
+  // The Rollup impact panel loading above the list, while the smooth scroll
+  // runs, used to leave the editor halfway down: the animation overwrites
+  // Chromium's scroll-anchoring correction.
+  it('puts the row back at the top once the smooth scroll ends, unless the user scrolled', async () => {
+    const { scroll, user } = renderView();
+    await openRow(user, 'Charge Category');
+    expect(scroll).toHaveBeenCalledTimes(1);
+    document.dispatchEvent(new Event('scrollend'));
+    expect(scroll).toHaveBeenCalledTimes(2);
+    expect(scroll.mock.contexts[1]).toBe(rowAbove());
+    expect(scroll).toHaveBeenLastCalledWith({ block: 'start', behavior: 'auto' });
+    // Once only: a later scroll is the user's.
+    document.dispatchEvent(new Event('scrollend'));
+    expect(scroll).toHaveBeenCalledTimes(2);
+
+    await openRow(user, 'Region');
+    expect(scroll).toHaveBeenCalledTimes(3);
+    document.dispatchEvent(new WheelEvent('wheel', { bubbles: true }));
+    document.dispatchEvent(new Event('scrollend'));
+    expect(scroll).toHaveBeenCalledTimes(3);
+
+    // Nor under a dialog that opened on its own meanwhile.
+    await openRow(user, 'Team');
+    expect(scroll).toHaveBeenCalledTimes(4);
+    const dialog = render(<ModalLayer kind="dialog" />);
+    document.dispatchEvent(new Event('scrollend'));
+    expect(scroll).toHaveBeenCalledTimes(4);
+    dialog.unmount();
   });
 
   it('is not offered for a dimension that cannot be turned off, nor in the Add form', async () => {
     const { user } = renderView();
     await openRow(user, 'Service');
     expect(screen.queryByRole('button', { name: 'Disable dimension' })).toBeNull();
+    // The corner the button would take says why instead.
+    const note = within(openEditor()).getByText('Always enabled — required for cost breakdown');
+    expect(note.closest('.justify-between')?.lastElementChild).toBe(note);
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    await openRow(user, 'Region');
+    expect(within(openEditor()).queryByText('Always enabled — required for cost breakdown')).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
     await user.click(screen.getByRole('button', { name: '+ Add' }));
@@ -223,7 +288,8 @@ describe('Rollup impact — dimension names', () => {
     await user.click(within(impactPanel()).getByRole('button', { name: 'Configure Team' }));
     expect(screen.getByLabelText('Display Label')).toHaveProperty('value', 'Team');
     expect(scroll).toHaveBeenCalledTimes(1);
-    expect(scroll.mock.contexts[0]).toBe(openEditor());
+    expect(scroll.mock.contexts[0]).toBe(rowAbove());
+    expect(rowAbove().textContent).toMatch(/^Charge Category/);
 
     const [listName, warningName] = region;
     if (listName === undefined || warningName === undefined) throw new Error('missing Region names');
@@ -236,6 +302,6 @@ describe('Rollup impact — dimension names', () => {
     await user.keyboard('{Enter}');
     expect(screen.getByLabelText('Display Label')).toHaveProperty('value', 'Region');
     expect(scroll).toHaveBeenCalledTimes(3);
-    expect(scroll.mock.contexts[2]).toBe(openEditor());
+    expect(scroll.mock.contexts[2]).toBe(rowAbove());
   });
 });

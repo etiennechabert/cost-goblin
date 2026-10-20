@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parse } from 'yaml';
 import { registerDimensionsHandlers } from '../main/handlers/dimensions.js';
+import { DEFAULT_BUILT_INS } from '../main/handlers/dimensions-merge.js';
 import {
   FIXTURE_AWS_PROVIDER,
   FIXTURE_CONFIG_DIR,
@@ -144,6 +145,19 @@ describe('dimensions:discover-column-values', () => {
     const costs = list(at(preview, 'values')).map(v => num(at(v, 'cost')));
     expect([...costs].sort((a, b) => b - a)).toEqual(costs);
     expect(at(preview, 'stripIssues')).toEqual({ invalid: [], slow: [], skipped: [] });
+  });
+
+  // Resource and Provider once fell outside the allow-list: their editors
+  // showed "0 distinct values" over data holding thousands.
+  it('previews every default built-in dimension\'s column', async () => {
+    const h = await dimsApp();
+    for (const field of new Set(DEFAULT_BUILT_INS.map(d => d.field))) {
+      const preview = await h.ipc.invoke('dimensions:discover-column-values', field);
+      expect({ field, period: at(preview, 'period') }).toEqual({ field, period: '2026-02' });
+    }
+    const resources = await h.ipc.invoke('dimensions:discover-column-values', 'resource_id');
+    expect(num(at(resources, 'distinctCount'))).toBeGreaterThan(0);
+    expect(values(await h.ipc.invoke('dimensions:discover-column-values', 'provider'))).toEqual([AWS]);
   });
 
   it('refuses columns outside the allow-list and malformed strip patterns before any query', async () => {

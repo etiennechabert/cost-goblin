@@ -29,6 +29,7 @@ function tagOrderKey(t: { tagName?: string | undefined; accountTagFallback?: str
 // from the raw column regardless of enabled state) but is now toggleable, so a
 // heavy sku_meter grain can be dropped from the rollup to keep dashboards fast.
 const LOCKED_DIMENSIONS = new Set([asDimensionId('service'), asDimensionId('service_category')]);
+const LOCKED_DIMENSION_NOTE = 'Always enabled — required for cost breakdown';
 
 function migrateLocked(cfg: DimensionsConfig): { config: DimensionsConfig; changed: boolean } {
   const needsFix = cfg.builtIn.some(d => LOCKED_DIMENSIONS.has(d.name) && d.enabled === false);
@@ -110,20 +111,51 @@ function useClickOutsideDismiss(
 }
 
 /** An open dimension editor. Focusable (tabIndex -1) so a reveal can move focus
- *  into it; `scroll-mt` keeps a revealed one off the scroller's top edge. */
+ *  into it; `scroll-mt` keeps a revealed one with nothing above it off the
+ *  scroller's top edge. */
 const EDITOR_CARD_CLASS = 'scroll-mt-4 rounded-xl border border-accent/30 bg-bg-tertiary/10 px-5 py-4 flex flex-col gap-4 outline-none';
 
-/** Brings an editor into view and moves focus into it each time `revealSeq`
- *  changes to a non-zero value: when it was opened from elsewhere on the page
- *  (a Rollup impact name, or as the next dimension after a Disable) rather than
- *  from its own row, which is already where the user is looking. */
+/** Input that means the user is scrolling the page themselves. */
+const USER_SCROLL_EVENTS = ['wheel', 'touchstart', 'keydown', 'pointerdown'] as const;
+
+/** Scrolls an editor up to the top of the page and moves focus into it each
+ *  time `revealSeq` changes to a non-zero value (each time it is opened). The
+ *  element above it, the previous dimension's collapsed row or the list
+ *  heading, is what lands at the top, so the user keeps their place in the list.
+ *
+ *  Content above that grows while the smooth scroll runs (the Rollup impact
+ *  panel loading) would leave the editor halfway down: the animation overwrites
+ *  Chromium's scroll-anchoring correction. So when the scroll ends, the anchor
+ *  is put back at the top, unless the user has started scrolling (or a dialog
+ *  has opened) meanwhile. */
 function useRevealOnRequest(containerRef: React.RefObject<HTMLDivElement | null>, revealSeq: number): void {
   const reducedMotion = useReducedMotion();
   useEffect(() => {
     const el = containerRef.current;
-    if (revealSeq === 0 || el === null) return;
-    el.scrollIntoView({ block: 'start', behavior: reducedMotion ? 'auto' : 'smooth' });
+    if (revealSeq === 0 || el === null) return undefined;
+    const anchor = el.previousElementSibling ?? el;
+    anchor.scrollIntoView({ block: 'start', behavior: reducedMotion ? 'auto' : 'smooth' });
     el.focus({ preventScroll: true });
+    // An instant scroll needs no settling: scroll anchoring holds it.
+    if (reducedMotion) return undefined;
+
+    function stop(): void {
+      clearTimeout(timer);
+      document.removeEventListener('scrollend', settle, true);
+      for (const type of USER_SCROLL_EVENTS) document.removeEventListener(type, stop, true);
+    }
+    function settle(): void {
+      stop();
+      // Not under a dialog that opened on its own meanwhile.
+      if (getModalLayerCount() > 0) return;
+      anchor.scrollIntoView({ block: 'start', behavior: 'auto' });
+    }
+    // Capture, to hear the end of an element scroller's scroll too. Bounded,
+    // for when the anchor was already in place and no scroll happens.
+    const timer = setTimeout(stop, 2000);
+    document.addEventListener('scrollend', settle, true);
+    for (const type of USER_SCROLL_EVENTS) document.addEventListener(type, stop, true);
+    return stop;
     // Only a new request scrolls: the motion setting is read, not watched.
   }, [containerRef, revealSeq]);
 }
@@ -454,7 +486,7 @@ function BuiltInEditor({ dim, onSave, onCancel, onDisable, revealSeq, accountTag
   onCancel: () => void;
   /** Undefined for a dimension that can't be turned off. */
   onDisable: DisableAction | undefined;
-  /** See useRevealOnRequest; 0 = opened from its own row. */
+  /** See useRevealOnRequest; 0 = never scrolled to. */
   revealSeq: number;
   accountTagKeys: readonly string[];
 }>): React.JSX.Element {
@@ -754,7 +786,12 @@ function BuiltInEditor({ dim, onSave, onCancel, onDisable, revealSeq, accountTag
             Cancel
           </button>
         </div>
-        {onDisable !== undefined && <DisableDimensionButton isDirty={isDirty} action={onDisable} />}
+        {onDisable === undefined ? (
+          <span className="inline-flex items-center gap-1.5 text-xs text-text-muted">
+            <Lock size={13} />
+            {LOCKED_DIMENSION_NOTE}
+          </span>
+        ) : <DisableDimensionButton isDirty={isDirty} action={onDisable} />}
       </div>
       {discardConfirm && (
         <ConfirmModal
@@ -1224,7 +1261,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, onDisable, revealSeq, idCo
   onRemove: (() => void) | undefined;
   /** Undefined for a tag that isn't in the list yet (the Add form). */
   onDisable: DisableAction | undefined;
-  /** See useRevealOnRequest; 0 = opened from its own row. */
+  /** See useRevealOnRequest; 0 = never scrolled to (the Add form). */
   revealSeq: number;
   /** Why this tag can't be saved because another tag already has its
    *  dimension id, or null when the id is free. */
@@ -2130,7 +2167,7 @@ function GripHandle({ attrs }: Readonly<{ attrs: React.HTMLAttributes<HTMLButton
  *  beside them fall through to it. The card, not the button, shows the hover
  *  and press (`data-feedback="none"` drops the app-wide state layer, which
  *  would tint only the button's text column). */
-const ROW_CARD_CLASS = 'relative w-full rounded-xl border border-border bg-bg-secondary/50 px-5 py-3 flex items-center justify-between transition-colors hover:border-accent/40 hover:bg-bg-tertiary/60 has-[>button:active]:bg-bg-tertiary';
+const ROW_CARD_CLASS = 'scroll-mt-4 relative w-full rounded-xl border border-border bg-bg-secondary/50 px-5 py-3 flex items-center justify-between transition-colors hover:border-accent/40 hover:bg-bg-tertiary/60 has-[>button:active]:bg-bg-tertiary';
 const ROW_OPEN_CLASS = "flex flex-col gap-1 text-left flex-1 min-w-0 cursor-pointer outline-none after:absolute after:inset-0 after:rounded-xl after:content-[''] focus-visible:after:outline-2 focus-visible:after:outline-accent";
 const ROW_CONTROLS_CLASS = 'pointer-events-none relative z-10 flex items-center gap-3 shrink-0';
 
@@ -2198,9 +2235,9 @@ export function DimensionsView(): React.JSX.Element {
   const [armed, setArmed] = useState<DragRef | null>(null);
   const [dragFrom, setDragFrom] = useState<DragRef | null>(null);
   const [dragOver, setDragOver] = useState<DragRef | null>(null);
-  // An editor opened from elsewhere on the page (a Rollup impact name, or the
-  // next dimension after a Disable) scrolls into view. The counter makes a
-  // second request for the editor already open scroll back to it.
+  // Every opened editor scrolls up to the top of the page. The counter makes
+  // a second request for the editor already open (a Rollup impact name)
+  // scroll back to it.
   const [reveal, setReveal] = useState<{ key: string; seq: number } | null>(null);
   const listHeadingRef = useRef<HTMLHeadingElement | null>(null);
   // Lazy-load the tag-discovery scan — it hits DuckDB. Fires when the user
@@ -2458,9 +2495,8 @@ export function DimensionsView(): React.JSX.Element {
     applyDraft({ ...config, tags });
   }
 
-  /** Opens a row's editor (closing any other); `scrollTo` when it was asked
-   *  for from somewhere other than the row itself. */
-  function openRow(row: OrderedRow, scrollTo: boolean): void {
+  /** Opens a row's editor (closing any other) and scrolls it up to the top. */
+  function openRow(row: OrderedRow): void {
     setAddingNew(false);
     if (row.kind === 'builtIn') {
       setEditingBuiltInIdx(row.idx);
@@ -2469,7 +2505,7 @@ export function DimensionsView(): React.JSX.Element {
       setEditingIdx(row.idx);
       setEditingBuiltInIdx(null);
     }
-    setReveal(cur => (scrollTo ? { key: row.key, seq: (cur?.seq ?? 0) + 1 } : null));
+    setReveal(cur => ({ key: row.key, seq: (cur?.seq ?? 0) + 1 }));
   }
 
   /** Disables the dimension at `orderIdx` of the list from its open editor
@@ -2493,7 +2529,7 @@ export function DimensionsView(): React.JSX.Element {
       // user in the list rather than back at the top of the page.
       listHeadingRef.current?.focus({ preventScroll: true });
     } else {
-      openRow(following, true);
+      openRow(following);
     }
   }
 
@@ -2582,7 +2618,7 @@ export function DimensionsView(): React.JSX.Element {
   const openerForColumn: ColumnOpener = (column) => {
     const key = config === null ? undefined : columnDimension(config, column)?.key;
     const row = orderedRows.find(r => r.key === key);
-    return row === undefined ? undefined : () => { openRow(row, true); };
+    return row === undefined ? undefined : () => { openRow(row); };
   };
   const revealSeqFor = (key: string): number => (reveal?.key === key ? reveal.seq : 0);
   const disableAction = (orderIdx: number): DisableAction => ({
@@ -2693,7 +2729,7 @@ export function DimensionsView(): React.JSX.Element {
                 const isOn = locked || d.enabled !== false;
                 const rawOnly = isOn && rawOnlyColumns.has(builtInGrainColumn(d));
                 let buttonTitle = 'Click to enable';
-                if (locked) buttonTitle = 'Always enabled — required for cost breakdown';
+                if (locked) buttonTitle = LOCKED_DIMENSION_NOTE;
                 else if (isOn) buttonTitle = 'Click to disable';
                 return (
                   <button
@@ -2770,7 +2806,7 @@ export function DimensionsView(): React.JSX.Element {
           its type-specific editor. */}
       {config !== null && orderedRows.length > 0 && (
         <div className="flex flex-col gap-3">
-          <h3 ref={listHeadingRef} tabIndex={-1} className="text-sm font-medium text-text-secondary outline-none">
+          <h3 ref={listHeadingRef} tabIndex={-1} className="scroll-mt-4 text-sm font-medium text-text-secondary outline-none">
             {'Enabled dimensions '}
             <span className="text-text-muted ml-2 font-normal text-xs">click to configure · drag or use arrows to reorder</span>
           </h3>
@@ -2810,7 +2846,7 @@ export function DimensionsView(): React.JSX.Element {
               }
               return (
                 <div key={row.key} {...dnd.row} className={ROW_CARD_CLASS}>
-                  <button type="button" data-feedback="none" data-opens-editor onClick={() => { openRow(row, false); }} className={ROW_OPEN_CLASS}>
+                  <button type="button" data-feedback="none" data-opens-editor onClick={() => { openRow(row); }} className={ROW_OPEN_CLASS}>
                     <div className="flex items-center gap-3">
                       <span className="text-sm font-medium text-text-primary">{d.label}</span>
                       <span className="text-xs text-text-muted font-mono">{d.field}</span>
@@ -2868,7 +2904,7 @@ export function DimensionsView(): React.JSX.Element {
             }
             return (
               <div key={row.key} {...dnd.row} className={ROW_CARD_CLASS}>
-                <button type="button" data-feedback="none" data-opens-editor onClick={() => { openRow(row, false); }} className={ROW_OPEN_CLASS}>
+                <button type="button" data-feedback="none" data-opens-editor onClick={() => { openRow(row); }} className={ROW_OPEN_CLASS}>
                   <div className="flex items-center gap-3">
                     <span className="text-sm font-medium text-text-primary">{tag.label}</span>
                     {tag.tagName !== undefined && tag.tagName.length > 0 && (
