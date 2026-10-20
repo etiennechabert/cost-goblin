@@ -155,8 +155,6 @@ export function registerCostHandlers(app: AppContext): void {
     const costScope = await getQueryCostScope();
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
     const providers = await getQueryProviders(tier);
-    // The previous period is the capped range's length, so both compare
-    // windows of the same size.
     const dateRange = capToFreshnessLag(params.dateRange, ctx.now(), costScope.lagDays);
     if (dateRange === null || providersEmptyForRange(providers, dateRange)) {
       return {

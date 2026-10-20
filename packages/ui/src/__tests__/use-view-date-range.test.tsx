@@ -23,8 +23,7 @@ afterEach(() => {
 
 const LAG = 7;
 
-function renderWithScope(load: Promise<CostScopeConfig>) {
-  const api = new MockCostApi();
+function renderWithScope(load: Promise<CostScopeConfig>, api = new MockCostApi()) {
   vi.spyOn(api, 'getCostScope').mockReturnValue(load);
   const wrapper = ({ children }: { children: ReactNode }) => <CostApiProvider value={api}>{children}</CostApiProvider>;
   return renderHook(() => useViewDateRange(), { wrapper });
@@ -70,9 +69,23 @@ describe('useViewDateRange', () => {
     expect(result.current.dateRange).toBe(first);
   });
 
+  it('starts a later mount on the lag the first one loaded', async () => {
+    const api = new MockCostApi();
+    const first = renderWithScope(Promise.resolve({ ...DEFAULT_COST_SCOPE, lagDays: LAG }), api);
+    await waitFor(() => { expect(first.result.current.lagDays).toBe(LAG); });
+    first.unmount();
+
+    // The second mount's own load never answers: only the remembered lag can
+    // put its window on 7 days.
+    const { result } = renderWithScope(deferredScope().promise, api);
+    expect(result.current.dateRange).toEqual({ start: daysAgo(30 + LAG), end: daysAgo(LAG) });
+  });
+
   it('stays on the default lag when the cost scope fails to load', async () => {
-    const { result } = renderWithScope(Promise.reject(new Error('cost-scope.yaml: bad YAML')));
-    await act(async () => { await Promise.resolve(); });
+    const load = Promise.reject(new Error('cost-scope.yaml: bad YAML'));
+    const { result } = renderWithScope(load);
+    // Let the rejection reach the hook's handler before asserting nothing moved.
+    await act(async () => { await load.catch(() => undefined); await Promise.resolve(); });
     expect(result.current.lagDays).toBe(DEFAULT_LAG_DAYS);
     expect(result.current.dateRange).toEqual({ start: daysAgo(30 + DEFAULT_LAG_DAYS), end: daysAgo(DEFAULT_LAG_DAYS) });
   });

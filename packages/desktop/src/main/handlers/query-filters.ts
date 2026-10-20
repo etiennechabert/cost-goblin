@@ -52,12 +52,12 @@ export function registerFilterHandlers(app: AppContext): void {
     const range = requestedRange === undefined || cutoff === undefined
       ? requestedRange
       : capDateRange({ start: asDateString(requestedRange.start), end: asDateString(requestedRange.end) }, cutoff);
-    if (range === null) return [];
 
     const qb = new QueryBuilder();
     // Throws SecurityError for ids that match neither a built-in nor a tag
     // dimension — a renderer-supplied id must never reach the SQL verbatim.
     const { fieldExpr } = resolveField(asDimensionId(dimensionId), dimensions);
+    if (range === null) return [];
 
     const providers = await getQueryProviders('daily');
     const matSource = range === undefined
