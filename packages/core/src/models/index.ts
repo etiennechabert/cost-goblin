@@ -1,5 +1,6 @@
 export {
   getDescendantTagValues,
+  expandOrgNodeValues,
   findNode,
   getAncestorPath,
   getAllLeafValues,

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   getDescendantTagValues,
+  expandOrgNodeValues,
   findNode,
   getAncestorPath,
   getAllLeafValues,
@@ -98,6 +99,25 @@ describe('getAncestorPath', () => {
   it('returns self for unknown node', () => {
     const path = getAncestorPath(tree, 'unknown');
     expect(path).toEqual(['unknown']);
+  });
+});
+
+describe('expandOrgNodeValues', () => {
+  it('stands a node\'s name for itself and every value it rolls up, at any depth', () => {
+    expect(expandOrgNodeValues(tree, ['Engineering'])).toEqual(['Engineering', 'core-banking', 'payments', 'identity', 'platform']);
+    expect(expandOrgNodeValues(tree, ['SRE'])).toEqual(['SRE', 'sre-emea', 'sre-us']);
+    expect(expandOrgNodeValues(tree, ['Company'])).toEqual(['Company', ...getDescendantTagValues(company)]);
+  });
+
+  it('keeps a leaf or a value outside the tree as itself, each value once', () => {
+    expect(expandOrgNodeValues(tree, ['payments', 'new-team'])).toEqual(['payments', 'new-team']);
+    expect(expandOrgNodeValues(tree, ['Engineering', 'payments', 'SRE'])).toEqual(['Engineering', 'core-banking', 'payments', 'identity', 'platform', 'SRE', 'sre-emea', 'sre-us']);
+  });
+
+  it('keeps a node that rolls up nothing, or a name in no tree, as itself', () => {
+    const empty: OrgNode[] = [{ name: 'Empty', virtual: true, children: [] }];
+    expect(expandOrgNodeValues(empty, ['Empty'])).toEqual(['Empty']);
+    expect(expandOrgNodeValues([], ['Company'])).toEqual(['Company']);
   });
 });
 

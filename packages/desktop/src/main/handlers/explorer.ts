@@ -26,13 +26,14 @@ import type {
   ExplorerDailyRow,
   ExplorerTagColumn,
   DimensionsConfig,
+  OrgNode,
   ProviderSourceSpec,
   AggregatedTableParams,
   AggregatedTableResult,
 } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
 import { type AppContext, prefsPath } from './context.js';
-import { buildAccountReverseMap, columnForDimension, resolveRollupSource, tagSelectItems, tagValuesById, toNum, toStr } from './query-utils.js';
+import { buildAccountReverseMap, columnForDimension, filterOrgTree, isAccountGroupBy, resolveRollupSource, tagSelectItems, tagValuesById, toNum, toStr } from './query-utils.js';
 import { parseRowKeys, queryAggregatedRows } from './aggregated-table.js';
 import type { RunSql } from './aggregated-table.js';
 import { appendRowFilters, explorerGroupBy, explorerOrderBy } from './explorer-columns.js';
@@ -65,6 +66,8 @@ interface QueryContext {
   readonly tagSqlColumns: ReadonlyMap<string, string>;
   readonly dimensions: DimensionsConfig;
   readonly accountMap: ReadonlyMap<string, string>;
+  /** Resolves the org-tree node names the filters hold (filterOrgTree). */
+  readonly orgTree: readonly OrgNode[] | undefined;
 }
 
 interface BuildFreshSourceOptions {
@@ -160,11 +163,12 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
   const shared = { providers, startStr, endStr, windowDays, tier, tagColumns, tagSqlColumns, dimensions, accountMap } as const;
 
   if (periods.length === 0) {
-    return { empty: true, source: '', whereStr: '', ...shared };
+    return { empty: true, source: '', whereStr: '', orgTree: undefined, ...shared };
   }
 
   const accountReverseMap = buildAccountReverseMap(accountMap);
-  const filterPredicate = buildExplorerFilterPredicate(params.filters, dimensions, accountReverseMap);
+  const orgTree = await filterOrgTree(params.filters, dimensions, app.getOrgTreeConfig);
+  const filterPredicate = buildExplorerFilterPredicate(params.filters, dimensions, accountReverseMap, orgTree);
 
   // Explorer always reads Parquet directly — the materialized base uses a
   // slim schema (no description, usage_amount, list_cost) that Explorer's
@@ -175,7 +179,7 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
     ...(endHour === undefined ? {} : { endHour }),
     tier, periods, providers, dimensions, filterPredicate, accountReverseMap,
   });
-  return { empty: false, source, whereStr, ...shared };
+  return { empty: false, source, whereStr, orgTree, ...shared };
 }
 
 /** The dashboard Table widget hits the overview with the GLOBAL cost scope and
@@ -286,7 +290,7 @@ export function registerExplorerHandlers(app: AppContext): void {
       // user's dashboard filters apply. line_items is the per-grain COUNT(*),
       // so SUM(line_items) equals the raw line-item count the raw path returns
       // — the overview's totalRows stays consistent with the detailed table.
-      const filterPredicate = buildExplorerFilterPredicate(params.filters, qc.dimensions, await getAccountReverseMap());
+      const filterPredicate = buildExplorerFilterPredicate(params.filters, qc.dimensions, await getAccountReverseMap(), qc.orgTree);
       const filterClause = filterPredicate === null ? '' : ` AND (${filterPredicate})`;
       source = rollupSource;
       whereStr = `WHERE usage_date BETWEEN '${qc.startStr}' AND '${qc.endStr}'${filterClause}`;
@@ -441,8 +445,7 @@ export function registerExplorerHandlers(app: AppContext): void {
     `.trim();
 
     const rows = await runQuery(sql);
-    const isAccountDim = dimId === 'account' || dimId === 'account_id';
-    if (isAccountDim) {
+    if (isAccountGroupBy(dimId)) {
       const merged = new Map<string, { cost: number; rows: number }>();
       for (const r of rows) {
         const rawVal = toStr(r['val']);

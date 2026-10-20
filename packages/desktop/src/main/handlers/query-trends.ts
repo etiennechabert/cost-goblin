@@ -15,6 +15,8 @@ import type { AppContext } from './context.js';
 import {
   buildTrendResult,
   columnForDimension,
+  filterOrgTree,
+  isAccountGroupBy,
   mergeTrendRowsByEntity,
   providersEmptyForRange,
   resolveEntityName,
@@ -23,7 +25,7 @@ import {
 import { originStore } from '../query-log.js';
 
 export function registerTrendHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getQueryCostScope, getQueryProviders, runPreparedQuery, rollupStore } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getOrgTreeConfig, getQueryCostScope, getQueryProviders, runPreparedQuery, rollupStore } = app;
 
   ipcMain.handle('query:trends', (_event, params: TrendQueryParams): Promise<TrendResult> => originStore.run(params.origin ?? null, async () => {
     const dimensions = await getDimensions();
@@ -47,13 +49,14 @@ export function registerTrendHandlers(app: AppContext): void {
     ]);
     const isMat = matSource !== undefined;
 
-    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, providers, accountReverseMap, costScope, materializedSource: matSource };
+    const orgTree = await filterOrgTree(params.filters, dimensions, getOrgTreeConfig);
+    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, providers, accountReverseMap, orgTree, costScope, materializedSource: matSource };
     const { sql, params: queryParams } = buildTrendQuery(params, qcOpts);
     logger.info('query:trends', { groupBy: params.groupBy, materialized: isMat });
 
     const rows = await runPreparedQuery(sql, queryParams, isMat);
     const result = buildTrendResult(rows, params.deltaThreshold, params.percentThreshold);
-    if (params.groupBy === 'account' || params.groupBy === 'account_id') {
+    if (isAccountGroupBy(params.groupBy)) {
       return {
         ...result,
         increases: mergeTrendRowsByEntity(result.increases.map(r => ({ ...r, entity: asEntityRef(resolveEntityName(r.entity, accountMap)) }))),

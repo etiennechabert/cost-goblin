@@ -15,8 +15,11 @@ import {
 import type {
   CostResult,
   CostRow,
+  DailyCostDay,
+  DailyCostsResult,
   DateRange,
   DimensionsConfig,
+  Dollars,
   TrendResult,
   TrendRow,
   MissingTagsResult,
@@ -27,6 +30,7 @@ import type {
   DailyCost,
   DistributionSlice,
   OrgNode,
+  OrgTreeConfig,
   ProviderName,
   ProviderSourceSpec,
 } from '@costgoblin/core';
@@ -125,6 +129,32 @@ export function isOwnerGroupBy(groupBy: string, dimensions: DimensionsConfig): b
   return dimensions.tags.some(
     t => t.concept === 'owner' && tagDimColumn(t) === groupBy,
   );
+}
+
+/** A query grouped by account returns account ids, which the handlers show
+ *  by display name (resolveEntityName). */
+export function isAccountGroupBy(groupBy: string): boolean {
+  return groupBy === 'account' || groupBy === 'account_id';
+}
+
+/** The configured org tree, or undefined when it has no nodes. */
+export async function configuredOrgTree(getOrgTreeConfig: () => Promise<OrgTreeConfig>): Promise<readonly OrgNode[] | undefined> {
+  const { tree } = await getOrgTreeConfig();
+  return tree.length > 0 ? tree : undefined;
+}
+
+/** The org tree that resolves the node names a query's owner-dimension filter
+ *  may hold (QueryContextOptions.orgTree), or undefined when no filter has a
+ *  value on that dimension or no tree is configured. The tree is read only
+ *  when a filter needs it, so a broken org-tree.yaml fails the queries whose
+ *  rows it would change rather than every dashboard query. */
+export async function filterOrgTree(
+  filters: Readonly<Partial<Record<string, readonly string[]>>>,
+  dimensions: DimensionsConfig,
+  getOrgTreeConfig: () => Promise<OrgTreeConfig>,
+): Promise<readonly OrgNode[] | undefined> {
+  const filtersOwner = Object.entries(filters).some(([id, values]) => isOwnerGroupBy(id, dimensions) && (values ?? []).some(v => v !== ''));
+  return filtersOwner ? configuredOrgTree(getOrgTreeConfig) : undefined;
 }
 
 export function resolveEntityName(entity: string, accountMap: Map<string, string>): string {
@@ -261,6 +291,54 @@ export function buildCostResult(rows: RawRow[], dateRange: DateRange): CostResul
     topServices,
     dateRange,
   };
+}
+
+function dailyDate(raw: unknown): string {
+  if (raw instanceof Date) return raw.toISOString().slice(0, 10);
+  return typeof raw === 'string' ? raw : '';
+}
+
+function toDailyCostDay([date, breakdown]: readonly [string, Record<string, number>]): DailyCostDay {
+  const total = Object.values(breakdown).reduce((s, v) => s + v, 0);
+  const typedBreakdown: Record<string, Dollars> = {};
+  for (const [k, v] of Object.entries(breakdown)) {
+    typedBreakdown[k] = asDollars(v);
+  }
+  return { date: asDateString(date), total: asDollars(total), breakdown: typedBreakdown };
+}
+
+/** The daily result for buildDailyCostsQuery's rows (date, group_name, cost):
+ *  one entry per date, each group's cost under the series name `seriesName`
+ *  gives it. Groups that get the same name (account ids sharing a display
+ *  name, the owner values under one org-tree node) are summed on each day, so
+ *  every day's total stays the sum of its rows. */
+export function buildDailyCostsResult(rows: readonly RawRow[], seriesName: (group: string) => string): DailyCostsResult {
+  const dayMap = new Map<string, Record<string, number>>();
+  const groupSet = new Set<string>();
+  let totalCost = 0;
+
+  for (const row of rows) {
+    const date = dailyDate(row['date']);
+    const rawGroup = row['group_name'];
+    const group = seriesName(typeof rawGroup === 'string' ? rawGroup : '');
+    const cost = Number(row['cost'] ?? 0);
+
+    groupSet.add(group);
+    totalCost += cost;
+
+    const existing = dayMap.get(date);
+    if (existing === undefined) {
+      dayMap.set(date, { [group]: cost });
+    } else {
+      existing[group] = (existing[group] ?? 0) + cost;
+    }
+  }
+
+  const days = [...dayMap.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(toDailyCostDay);
+
+  return { days, groups: [...groupSet], totalCost: asDollars(totalCost) };
 }
 
 export function buildTrendResult(rows: RawRow[], deltaThreshold: number, percentThreshold: number): TrendResult {
@@ -548,4 +626,24 @@ export function applyOrgTreeRollup(result: CostResult, tree: readonly OrgNode[])
   }
 
   return { ...result, rows: rolledUpRows };
+}
+
+/** Each owner value the tree rolls up, mapped to the top-level node whose row
+ *  applyOrgTreeRollup counts it in: every value getDescendantTagValues lists
+ *  under that node (a virtual node's descendants, a real node's own value and
+ *  its descendants'). Values outside the tree are left out (one spelled like
+ *  a virtual node keeps its name, so it sums into that node's series, as a
+ *  filter on the name keeps it: expandOrgNodeValues); a value listed under
+ *  two top-level nodes goes to the first. Renaming each value this way
+ *  and summing, as the daily series do, keeps a node whose total is zero or
+ *  negative, where applyOrgTreeRollup drops it: on a day with a credit, the
+ *  day's bars still add up to its total. */
+export function rollupNodeByValue(tree: readonly OrgNode[]): Map<string, string> {
+  const nodeByValue = new Map<string, string>();
+  for (const node of tree) {
+    for (const value of getDescendantTagValues(node)) {
+      if (!nodeByValue.has(value)) nodeByValue.set(value, node.name);
+    }
+  }
+  return nodeByValue;
 }

@@ -16,15 +16,15 @@ import type { QueryContextOptions } from '../query/builder.js';
 import { SecurityError } from '../query/identifier-validator.js';
 import { rollupGrainColumns } from '../rollup/grain.js';
 import { asDateString, asDimensionId, asEntityRef, asProviderName, asTagValue, tagDimColumn, tagSqlColumn } from '../types/branded.js';
-import type { DimensionsConfig, TagDimension } from '../types/config.js';
+import type { DimensionsConfig, OrgNode, TagDimension } from '../types/config.js';
 import type { CostScopeConfig, ExclusionRule } from '../types/cost-scope.js';
 import type { FilterMap } from '../types/query.js';
 
 /**
  * The filter, entity and DDL builders on real Parquet through real DuckDB:
- * multi-value and account-name filters bound as parameters, the org-node
- * restriction, the materialized base table, a December rollup partition's
- * upper bound, and the grain probe with exclusions.
+ * multi-value, account-name and org-tree-node filters bound as parameters,
+ * the org-node restriction, the materialized base table, a December rollup
+ * partition's upper bound, and the grain probe with exclusions.
  */
 
 const PROVIDER = asProviderName('aws');
@@ -149,6 +149,31 @@ describe('query builders on DuckDB', () => {
     it('restricts the entities to an org node', async () => {
       const q = buildCostQuery({ groupBy: asDimensionId('account'), dateRange: JAN, filters: {}, orgNodeValues: ['333', '444'] }, opts);
       expect(totalsByEntity(await runPrepared(conn, q.sql, q.params))).toEqual({ '333': 4, '444': 8 });
+    });
+
+    it('keeps every value under the org-tree node a filter on the owner dimension names', async () => {
+      const team = asDimensionId(tagDimColumn(TEAM));
+      const orgTree: readonly OrgNode[] = [{ name: 'Eng', virtual: true, children: [{ name: 'core' }, { name: 'data' }] }];
+      const owned: QueryContextOptions = { ...opts, dimensions: { ...dimensions, tags: [{ ...TEAM, concept: 'owner' }] }, orgTree };
+      const byNode = (filterValues: readonly string[], o: QueryContextOptions) =>
+        buildCostQuery({ groupBy: asDimensionId('account'), dateRange: JAN, filters: filters({ [team]: filterValues }) }, o);
+
+      const q = byNode(['Eng'], owned);
+      expect(q.params.slice(0, 3)).toEqual(['Eng', 'core', 'data']);
+      expect(totalsByEntity(await runPrepared(conn, q.sql, q.params))).toEqual({ '111': 1, '222': 2, '333': 4 });
+      const withNone = byNode(['Eng', ''], owned);
+      expect(totalsByEntity(await runPrepared(conn, withNone.sql, withNone.params))).toEqual({ '111': 1, '222': 2, '333': 4 });
+
+      // Without the tree, or on a tag that isn't the owner, the name is a value like any other.
+      for (const o of [{ ...owned, orgTree: undefined }, { ...opts, orgTree }]) {
+        const plain = byNode(['Eng'], o);
+        expect(await runPrepared(conn, plain.sql, plain.params)).toEqual([]);
+      }
+
+      const detail = buildEntityDetailQuery({ entity: asEntityRef('Eng'), dimension: team, dateRange: JAN, filters: {} }, owned);
+      expect((await runPrepared(conn, detail.sql, detail.params)).map(r => [r['account_id'], Number(r['cost'])])).toEqual([
+        ['111', 1], ['222', 2], ['333', 4],
+      ]);
     });
 
     it('drills into every account behind a display name', async () => {

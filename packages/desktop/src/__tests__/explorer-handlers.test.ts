@@ -2,7 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { registerExplorerHandlers } from '../main/handlers/explorer.js';
-import { at, createHarness, list, num, str, type Harness, type HarnessOptions } from './helpers/ipc-harness.js';
+import { FIXTURE_COMPANY_VALUES, at, createHarness, list, num, str, type Harness, type HarnessOptions } from './helpers/ipc-harness.js';
 
 /** The Explorer's IPC channels over a real in-process DuckDB and a copy of
  *  the synthetic tree: hourly drill-down, row clamping, the ungrouped
@@ -89,6 +89,12 @@ describe('explorer:query-overview', () => {
     const unfiltered = await h.ipc.invoke('explorer:query-overview', { filters: {}, dateRange: FEBRUARY, applyCostScope: true });
     expect(h.db.statements.at(-1)).toContain('rollup.parquet');
     expect(list(at(unfiltered, 'dailyTotals'))).toHaveLength(28);
+
+    // An org-tree node a dashboard filter names keeps the values under it here too.
+    const byNode = await h.ipc.invoke('explorer:query-overview', { filters: { tag_team: ['Company'] }, dateRange: FEBRUARY, applyCostScope: true });
+    expect(h.db.statements.at(-1)).toContain('rollup.parquet');
+    expect(num(at(byNode, 'totalCost'))).toBeGreaterThan(0);
+    expect(byNode).toEqual(await h.ipc.invoke('explorer:query-overview', { filters: { tag_team: FIXTURE_COMPANY_VALUES }, dateRange: FEBRUARY, applyCostScope: true }));
   });
 
   // Answering without it would show unscoped totals as if they were scoped.
@@ -158,6 +164,22 @@ describe('explorer:query-aggregated-table', () => {
   it('is empty without data in range', async () => {
     const h = await explorerApp();
     expect(await h.ipc.invoke('explorer:query-aggregated-table', { filters: {}, dateRange: NO_DATA, groupByColumns: [], rowLimit: 10 })).toMatchObject({ rows: [], totalRows: 0 });
+  });
+
+  // The dashboard table widget gets the filter a click on a rolled-up
+  // "Company" slice sets, and keeps what the other widgets keep for it.
+  it('keeps every value under the org-tree node a dashboard filter names', async () => {
+    const h = await explorerApp();
+    const byTeams = (teams: readonly string[]): Promise<unknown> => h.ipc.invoke('explorer:query-aggregated-table', {
+      filters: { tag_team: teams }, dateRange: FEBRUARY, groupByColumns: ['tag_team'], rowLimit: 1000,
+    });
+    const byNode = await byTeams(['Company']);
+    expect(list(at(byNode, 'rows')).length).toBeGreaterThan(0);
+    expect(byNode).toEqual(await byTeams(FIXTURE_COMPANY_VALUES));
+    const overview = (teams: readonly string[]): Promise<unknown> => h.ipc.invoke('explorer:query-overview', {
+      filters: { tag_team: teams }, dateRange: FEBRUARY, applyCostScope: true,
+    });
+    expect(await overview(['Company'])).toEqual(await overview(FIXTURE_COMPANY_VALUES));
   });
 });
 
