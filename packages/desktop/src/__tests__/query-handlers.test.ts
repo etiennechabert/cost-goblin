@@ -285,7 +285,7 @@ describe('the cost scope freshness lag', () => {
     expect(await h.ipc.invoke('query:filter-values', 'service', {}, WITHIN_LAG)).toEqual([]);
     // The dimension allow-list still runs first.
     await expect(h.ipc.invoke('query:filter-values', 'service; DROP TABLE x', {}, WITHIN_LAG)).rejects.toThrow('Unknown dimension "service; DROP TABLE x"');
-    expect(h.db.statements.length).toBe(before);
+    expect(h.db.statements).toHaveLength(before);
   });
 
   it('leaves the newest days to filter values that bypass the cost scope', async () => {

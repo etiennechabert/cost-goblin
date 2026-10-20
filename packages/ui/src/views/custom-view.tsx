@@ -176,8 +176,9 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
   // render would otherwise fire, writing those defaults over the shared file.
   // Gating on an async prefs read instead would drop any change the user made
   // while that read was still in flight — a ref flip doesn't re-run the effect.
-  // It runs on `pickedRange`, not `dateRange`: the default window moving to
-  // the cost scope's lag once that loads isn't a change to write either.
+  // It runs on and writes `pickedRange`, never the default window: stored, that
+  // would stop following the cost scope's lag (and moving to it once it loads
+  // isn't a change to write either).
   const saveReadyRef = useRef(false);
   const savePendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -189,7 +190,7 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
     savePendingRef.current = setTimeout(() => {
       savePendingRef.current = null;
       api.saveExplorerPreferences({
-        lastUsedDateRange: dateRange,
+        ...(pickedRange === null ? {} : { lastUsedDateRange: pickedRange }),
         lastUsedGranularity: granularity,
         compareEnabled,
       }).catch(() => undefined);

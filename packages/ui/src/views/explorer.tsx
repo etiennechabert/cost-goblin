@@ -150,10 +150,11 @@ export function ExplorerView(): React.JSX.Element {
   // reflects the new state locally, so a write failure just means the
   // preference won't survive a reload (rare edge case, not worth surfacing).
   // Saves are merged onto the on-disk prefs, so each of these sends ONLY the
-  // fields it is actually changing.
-  function saveSessionPrefs(range: DateRange, gran: Granularity) {
+  // fields it is actually changing. A null range is the default window,
+  // which must not be stored: it would stop following the lag.
+  function saveSessionPrefs(range: DateRange | null, gran: Granularity) {
     api.saveExplorerPreferences({
-      lastUsedDateRange: range,
+      ...(range === null ? {} : { lastUsedDateRange: range }),
       lastUsedGranularity: gran,
     }).catch(() => undefined);
   }
@@ -177,11 +178,11 @@ export function ExplorerView(): React.JSX.Element {
   // after preferences have loaded — the prefsLoadedRef flag is set in the
   // mount effect once the initial load completes (or fails). This prevents
   // redundant writes when restoring persisted values on mount. It runs on
-  // `pickedRange`, not `dateRange`: the default window moving to the cost
-  // scope's lag isn't a change to write.
+  // `pickedRange`, not `dateRange`: the default window (moving to the cost
+  // scope's lag once it loads) is never written.
   useEffect(() => {
     if (!prefsLoadedRef.current) return;
-    saveSessionPrefs(dateRange, granularity);
+    saveSessionPrefs(pickedRange, granularity);
   }, [pickedRange, granularity]);
 
   const cancelReadyRef = useRef(false);

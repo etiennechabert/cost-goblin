@@ -128,12 +128,12 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
   // values it just read. This view doesn't manage column visibility, so it
   // omits hiddenColumns/columnOrder entirely — the save merges onto the
   // on-disk prefs, leaving the user's curated column set (owned by the
-  // Explorer) untouched. It runs on `pickedRange`, not `dateRange`: the
-  // default window moving to the cost scope's lag isn't a change to write.
+  // Explorer) untouched. It runs on and writes `pickedRange`, never the
+  // default window: stored, that would stop following the cost scope's lag.
   useEffect(() => {
     if (!prefsLoadedRef.current) return;
     api.saveExplorerPreferences({
-      lastUsedDateRange: dateRange,
+      ...(pickedRange === null ? {} : { lastUsedDateRange: pickedRange }),
       lastUsedGranularity: granularity,
     }).catch(() => undefined);
   }, [pickedRange, granularity, api]);

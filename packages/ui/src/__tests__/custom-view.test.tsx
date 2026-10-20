@@ -119,6 +119,30 @@ describe('CustomView', () => {
     expect(saved?.compareEnabled).toBe(false);
   });
 
+  it('saves a compare toggle without the default window it never picked', async () => {
+    const api = new MockCostApi();
+    const user = userEvent.setup();
+    render(
+      <PaletteProvider>
+        <CostApiProvider value={api}>
+          <CustomView spec={SPEC} headerSubtitle="hello" />
+        </CostApiProvider>
+      </PaletteProvider>,
+    );
+    await waitFor(() => {
+      expect(screen.getByText('Total Cost')).toBeDefined();
+    });
+
+    await user.click(screen.getByRole('button', { name: /Last 30 days/ }));
+    await user.click(screen.getByRole('checkbox', { name: 'Compare to previous period' }));
+
+    await waitFor(() => {
+      expect(api.savedExplorerPreferences.at(-1)?.compareEnabled).toBe(true);
+    }, { timeout: 2000 });
+    // Stored, the default window would stop following the cost scope's lag.
+    expect(api.savedExplorerPreferences.filter(p => 'lastUsedDateRange' in p)).toEqual([]);
+  });
+
   describe('with a cost scope lag of 7 days', () => {
     // Pin Date so the window captured at mount and the one asserted fall on
     // the same day even across a UTC midnight.
