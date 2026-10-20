@@ -267,6 +267,29 @@ describe('CustomView — group-bys on a dimension that is not enabled', () => {
   });
 });
 
+describe('CustomView — rollup build', () => {
+  it('shows the build overlay instead of the widgets while the viewed months are being built', async () => {
+    const api = new ViewApi();
+    render(
+      <PaletteProvider>
+        <CostApiProvider value={api}>
+          <CustomView
+            spec={view([{ id: 'pie', type: 'pie', size: 'medium', groupBy: asDimensionId('service') }])}
+            rollupStatus={{ state: 'computing', done: 0, total: 2, periods: ['2026-02', '2026-03'], active: ['2026-02'] }}
+          />
+        </CostApiProvider>
+      </PaletteProvider>,
+    );
+
+    expect(await screen.findByText('Preparing your cost data')).toBeDefined();
+    // The dimensions have loaded (the filter bar shows), so the widgets would have mounted by now.
+    expect(await screen.findByRole('button', { name: 'Environment' })).toBeDefined();
+    expect(document.querySelector('[data-widget-id]')).toBeNull();
+    expect(screen.queryByText('Loading...')).toBeNull();
+    expect(api.costCalls).toEqual([]);
+  });
+});
+
 describe('CustomView — filter bar', () => {
   it('orders chips by dimension concept and pre-applies dimension defaults', async () => {
     const api = new ViewApi();
@@ -287,6 +310,8 @@ describe('CustomView — filter bar', () => {
       .filter(t => /^(Environment|Product|Team|Business unit|Account|Cost center)/.test(t));
     expect(chips).toEqual(['Environment: prod', 'Product', 'Team', 'Business unit', 'Account', 'Cost center']);
     await waitFor(() => { expect(api.costCalls.at(-1)?.filters).toEqual({ tag_env: ['prod'] }); });
+    // The widgets mount with the defaults already set: none queries without them first.
+    expect(api.costCalls.map(c => c.filters)).toEqual(api.costCalls.map(() => ({ tag_env: ['prod'] })));
   });
 
   it('serves dropdowns from the prefetch, and queries live once another filter narrows them', async () => {

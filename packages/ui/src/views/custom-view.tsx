@@ -131,7 +131,7 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
   // view received an explicit `initialFilter` (drill-through, saved state).
   // Re-mounting the view (navigation, reload) re-applies defaults — that's
   // the "always re-apply on open" contract.
-  const defaultsAppliedRef = useRef(initialFilter !== undefined);
+  const [defaultsApplied, setDefaultsApplied] = useState(initialFilter !== undefined);
   const [hourlyHint, setHourlyHint] = useState(false);
 
   // Urgent: the filter bar and the default filters below wait on this, and as
@@ -147,16 +147,18 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
   const enabledIds = useMemo(() => rawDimensions.map(getDimensionId), [rawDimensions]);
   const shownSpec = useMemo(() => withEnabledGroupBys(spec, enabledIds), [spec, enabledIds]);
   // The widgets wait for the dimensions, so none first queries a group-by it
-  // is about to leave (a disabled dimension is read from the raw Parquet).
+  // is about to leave (a disabled dimension is read from the raw Parquet), or
+  // without the default filters.
   const dimensionsSettled = dimensionsQuery.status === 'success' || dimensionsQuery.status === 'error';
 
-  useEffect(() => {
-    if (defaultsAppliedRef.current) return;
-    if (dimensionsQuery.status !== 'success') return;
+  // Seeded while rendering, not in an effect: the widgets mount in the commit
+  // the dimensions arrive in, and an effect would run after their first
+  // queries had gone out without the defaults.
+  if (!defaultsApplied && dimensionsQuery.status === 'success') {
+    setDefaultsApplied(true);
     const defaults = defaultsFromDimensions(dimensionsQuery.data);
-    defaultsAppliedRef.current = true;
     if (Object.keys(defaults).length > 0) setFilters(defaults);
-  }, [dimensionsQuery]);
+  }
 
   const previousDateRange = useMemo(
     () => previousRangeFor(dateRange),

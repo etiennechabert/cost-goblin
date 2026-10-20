@@ -377,6 +377,21 @@ describe('WidgetInspector — group by', () => {
     expect(lastChange()).toStrictEqual({ id: 'w', type: 'pie', size: 'medium', groupBy: asDimensionId('tag_team') });
   });
 
+  it('shows a dimension that is not enabled as what the chart is configured with, and moves off it', async () => {
+    const { user, lastChange } = setup({ id: 'w', type: 'pie', size: 'medium', groupBy: asDimensionId('account') });
+
+    const select = screen.getByRole('combobox', { name: 'Group by' });
+    expect(valueOf(select)).toBe('account');
+    const configured = within(select).getByRole('option', { name: 'account (not enabled)' });
+    expect(configured).toHaveProperty('disabled', true);
+    expect(within(select).getAllByRole('option').map(o => o.textContent)).toEqual(['account (not enabled)', 'Service', 'Region', 'Team']);
+
+    await user.selectOptions(select, 'Region');
+
+    expect(lastChange()).toStrictEqual({ id: 'w', type: 'pie', size: 'medium', groupBy: REGION });
+    expect(within(select).queryByRole('option', { name: 'account (not enabled)' })).toBeNull();
+  });
+
   it.each<WidgetSpec>([
     { id: 'w', type: 'summary', size: 'small' },
     { id: 'w', type: 'table', size: 'full' },
