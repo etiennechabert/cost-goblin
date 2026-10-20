@@ -184,6 +184,28 @@ describe('Dimension editor — Disable dimension', () => {
 });
 
 describe('Rollup impact — dimension names', () => {
+  it('from the keyboard, ask before dropping the open editor’s unsaved edits', async () => {
+    const { user } = renderView([dim('region'), dim(tagSqlColumn(TEAM))]);
+    await openRow(user, 'Region');
+    await user.type(screen.getByLabelText('Description'), 'draft note');
+    const team = await within(impactPanel()).findByRole('button', { name: 'Team' });
+
+    team.focus();
+    await user.keyboard('{Enter}');
+    const dialog = await screen.findByRole('dialog', { name: 'Discard unsaved changes?' });
+    await user.click(within(dialog).getByRole('button', { name: 'Keep editing' }));
+    await waitFor(() => { expect(screen.queryByRole('dialog')).toBeNull(); });
+    expect(screen.getByLabelText('Display Label')).toHaveProperty('value', 'Region');
+    expect(screen.getByLabelText('Description')).toHaveProperty('value', 'draft note');
+
+    // With nothing unsaved, the key press switches editors straight away.
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await openRow(user, 'Region');
+    team.focus();
+    await user.keyboard('{Enter}');
+    expect(screen.getByLabelText('Display Label')).toHaveProperty('value', 'Team');
+  });
+
   it('open that dimension’s editor and bring it into view, again when asked again', async () => {
     const { scroll, user } = renderView([
       dim('region', { outlier: true, marginalMultiplier: 16.3, marginalRows: 1_600_000, impactShare: 0.9 }),
