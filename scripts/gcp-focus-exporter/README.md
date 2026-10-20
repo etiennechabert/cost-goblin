@@ -129,37 +129,43 @@ pick whichever suits you.
 gcloud, Docker and your credentials are already there.
 
 [**Open Cloud Shell**](https://shell.cloud.google.com/?show=ide%2Cterminal)
-and paste this into its terminal, with your own values on the four `export`
+and paste this into its terminal, with your own values on the six `export`
 lines. It downloads this folder from the latest release, rather than the whole
 repository, and runs `deploy.sh` with those values:
 
 ```bash
-export FOCUS_TABLE=my-project.gcp_billing_immutable_XXXXXX_eu.gcp_billing_export_focus_XXXXXX
+export PROJECT_ID=my-project
+export DATASET=gcp_billing_immutable_XXXXXX_eu
+export TABLE=gcp_billing_export_focus_XXXXXX
 export BUCKET=your-company-billing
 export LOCATION=EU
 export REGION=europe-west1
-curl -fsSL https://github.com/etiennechabert/cost-goblin/releases/latest/download/gcp-focus-exporter.tar.gz | tar xz && cd gcp-focus-exporter && ./deploy.sh
+curl -fsSL https://github.com/etiennechabert/cost-goblin/releases/latest/download/gcp-focus-exporter.tar.gz | tar xz && cd gcp-focus-exporter && FOCUS_TABLE=${PROJECT_ID}.${DATASET}.${TABLE} ./deploy.sh
 ```
 
-- `FOCUS_TABLE`: the billing export table as `project.dataset.table`, the
-  *Table ID* of the `gcp_billing_export_focus_…` table in BigQuery.
+- `PROJECT_ID`: the project holding the billing export dataset. The job runs
+  there too.
+- `DATASET`: the billing export dataset, `gcp_billing_immutable_…` in
+  BigQuery's Explorer.
+- `TABLE`: the FOCUS table inside it, `gcp_billing_export_focus_…`.
 - `BUCKET`: the bucket from [Before you start](#before-you-start), without `gs://`.
-- `LOCATION`: the export dataset's location, which the bucket's must match.
+- `LOCATION`: the dataset's location, which the bucket's must match.
 - `REGION`: where the job runs, a region inside `LOCATION`: `europe-west1`
   for `EU`, `us-central1` for `US`.
 
 `deploy.sh` reads every setting from the environment, so the others at its top
-(`PROJECT_ID` when the job runs outside the table's project, `TIERS`,
-`SCHEDULE`, …) take an `export` line the same way. To update the exporter
-later, paste the same block again.
+(`TIERS`, `SCHEDULE`, …) take an `export` line the same way. To run the job in
+another project than the export's, set `PROJECT_ID` to the job's project and
+write the export's project in place of `${PROJECT_ID}` in `FOCUS_TABLE`. To
+update the exporter later, run `cd ~` and paste the same block again.
 
 ### 2. Locally, if you already have the gcloud CLI
 
-Export the same four variables, then run it from a clone of this repository:
+Export the same six variables, then run it from a clone of this repository:
 
 ```bash
 cd scripts/gcp-focus-exporter
-./deploy.sh
+FOCUS_TABLE=${PROJECT_ID}.${DATASET}.${TABLE} ./deploy.sh
 ```
 
 It enables the APIs, creates the watermark dataset and a service account,
