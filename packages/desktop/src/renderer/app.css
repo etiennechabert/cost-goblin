@@ -81,10 +81,11 @@ body {
 /* Pointer feedback every control gets without asking. In the base layer, so a
    component's own utilities (cursor-grab, cursor-default, disabled:…) win. */
 @layer base {
-  /* Tailwind v4 leaves controls on the arrow cursor. Radix and cmdk mark a
-     disabled item with aria-disabled or data-disabled. */
+  /* Tailwind v4 leaves controls on the arrow cursor. Radix marks a disabled
+     item with an empty data-disabled, cmdk with "true" (and "false" on every
+     enabled one): only a value other than "false" means disabled. */
   button:not(:disabled, [aria-disabled='true']),
-  :is([role='button'], [role='tab'], [role='menuitem'], [role='menuitemcheckbox'], [role='menuitemradio'], [role='option']):not([aria-disabled='true'], [data-disabled]),
+  :is([role='button'], [role='tab'], [role='menuitem'], [role='menuitemcheckbox'], [role='menuitemradio'], [role='option']):not([aria-disabled='true'], [data-disabled]:not([data-disabled='false'])),
   select:not(:disabled),
   summary,
   input:is([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file']):not(:disabled),
@@ -99,11 +100,11 @@ body {
      containing block of what it positions, or shift it under the pointer
      between press and release. `data-feedback="none"` opts out a button whose
      visible target is drawn by an ancestor (a card it stretches over). */
-  :where(button, [role='button']):not(:disabled, [aria-disabled='true'], [data-disabled], [data-feedback='none']):hover {
+  :where(button, [role='button']):not(:disabled, [aria-disabled='true'], [data-disabled]:not([data-disabled='false']), [data-feedback='none']):hover {
     background-image: linear-gradient(color-mix(in oklab, currentColor 8%, transparent), color-mix(in oklab, currentColor 8%, transparent));
   }
 
-  :where(button, [role='button']):not(:disabled, [aria-disabled='true'], [data-disabled], [data-feedback='none']):active {
+  :where(button, [role='button']):not(:disabled, [aria-disabled='true'], [data-disabled]:not([data-disabled='false']), [data-feedback='none']):active {
     background-image: linear-gradient(color-mix(in oklab, currentColor 16%, transparent), color-mix(in oklab, currentColor 16%, transparent));
   }
 }

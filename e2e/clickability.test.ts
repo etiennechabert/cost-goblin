@@ -722,6 +722,21 @@ test.describe('Clickability (workspace mode)', () => {
       })
       .map(b => b.getAttribute('aria-label') ?? b.textContent.trim()));
     expect(await onArrow()).toEqual([]);
+    // Disabled items lose it: Radix marks them with an empty data-disabled,
+    // cmdk with "true", and cmdk writes "false" on every enabled item.
+    const optionCursor = await p.evaluate(() => {
+      const probe = (disabled: string): string => {
+        const el = document.createElement('div');
+        el.setAttribute('role', 'option');
+        el.setAttribute('data-disabled', disabled);
+        document.body.append(el);
+        const cursor = getComputedStyle(el).cursor;
+        el.remove();
+        return cursor;
+      };
+      return { enabled: probe('false'), cmdkDisabled: probe('true'), radixDisabled: probe('') };
+    });
+    expect(optionCursor).toEqual({ enabled: 'pointer', cmdkDisabled: 'auto', radixDisabled: 'auto' });
 
     // A hover tints the button, a press tints it more: the click shows it landed.
     const button = p.getByRole('navigation', { name: 'Dashboards and analysis' }).getByRole('button', { name: 'Baselines' });
