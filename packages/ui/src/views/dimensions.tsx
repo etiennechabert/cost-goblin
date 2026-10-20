@@ -1850,6 +1850,8 @@ function ImpactDimName({ label, onOpen, className, children }: Readonly<{
       type="button"
       onClick={onOpen}
       title={`Configure ${label}`}
+      // Named apart from the dimension's pill, which shows the same label.
+      aria-label={`Configure ${label}`}
       data-opens-editor
       className={`${className} cursor-pointer text-left underline-offset-2 hover:underline focus-visible:underline`}
     >
