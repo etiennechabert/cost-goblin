@@ -175,17 +175,17 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
   const productDim = rawDimensions.find(isProductDimension);
   const regionDimId = asDimensionId('region');
 
-  const wantedPies = [
-    pie1DimId ?? accountDimId,
-    pie2DimId ?? (productDim === undefined ? regionDimId : getDimensionId(productDim)),
-    pie3DimId ?? serviceDimId,
-  ];
   // getDimensions lists only the enabled dimensions: a default pie on a
-  // disabled one (Account can be) moves to an enabled dimension instead.
-  const shownPies = enabledGroupBys(wantedPies, rawDimensions.map(getDimensionId));
-  const effectivePie1 = shownPies[0] ?? accountDimId;
-  const effectivePie2 = shownPies[1] ?? regionDimId;
-  const effectivePie3 = shownPies[2] ?? serviceDimId;
+  // disabled one (Account can be) moves to an enabled dimension instead. The
+  // defaults are resolved among themselves, not against the user's picks, so
+  // picking a dimension in one pie never moves another.
+  const defaultPies = enabledGroupBys(
+    [accountDimId, productDim === undefined ? regionDimId : getDimensionId(productDim), serviceDimId],
+    rawDimensions.map(getDimensionId),
+  );
+  const effectivePie1 = pie1DimId ?? defaultPies[0] ?? accountDimId;
+  const effectivePie2 = pie2DimId ?? defaultPies[1] ?? regionDimId;
+  const effectivePie3 = pie3DimId ?? defaultPies[2] ?? serviceDimId;
   // The pies wait for the dimensions, so none first queries a default it is
   // about to leave. If they fail to load, the defaults are queried as they are.
   const dimensionsSettled = dimensionsQuery.status === 'success' || dimensionsQuery.status === 'error';
