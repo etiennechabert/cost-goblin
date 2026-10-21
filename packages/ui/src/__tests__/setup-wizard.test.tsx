@@ -2,6 +2,7 @@ import type { CheckConfigBeaconParams, CheckConfigBeaconResult, CostGoblinConfig
 import { asBucketPath } from '@costgoblin/core/browser';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
+import { useLayoutEffect } from 'react';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { MOCK_GCP_PROVIDER, MOCK_MIXED_PROVIDER_CONFIG, MockCostApi } from '../__fixtures__/mock-api.js';
@@ -260,6 +261,17 @@ describe('SetupWizard window drag region', () => {
   });
 });
 
+/** Clears the workspace name in the commit that mounts the wizard: the field is
+ *  in the DOM, but none of the wizard's mount effects has run yet. A keystroke
+ *  lands there when the wizard mounted from an async update (as in the app
+ *  shell) and React has not flushed its effects by the user's first input. */
+function ClearNameOnMount(): null {
+  useLayoutEffect(() => {
+    fireEvent.change(screen.getByLabelText('Workspace name'), { target: { value: '' } });
+  }, []);
+  return null;
+}
+
 describe('SetupWizard workspace naming', () => {
   it('starts on the naming step with the field prefilled when workspaceNaming is present', () => {
     const api = new MockCostApi();
@@ -305,6 +317,16 @@ describe('SetupWizard workspace naming', () => {
     await user.type(input, 'bad name!');
     expect(screen.getByText(/letters, digits/)).toBeDefined();
     expect(screen.getByRole('button', { name: 'Continue' }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it('keeps a name cleared before the mount effects have run', () => {
+    render(
+      <CostApiProvider value={new MockCostApi()}>
+        <SetupWizard onComplete={vi.fn()} workspaceNaming={{ initialName: 'default' }} />
+        <ClearNameOnMount />
+      </CostApiProvider>,
+    );
+    expect(screen.getByLabelText('Workspace name')).toHaveProperty('value', '');
   });
 
   // Defense in depth: the host holds the wizard until the workspaces info is

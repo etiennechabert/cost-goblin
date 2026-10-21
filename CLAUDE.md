@@ -341,6 +341,7 @@ curl -s "https://sonarcloud.io/api/hotspots/search?projectKey=etiennechabert_cos
 - Lucide React (icons)
 - Every button gets its pointer cursor and a hover/press state layer from the base layer of `packages/desktop/src/renderer/app.css` (a `background-image` tint of its text colour). Don't add press effects with `transform` or `filter`: they move the target between press and release, and make the button the containing block of what it positions. A button stretched over a card (`after:absolute after:inset-0`) sets `data-feedback="none"`, and the card draws the hover and press states; so does a `role="button"` surface with its own feedback (a chart's drag-to-select plot). cmdk writes `data-disabled="false"` on enabled items: a disabled selector is `[data-disabled]:not([data-disabled='false'])`, never bare `[data-disabled]`.
 - Rows that are tidied or sorted from their own text, with React keys taken from it (the tag editor's alias rules), stay pinned while the user types and re-sort only once focus leaves the list. Re-keying a row unmounts the focused input, or the button that focus or a click is heading to.
+- A field that opens prefilled derives its value until the user edits it (`typed ?? initial`, as the setup wizard's workspace name does). An effect that writes the default into state can run after the user's first keystroke, and put the default back.
 
 ## What NOT To Do
 

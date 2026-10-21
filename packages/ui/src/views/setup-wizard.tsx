@@ -2484,7 +2484,12 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   const [sourceMode] = useState(() => resolveSourceMode(initialSource, initialProfile, gcpSource));
   const gcpSourceMode = sourceMode?.kind === 'gcp' ? sourceMode : undefined;
   const isSourceMode = sourceMode !== null;
-  const [workspaceName, setWorkspaceName] = useState(workspaceNaming?.initialName ?? '');
+  // The name typed on the naming step; null until the user edits the field.
+  // Until then the field shows `workspaceNaming.initialName`, derived rather
+  // than written into state: the prop may arrive after mount, and an effect
+  // seeding it could run after the user's first keystroke and undo it.
+  const [typedWorkspaceName, setTypedWorkspaceName] = useState<string | null>(null);
+  const workspaceName = typedWorkspaceName ?? workspaceNaming?.initialName ?? '';
   // Provider identity: fixed when reconfiguring an existing provider (source
   // mode), free-text when adding one, prefilled 'aws-main' on first run.
   const [providerName, setProviderName] = useState(initialProviderName ?? (mode === 'add' ? '' : 'aws-main'));
@@ -2522,16 +2527,6 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     }).catch(() => { /* onboarding: no config yet */ });
   }, [api, initialProviderName, isSourceMode]);
   const providerNameFixed = initialProviderName !== undefined || isSourceMode;
-  // `workspaceNaming` can arrive AFTER mount (the host learns the workspace
-  // mode from an IPC round-trip that races the setup check) — the useState
-  // initializer above won't re-run, so seed the field when the prop appears.
-  // Only an untouched (empty) field is seeded; user input is never clobbered.
-  const initialWorkspaceName = workspaceNaming?.initialName;
-  useEffect(() => {
-    if (initialWorkspaceName !== undefined) {
-      setWorkspaceName((current) => (current === '' ? initialWorkspaceName : current));
-    }
-  }, [initialWorkspaceName]);
   const [wizard, setWizard] = useState<WizardStep>(() => initialWizardStep(sourceMode, workspaceNaming !== undefined));
   const [collectedPaths, setCollectedPaths] = useState(EMPTY_PATHS);
   // The GCP chain's optional reader, as typed: a full address, or a bare
@@ -3130,7 +3125,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
           {wizard.step === 'welcome' && workspaceNaming !== undefined && (
             <WelcomeStep
               onNext={handleWelcomeNext}
-              naming={{ value: workspaceName, onChange: setWorkspaceName }}
+              naming={{ value: workspaceName, onChange: setTypedWorkspaceName }}
               jumpBack={jumpBack}
             />
           )}
