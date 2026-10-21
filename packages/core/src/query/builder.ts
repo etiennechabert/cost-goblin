@@ -1,5 +1,5 @@
 import type { BuiltInDimension, DimensionsConfig, TagDimension } from '../types/config.js';
-import type { CostQueryParams, DailyCostsParams, DateRange, FilterMap, TrendQueryParams, MissingTagsParams, EntityDetailParams } from '../types/query.js';
+import type { CostQueryParams, DailyCostsParams, DateRange, FilterMap, Granularity, TrendQueryParams, MissingTagsParams, EntityDetailParams } from '../types/query.js';
 import { DEFAULT_PLACEHOLDER_PATTERNS } from '../types/query.js';
 import type { DimensionId, ProviderName } from '../types/branded.js';
 import { tagDimColumn, tagSqlColumn } from '../types/branded.js';
@@ -1014,6 +1014,24 @@ export function buildNonResourceCostQuery(
   return { sql, params: qb.build().params };
 }
 
+const USAGE_DATE_BUCKETS: Record<'daily' | 'weekly' | 'monthly', string> = {
+  daily: 'usage_date',
+  weekly: "CAST(date_trunc('week', usage_date) AS DATE)",
+  monthly: "CAST(date_trunc('month', usage_date) AS DATE)",
+};
+
+/** SQL for the bucket a daily-tier row is grouped into: its own day, its ISO
+ *  week's Monday or its month's first day. `usage_date` is already a UTC
+ *  billing day (see `CHARGE_PERIOD_START_UTC_SQL`), so the bucket does not
+ *  move with the DuckDB session's zone. The expression comes from a closed
+ *  lookup, never from a caller string. Hourly has no bucket here: the hourly
+ *  tier keeps its own hour expression. */
+export function usageDateBucketExpr(granularity: Granularity | undefined): string {
+  if (granularity === 'weekly') return USAGE_DATE_BUCKETS.weekly;
+  if (granularity === 'monthly') return USAGE_DATE_BUCKETS.monthly;
+  return USAGE_DATE_BUCKETS.daily;
+}
+
 export function buildDailyCostsQuery(
   params: DailyCostsParams,
   opts: QueryContextOptions,
@@ -1034,7 +1052,7 @@ export function buildDailyCostsQuery(
   // hour-aligned Usage rows instead of polluting the histogram.
   const dateExpr = resolvedTier === 'hourly'
     ? "strftime(date_trunc('hour', usage_hour + INTERVAL '30 minutes'), '%Y-%m-%d %H:00')"
-    : 'usage_date::VARCHAR';
+    : `${usageDateBucketExpr(params.granularity)}::VARCHAR`;
 
   const sql = `
     SELECT
@@ -1214,7 +1232,7 @@ export function buildEntityDetailQuery(
   // rounded to the nearest hour boundary (see buildDailyCostsQuery comment).
   const groupKey = resolvedTier === 'hourly'
     ? "strftime(date_trunc('hour', usage_hour + INTERVAL '30 minutes'), '%Y-%m-%d %H:00')"
-    : 'usage_date::VARCHAR';
+    : `${usageDateBucketExpr(params.granularity)}::VARCHAR`;
 
   const sql = `
     SELECT
