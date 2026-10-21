@@ -975,7 +975,6 @@ export function CostScopeView({ onConfigLoaded }: CostScopeViewProps = {}): Reac
                     <input
                       type="number"
                       min={0}
-                      max={7}
                       value={draft.lagDays ?? DEFAULT_LAG_DAYS}
                       onChange={e => { handleLagDaysChange(Number(e.target.value)); }}
                       className="w-16 rounded border border-border bg-bg-secondary px-2 py-1 text-xs text-text-primary text-right tabular-nums"
