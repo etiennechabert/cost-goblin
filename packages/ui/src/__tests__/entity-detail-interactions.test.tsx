@@ -580,9 +580,9 @@ describe('EntityDetail — Weekly', () => {
   });
   afterEach(() => { vi.useRealTimers(); });
 
-  const WEEK_KEYS = ['2026-08-31', '2026-09-07', '2026-09-14', '2026-09-21', '2026-09-28', '2026-10-05'];
+  const WEEK_KEYS = ['2026-08-31', '2026-09-07', '2026-09-14', '2026-09-21', '2026-09-28', '2026-10-05', '2026-10-12', '2026-10-19'];
 
-  /** Saved Weekly prefs over six whole weeks, and one bar per week for any weekly request. */
+  /** Saved Weekly prefs over eight whole weeks, the last one the current week, and one bar per week for any weekly request. */
   class WeeklyDetailApi extends DetailApi {
     constructor() {
       super();
@@ -590,7 +590,7 @@ describe('EntityDetail — Weekly', () => {
         hiddenColumns: [],
         columnOrder: [],
         lastUsedGranularity: 'weekly',
-        lastUsedDateRange: { start: asDateString('2026-08-31'), end: asDateString('2026-10-11') },
+        lastUsedDateRange: { start: asDateString('2026-08-31'), end: asDateString('2026-10-25') },
       };
     }
 
@@ -604,7 +604,7 @@ describe('EntityDetail — Weekly', () => {
           breakdown: { 'Amazon EC2': asDollars(60 + i), 'Amazon S3': asDollars(40) },
         })),
         groups: ['Amazon EC2', 'Amazon S3'],
-        totalCost: asDollars(630),
+        totalCost: asDollars(830),
       });
     }
   }
@@ -621,15 +621,15 @@ describe('EntityDetail — Weekly', () => {
   it('restores Weekly from the preferences: title, request and period labels', async () => {
     const api = await openWeekly();
 
-    expect(api.detailCalls.at(-1)).toMatchObject({ granularity: 'weekly', dateRange: { start: '2026-08-31', end: '2026-10-11' } });
+    expect(api.detailCalls.at(-1)).toMatchObject({ granularity: 'weekly', dateRange: { start: '2026-08-31', end: '2026-10-25' } });
     expect(screen.getByRole('button', { name: 'Weekly' })).toBeDefined();
-    expect(screen.getByText('W41 2026')).toBeDefined();
+    expect(screen.getByText('W42 2026')).toBeDefined();
   });
 
   it('drags three weekly bars to Daily over those whole weeks', async () => {
     const api = await openWeekly();
 
-    dragHistogram(5, 145); // bars 0–2 of six (50px each)
+    dragHistogram(5, 105); // bars 0–2 of eight (37.5px each)
 
     await waitFor(() => { expect(api.detailCalls.at(-1)?.granularity).toBe('daily'); });
     expect(api.detailCalls.at(-1)?.dateRange).toEqual({ start: '2026-08-31', end: '2026-09-20' });
@@ -640,19 +640,20 @@ describe('EntityDetail — Weekly', () => {
   it('keeps Weekly when the drag covers more than three weeks', async () => {
     const api = await openWeekly();
 
-    dragHistogram(5, 195); // bars 0–3: four weeks
+    dragHistogram(5, 150); // bars 0–3: four weeks
 
     await waitFor(() => { expect(api.detailCalls.at(-1)?.dateRange).toEqual({ start: '2026-08-31', end: '2026-09-27' }); });
     expect(api.detailCalls.at(-1)?.granularity).toBe('weekly');
     expect(screen.getByText('Weekly Costs')).toBeDefined();
   });
 
-  it('caps a Daily drop at the newest day when the drag reaches the current week', async () => {
+  it('caps a Daily drop at the newest day when the drag includes the current week', async () => {
     const api = await openWeekly();
 
-    dragHistogram(205, 295); // the last two bars: weeks of Sep 28 and Oct 5
+    dragHistogram(230, 295); // the last two bars: weeks of Oct 12 and Oct 19
 
     await waitFor(() => { expect(api.detailCalls.at(-1)?.granularity).toBe('daily'); });
-    expect(api.detailCalls.at(-1)?.dateRange).toEqual({ start: '2026-09-28', end: '2026-10-11' });
+    // The current week runs to Sun Oct 25, past the newest day: the Daily range ends at it.
+    expect(api.detailCalls.at(-1)?.dateRange).toEqual({ start: '2026-10-12', end: '2026-10-19' });
   });
 });
