@@ -9,7 +9,7 @@ Covers `packages/core/src/query/`, `packages/core/src/normalize/`, `packages/cor
 - DuckDB can't prepare DDL (`CREATE … AS`, `COPY … TO`). The rollup and grain-probe builders therefore inline escaped literals after `assertBillingPeriod` / `assertDateString`, and a `$n` placeholder in DDL stays unbound.
 - Bound integers are int32 (`bindInteger` in `packages/desktop/src/main/duckdb-worker.ts`), so epoch milliseconds, byte counts and large thresholds overflow.
 - `toNum` decodes only numbers and bigints: a DECIMAL result becomes 0 with no error. Cost columns are DOUBLE by contract, and hand-written aggregates need `CAST(SUM(…) AS DOUBLE)`.
-- Rows leave the DuckDB worker by structured clone, which drops DuckDB's value classes: a DATE arrives as `{ days }`, a TIMESTAMP as `{ micros }`, and `toStr` reads both as ''. Select them as VARCHAR. `run_sql`, whose columns are unknown, has DuckDB write each one as JSON text (`to_json`).
+- Rows leave the DuckDB worker by structured clone, which drops DuckDB's value classes: a DATE arrives as `{ days }`, a TIMESTAMP as `{ micros }`, and the `toStr` helpers read them as '' or '[object Object]'. Select them as VARCHAR. `run_sql`, whose columns are unknown, has DuckDB write each one as JSON text (`to_json`).
 - A new raw FOCUS column in `buildSource` goes into `packages/core/src/sync/focus-contract.ts`, and `packages/core/src/sync/gcp-canonicalize.ts` must produce it, or GCP months fail to bind. Keep `union_by_name=true` and the table prefix on raw columns.
 - Intersect every glob with the months that provider actually has on disk: one glob matching nothing fails the whole UNION.
 
