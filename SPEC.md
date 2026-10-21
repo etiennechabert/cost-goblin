@@ -242,7 +242,7 @@ rejects a candidate export missing any of them):
 
 | Column | Type | Purpose |
 |--------|------|---------|
-| `ChargePeriodStart` | Timestamp | Date/hour partitioning key (`usage_date`/`usage_hour`) |
+| `ChargePeriodStart` | Timestamp (tz-aware on AWS) | Date/hour partitioning key (`usage_date`/`usage_hour`, in UTC) |
 | `SubAccountId` | String | Account dimension |
 | `SubAccountName` | String | Account display name |
 | `BilledCost` | Number | `billed` metric (invoice basis) |
@@ -388,12 +388,15 @@ No credentials are stored by the app — it delegates to the AWS SDK.
 
 DuckDB queries run against a canonical projection over the raw FOCUS 1.2
 Parquet, built at query time by `buildSource` (no sync-time rewrite). Each
-canonical column is a trivial rename/cast of a FOCUS column:
+canonical column is a trivial rename/cast of a FOCUS column. Days and hours are
+UTC: AWS writes `ChargePeriodStart` tz-aware, and a cast of that resolves in
+the DuckDB session's time zone (the machine's), so both come from
+`CHARGE_PERIOD_START_UTC_SQL` = `make_timestamp(epoch_us(ChargePeriodStart))`:
 
 | Column | Type | FOCUS source | Description |
 |--------|------|-------------|-------------|
-| `usage_date` | `DATE` | `ChargePeriodStart::DATE` | Day of usage |
-| `usage_hour` | `TIMESTAMP` | `ChargePeriodStart` | Hour of usage (hourly tier only) |
+| `usage_date` | `DATE` | `CHARGE_PERIOD_START_UTC_SQL::DATE` | UTC day of usage |
+| `usage_hour` | `TIMESTAMP` | `CHARGE_PERIOD_START_UTC_SQL` | UTC hour of usage (hourly tier only) |
 | `account_id` | `VARCHAR` | `SubAccountId` | Cloud account/project/subscription ID |
 | `account_name` | `VARCHAR` | `SubAccountName` | Friendly account name |
 | `region` | `VARCHAR` | `RegionId` | Cloud region |
