@@ -22,7 +22,7 @@ import { StackedBarChart, bucketBars } from '../components/stacked-bar-chart.js'
 import type { BarDay, HistogramTab } from '../components/stacked-bar-chart.js';
 import { getDimensionId, getDimensionLabel, isEnvironmentDimension, isOwnerDimension, isProductDimension, isUnitDimension } from '../lib/dimensions.js';
 import { computeBucketedHourRange, computeBucketedRange, periodBarsRange, resolveZoomDrag, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
-import { costsTitle, daysAgo } from '../lib/dates.js';
+import { costsTitle, daysAgo, dateColumnHeader } from '../lib/dates.js';
 import { BaselineMicroBar } from '../components/baseline-micro-bar.js';
 import { enabledGroupBys } from '../widgets/enabled-group-by.js';
 
@@ -51,13 +51,13 @@ function dailyCostsToBarDays(data: DailyCostsResult | null): BarDay[] {
   }));
 }
 
-function buildEntityCsv(data: EntityDetailResult): string {
+function buildEntityCsv(data: EntityDetailResult, granularity: Granularity): string {
   const lines: string[] = [
     `Entity,${String(data.entity)}`,
     `Total Cost,${String(data.totalCost)}`,
     `Percent Change,${String(data.percentChange)}`,
     '',
-    'Date,Cost',
+    `${dateColumnHeader(granularity)},Cost`,
     ...data.dailyCosts.map((d) => `${String(d.date)},${String(d.cost)}`),
     '',
     'Account,Cost,Percentage',
@@ -69,8 +69,8 @@ function buildEntityCsv(data: EntityDetailResult): string {
   return lines.join('\n');
 }
 
-function handleCsvExport(data: EntityDetailResult, entity: string) {
-  const csv = buildEntityCsv(data);
+function handleCsvExport(data: EntityDetailResult, entity: string, granularity: Granularity) {
+  const csv = buildEntityCsv(data, granularity);
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -310,7 +310,7 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
           {data !== null && (
             <button
               type="button"
-              onClick={() => { handleCsvExport(data, entity); }}
+              onClick={() => { handleCsvExport(data, entity, granularity); }}
               className="flex items-center gap-1.5 rounded-lg border border-border bg-bg-tertiary/50 px-3 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary"
             >
               Export CSV

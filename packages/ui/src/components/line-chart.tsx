@@ -12,7 +12,8 @@ import type { SeriesColors } from '../lib/palette.js';
 import { TOOLTIP_STYLES } from '../lib/tooltip-styles.js';
 import { formatDollars } from './format.js';
 import { useSeriesColors } from '../hooks/use-palette.js';
-import { asDateString, formatPeriodLabel, isPeriodGranularity } from '@costgoblin/core/browser';
+import { formatBucketKey } from '../lib/drag-select.js';
+import { isPeriodGranularity } from '@costgoblin/core/browser';
 import type { Granularity } from '@costgoblin/core/browser';
 
 export interface LineSeriesPoint {
@@ -107,7 +108,7 @@ function LineSvg({ series, seriesColor, visible, previousSeries, granularity, wi
   const periodGranularity = granularity !== undefined && isPeriodGranularity(granularity) ? granularity : undefined;
   const periodLabel = (key: string): string => periodGranularity === undefined
     ? key
-    : formatPeriodLabel(asDateString(key.slice(0, 10)), periodGranularity);
+    : formatBucketKey(key, periodGranularity);
   const numTicks = Math.min(6, Math.max(2, Math.floor(innerW / 80)));
   // A period axis ticks at the periods themselves: a generic time scale would
   // land on arbitrary days and mislabel them.

@@ -14,6 +14,7 @@ import { filtersKey } from './widget.js';
 import { EMPTY_VALUE_LABEL, getDimensionId } from '../lib/dimensions.js';
 import { filtersEmptyGroup, toExplorerFilters } from '../lib/agg-column.js';
 import { formatBucketKey } from '../lib/drag-select.js';
+import { dateColumnHeader } from '../lib/dates.js';
 import type { TableColumn } from '../lib/table-types.js';
 
 const ROW_LIMIT = 500;
@@ -402,6 +403,7 @@ export function TableWidget({
         error={error}
         height={400}
         csvFilename={`costgoblin-${spec.title ?? 'table'}-${dateRange.start}-${dateRange.end}`}
+        csvHeaderLabels={isPeriodGranularity(granularity) ? { usage_date: dateColumnHeader(granularity) } : undefined}
         renderExpandedRow={renderExpandedRow}
       />
     </div>

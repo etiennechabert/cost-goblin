@@ -221,6 +221,8 @@ interface DataTableProps<TData> {
   readonly overscan?: number | undefined;
   readonly totalRows?: number | undefined;
   readonly csvFilename?: string | undefined;
+  /** Column id to the header its CSV column gets instead of the on-screen one. */
+  readonly csvHeaderLabels?: Readonly<Record<string, string>> | undefined;
   // Column picker support
   readonly allColumns?: readonly TableColumn<TData>[] | undefined;
   readonly hiddenColumns?: readonly string[] | undefined;
@@ -246,6 +248,7 @@ export function DataTable<TData extends RowData>({
   overscan = 10,
   totalRows,
   csvFilename,
+  csvHeaderLabels,
   allColumns,
   hiddenColumns,
   autoHiddenKeys,
@@ -306,7 +309,7 @@ export function DataTable<TData extends RowData>({
       </span>
       <div className="flex items-center gap-2">
         {headerRight}
-        {csvFilename !== undefined && <CsvExportButton table={table} filename={csvFilename} />}
+        {csvFilename !== undefined && <CsvExportButton table={table} filename={csvFilename} headerLabels={csvHeaderLabels} />}
         {allColumns !== undefined && onHiddenColumnsChange !== undefined && onColumnOrderChange !== undefined && (
           <>
             <span className="hidden md:inline text-text-muted">Click a cell to add that value to filters.</span>

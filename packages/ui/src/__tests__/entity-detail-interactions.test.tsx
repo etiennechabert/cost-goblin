@@ -201,6 +201,47 @@ describe('EntityDetail — CSV export', () => {
   });
 });
 
+describe('EntityDetail — CSV export in period modes', () => {
+  const urlDescriptor = Object.getOwnPropertyDescriptor(URL, 'createObjectURL');
+  const revokeDescriptor = Object.getOwnPropertyDescriptor(URL, 'revokeObjectURL');
+  let exported: Blob | undefined;
+
+  beforeEach(() => {
+    exported = undefined;
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: (blob: Blob): string => { exported = blob; return 'blob:p'; } });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: (): void => undefined });
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    for (const [key, descriptor] of [['createObjectURL', urlDescriptor], ['revokeObjectURL', revokeDescriptor]] as const) {
+      if (descriptor === undefined) Reflect.deleteProperty(URL, key);
+      else Object.defineProperty(URL, key, descriptor);
+    }
+  });
+
+  it.each([
+    { granularity: 'weekly', header: 'Week (start),Cost' },
+    { granularity: 'monthly', header: 'Month (start),Cost' },
+  ] as const)('labels the date column "$header" in $granularity, the values staying ISO dates', async ({ granularity, header }) => {
+    const api = new DetailApi();
+    api.prefs = {
+      hiddenColumns: [],
+      columnOrder: [],
+      lastUsedGranularity: granularity,
+      lastUsedDateRange: { start: asDateString('2026-08-01'), end: asDateString('2026-10-31') },
+    };
+    const { user } = renderDetail(api);
+
+    await user.click(await screen.findByRole('button', { name: 'Export CSV' }));
+
+    if (exported === undefined) throw new Error('nothing was exported');
+    const lines = (await exported.text()).split('\n');
+    expect(lines[4]).toBe(header);
+    expect(lines[5]).toBe('2026-03-01,1400');
+  });
+});
+
 describe('EntityDetail — summary', () => {
   it.each([
     { percentChange: -4.5, shown: '-4.5%', color: 'text-positive' },

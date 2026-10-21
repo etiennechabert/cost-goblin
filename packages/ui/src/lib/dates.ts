@@ -17,6 +17,14 @@ const TOTAL_TITLES: Readonly<Record<Granularity, string>> = {
   hourly: 'Hourly total',
 };
 
+/** The header of a CSV column of bucket dates. In Weekly/Monthly each value is
+ *  its period's first day (an ISO date), and the header says so. */
+export function dateColumnHeader(granularity: Granularity): string {
+  if (granularity === 'weekly') return 'Week (start)';
+  if (granularity === 'monthly') return 'Month (start)';
+  return 'Date';
+}
+
 /** The title of a total-over-time chart at `granularity`. */
 export function totalTitle(granularity: Granularity): string {
   return TOTAL_TITLES[granularity];

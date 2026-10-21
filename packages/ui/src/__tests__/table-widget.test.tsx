@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { describe, it, expect } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import type { AggregatedTableParams, AggregatedTableResult, AggregatedTableRow, ExplorerSort, WidgetSpec } from '@costgoblin/core/browser';
 import { asDateString } from '@costgoblin/core/browser';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
@@ -299,6 +299,40 @@ describe('TableWidget grouped by date in Monthly', () => {
     // The detail table's Date cell is the month too, not the raw bucket key.
     await waitFor(() => { expect(screen.getAllByText('Oct 2026').length).toBeGreaterThan(2); });
     expect(screen.queryByText('2026-10-01')).toBeNull();
+  });
+
+  describe('CSV export', () => {
+    const urlDescriptor = Object.getOwnPropertyDescriptor(URL, 'createObjectURL');
+    const revokeDescriptor = Object.getOwnPropertyDescriptor(URL, 'revokeObjectURL');
+    let exported: Blob | undefined;
+
+    beforeEach(() => {
+      exported = undefined;
+      Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: (blob: Blob): string => { exported = blob; return 'blob:t'; } });
+      Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: (): void => undefined });
+      vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+      for (const [key, descriptor] of [['createObjectURL', urlDescriptor], ['revokeObjectURL', revokeDescriptor]] as const) {
+        if (descriptor === undefined) Reflect.deleteProperty(URL, key);
+        else Object.defineProperty(URL, key, descriptor);
+      }
+      vi.restoreAllMocks();
+    });
+
+    async function exportedLines(): Promise<string[]> {
+      await screen.findByText('Oct 2026');
+      fireEvent.click(screen.getByRole('button', { name: /CSV/ }));
+      if (exported === undefined) throw new Error('nothing was exported');
+      return (await exported.text()).split('\n');
+    }
+
+    it('labels the date column as the period start, the values staying ISO dates', async () => {
+      renderMonthly(new MonthlyTableApi());
+
+      expect(await exportedLines()).toEqual(['Month (start),Cost', '2026-10-01,300', '2026-09-01,200', '2026-08-01,100']);
+    });
   });
 
   it('keeps the raw day in Daily', async () => {
