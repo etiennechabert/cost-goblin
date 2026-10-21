@@ -652,7 +652,7 @@ function BuiltInEditor({ dim, onSave, onCancel, onDisable, revealSeq, accountTag
           onChange={e => { setState(s => ({ ...s, nameStripPatterns: e.target.value })); }}
           rows={3}
           className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm font-mono text-text-primary outline-none focus:border-accent"
-          placeholder={'\\s+(production|staging|sandbox)$\n^DiBa Cards '}
+          placeholder={'\\s+(production|staging|sandbox)$\n^Acme Corp '}
         />
       </label>
       {stripPatternViolations.length > 0 && (
