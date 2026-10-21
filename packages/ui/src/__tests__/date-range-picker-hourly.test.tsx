@@ -1,11 +1,11 @@
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { asBucketPath, asDateString, asHourString } from '@costgoblin/core/browser';
+import { DEFAULT_LAG_DAYS, asBucketPath, asDateString, asHourString } from '@costgoblin/core/browser';
 import type { CostGoblinConfig } from '@costgoblin/core/browser';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
-import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
+import { DateRangePicker, getDefaultDateRange, lastNDaysRange } from '../components/date-range-picker.js';
 import type { DateRange, Granularity } from '../components/date-range-picker.js';
 
 /** A mock whose provider has the hourly tier, which lights up the toggle. */
@@ -97,8 +97,8 @@ describe('DateRangePicker — hour bounds', () => {
 });
 
 describe('DateRangePicker — with the hourly tier configured', () => {
-  it('enables the Hourly toggle and switches granularity, keeping the day range', async () => {
-    const value = getDefaultDateRange();
+  it('enables the Hourly toggle and switches granularity, keeping a day range that fits the retention', async () => {
+    const value = lastNDaysRange(14, DEFAULT_LAG_DAYS);
     const { onChange, user } = renderPicker({ value });
     const hourly = await hourlyEnabled();
     expect(hourly.getAttribute('title')).toBeNull();
@@ -109,6 +109,12 @@ describe('DateRangePicker — with the hourly tier configured', () => {
 
     await user.click(hourly);
     expect(onChange).toHaveBeenLastCalledWith(value, 'hourly');
+  });
+
+  it('falls back to the last 7 days when the day range outlasts the hourly retention', async () => {
+    const { onChange, user } = renderPicker({ value: lastNDaysRange(90, DEFAULT_LAG_DAYS) });
+    await user.click(await hourlyEnabled());
+    expect(onChange).toHaveBeenLastCalledWith(lastNDaysRange(7, DEFAULT_LAG_DAYS), 'hourly');
   });
 
   it('drops the hour bounds when switching back to Daily', async () => {

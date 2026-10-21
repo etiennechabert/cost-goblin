@@ -190,8 +190,10 @@ describe('CustomView — drag-to-zoom from a widget', () => {
     const { user } = renderView(STACKED, api);
     await waitFor(() => { expect(screen.getByRole('button', { name: 'Hourly' })).toHaveProperty('disabled', false); });
 
+    // The default 31-day range outlasts the 30-day hourly retention, so the
+    // switch lands on the last 7 days.
     await user.click(screen.getByRole('button', { name: 'Hourly' }));
-    await user.click(screen.getByRole('button', { name: `${DEFAULT_START} → ${DEFAULT_END}` }));
+    await user.click(screen.getByRole('button', { name: /Last 7 days/ }));
     await user.click(await screen.findByRole('checkbox', { name: 'Compare to previous period' }));
     await user.keyboard('{Escape}');
     await waitFor(() => { expect(api.dailyCalls.at(-1)?.granularity).toBe('hourly'); });
@@ -394,14 +396,19 @@ describe('CustomView — filter bar', () => {
     await waitFor(() => { expect(prefetches()).toBe(8); });
     await waitFor(() => { expect(screen.getByRole('button', { name: 'Hourly' })).toHaveProperty('disabled', false); });
 
+    // A range inside the hourly retention survives the round-trip unchanged.
+    await user.click(screen.getByRole('button', { name: /Last 30 days/ }));
+    await user.click(await screen.findByRole('button', { name: 'Last 14 days' }));
+    await waitFor(() => { expect(prefetches()).toBe(16); });
+
     await user.click(screen.getByRole('button', { name: 'Hourly' }));
     await user.click(screen.getByRole('button', { name: 'Daily' }));
     await new Promise((resolve) => { setTimeout(resolve, 20); });
-    expect(prefetches()).toBe(8);
+    expect(prefetches()).toBe(16);
 
-    await user.click(screen.getByRole('button', { name: /Last 30 days/ }));
+    await user.click(screen.getByRole('button', { name: /Last 14 days/ }));
     await user.click(await screen.findByRole('button', { name: 'Last 90 days' }));
-    await waitFor(() => { expect(prefetches()).toBe(16); });
+    await waitFor(() => { expect(prefetches()).toBe(24); });
   });
 
   it('persists the session after a change and swallows a failed write', async () => {

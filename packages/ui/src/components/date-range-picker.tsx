@@ -1,11 +1,21 @@
 import { useState } from 'react';
 import { CalendarIcon, ChevronDown } from 'lucide-react';
 import type { DateRange as DayPickerRange } from 'react-day-picker';
-import type { DateString, Granularity, HourString } from '@costgoblin/core/browser';
-import { DEFAULT_LAG_DAYS, asDateString } from '@costgoblin/core/browser';
-import { daysAgo, getThisMonth, getLastMonth, getCurrentQuarter, getLastQuarter, getYTD, getLastYear } from '../lib/dates.js';
+import type { DateString, Granularity, HourString, PeriodGranularity } from '@costgoblin/core/browser';
+import {
+  DEFAULT_LAG_DAYS,
+  asDateString,
+  capToNewestDay,
+  formatPeriodLabel,
+  isPeriodGranularity,
+  lastNPeriodsRange,
+  periodEnd,
+  widenToPeriods,
+} from '@costgoblin/core/browser';
+import { daysAgo, daysBetween, getThisMonth, getLastMonth, getCurrentQuarter, getLastQuarter, getYTD, getLastYear, shiftDay } from '../lib/dates.js';
 import { shouldAutoSwitchToHourly } from '../lib/drag-select.js';
-import { useHourlyConfigured } from '../hooks/use-hourly-configured.js';
+import { useHourlyRetentionDays } from '../hooks/use-hourly-configured.js';
+import { useOldestDailyPeriod } from '../hooks/use-oldest-daily-period.js';
 import { Calendar } from './ui/calendar.js';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover.js';
 
@@ -27,9 +37,24 @@ type CalendarPreset = {
   readonly hint?: string;
 };
 
-type Preset = DayPreset | CalendarPreset;
+/** A whole-period window (Weekly and Monthly modes): never capped at the newest
+ *  day, since the current unfinished period is part of the selection. */
+type PeriodPreset = {
+  readonly label: string;
+  readonly type: 'periods';
+  readonly getRange: (newestDay: DateString) => { start: DateString; end: DateString };
+  readonly granularity: PeriodGranularity;
+  readonly hint?: string;
+};
 
-const PRESETS: readonly { section: string; items: readonly Preset[] }[] = [
+type Preset = DayPreset | CalendarPreset | PeriodPreset;
+
+interface PresetSection {
+  readonly section: string;
+  readonly items: readonly Preset[];
+}
+
+const DAY_PRESETS: readonly PresetSection[] = [
   {
     section: 'Days',
     items: [
@@ -54,7 +79,50 @@ const PRESETS: readonly { section: string; items: readonly Preset[] }[] = [
   },
 ];
 
-const ALL_PRESETS = PRESETS.flatMap(s => s.items);
+function lastNMonths(n: number): PeriodPreset {
+  return { label: `Last ${String(n)} months`, type: 'periods', granularity: 'monthly', getRange: newestDay => lastNPeriodsRange(n, 'monthly', newestDay) };
+}
+
+function lastNWeeks(n: number): PeriodPreset {
+  return { label: `Last ${String(n)} weeks`, type: 'periods', granularity: 'weekly', getRange: newestDay => lastNPeriodsRange(n, 'weekly', newestDay) };
+}
+
+const MONTH_PRESETS: readonly PresetSection[] = [
+  { section: 'Months', items: [lastNMonths(3), lastNMonths(6), lastNMonths(12), lastNMonths(24)] },
+  {
+    section: 'Period',
+    items: [
+      { label: 'This year', type: 'periods', granularity: 'monthly', getRange: () => getYTD() },
+      { label: 'Last year', type: 'periods', granularity: 'monthly', getRange: () => getLastYear() },
+    ],
+  },
+];
+
+const WEEK_PRESETS: readonly PresetSection[] = [
+  { section: 'Weeks', items: [lastNWeeks(4), lastNWeeks(6), lastNWeeks(12), lastNWeeks(26), lastNWeeks(52)] },
+];
+
+/** The presets a mode offers. Monthly's "All synced data" reaches back to the
+ *  oldest local daily period, so it only exists once that is known. */
+function presetSections(granularity: Granularity, oldestDaily: DateString | null): readonly PresetSection[] {
+  if (granularity === 'weekly') return WEEK_PRESETS;
+  if (granularity !== 'monthly') return DAY_PRESETS;
+  if (oldestDaily === null) return MONTH_PRESETS;
+  const allSynced: PeriodPreset = {
+    label: 'All synced data',
+    type: 'periods',
+    granularity: 'monthly',
+    getRange: newestDay => ({ start: oldestDaily, end: periodEnd(newestDay, 'monthly') }),
+  };
+  return MONTH_PRESETS.map(({ section, items }) => section === 'Period' ? { section, items: [...items, allSynced] } : { section, items });
+}
+
+const TOGGLE_MODES: readonly { readonly value: Granularity; readonly label: string }[] = [
+  { value: 'monthly', label: 'Monthly' },
+  { value: 'weekly', label: 'Weekly' },
+  { value: 'daily', label: 'Daily' },
+  { value: 'hourly', label: 'Hourly' },
+];
 
 /** Parse a YYYY-MM-DD string to a local-midnight Date — matches the Date objects react-day-picker hands back. */
 function parseDay(s: DateString): Date {
@@ -104,13 +172,36 @@ export function lastNDaysRange(days: number, lagDays: number): DateRange {
   return { start: daysAgo(days + lagDays), end: daysAgo(lagDays) };
 }
 
+/** The range a mode switch lands on: widen, never cut. Daily and hourly ranges
+ *  grow to the whole weeks or months covering them; a weekly or monthly range
+ *  keeps its days for Daily, ending no later than the newest day with data;
+ *  Hourly keeps the range when it fits the hourly retention and falls back to
+ *  the last 7 days when it does not. */
+export function switchGranularity(
+  range: DateRange,
+  from: Granularity,
+  to: Granularity,
+  ctx: { readonly newestDay: DateString; readonly hourlyRetentionDays: number | null },
+): DateRange {
+  if (from === to) return range;
+  if (isPeriodGranularity(to)) return widenToPeriods(range, to);
+  const days = { start: range.start, end: range.end };
+  if (to === 'daily') return isPeriodGranularity(from) ? capToNewestDay(days, ctx.newestDay) : days;
+  const fitted = isPeriodGranularity(from) ? capToNewestDay(days, ctx.newestDay) : range;
+  const fits = ctx.hourlyRetentionDays !== null
+    && fitted.start <= ctx.newestDay
+    && daysBetween(fitted.start, ctx.newestDay) <= ctx.hourlyRetentionDays;
+  return fits ? fitted : { start: shiftDay(ctx.newestDay, -7), end: ctx.newestDay };
+}
+
 export function getDefaultDateRange(lagDays: number = DEFAULT_LAG_DAYS): DateRange {
   return lastNDaysRange(30, lagDays);
 }
 
 export function DateRangePicker({ value, granularity, onChange, hideHourly, lagDays = DEFAULT_LAG_DAYS, compareEnabled, onCompareChange }: DateRangePickerProps) {
-  const hourlyConfigured = useHourlyConfigured();
-  const hourlyAvailable = hideHourly !== true && hourlyConfigured;
+  const hourlyRetentionDays = useHourlyRetentionDays();
+  const hourlyAvailable = hideHourly !== true && hourlyRetentionDays !== null;
+  const oldestDaily = useOldestDailyPeriod(granularity === 'monthly');
   const [open, setOpen] = useState(false);
   const [showCustom, setShowCustom] = useState(false);
   // While the user is mid-selection (start picked, end not yet), the committed
@@ -118,22 +209,27 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
   // calendar highlights it. Cleared once a full range commits or the popover closes.
   const [draftRange, setDraftRange] = useState<DayPickerRange | undefined>(undefined);
   const latestDate = daysAgo(lagDays);
+  const sections = presetSections(granularity, oldestDaily);
+  const presets = sections.flatMap(section => section.items);
 
   // Calendar periods stop at the newest day the lag allows, like the queries
   // they run. One that starts after it (This month, early in the month) has
   // nothing to show yet: its start comes after its end.
   function getPresetRange(preset: Preset): DateRange {
     if (preset.type === 'days') return lastNDaysRange(preset.days, lagDays);
+    if (preset.type === 'periods') return preset.getRange(latestDate);
     const range = preset.getRange();
     return range.end > latestDate ? { start: range.start, end: latestDate } : range;
   }
 
   function isPresetAvailable(preset: Preset): boolean {
     const range = getPresetRange(preset);
-    return range.start <= range.end;
+    return range.start <= latestDate && range.start <= range.end;
   }
 
   function resolveGranularity(range: DateRange, preferred: Granularity): Granularity {
+    // Whole-period modes never drop to hourly on their own.
+    if (isPeriodGranularity(preferred)) return preferred;
     if (preferred === 'hourly' && !hourlyAvailable) return 'daily';
     if (preferred === 'daily' && hourlyAvailable && shouldAutoSwitchToHourly(range.start, range.end, 'daily')) return 'hourly';
     return preferred;
@@ -147,14 +243,16 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
       return compareEnabled === true ? `${base} vs prev` : base;
     }
     let label: string | undefined;
-    for (const preset of ALL_PRESETS) {
+    for (const preset of presets) {
       const range = getPresetRange(preset);
       if (value.start === range.start && value.end === range.end && granularity === resolveGranularity(range, preset.granularity)) {
         label = preset.label;
         break;
       }
     }
-    const base = label ?? `${value.start} → ${value.end}`;
+    const base = label ?? (isPeriodGranularity(granularity)
+      ? `${formatPeriodLabel(value.start, granularity)} – ${formatPeriodLabel(value.end, granularity)}`
+      : `${value.start} → ${value.end}`);
     return compareEnabled === true ? `${base} vs prev` : base;
   }
 
@@ -176,8 +274,10 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
 
   function handleCustomRange(range: DateRange) {
     // Same intent as a preset: editing the calendar picks whole days, so any
-    // active hour bounds no longer apply.
-    onChange(range, resolveGranularity(range, granularity));
+    // active hour bounds no longer apply. Weekly and Monthly stretch the days
+    // to whole periods.
+    const picked = isPeriodGranularity(granularity) ? widenToPeriods(range, granularity) : range;
+    onChange(picked, resolveGranularity(picked, granularity));
   }
 
   function handleRangeSelect(range: DayPickerRange | undefined) {
@@ -191,12 +291,7 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
   function handleGranularityToggle(next: Granularity) {
     if (next === granularity) return;
     if (next === 'hourly' && !hourlyAvailable) return;
-    // Switching to Daily clears hour bounds; switching to Hourly leaves the
-    // current day-level range alone (the user can drag-zoom from there).
-    const cleared: DateRange = next === 'daily'
-      ? { start: value.start, end: value.end }
-      : value;
-    onChange(cleared, next);
+    onChange(switchGranularity(value, granularity, next, { newestDay: latestDate, hourlyRetentionDays }), next);
   }
 
   function isActivePreset(preset: Preset): boolean {
@@ -209,33 +304,27 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
     <div className="flex items-center gap-2">
       {hideHourly !== true && (
         <div className="inline-flex items-center rounded-lg border border-border bg-bg-tertiary/30 p-0.5">
-          <button
-            type="button"
-            onClick={() => { handleGranularityToggle('daily'); }}
-            className={[
-              'px-2.5 py-1 text-xs font-medium rounded-md transition-colors',
-              granularity === 'daily'
-                ? 'bg-accent text-bg-primary shadow-sm'
-                : 'text-text-muted hover:text-text-primary',
-            ].join(' ')}
-          >
-            Daily
-          </button>
-          <button
-            type="button"
-            onClick={() => { handleGranularityToggle('hourly'); }}
-            disabled={!hourlyAvailable}
-            title={hourlyAvailable ? undefined : 'Hourly tier is not configured'}
-            className={[
-              'px-2.5 py-1 text-xs font-medium rounded-md transition-colors',
-              granularity === 'hourly'
-                ? 'bg-accent text-bg-primary shadow-sm'
-                : 'text-text-muted hover:text-text-primary',
-              hourlyAvailable ? '' : 'opacity-50 cursor-not-allowed',
-            ].join(' ')}
-          >
-            Hourly
-          </button>
+          {TOGGLE_MODES.map(({ value: mode, label }) => {
+            const unavailable = mode === 'hourly' && !hourlyAvailable;
+            return (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => { handleGranularityToggle(mode); }}
+                disabled={unavailable}
+                title={unavailable ? 'Hourly tier is not configured' : undefined}
+                className={[
+                  'px-2.5 py-1 text-xs font-medium rounded-md transition-colors',
+                  granularity === mode
+                    ? 'bg-accent text-bg-primary shadow-sm'
+                    : 'text-text-muted hover:text-text-primary',
+                  unavailable ? 'opacity-50 cursor-not-allowed' : '',
+                ].join(' ')}
+              >
+                {label}
+              </button>
+            );
+          })}
         </div>
       )}
       <Popover open={open} onOpenChange={handleOpenChange}>
@@ -251,7 +340,7 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
       </PopoverTrigger>
       <PopoverContent className="w-72 p-0" align="end">
         <div className="flex flex-col">
-          {PRESETS.map(({ section, items }) => (
+          {sections.map(({ section, items }) => (
             <div key={section}>
               <div className="px-3 pt-2.5 pb-1">
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">{section}</span>

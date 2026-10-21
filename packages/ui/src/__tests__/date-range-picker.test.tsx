@@ -1,8 +1,11 @@
 import { render, screen, cleanup, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, it, expect, vi } from 'vitest';
-import { asDateString } from '@costgoblin/core/browser';
-import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
+import { asDateString, asHourString } from '@costgoblin/core/browser';
+import type { DataInventoryResult } from '@costgoblin/core/browser';
+import { MockCostApi } from '../__fixtures__/mock-api.js';
+import { CostApiProvider } from '../hooks/use-cost-api.js';
+import { DateRangePicker, getDefaultDateRange, lastNDaysRange, switchGranularity } from '../components/date-range-picker.js';
 import type { DateRange, Granularity } from '../components/date-range-picker.js';
 
 function renderPicker(overrides?: Partial<{
@@ -185,5 +188,178 @@ describe('DateRangePicker calendar periods and the freshness lag', () => {
     // Last month still has its first 26 days.
     await user.click(screen.getByRole('button', { name: 'Last month' }));
     expect(onChange.mock.calls[0]?.[0]).toEqual({ start: asDateString('2026-09-01'), end: asDateString('2026-09-26') });
+  });
+});
+
+/** A mock whose daily tier holds local data back to January 2025 (and one
+ *  period that is only on the remote, which must not count as local). */
+class InventoryApi extends MockCostApi {
+  override getDataInventory(): Promise<DataInventoryResult> {
+    const period = (name: string, localStatus: 'missing' | 'repartitioned') => ({ period: name, files: [], totalSize: 0, localStatus });
+    return Promise.resolve({
+      periods: [period('2024-11', 'missing'), period('2025-01', 'repartitioned'), period('2026-09', 'repartitioned')],
+      totalRemoteSize: 0,
+      totalLocalPeriods: 2,
+      totalRemotePeriods: 3,
+      lastSync: null,
+      local: { periods: ['2025-01', '2026-09'], diskBytes: 0, oldestPeriod: '2025-01', newestPeriod: '2026-09' },
+    });
+  }
+}
+
+const MARCH_TO_OCT_2026: DateRange = { start: asDateString('2026-03-01'), end: asDateString('2026-10-31') };
+
+describe('DateRangePicker monthly and weekly modes', () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  type OnChange = (range: DateRange, granularity: Granularity, lastNDays?: number) => void;
+
+  // Fake only Date so userEvent's timers keep running. Today is 2026-10-21 and
+  // the lag is 2 days, so the newest day is 2026-10-19.
+  function renderMode(granularity: Granularity, value: DateRange, api: MockCostApi = new MockCostApi()) {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-21T12:00:00Z'));
+    const onChange = vi.fn<OnChange>();
+    render(
+      <CostApiProvider value={api}>
+        <DateRangePicker value={value} granularity={granularity} onChange={onChange} lagDays={2} />
+      </CostApiProvider>,
+    );
+    return { onChange, user: userEvent.setup() };
+  }
+
+  const presetButtons = () => screen.getAllByRole('button')
+    .map(b => b.textContent)
+    .filter(text => /^(Last|This|All) /.test(text));
+
+  it('orders the toggle Monthly, Weekly, Daily, Hourly', () => {
+    renderMode('daily', getDefaultDateRange(2));
+    const order = screen.getAllByRole('button')
+      .map(b => b.textContent)
+      .filter(text => ['Monthly', 'Weekly', 'Daily', 'Hourly'].includes(text));
+    expect(order).toEqual(['Monthly', 'Weekly', 'Daily', 'Hourly']);
+  });
+
+  it('renders no toggle at all with hideHourly', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-21T12:00:00Z'));
+    render(<DateRangePicker value={getDefaultDateRange(2)} granularity="daily" onChange={vi.fn()} hideHourly lagDays={2} />);
+    for (const name of ['Monthly', 'Weekly', 'Daily', 'Hourly']) {
+      expect(screen.queryByRole('button', { name })).toBeNull();
+    }
+  });
+
+  it('lists the seven monthly presets, and none are available before the inventory loads "All synced data"', async () => {
+    const { user } = renderMode('monthly', MARCH_TO_OCT_2026);
+    await user.click(screen.getByRole('button', { name: /Mar 2026/ }));
+    expect(presetButtons()).toEqual(['Last 3 months', 'Last 6 months', 'Last 12 months', 'Last 24 months', 'This year', 'Last year']);
+  });
+
+  it('gives whole months for "Last 3 months", counting the current one', async () => {
+    const { onChange, user } = renderMode('monthly', MARCH_TO_OCT_2026);
+    await user.click(screen.getByRole('button', { name: /Mar 2026/ }));
+    await user.click(screen.getByRole('button', { name: 'Last 3 months' }));
+    expect(onChange).toHaveBeenCalledWith({ start: '2026-08-01', end: '2026-10-31' }, 'monthly', undefined);
+  });
+
+  it('gives whole calendar years for "This year" and "Last year"', async () => {
+    const { onChange, user } = renderMode('monthly', MARCH_TO_OCT_2026);
+    await user.click(screen.getByRole('button', { name: /Mar 2026/ }));
+    await user.click(screen.getByRole('button', { name: 'This year' }));
+    expect(onChange).toHaveBeenLastCalledWith({ start: '2026-01-01', end: '2026-12-31' }, 'monthly', undefined);
+    await user.click(screen.getByRole('button', { name: /Mar 2026/ }));
+    await user.click(screen.getByRole('button', { name: 'Last year' }));
+    expect(onChange).toHaveBeenLastCalledWith({ start: '2025-01-01', end: '2025-12-31' }, 'monthly', undefined);
+  });
+
+  it('lists the five weekly presets and gives whole weeks for "Last 4 weeks"', async () => {
+    const { onChange, user } = renderMode('weekly', { start: asDateString('2026-08-10'), end: asDateString('2026-10-25') });
+    await user.click(screen.getByRole('button', { name: /W33 2026/ }));
+    expect(presetButtons()).toEqual(['Last 4 weeks', 'Last 6 weeks', 'Last 12 weeks', 'Last 26 weeks', 'Last 52 weeks']);
+    await user.click(screen.getByRole('button', { name: 'Last 4 weeks' }));
+    expect(onChange).toHaveBeenCalledWith({ start: '2026-09-28', end: '2026-10-25' }, 'weekly', undefined);
+  });
+
+  it('hides "All synced data" until the oldest local daily period is known, then spans from it', async () => {
+    const first = renderMode('monthly', MARCH_TO_OCT_2026);
+    await first.user.click(screen.getByRole('button', { name: /Mar 2026/ }));
+    expect(screen.queryByRole('button', { name: 'All synced data' })).toBeNull();
+    cleanup();
+
+    const { onChange, user } = renderMode('monthly', MARCH_TO_OCT_2026, new InventoryApi());
+    await user.click(screen.getByRole('button', { name: /Mar 2026/ }));
+    const all = await screen.findByRole('button', { name: 'All synced data' });
+    await user.click(all);
+    expect(onChange).toHaveBeenCalledWith({ start: '2025-01-01', end: '2026-10-31' }, 'monthly', undefined);
+  });
+
+  it('labels an unpreset whole-period range by its first and last period', () => {
+    renderMode('monthly', { start: asDateString('2026-08-01'), end: asDateString('2026-10-31') });
+    expect(screen.getByText('Last 3 months')).toBeDefined();
+    cleanup();
+    renderMode('monthly', MARCH_TO_OCT_2026);
+    expect(screen.getByText('Mar 2026 – Oct 2026')).toBeDefined();
+    cleanup();
+    renderMode('weekly', { start: asDateString('2026-09-28'), end: asDateString('2026-10-25') });
+    expect(screen.getByText('Last 4 weeks')).toBeDefined();
+    cleanup();
+    renderMode('weekly', { start: asDateString('2026-09-28'), end: asDateString('2026-10-18') });
+    expect(screen.getByText('W40 2026 – W42 2026')).toBeDefined();
+  });
+
+  it('widens to whole periods when a toggle button is pressed', async () => {
+    const { onChange, user } = renderMode('daily', { start: asDateString('2026-03-15'), end: asDateString('2026-10-19') });
+    await user.click(screen.getByRole('button', { name: 'Monthly' }));
+    expect(onChange).toHaveBeenLastCalledWith({ start: '2026-03-01', end: '2026-10-31' }, 'monthly');
+    await user.click(screen.getByRole('button', { name: 'Weekly' }));
+    expect(onChange).toHaveBeenLastCalledWith({ start: '2026-03-09', end: '2026-10-25' }, 'weekly');
+  });
+});
+
+describe('switchGranularity', () => {
+  const ctx = { newestDay: asDateString('2026-10-19'), hourlyRetentionDays: 30 };
+  const march15: DateRange = { start: asDateString('2026-03-15'), end: asDateString('2026-10-19') };
+
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('widens daily and hourly ranges to the periods covering them', () => {
+    expect(switchGranularity(march15, 'daily', 'monthly', ctx)).toEqual({ start: '2026-03-01', end: '2026-10-31' });
+    expect(switchGranularity(march15, 'daily', 'weekly', ctx)).toEqual({ start: '2026-03-09', end: '2026-10-25' });
+    const hours: DateRange = { start: asDateString('2026-10-12'), end: asDateString('2026-10-12'), startHour: asHourString('2026-10-12 14:00:00'), endHour: asHourString('2026-10-12 18:00:00') };
+    expect(switchGranularity(hours, 'hourly', 'weekly', ctx)).toEqual({ start: '2026-10-12', end: '2026-10-18' });
+  });
+
+  it('widens between weekly and monthly in both directions', () => {
+    const weeks: DateRange = { start: asDateString('2026-09-28'), end: asDateString('2026-10-25') };
+    expect(switchGranularity(weeks, 'weekly', 'monthly', ctx)).toEqual({ start: '2026-09-01', end: '2026-10-31' });
+    const months: DateRange = { start: asDateString('2026-10-01'), end: asDateString('2026-10-31') };
+    expect(switchGranularity(months, 'monthly', 'weekly', ctx)).toEqual({ start: '2026-09-28', end: '2026-11-01' });
+  });
+
+  it('keeps the days of a period range for daily, capping the end at the newest day', () => {
+    const march: DateRange = { start: asDateString('2026-03-01'), end: asDateString('2026-10-31') };
+    expect(switchGranularity(march, 'monthly', 'daily', ctx)).toEqual({ start: '2026-03-01', end: '2026-10-19' });
+    const past: DateRange = { start: asDateString('2026-03-01'), end: asDateString('2026-05-31') };
+    expect(switchGranularity(past, 'monthly', 'daily', ctx)).toEqual({ start: '2026-03-01', end: '2026-05-31' });
+  });
+
+  it('drops hour bounds going from hourly to daily', () => {
+    const hours: DateRange = { start: asDateString('2026-10-12'), end: asDateString('2026-10-12'), startHour: asHourString('2026-10-12 14:00:00'), endHour: asHourString('2026-10-12 18:00:00') };
+    expect(switchGranularity(hours, 'hourly', 'daily', ctx)).toEqual({ start: '2026-10-12', end: '2026-10-12' });
+  });
+
+  it('keeps a range that fits hourly retention, capped at the newest day', () => {
+    const recent: DateRange = { start: asDateString('2026-10-01'), end: asDateString('2026-10-19') };
+    expect(switchGranularity(recent, 'daily', 'hourly', ctx)).toEqual(recent);
+    const thisMonth: DateRange = { start: asDateString('2026-10-01'), end: asDateString('2026-10-31') };
+    expect(switchGranularity(thisMonth, 'monthly', 'hourly', ctx)).toEqual({ start: '2026-10-01', end: '2026-10-19' });
+  });
+
+  it('lands on the last 7 days when a long range does not fit hourly retention', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-21T12:00:00Z'));
+    const twoYears: DateRange = { start: asDateString('2024-11-01'), end: asDateString('2026-10-31') };
+    expect(switchGranularity(twoYears, 'monthly', 'hourly', ctx)).toEqual(lastNDaysRange(7, 2));
+    expect(switchGranularity(march15, 'daily', 'hourly', ctx)).toEqual(lastNDaysRange(7, 2));
   });
 });
