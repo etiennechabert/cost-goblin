@@ -453,9 +453,9 @@ function SavingsSettings({ saved, types, hiddenTypes, onToggleType, preferred, o
   return (
     <div className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-4 flex flex-col gap-5">
       {!saved && (
-        <p role="status" className="text-xs text-warning">
+        <output className="block text-xs text-warning">
           Your saved Savings settings could not be read, so changes here are not saved and last until you leave this view.
-        </p>
+        </output>
       )}
       <div>
         <h3 className="text-sm font-medium text-text-secondary mb-3">Visible recommendation types</h3>
