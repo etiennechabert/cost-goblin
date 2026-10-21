@@ -6,7 +6,7 @@ import {
   isPeriodGranularity,
   previousPeriodRange,
 } from '@costgoblin/core/browser';
-import { shouldAutoSwitchToHourly, zoomGranularity } from '../lib/drag-select.js';
+import { resolveZoomDrag, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
 import { useHourlyConfigured } from '../hooks/use-hourly-configured.js';
 import { HourlyHintBanner } from '../components/hourly-hint-banner.js';
 import { UpdatingBadge } from '../components/updating-badge.js';
@@ -255,16 +255,11 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
     // selection, ending no later than the newest day with data; a selection
     // that starts after it has no days to show, so the drag is ignored. A short
     // Daily window goes to Hourly when that tier exists, else shows the hint.
-    const zoomed = zoomGranularity(range, granularity);
-    let next = range;
-    if (isPeriodGranularity(granularity)) {
-      const newestDay = daysAgo(lagDays);
-      if (range.start > newestDay) return;
-      if (zoomed === 'daily' && range.end > newestDay) next = { ...range, end: newestDay };
-    }
-    const needsHourlyHint = zoomed === 'hourly' && granularity !== 'hourly' && !hourlyConfigured;
-    setDateRange(next);
-    setGranularity(needsHourlyHint ? granularity : zoomed);
+    const zoom = resolveZoomDrag(range, granularity, daysAgo(lagDays));
+    if (zoom === null) return;
+    const needsHourlyHint = zoom.granularity === 'hourly' && granularity !== 'hourly' && !hourlyConfigured;
+    setDateRange(zoom.range);
+    setGranularity(needsHourlyHint ? granularity : zoom.granularity);
     setHourlyHint(needsHourlyHint);
   }, [granularity, hourlyConfigured, lagDays, setDateRange]);
 

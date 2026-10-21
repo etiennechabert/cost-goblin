@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { pixelToIndex, bucketKeyToDate, computeBucketedHourRange, normalizeHourKey, shouldAutoSwitchToHourly, zoomGranularity } from '../lib/drag-select.js';
+import { asDateString } from '@costgoblin/core/browser';
+import { pixelToIndex, bucketKeyToDate, computeBucketedHourRange, normalizeHourKey, periodBarsRange, resolveZoomDrag, shouldAutoSwitchToHourly, zoomGranularity } from '../lib/drag-select.js';
 
 describe('pixelToIndex', () => {
   it('maps the left edge to index 0', () => {
@@ -137,5 +138,55 @@ describe('zoomGranularity', () => {
 
   it('keeps Hourly', () => {
     expect(zoomGranularity({ start: '2026-04-01', end: '2026-04-01' }, 'hourly')).toBe('hourly');
+  });
+});
+
+describe('periodBarsRange', () => {
+  const months = [{ date: '2026-08-01' }, { date: '2026-09-01' }, { date: '2026-10-01' }];
+
+  it('runs from the first bar\'s period start to the last bar\'s period end', () => {
+    expect(periodBarsRange(months, 0, 1, 'monthly')).toEqual({ start: '2026-08-01', end: '2026-09-30' });
+    expect(periodBarsRange(months, 2, 2, 'monthly')).toEqual({ start: '2026-10-01', end: '2026-10-31' });
+  });
+
+  it('spans ISO weeks Monday to Sunday', () => {
+    const weeks = [{ date: '2026-10-05' }, { date: '2026-10-12' }, { date: '2026-10-19' }];
+    expect(periodBarsRange(weeks, 0, 2, 'weekly')).toEqual({ start: '2026-10-05', end: '2026-10-25' });
+  });
+
+  it('is null when an index has no bar', () => {
+    expect(periodBarsRange(months, 0, 3, 'monthly')).toBeNull();
+    expect(periodBarsRange(months, -1, 1, 'monthly')).toBeNull();
+  });
+});
+
+describe('resolveZoomDrag', () => {
+  const newest = asDateString('2026-10-19');
+  const range = (start: string, end: string) => ({ start: asDateString(start), end: asDateString(end) });
+
+  it('drops a short period drag to Daily over its days', () => {
+    expect(resolveZoomDrag(range('2026-05-01', '2026-06-30'), 'monthly', newest))
+      .toEqual({ range: range('2026-05-01', '2026-06-30'), granularity: 'daily' });
+  });
+
+  it('caps a period drag that drops to Daily at the newest day', () => {
+    expect(resolveZoomDrag(range('2026-09-01', '2026-10-31'), 'monthly', newest))
+      .toEqual({ range: range('2026-09-01', '2026-10-19'), granularity: 'daily' });
+  });
+
+  it('ignores a period drag that starts after the newest day', () => {
+    expect(resolveZoomDrag(range('2026-10-20', '2026-10-25'), 'weekly', newest)).toBeNull();
+  });
+
+  it('keeps a long period drag whole, past the newest day', () => {
+    expect(resolveZoomDrag(range('2026-08-01', '2026-10-31'), 'monthly', newest))
+      .toEqual({ range: range('2026-08-01', '2026-10-31'), granularity: 'monthly' });
+  });
+
+  it('leaves Daily and Hourly drags as dragged', () => {
+    expect(resolveZoomDrag(range('2026-10-18', '2026-10-25'), 'daily', newest))
+      .toEqual({ range: range('2026-10-18', '2026-10-25'), granularity: 'daily' });
+    expect(resolveZoomDrag(range('2026-10-20', '2026-10-22'), 'daily', newest))
+      .toEqual({ range: range('2026-10-20', '2026-10-22'), granularity: 'hourly' });
   });
 });

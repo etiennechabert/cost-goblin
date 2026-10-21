@@ -10,6 +10,18 @@ const COSTS_TITLES: Readonly<Record<Granularity, string>> = {
   hourly: 'Hourly Costs',
 };
 
+const TOTAL_TITLES: Readonly<Record<Granularity, string>> = {
+  monthly: 'Monthly total',
+  weekly: 'Weekly total',
+  daily: 'Daily total',
+  hourly: 'Hourly total',
+};
+
+/** The title of a total-over-time chart at `granularity`. */
+export function totalTitle(granularity: Granularity): string {
+  return TOTAL_TITLES[granularity];
+}
+
 /** The default title of a cost-over-time chart at `granularity`. */
 export function costsTitle(granularity: Granularity): string {
   return COSTS_TITLES[granularity];

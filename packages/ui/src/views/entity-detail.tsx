@@ -7,7 +7,7 @@ import type {
   EntityDetailResult,
   FilterMap,
 } from '@costgoblin/core/browser';
-import { asDateString, asDimensionId, asEntityRef, asHourString, asTagValue } from '@costgoblin/core/browser';
+import { asDateString, asDimensionId, asEntityRef, asHourString, asTagValue, isPeriodGranularity } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useViewDateRange } from '../hooks/use-view-date-range.js';
 import { useQuery } from '../hooks/use-query.js';
@@ -21,7 +21,8 @@ import type { PieSlice } from '../components/pie-chart.js';
 import { StackedBarChart, bucketBars } from '../components/stacked-bar-chart.js';
 import type { BarDay, HistogramTab } from '../components/stacked-bar-chart.js';
 import { getDimensionId, getDimensionLabel, isEnvironmentDimension, isOwnerDimension, isProductDimension, isUnitDimension } from '../lib/dimensions.js';
-import { computeBucketedHourRange, computeBucketedRange, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
+import { computeBucketedHourRange, computeBucketedRange, periodBarsRange, resolveZoomDrag, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
+import { costsTitle, daysAgo } from '../lib/dates.js';
 import { BaselineMicroBar } from '../components/baseline-micro-bar.js';
 import { enabledGroupBys } from '../widgets/enabled-group-by.js';
 
@@ -247,6 +248,18 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
       setHourlyHint(false);
       return;
     }
+    if (isPeriodGranularity(granularity)) {
+      // A bar is a whole week or month: the drag selects those periods, then
+      // zooms like a dashboard drag, ending no later than the newest day.
+      const periods = periodBarsRange(barDays, startIdx, endIdx, granularity);
+      if (periods === null) return;
+      const zoom = resolveZoomDrag(periods, granularity, daysAgo(lagDays));
+      if (zoom === null) return;
+      setDateRange(zoom.range);
+      setGranularity(zoom.granularity);
+      setHourlyHint(false);
+      return;
+    }
     const range = computeBucketedRange(barDays, startIdx, endIdx, dateRange.end);
     if (range === null) return;
     const { startDate, endDate } = range;
@@ -261,7 +274,7 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
     } else {
       setHourlyHint(false);
     }
-  }, [barDays, dateRange.end, granularity, hourlyConfigured]);
+  }, [barDays, dateRange.end, granularity, hourlyConfigured, lagDays]);
 
   useEffect(() => {
     if (!shouldAutoSwitchToHourly(dateRange.start, dateRange.end, granularity)) {
@@ -352,7 +365,8 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
                 onTabChange={setHistogramTab}
                 expanded={histogramExpanded}
                 onExpandToggle={() => { setHistogramExpanded(prev => !prev); }}
-                title={granularity === 'hourly' ? 'Hourly Costs' : 'Daily Costs'}
+                title={costsTitle(granularity)}
+                granularity={granularity}
                 loading={dailyQuery.status === 'loading'}
                 onRangeSelect={handleHistogramRangeSelect}
               />

@@ -1,5 +1,13 @@
-import { asDateString, countPeriods, formatPeriodLabel, isPeriodGranularity } from '@costgoblin/core/browser';
-import type { PeriodGranularity } from '@costgoblin/core/browser';
+import {
+  asDateString,
+  capToNewestDay,
+  countPeriods,
+  formatPeriodLabel,
+  isPeriodGranularity,
+  periodEnd,
+  periodStart,
+} from '@costgoblin/core/browser';
+import type { DateRange, DateString, PeriodGranularity } from '@costgoblin/core/browser';
 import type { Granularity } from '../components/date-range-picker.js';
 import { daysBetween } from './dates.js';
 
@@ -111,6 +119,41 @@ export function shouldAutoSwitchToHourly(
 
 interface BucketLike {
   readonly date: string;
+}
+
+/** The whole periods a drag over weekly or monthly bars selects: the first
+ *  bar's period start to the last bar's period end (a bar is keyed by its
+ *  period's first day). Null when an index has no bar. */
+export function periodBarsRange(
+  bars: readonly BucketLike[],
+  startIdx: number,
+  endIdx: number,
+  granularity: PeriodGranularity,
+): { start: DateString; end: DateString } | null {
+  const first = bars[startIdx];
+  const last = bars[endIdx];
+  if (first === undefined || last === undefined) return null;
+  return {
+    start: periodStart(asDateString(bucketKeyToDate(first.date)), granularity),
+    end: periodEnd(asDateString(bucketKeyToDate(last.date)), granularity),
+  };
+}
+
+/** Where a drag-zoom onto `range` lands, from a chart in `current`: the zoomed
+ *  granularity and the range to show, or null when the drag changes nothing.
+ *  A drag in Weekly or Monthly runs over whole periods that can reach past the
+ *  newest day with data: one that starts after it has no days to show (null),
+ *  and one that drops to Daily ends no later than it. Daily and Hourly drags
+ *  keep their range as dragged. */
+export function resolveZoomDrag(
+  range: DateRange,
+  current: Granularity,
+  newestDay: DateString,
+): { readonly range: DateRange; readonly granularity: Granularity } | null {
+  const zoomed = zoomGranularity(range, current);
+  if (!isPeriodGranularity(current)) return { range, granularity: zoomed };
+  if (range.start > newestDay) return null;
+  return { range: zoomed === 'daily' ? capToNewestDay(range, newestDay) : range, granularity: zoomed };
 }
 
 // For bucketed bars (one bar can cover multiple days) the bar's date is the

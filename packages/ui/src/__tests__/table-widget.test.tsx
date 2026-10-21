@@ -237,3 +237,88 @@ describe('TableWidget previous-period rows', () => {
     expect(api.previousRequests()).toHaveLength(1);
   });
 });
+
+describe('TableWidget grouped by date in Monthly', () => {
+  const RANGE = { start: asDateString('2026-08-01'), end: asDateString('2026-10-31') };
+  const PREVIOUS_RANGE = { start: asDateString('2026-05-01'), end: asDateString('2026-07-31') };
+  const DATE_SPEC: WidgetSpec = { id: 'by-date', type: 'table', size: 'full', enabledColumns: ['usage_date', 'cost'] };
+
+  function monthRow(month: string, cost: number): AggregatedTableRow {
+    return { values: { usage_date: month }, cost, listCost: cost, usageAmount: 0, rowCount: 1 };
+  }
+
+  class MonthlyTableApi extends MockCostApi {
+    readonly requests: AggregatedTableParams[] = [];
+
+    override queryAggregatedTable(params?: AggregatedTableParams): Promise<AggregatedTableResult> {
+      if (params === undefined) return super.queryAggregatedTable();
+      this.requests.push(params);
+      const rows = params.rowFilters === undefined
+        ? [monthRow('2026-10-01', 300), monthRow('2026-09-01', 200), monthRow('2026-08-01', 100)]
+        : [{ ...monthRow('2026-10-01', 300), values: { usage_date: '2026-10-01', service: 'Amazon EC2' } }];
+      return Promise.resolve({ rows, totalRows: rows.length, tagColumns: [] });
+    }
+  }
+
+  function renderMonthly(api: MockCostApi) {
+    return render(
+      <CostApiProvider value={api}>
+        <TableWidget
+          spec={DATE_SPEC}
+          dateRange={RANGE}
+          previousDateRange={PREVIOUS_RANGE}
+          compareEnabled={false}
+          granularity="monthly"
+          globalFilters={{}}
+          dimensions={[]}
+          onSetFilter={() => undefined}
+        />
+      </CostApiProvider>,
+    );
+  }
+
+  it('reads each date cell as its month', async () => {
+    renderMonthly(new MonthlyTableApi());
+
+    await screen.findByText('Oct 2026');
+    expect(shownCategories()).toEqual(['Oct 2026', 'Sep 2026', 'Aug 2026']);
+  });
+
+  it('drills a row with its month\'s first day and the same granularity, and labels the detail rows', async () => {
+    const api = new MonthlyTableApi();
+    renderMonthly(api);
+
+    fireEvent.click((await screen.findByText('Oct 2026')).closest('tr') ?? document.body);
+
+    await waitFor(() => {
+      expect(api.requests.some(r => r.origin === 'widget:table:expand')).toBe(true);
+    });
+    const drill = api.requests.find(r => r.origin === 'widget:table:expand');
+    expect(drill?.rowFilters).toEqual({ usage_date: '2026-10-01' });
+    expect(drill?.granularity).toBe('monthly');
+    // The detail table's Date cell is the month too, not the raw bucket key.
+    await waitFor(() => { expect(screen.getAllByText('Oct 2026').length).toBeGreaterThan(2); });
+    expect(screen.queryByText('2026-10-01')).toBeNull();
+  });
+
+  it('keeps the raw day in Daily', async () => {
+    const api = new MonthlyTableApi();
+    render(
+      <CostApiProvider value={api}>
+        <TableWidget
+          spec={DATE_SPEC}
+          dateRange={RANGE}
+          previousDateRange={PREVIOUS_RANGE}
+          compareEnabled={false}
+          granularity="daily"
+          globalFilters={{}}
+          dimensions={[]}
+          onSetFilter={() => undefined}
+        />
+      </CostApiProvider>,
+    );
+
+    await screen.findByText('2026-10-01');
+    expect(screen.queryByText('Oct 2026')).toBeNull();
+  });
+});
