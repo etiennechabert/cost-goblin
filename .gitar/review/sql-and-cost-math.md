@@ -30,7 +30,7 @@ Covers `packages/core/src/query/`, `packages/core/src/normalize/`, `packages/cor
 
 ## Dates
 
-- `usage_date` is the naive-UTC `ChargePeriodStart` cast to DATE, and the DuckDB session time zone isn't pinned, so TIMESTAMPTZ input would shift days. Day math in JS is UTC-only.
+- `usage_date` and `usage_hour` come from `CHARGE_PERIOD_START_UTC_SQL` (`packages/core/src/query/builder.ts`). AWS writes `ChargePeriodStart` as TIMESTAMPTZ and DuckDB's session time zone is the machine's, so a raw `::DATE`, `::TIMESTAMP` or date-literal comparison on it shifts rows across days. Day math in JS is UTC-only.
 - Ranges are inclusive (`BETWEEN`). Compare DATE with DATE: an hourly timestamp compared with a date drops most of the last day.
 - A handler or MCP tool caps its range at the cost scope's `lagDays` (`capToFreshnessLag`, `resolveToolDateRange`) before building SQL, and returns empty when nothing is left; the SQL builders never apply it. The Explorer with "Apply cost scope" off is the one exception. Main-process "now" comes from `IpcContext` or `McpContext`, never `Date`.
 - The trends previous-period window exists three times, in JS and SQL in `packages/core/src/query/builder.ts` and in `packages/desktop/src/main/handlers/query-trends.ts`. Keep them aligned.

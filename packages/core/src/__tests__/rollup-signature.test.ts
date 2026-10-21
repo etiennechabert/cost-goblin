@@ -125,16 +125,17 @@ describe('computeShapeSignature', () => {
       expect(sig({ rules: teamRule({ matchMissing: false }) })).toBe(sig({ rules: teamRule() }));
     });
 
-    // Digests of these exact inputs before rule conditions became NULL-safe.
-    // A built-in column is never NULL, so those partitions are byte-identical
-    // and must keep their digest; a rule on a tag also dropped the untagged
-    // rows, so those partitions must re-roll.
+    // Digests of these exact inputs as computed before rule conditions became
+    // NULL-safe, at the current ROLLUP_SCHEMA_VERSION (4: the version is part
+    // of every digest). A built-in column is never NULL, so those partitions
+    // are byte-identical and must keep their digest; a rule on a tag also
+    // dropped the untagged rows, so those partitions must re-roll.
     it('keeps the earlier digest for rules on built-in columns (no re-roll)', () => {
-      expect(sig({ rules: serviceRule() })).toBe('9450a55f2ae5ec0a7795f6e1501ab575cc85d6ea618a6919c2e90b5352bef506');
+      expect(sig({ rules: serviceRule() })).toBe('233df2068a2cac4780a68e64eb1a32897332e47a472f7a150da9434c1ed4cdd4');
     });
 
     it('moves the digest of rules on tags, whose partitions dropped untagged rows', () => {
-      expect(sig({ rules: teamRule() })).not.toBe('64a52fd554838073186a29f66ce6f6f2eb48bf5c187e8cef0498c3b8177502b0');
+      expect(sig({ rules: teamRule() })).not.toBe('83acf0a17fa8d6f73b68b342e39e4aaed74ac2e52005c3729863781fc37b6677');
     });
   });
 });

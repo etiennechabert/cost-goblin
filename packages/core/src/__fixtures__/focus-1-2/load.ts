@@ -36,6 +36,8 @@ const GCP_TAG_SOURCES = `list_concat(list_concat(
   list_transform(x_Labels,        t -> struct_pack("Key" := t."Key", "Value" := t."Value"))),
   list_transform(x_ProjectLabels, t -> struct_pack("Key" := t."Key", "Value" := t."Value")))`;
 
+const TIMESTAMPTZ = 'TIMESTAMP WITH TIME ZONE';
+
 /** Columns whose physical type is not VARCHAR, per provider. Anything absent
  *  from these maps stays VARCHAR — which is what the providers do too. */
 const PHYSICAL_TYPES: Record<SampleProvider, Readonly<Record<string, string>>> = {
@@ -43,8 +45,10 @@ const PHYSICAL_TYPES: Record<SampleProvider, Readonly<Record<string, string>>> =
     BilledCost: 'DOUBLE', ContractedCost: 'DOUBLE', EffectiveCost: 'DOUBLE', ListCost: 'DOUBLE',
     ContractedUnitPrice: 'DOUBLE', ListUnitPrice: 'DOUBLE',
     ConsumedQuantity: 'DOUBLE', PricingQuantity: 'DOUBLE', CommitmentDiscountQuantity: 'DOUBLE',
-    BillingPeriodStart: 'TIMESTAMP', BillingPeriodEnd: 'TIMESTAMP',
-    ChargePeriodStart: 'TIMESTAMP', ChargePeriodEnd: 'TIMESTAMP',
+    // Parquet timestamps with isAdjustedToUTC=1, which DuckDB reads as
+    // TIMESTAMP WITH TIME ZONE: `::DATE` on one depends on the session zone.
+    BillingPeriodStart: TIMESTAMPTZ, BillingPeriodEnd: TIMESTAMPTZ,
+    ChargePeriodStart: TIMESTAMPTZ, ChargePeriodEnd: TIMESTAMPTZ,
     Tags: 'MAP(VARCHAR, VARCHAR)',
     x_Discounts: 'MAP(VARCHAR, DOUBLE)',
   },
@@ -98,6 +102,9 @@ function castExpr(column: string, type: string | undefined): string {
   // and `CAST('' AS JSON)` throws outright — so the guard has to null out
   // before the parse, not after.
   const empty = `NULLIF(${quoted}, '')`;
+  // The CSV holds UTC wall-clock times. Read without an offset, a tz-aware
+  // cast would take them in the session zone.
+  if (type === TIMESTAMPTZ) return `CAST(${empty} || '+00' AS ${type}) AS ${quoted}`;
   if (isJsonBacked(type)) {
     const parsed = `CAST(${empty} AS JSON)`;
     return type === 'JSON' ? `${parsed} AS ${quoted}` : `CAST(${parsed} AS ${type}) AS ${quoted}`;

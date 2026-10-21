@@ -22,6 +22,17 @@ import { previousTrendPeriod, trendPercentChangeSql } from './trend-change.js';
  *  filterable, and drillable. It cannot collide with a real account id. */
 export const NO_ACCOUNT_SENTINEL = '(no account)';
 
+/** `ChargePeriodStart` as a naive TIMESTAMP holding its UTC wall-clock time:
+ *  what `usage_date` and `usage_hour` are cut from. AWS writes the column
+ *  tz-aware (Parquet isAdjustedToUTC=1), and `::DATE` or `::TIMESTAMP` on a
+ *  TIMESTAMP WITH TIME ZONE resolves in the session time zone, which DuckDB
+ *  takes from the machine: a 23:00 UTC row billed on the next day east of UTC,
+ *  a 05:00 UTC one on the day before west of it. Epoch microseconds are the
+ *  same for a tz-aware column and for the naive UTC TIMESTAMP that GCP sync
+ *  writes, so this reads both in UTC whatever the session zone; `AT TIME ZONE
+ *  'UTC'` would shift the naive one. */
+export const CHARGE_PERIOD_START_UTC_SQL = 'make_timestamp(epoch_us(ChargePeriodStart))';
+
 function assertFiniteNumber(value: number, name: string): void {
   if (!Number.isFinite(value) || value < 0) {
     throw new Error(`Query parameter "${name}" must be a non-negative finite number, got ${String(value)}`);
@@ -532,8 +543,8 @@ export function buildSource(opts: BuildSourceOptions): string {
   const tagClause = tagSelects.length > 0 ? `,\n      ${tagSelects.join(',\n      ')}` : '';
 
   const dateExpr = tier === 'hourly'
-    ? 'ChargePeriodStart::DATE AS usage_date,\n      ChargePeriodStart::TIMESTAMP AS usage_hour'
-    : 'ChargePeriodStart::DATE AS usage_date';
+    ? `${CHARGE_PERIOD_START_UTC_SQL}::DATE AS usage_date,\n      ${CHARGE_PERIOD_START_UTC_SQL} AS usage_hour`
+    : `${CHARGE_PERIOD_START_UTC_SQL}::DATE AS usage_date`;
 
   const tablePrefix = needsOrgJoin ? 'src.' : '';
 

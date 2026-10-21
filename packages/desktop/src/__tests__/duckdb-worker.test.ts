@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { DuckDBInstance } from '@duckdb/node-api';
+import { CHARGE_PERIOD_START_UTC_SQL } from '@costgoblin/core';
 import type { DuckDbSandboxOptions } from '@costgoblin/core';
 import { createDuckDBClient } from '../main/duckdb-client.js';
 import type { DuckDBClient } from '../main/duckdb-client.js';
@@ -383,7 +384,7 @@ describe('DuckDB Worker (sandboxed)', () => {
 
     it('reads Parquet under the data dir', async () => {
       const { rows } = expectRows(await query(
-        `SELECT MAX(ChargePeriodStart::DATE)::VARCHAR AS d FROM read_parquet(['${dataDir}/aws/raw/daily-2026-01/*.parquet'])`,
+        `SELECT MAX(${CHARGE_PERIOD_START_UTC_SQL})::DATE::VARCHAR AS d FROM read_parquet(['${dataDir}/aws/raw/daily-2026-01/*.parquet'])`,
       ));
       expect(rows[0]).toHaveProperty('d', '2026-01-07');
     });

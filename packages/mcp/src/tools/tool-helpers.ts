@@ -4,6 +4,7 @@ import {
   asDateString,
   assertDateString,
   capDateRange,
+  CHARGE_PERIOD_START_UTC_SQL,
   computePeriodsInRange,
   daysBefore,
   DEFAULT_LAG_DAYS,
@@ -271,7 +272,7 @@ export async function computeDataCoverage(
     if (globs.length > 0) {
       try {
         const rows = await ctx.runQuery(
-          `SELECT MAX(ChargePeriodStart::DATE)::VARCHAR AS d FROM read_parquet([${globs.join(', ')}])`,
+          `SELECT MAX(${CHARGE_PERIOD_START_UTC_SQL})::DATE::VARCHAR AS d FROM read_parquet([${globs.join(', ')}])`,
         );
         const v = rows[0]?.['d'];
         if (typeof v === 'string' && v.length >= 10) latestDay = v.slice(0, 10);
