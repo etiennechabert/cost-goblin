@@ -95,7 +95,9 @@ interface ProviderSnapshot {
 
 /** `s3://bucket/prefix` with no trailing slash, so `prefix/` and `prefix` match. */
 function exportKeyOf(bucket: string): string {
-  return bucket.replace(/\/+$/, '');
+  let end = bucket.length;
+  while (end > 0 && bucket[end - 1] === '/') end -= 1;
+  return bucket.slice(0, end);
 }
 
 async function readProviderSnapshot(
