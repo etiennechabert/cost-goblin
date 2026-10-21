@@ -126,6 +126,15 @@ describe('weekly and monthly period buckets', () => {
     const utcRows = await dailyCosts('weekly');
     await conn.run("SET TimeZone = 'America/Los_Angeles'");
     const laRows = await dailyCosts('weekly');
-    expect(byKey(laRows)).toEqual(byKey(utcRows));
+    // Same buckets and groups; amounts compare to the cent, not bit for bit,
+    // because DuckDB's SUM order (and so its float rounding) varies per run.
+    const la = byKey(laRows);
+    const utc = byKey(utcRows);
+    expect(la.map(r => `${String(r['date'])}|${String(r['group_name'])}`)).toEqual(
+      utc.map(r => `${String(r['date'])}|${String(r['group_name'])}`),
+    );
+    la.forEach((row, i) => {
+      expect(Number(row['cost'])).toBeCloseTo(Number(utc[i]?.['cost']), 6);
+    });
   });
 });
