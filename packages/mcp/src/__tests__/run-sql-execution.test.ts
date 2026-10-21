@@ -4,7 +4,7 @@ import type { DuckDBConnection } from '@duckdb/node-api';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { asBucketPath, asProviderName } from '@costgoblin/core';
+import { asBucketPath, asProviderName, CHARGE_PERIOD_START_UTC_SQL } from '@costgoblin/core';
 import type { CostGoblinConfig, CostScopeConfig, DimensionsConfig } from '@costgoblin/core';
 import type { McpContext, RawRow } from '../context.js';
 import { runSql, validateRunSqlQuery } from '../tools/run-sql.js';
@@ -51,7 +51,7 @@ function harness(opts: {
     dataDir,
     stateDir: root,
     runQuery: (sql) => {
-      if (sql.includes('MAX(ChargePeriodStart::DATE)')) return Promise.resolve([{ d: '2026-02-20' }]);
+      if (sql.includes(`MAX(${CHARGE_PERIOD_START_UTC_SQL})`)) return Promise.resolve([{ d: '2026-02-20' }]);
       statements.push(sql);
       return opts.respond?.(sql) ?? Promise.resolve([]);
     },

@@ -9,8 +9,11 @@ import { canonicalJson, sha256Hex } from './digest.js';
  *  v2: FOCUS 1.2 migration (#515) — canonical columns and cost metrics changed,
  *  so every CUR-era partition is invalid.
  *  v3: tag columns are stored under `tagSqlColumn` instead of the `tag_<key>`
- *  dimension id, which DuckDB could not tell apart from a case variant. */
-export const ROLLUP_SCHEMA_VERSION = 3;
+ *  dimension id, which DuckDB could not tell apart from a case variant.
+ *  v4: `usage_date` is the UTC day of ChargePeriodStart. Earlier builds took
+ *  the machine's local day of AWS's tz-aware timestamps, and a partition
+ *  dropped the rows that day put in another month. */
+export const ROLLUP_SCHEMA_VERSION = 4;
 
 function isEnabled(d: { readonly enabled?: boolean | undefined }): boolean {
   return d.enabled !== false;

@@ -20,6 +20,7 @@ export {
   tryResolveField,
   sqlEscapeString,
   sqlStringLiteral,
+  CHARGE_PERIOD_START_UTC_SQL,
   NO_ACCOUNT_SENTINEL,
 } from './builder.js';
 export type { QueryContextOptions, BuildSourceOptions, ProviderSourceSpec, ProviderSourceBranch, BaselineDiscoveryParams, ResolvedDimension } from './builder.js';

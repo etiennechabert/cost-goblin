@@ -58,6 +58,11 @@ JSON document, and GCP as `ARRAY<STRUCT<Key, Value>>` under a different name.
 Azure. This matters: tag extraction in the query layer is
 `element_at(Tags, 'key')[1]`, which only compiles against a `MAP`.
 
+AWS's four period timestamps load as `TIMESTAMP WITH TIME ZONE`, as its export
+writes them (Parquet `isAdjustedToUTC=1`); the CSV holds their UTC wall-clock
+time. `::DATE` on such a value resolves in the session time zone, which is why
+the query layer takes the UTC day explicitly.
+
 Empty CSV cells load as `NULL`, the way a real export delivers absent values.
 
 Nested columns are stored in the CSV as JSON text and parsed back on load.

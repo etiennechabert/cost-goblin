@@ -269,7 +269,7 @@ union + injected `provider` column already shipped in #516).
 
 | Contract column | GCP FOCUS export source | Note |
 |---|---|---|
-| `ChargePeriodStart` | same | granularity may be finer than daily — fine, `usage_date = ChargePeriodStart::DATE`; row volume **[LIVE-GATE: measure]** |
+| `ChargePeriodStart` | same | granularity may be finer than daily — fine, `usage_date` is its UTC day (`CHARGE_PERIOD_START_UTC_SQL`); row volume **[LIVE-GATE: measure]** |
 | `SubAccountId` / `SubAccountName` | same | project id / name |
 | `BilledCost` `EffectiveCost` `ListCost` `ContractedCost` | same, CAST to DOUBLE | conformance gaps **[LIVE-GATE: verify all four populated]** |
 | `ServiceName` / `ServiceCategory` / `RegionId` / `ResourceId` / `ChargeDescription` / `ConsumedQuantity` / `ChargeCategory` / `PricingCategory` / `CommitmentDiscountStatus` | same | `CommitmentDiscountStatus` covers CUDs **[LIVE-GATE: verify]** |

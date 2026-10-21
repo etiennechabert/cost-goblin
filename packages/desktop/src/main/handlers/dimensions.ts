@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { applyNormalizationRule, buildGrainProbeQuery, buildSource, computeRollupEstimate, dimensionsConfigToYaml, emptyRollupEstimate, generateAliasSuggestions, isStringRecord, rollupGrainColumns, rollupGrainDimensions, sqlEscapeString } from '@costgoblin/core';
+import { applyNormalizationRule, buildGrainProbeQuery, buildSource, CHARGE_PERIOD_START_UTC_SQL, computeRollupEstimate, dimensionsConfigToYaml, emptyRollupEstimate, generateAliasSuggestions, isStringRecord, rollupGrainColumns, rollupGrainDimensions, sqlEscapeString } from '@costgoblin/core';
 import type { AliasSuggestion, ColumnValuesPreview, DimensionsConfig, NormalizationRule, RollupGrainEstimate } from '@costgoblin/core';
 import { type AppContext, loadOrgAccountsMap } from './context.js';
 import { parseDimensionsPayload, parseDimensionsRewritePayload, parseDimensionsSavePayload, withAcceptedAliasSuggestion } from './dimensions-payload.js';
@@ -84,7 +84,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
       : `read_parquet(${rawGlobLiteral(ctx.dataDir, String(provider.name), 'daily-*/*.parquet')})`;
     const thirtyDaysAgo = tagDiscoverySince(ctx.now());
 
-    const totalSql = `SELECT COUNT(*) AS total FROM ${rawParquet} WHERE ChargePeriodStart >= '${thirtyDaysAgo}'`;
+    const totalSql = `SELECT COUNT(*) AS total FROM ${rawParquet} WHERE ${CHARGE_PERIOD_START_UTC_SQL} >= '${thirtyDaysAgo}'`;
     const totalRows = await runQuery(totalSql);
     const totalRowCount = totalRows[0] === undefined ? 0 : toNum(totalRows[0]['total']);
 
@@ -94,7 +94,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
                unnest(map_values(Tags)) AS tag_val
         FROM ${rawParquet}
         WHERE Tags IS NOT NULL
-          AND ChargePeriodStart >= '${thirtyDaysAgo}'
+          AND ${CHARGE_PERIOD_START_UTC_SQL} >= '${thirtyDaysAgo}'
       ),
       grouped AS (
         SELECT tag_key, tag_val, COUNT(*) AS val_cnt
