@@ -288,8 +288,9 @@ export function Savings() {
   const actionTypes = useMemo(() => typeTotals(counted.groups), [counted]);
   const allActionTypes = useMemo(() => (data === null ? [] : listedTypes(data.recommendations)), [data]);
 
-  // The settings edit what was saved, so they wait for it: a save from the
-  // defaults would overwrite the saved list.
+  // The settings edit what was saved, so they wait for it. After a failed
+  // load they still apply to this visit, but nothing is saved: a save built
+  // from the defaults would overwrite the settings that couldn't be read.
   const prefsReady = prefsLoaded || prefsQuery.status === 'error';
 
   function toggleHiddenType(actionType: string) {
@@ -301,12 +302,12 @@ export function Savings() {
       if (activeFilter === actionType) setActiveFilter(null);
     }
     setHiddenTypes(next);
-    api.saveSavingsPreferences({ hiddenActionTypes: [...next] }).catch(() => undefined);
+    if (prefsLoaded) api.saveSavingsPreferences({ hiddenActionTypes: [...next] }).catch(() => undefined);
   }
 
   function choosePreferred(next: PreferredCommitment) {
     setPreferred(next);
-    api.saveSavingsPreferences({ preferredCommitment: next }).catch(() => undefined);
+    if (prefsLoaded) api.saveSavingsPreferences({ preferredCommitment: next }).catch(() => undefined);
   }
 
   // A recount can leave the filtered type without a row (showing Savings
@@ -365,6 +366,7 @@ export function Savings() {
 
       {showSettings && prefsReady && allActionTypes.length > 0 && (
         <SavingsSettings
+          saved={prefsLoaded}
           types={allActionTypes}
           hiddenTypes={hiddenTypes}
           onToggleType={toggleHiddenType}
@@ -438,7 +440,9 @@ export function Savings() {
   );
 }
 
-function SavingsSettings({ types, hiddenTypes, onToggleType, preferred, onChoosePreferred }: Readonly<{
+function SavingsSettings({ saved, types, hiddenTypes, onToggleType, preferred, onChoosePreferred }: Readonly<{
+  /** False after the saved settings failed to load: changes aren't saved. */
+  saved: boolean;
   types: readonly { type: string; count: number }[];
   hiddenTypes: ReadonlySet<string>;
   onToggleType: (type: string) => void;
@@ -448,6 +452,11 @@ function SavingsSettings({ types, hiddenTypes, onToggleType, preferred, onChoose
   const selectClass = 'rounded-md border border-border bg-bg-primary px-2 py-1 text-sm text-text-primary';
   return (
     <div className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-4 flex flex-col gap-5">
+      {!saved && (
+        <p role="status" className="text-xs text-warning">
+          Your saved Savings settings could not be read, so changes here are not saved and last until you leave this view.
+        </p>
+      )}
       <div>
         <h3 className="text-sm font-medium text-text-secondary mb-3">Visible recommendation types</h3>
         <div className="flex flex-col gap-2">
@@ -466,7 +475,7 @@ function SavingsSettings({ types, hiddenTypes, onToggleType, preferred, onChoose
         </div>
         {hiddenTypes.size > 0 && (
           <p className="text-xs text-text-muted mt-3">
-            {String(hiddenTypes.size)} type{hiddenTypes.size > 1 ? 's' : ''} hidden. Settings saved automatically.
+            {String(hiddenTypes.size)} type{hiddenTypes.size > 1 ? 's' : ''} hidden.{saved ? ' Settings saved automatically.' : ''}
           </p>
         )}
       </div>
