@@ -24,8 +24,8 @@ const SAMPLE_NAMES: readonly string[] = [
   'acme-payments-production',
   'acme-payments-staging',
   'Acme Search   sandbox',
-  'DiBa Cards Core Banking',
-  'DiBa Cards  ',
+  'Acme Corp Data Platform',
+  'Acme Corp  ',
   '  spaced   out\tname  production',
   'aaa',
   '',
@@ -37,11 +37,11 @@ const BENIGN_PATTERN_SETS: readonly (readonly string[] | undefined)[] = [
   [],
   ['^acme-'],
   [String.raw`\s+(production|staging|sandbox)$`],
-  ['^DiBa Cards '],
+  ['^Acme Corp '],
   [''],
   ['(unclosed', 'foo'],
   ['a', 'a'],
-  ['^acme-', String.raw`-(production|staging)$`, '^DiBa Cards '],
+  ['^acme-', String.raw`-(production|staging)$`, '^Acme Corp '],
 ];
 
 const BIG_BUDGET = { perPatternMs: 1000, totalMs: 5000 };
@@ -163,7 +163,7 @@ describe('stripNamesBounded — wall-clock bound', () => {
 
   it('strips 5,000 names with 5 benign patterns quickly', () => {
     const names = Array.from({ length: 5000 }, (_, i) => `acme-team-${String(i)} production`);
-    const patterns = ['^acme-', String.raw`\s+(production|staging|sandbox)$`, '^DiBa Cards ', '-eu-west-1$', String.raw`\(legacy\)`];
+    const patterns = ['^acme-', String.raw`\s+(production|staging|sandbox)$`, '^Acme Corp ', '-eu-west-1$', String.raw`\(legacy\)`];
     const started = performance.now();
     const result = stripNamesBounded(names, patterns, PREVIEW_STRIP_BUDGET);
     expect(performance.now() - started).toBeLessThan(200);
