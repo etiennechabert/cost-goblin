@@ -10,12 +10,14 @@ import {
   isPeriodGranularity,
   lastNPeriodsRange,
   periodEnd,
+  periodStart,
   widenToPeriods,
 } from '@costgoblin/core/browser';
 import { daysAgo, getThisMonth, getLastMonth, getCurrentQuarter, getLastQuarter, getYTD, getLastYear, shiftDay } from '../lib/dates.js';
 import { shouldAutoSwitchToHourly } from '../lib/drag-select.js';
 import { useHourlyRetentionDays } from '../hooks/use-hourly-configured.js';
 import { useOldestDailyPeriod } from '../hooks/use-oldest-daily-period.js';
+import { MonthRangeGrid } from './month-range-grid.js';
 import { Calendar } from './ui/calendar.js';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover.js';
 
@@ -292,8 +294,20 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
     // Only commit once both ends are chosen — a lone start shouldn't refire the query.
     if (range?.from && range.to) {
       handleCustomRange({ start: formatDay(range.from), end: formatDay(range.to) });
+      // A weekly pick is committed widened to whole weeks: drop the raw days so
+      // the calendar shows the committed value rather than the two clicked days.
+      if (granularity === 'weekly') setDraftRange(undefined);
     }
   }
+
+  // While the second click of a weekly range is pending, the whole week of each
+  // picked day is tinted, so the user sees the range will snap to full weeks.
+  const draftWeeks = granularity === 'weekly' && draftRange?.from !== undefined
+    ? {
+        from: parseDay(periodStart(formatDay(draftRange.from), 'weekly')),
+        to: parseDay(periodEnd(formatDay(draftRange.to ?? draftRange.from), 'weekly')),
+      }
+    : undefined;
 
   function handleGranularityToggle(next: Granularity) {
     if (next === granularity) return;
@@ -406,16 +420,30 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
                     <span className="font-medium text-text-secondary">{value.end}</span>
                   </div>
                 </div>
-                <Calendar
-                  mode="range"
-                  required={false}
-                  resetOnSelect
-                  selected={draftRange ?? { from: parseDay(value.start), to: parseDay(value.end) }}
-                  onSelect={handleRangeSelect}
-                  defaultMonth={parseDay(value.end)}
-                  disabled={(date) => formatDay(date) > latestDate}
-                  autoFocus
-                />
+                {granularity === 'monthly' ? (
+                  <MonthRangeGrid
+                    value={value}
+                    newestDay={latestDate}
+                    onSelect={range => { handleCustomRange(range); }}
+                  />
+                ) : (
+                  <Calendar
+                    mode="range"
+                    required={false}
+                    resetOnSelect
+                    selected={draftRange ?? { from: parseDay(value.start), to: parseDay(value.end) }}
+                    onSelect={handleRangeSelect}
+                    defaultMonth={parseDay(value.end)}
+                    disabled={(date) => formatDay(date) > latestDate}
+                    {...(granularity === 'weekly' ? {
+                      ISOWeek: true,
+                      showWeekNumber: true,
+                      modifiers: { weekHighlight: draftWeeks ?? [] },
+                      modifiersClassNames: { weekHighlight: '[&:not([aria-selected])]:bg-accent/20 rounded-md' },
+                    } : {})}
+                    autoFocus
+                  />
+                )}
               </div>
             )}
           </div>

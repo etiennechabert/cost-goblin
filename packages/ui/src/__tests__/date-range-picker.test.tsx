@@ -314,6 +314,62 @@ describe('DateRangePicker monthly and weekly modes', () => {
     await user.click(screen.getByRole('button', { name: 'Weekly' }));
     expect(onChange).toHaveBeenLastCalledWith({ start: '2026-03-09', end: '2026-10-25' }, 'weekly');
   });
+
+  it('shows the month grid, not the day calendar, for a Monthly custom range', async () => {
+    const { onChange, user } = renderMode('monthly', MARCH_TO_OCT_2026);
+    await user.click(screen.getByRole('button', { name: /Mar 2026/ }));
+    await user.click(screen.getByText('Custom range…'));
+    expect(screen.queryByRole('grid')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Previous year' })).toBeDefined();
+    await user.click(screen.getByRole('button', { name: 'Jan' }));
+    await user.click(screen.getByRole('button', { name: 'Sep' }));
+    expect(onChange).toHaveBeenCalledWith({ start: '2026-01-01', end: '2026-09-30' }, 'monthly');
+  });
+
+  it('disables the months after the newest available day in the Monthly custom range', async () => {
+    const { user } = renderMode('monthly', MARCH_TO_OCT_2026);
+    await user.click(screen.getByRole('button', { name: /Mar 2026/ }));
+    await user.click(screen.getByText('Custom range…'));
+    expect(screen.getByRole('button', { name: 'Oct' }).hasAttribute('disabled')).toBe(false);
+    expect(screen.getByRole('button', { name: 'Nov' }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it('widens a Weekly custom range to whole ISO weeks', async () => {
+    const { onChange, user } = renderMode('weekly', { start: asDateString('2026-09-28'), end: asDateString('2026-10-25') });
+    await user.click(screen.getByRole('button', { name: 'Last 4 weeks' }));
+    await user.click(screen.getByText('Custom range…'));
+    await user.click(screen.getByRole('button', { name: /October 8th, 2026/ }));
+    expect(onChange).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: /October 15th, 2026/ }));
+    expect(onChange).toHaveBeenCalledOnce();
+    expect(onChange).toHaveBeenCalledWith({ start: '2026-10-05', end: '2026-10-18' }, 'weekly');
+  });
+
+  it('starts weeks on Monday and numbers them by ISO week in the Weekly calendar', async () => {
+    const { user } = renderMode('weekly', { start: asDateString('2026-09-28'), end: asDateString('2026-10-25') });
+    await user.click(screen.getByRole('button', { name: 'Last 4 weeks' }));
+    await user.click(screen.getByText('Custom range…'));
+    const grid = screen.getByRole('grid');
+    const headers = within(grid).getAllByRole('columnheader', { hidden: true }).map(h => h.textContent);
+    expect(headers).toEqual(['', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su']);
+    expect(within(grid).getByRole('rowheader', { name: 'Week 42' }).textContent).toBe('42');
+    // The week of Monday 2026-10-12 is labelled with its own number.
+    const monday = within(grid).getByRole('button', { name: /October 12th, 2026/ });
+    expect(monday.closest('tr')?.querySelector('[role="rowheader"]')?.textContent).toBe('42');
+  });
+
+  it('highlights the whole week of the first day picked while the end is pending', async () => {
+    const { user } = renderMode('weekly', { start: asDateString('2026-09-28'), end: asDateString('2026-10-25') });
+    await user.click(screen.getByRole('button', { name: 'Last 4 weeks' }));
+    await user.click(screen.getByText('Custom range…'));
+    await user.click(screen.getByRole('button', { name: /October 8th, 2026/ }));
+    const grid = screen.getByRole('grid');
+    for (const name of [/October 5th, 2026/, /October 11th, 2026/]) {
+      expect(within(grid).getByRole('button', { name }).closest('td')?.className).toContain('bg-accent/20');
+    }
+    expect(within(grid).getByRole('button', { name: /October 12th, 2026/ }).closest('td')?.className).not.toContain('bg-accent/20');
+    expect(within(grid).getByRole('button', { name: /October 4th, 2026/ }).closest('td')?.className).not.toContain('bg-accent/20');
+  });
 });
 
 describe('switchGranularity', () => {
