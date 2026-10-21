@@ -96,8 +96,9 @@ export async function listSavingsRecommendations(
   ];
   if (shown.length < groups.length) notes.push(`Showing ${String(shown.length)} of ${String(groups.length)} actions, highest savings first; pass a larger limit to see more.`);
 
+  const filterSuffix = params.actionType === undefined ? '' : ` — ${params.actionType}`;
   const result: StructuredResult = {
-    title: `Cost optimization recommendations (${String(groups.length)})${params.actionType === undefined ? '' : ` — ${params.actionType}`}`,
+    title: `Cost optimization recommendations (${String(groups.length)})${filterSuffix}`,
     meta,
     notes,
     tables: [{ columns: COLUMNS, rows: shown.map(row) }],

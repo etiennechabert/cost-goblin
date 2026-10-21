@@ -39,16 +39,16 @@ export async function latestCostOptSnapshot(dataDir: string, provider: ProviderN
     .map(name => SNAPSHOT_DIR.exec(name)?.[1])
     .filter((date): date is string => date !== undefined)
     .sort(newestFirst);
-  for (const date of dates) {
-    let files: string[];
+  // An empty directory (an interrupted download) is no snapshot.
+  const populated = await Promise.all(dates.map(async date => {
     try {
-      files = await readdir(join(rawDir, `cost-opt-${date}`));
+      return (await readdir(join(rawDir, `cost-opt-${date}`))).some(f => f.endsWith('.parquet'));
     } catch {
-      continue;
+      return false; // not a directory, or gone mid-scan
     }
-    if (files.some(f => f.endsWith('.parquet'))) return { providerName: String(provider), date };
-  }
-  return null;
+  }));
+  const date = dates.find((_, i) => populated[i] === true);
+  return date === undefined ? null : { providerName: String(provider), date };
 }
 
 /** SELECT one snapshot's recommendations, aliased for `parseSavingsRow`. */

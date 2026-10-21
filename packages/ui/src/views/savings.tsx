@@ -68,7 +68,8 @@ function snapshotLabel(snapshots: readonly SavingsSnapshot[]): string {
   if (snapshots.length === 0) return '';
   const [only] = snapshots;
   if (snapshots.length === 1 && only !== undefined) return `COH export of ${only.date}`;
-  return `COH exports: ${snapshots.map(s => `${s.providerName} ${s.date}`).join(', ')}`;
+  const perProvider = snapshots.map(s => `${s.providerName} ${s.date}`).join(', ');
+  return `COH exports: ${perProvider}`;
 }
 
 interface ParsedDetails {
@@ -477,7 +478,7 @@ function SavingsSettings({ types, hiddenTypes, onToggleType, preferred, onChoose
         </p>
         <div className="flex flex-wrap items-center gap-4 text-sm">
           <label className="flex items-center gap-2 text-text-secondary">
-            Term
+            <span>Term</span>
             <select
               className={selectClass}
               value={preferred.term ?? HIGHEST}
@@ -491,7 +492,7 @@ function SavingsSettings({ types, hiddenTypes, onToggleType, preferred, onChoose
             </select>
           </label>
           <label className="flex items-center gap-2 text-text-secondary">
-            Payment
+            <span>Payment</span>
             <select
               className={selectClass}
               value={preferred.paymentOption ?? HIGHEST}
