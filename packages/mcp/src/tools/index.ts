@@ -237,7 +237,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
   server.registerTool(
     'run_sql',
     {
-      description: describeTool('Run an ad-hoc SELECT query. A "costs" CTE is pre-defined with the dataset for the given date range (default: the last 60 days of consolidated billing data). Write: SELECT ... FROM costs WHERE ... At most `limit` rows (default 100, max 500) are returned, even when the query has its own LIMIT; a note says when more rows exist.'),
+      description: describeTool('Run an ad-hoc SELECT query. A "costs" CTE is pre-defined with the dataset for the given date range (default: the last 60 days of consolidated billing data). Write: SELECT ... FROM costs WHERE ... At most `limit` rows (default 100, max 500) are returned, even when the query has its own LIMIT; a note says when more rows exist. Values come back as DuckDB writes them (dates YYYY-MM-DD, lists and structs as JSON); numbers, DECIMAL included, as doubles: cast to VARCHAR to keep more than 15 significant digits.'),
       inputSchema: {
         sql: z.string().describe('SQL query (SELECT/WITH only). A "costs" CTE with columns: usage_date, account_id, account_name, region, service, service_code, service_category, charge_category, pricing_category, commitment_status, operation, sku_meter, description, resource_id, usage_amount, cost, list_cost, plus one column per tag dimension, named as list_dimensions\' SQL Column (tag_<key>_<hash>, not the tag_<key> id).'),
         dateRange: dateRangeSchema,

@@ -112,6 +112,34 @@ describe('formatAsMarkdown cells and layout', () => {
     expect(lines.at(-1)).toBe('|      |       |       |        |        |      |     |');
   });
 
+  // run_sql's columns: an SQL value is not a count to round to 1.5k.
+  it('prints a number column with the exact style as it is, and keeps the style out of json and csv', () => {
+    const result: StructuredResult = {
+      title: 'Exact',
+      tables: [{
+        columns: [
+          { key: 'count', header: 'Count', type: 'number' },
+          { key: 'value', header: 'Value', type: 'number', numberStyle: 'exact' },
+        ],
+        rows: [[1500, 1500], [0.0732, 0.0732], [-0.5, -0.5], [Number.NaN, Number.NaN], ['', '']],
+      }],
+    };
+    expect(formatAsMarkdown(result).split('\n').slice(2)).toEqual([
+      '| Count |  Value |',
+      '| ----: | -----: |',
+      '|  1.5k |   1500 |',
+      '|     0 | 0.0732 |',
+      '|     0 |   -0.5 |',
+      '|   NaN |    NaN |',
+      '|       |        |',
+    ]);
+    expect(JSON.parse(formatAsJson(result))).toMatchObject({
+      tables: [{ columns: [{ key: 'count', header: 'Count', type: 'number' }, { key: 'value', header: 'Value', type: 'number' }] }],
+    });
+    expect(formatAsJson(result)).not.toContain('numberStyle');
+    expect(formatAsCsv(result).split('\n').slice(1)).toEqual(['Count,Value', '1500,1500', '0.0732,0.0732', '-0.5,-0.5', 'NaN,NaN', ',']);
+  });
+
   it('separates consecutive tables with a blank line and renders a footer under its table', () => {
     const out = formatAsMarkdown({
       title: 'Two tables',

@@ -3,6 +3,7 @@ import {
   buildRunSqlStatement,
   MAX_CELL_CHARS,
   resolveRunSqlCap,
+  runSqlCell,
   truncateCell,
   validateRunSqlQuery,
 } from '../tools/run-sql.js';
@@ -89,9 +90,9 @@ describe('validateRunSqlQuery', () => {
 describe('buildRunSqlStatement', () => {
   const CTE = 'costs AS (SELECT 1 AS cost)';
 
-  it('wraps the query in a subquery capped at cap + 1 rows', () => {
+  it('wraps the query in a subquery capped at cap + 1 rows, every column as JSON text', () => {
     const sql = buildRunSqlStatement(CTE, 'SELECT * FROM costs', 5);
-    expect(sql.startsWith(`WITH ${CTE}\nSELECT * FROM (\n`)).toBe(true);
+    expect(sql.startsWith(`WITH ${CTE}\nSELECT to_json(COLUMNS(*))::VARCHAR FROM (\n`)).toBe(true);
     expect(sql.endsWith('\n) AS _costgoblin_q\nLIMIT 6')).toBe(true);
   });
 
@@ -161,5 +162,56 @@ describe('truncateCell', () => {
   it('keeps a surrogate pair that ends exactly at the boundary', () => {
     const s = `${'a'.repeat(4094)}😀${'b'.repeat(10)}`;
     expect(truncateCell(s)).toBe(`${'a'.repeat(4094)}😀…[+10 chars]`);
+  });
+});
+
+describe('runSqlCell', () => {
+  // What DuckDB's to_json writes for each kind of value.
+  it.each([
+    ['a string', '"he said \\"hi\\""', 'he said "hi"'],
+    ['a date', '"2026-01-02"', '2026-01-02'],
+    ['an empty string', '""', ''],
+    ['a decimal', '0.0732', 0.0732],
+    ['a negative exponent', '-1.5e-7', -1.5e-7],
+    ['a zero', '0', 0],
+    ['a wide integer', '170141183460469231731687303715884105727', 1.7014118346046923e38],
+    ['NaN', 'NaN', Number.NaN],
+    ['Infinity', 'Infinity', Number.POSITIVE_INFINITY],
+    ['-Infinity', '-Infinity', Number.NEGATIVE_INFINITY],
+    ['a boolean', 'true', 'true'],
+    ['a list', '[1,2,3]', '[1,2,3]'],
+    ['a struct or map', '{"a":1}', '{"a":1}'],
+    ['a JSON null', 'null', ''],
+  ])('reads %s', (_label, text, cell) => {
+    expect(runSqlCell(text)).toBe(cell);
+  });
+
+  // A query that closes the wrapper's subquery can UNION in a branch the
+  // wrapper never sees: its values arrive as plain text, which stays text.
+  it.each([
+    ['plain text', 'EC2'],
+    ['a bare date', '2026-01-02'],
+    ['an empty text', ''],
+    ['an unterminated string', '"abc'],
+    ['a hex literal', '0x10'],
+    ['a padded number', ' 12'],
+    ['a signed number', '+5'],
+    ['a leading-zero number', '012'],
+  ])('keeps %s as it is', (_label, text) => {
+    expect(runSqlCell(text)).toBe(text);
+  });
+
+  it('reads SQL NULL as empty', () => {
+    expect(runSqlCell(null)).toBe('');
+    expect(runSqlCell(undefined)).toBe('');
+  });
+
+  it.each([
+    ['number', 5],
+    ['bigint', 5n],
+    ['boolean', true],
+    ['object', { days: 20455 }],
+  ])('throws on a %s cell instead of blanking it', (type, value) => {
+    expect(() => runSqlCell(value)).toThrow(`run_sql expects JSON text or NULL in every cell, got ${type}`);
   });
 });
