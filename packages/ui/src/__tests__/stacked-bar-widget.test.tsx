@@ -18,6 +18,7 @@ import type { CostFocusAction, CostFocusState } from '../hooks/use-cost-focus.js
 import { PaletteProvider } from '../hooks/use-palette.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { StackedBarWidget } from '../widgets/stacked-bar-widget.js';
+import { costsTitle } from '../lib/dates.js';
 import { deferred, settle } from './deferred.js';
 
 const SERVICE = asDimensionId('service');
@@ -203,6 +204,45 @@ describe('StackedBarWidget — daily bars', () => {
     await act(async () => { await new Promise(resolve => { setTimeout(resolve, 0); }); });
     expect(api.calls).toHaveLength(0);
     expect(container.innerHTML).toBe('');
+  });
+});
+
+describe('StackedBarWidget — weekly and monthly bars', () => {
+  it('shows the current unfinished month as an empty bar when it has no data yet', async () => {
+    const api = new DailyApi();
+    api.current = () => Promise.resolve(daily([
+      ['2026-08-01', { platform: 60, data: 40 }],
+      ['2026-09-01', { platform: 70, data: 30 }],
+    ]));
+    const monthRange: DateRange = { start: asDateString('2026-08-01'), end: asDateString('2026-10-31') };
+    const { container } = renderWidget({ api, granularity: 'monthly', dateRange: monthRange });
+
+    const cols = await bars(container, 3);
+    expect(segments(cols[0])).toHaveLength(2);
+    expect(segments(cols[2])).toHaveLength(0);
+    for (const label of ['Aug 2026', 'Sep 2026', 'Oct 2026']) expect(screen.getByText(label)).toBeDefined();
+    expect(api.calls[0]).toMatchObject({ dateRange: monthRange, granularity: 'monthly' });
+  });
+
+  it('fills missing weeks and labels them by ISO week', async () => {
+    const api = new DailyApi();
+    api.current = () => Promise.resolve(daily([
+      ['2026-09-28', { platform: 60 }],
+      ['2026-10-12', { platform: 70 }],
+    ]));
+    const weekRange: DateRange = { start: asDateString('2026-09-28'), end: asDateString('2026-10-18') };
+    const { container } = renderWidget({ api, granularity: 'weekly', dateRange: weekRange });
+
+    const cols = await bars(container, 3);
+    expect(segments(cols[1])).toHaveLength(0);
+    for (const label of ['W40 2026', 'W41 2026', 'W42 2026']) expect(screen.getByText(label)).toBeDefined();
+  });
+
+  it('titles a default chart by its granularity', () => {
+    expect(costsTitle('monthly')).toBe('Monthly Costs');
+    expect(costsTitle('weekly')).toBe('Weekly Costs');
+    expect(costsTitle('daily')).toBe('Daily Costs');
+    expect(costsTitle('hourly')).toBe('Hourly Costs');
   });
 });
 

@@ -1,7 +1,9 @@
+import { asDateString, formatPeriodLabel, isPeriodGranularity } from '@costgoblin/core/browser';
 import type { Granularity } from '../components/date-range-picker.js';
 import { daysBetween } from './dates.js';
 
 const HOURLY_THRESHOLD_DAYS = 7;
+const PERIOD_KEY = /^\d{4}-\d{2}-\d{2}/;
 
 export function pixelToIndex(x: number, containerWidth: number, bucketCount: number): number {
   if (bucketCount <= 0 || containerWidth <= 0) return 0;
@@ -53,10 +55,16 @@ export function bucketKeyToDate(key: string): string {
 
 /** Human-readable label for a bar's time bucket. Hourly bucket keys carry an
  *  `HH:MM` suffix (e.g. "2026-05-01 21:00") and we surface that; daily keys
- *  collapse to date-only ("May 1"). Used for the live drag-zoom edge labels
- *  so the user can see the period before releasing the mouse. */
-export function formatBucketKey(key: string): string {
+ *  collapse to date-only ("May 1"); weekly and monthly keys, which are their
+ *  period's first day, read as the period ("W43 2026", "Oct 2026"). Used for the live
+ *  drag-zoom edge labels so the user can see the period before releasing the
+ *  mouse. */
+export function formatBucketKey(key: string, granularity?: Granularity): string {
   if (key.length === 0) return '';
+  // A weekly/monthly bucket key is its period's first day.
+  if (granularity !== undefined && isPeriodGranularity(granularity)) {
+    return PERIOD_KEY.test(key) ? formatPeriodLabel(asDateString(key.slice(0, 10)), granularity) : key;
+  }
   const datePart = key.slice(0, 10);
   const [yearStr, monthStr, dayStr] = datePart.split('-');
   const year = Number(yearStr);

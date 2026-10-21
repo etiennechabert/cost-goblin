@@ -12,6 +12,8 @@ import type { SeriesColors } from '../lib/palette.js';
 import { TOOLTIP_STYLES } from '../lib/tooltip-styles.js';
 import { formatDollars } from './format.js';
 import { useSeriesColors } from '../hooks/use-palette.js';
+import { asDateString, formatPeriodLabel, isPeriodGranularity } from '@costgoblin/core/browser';
+import type { Granularity } from '@costgoblin/core/browser';
 
 export interface LineSeriesPoint {
   readonly date: string;
@@ -31,6 +33,9 @@ interface LineChartProps {
   readonly title?: React.ReactNode | undefined;
   readonly subtitle?: string | undefined;
   readonly height?: number | undefined;
+  /** Weekly/monthly points are period starts: the x axis and tooltip label
+   *  them as their period (`W43 2026`, `Oct 2026`) instead of as days. */
+  readonly granularity?: Granularity | undefined;
   readonly onSeriesClick?: ((name: string) => void) | undefined;
 }
 
@@ -46,11 +51,18 @@ interface LineSvgProps {
   readonly seriesColor: SeriesColors;
   readonly visible: readonly LineSeries[];
   readonly previousSeries?: readonly LineSeries[] | undefined;
+  readonly granularity?: Granularity | undefined;
   readonly width: number;
   readonly height: number;
 }
 
-function LineSvg({ series, seriesColor, visible, previousSeries, width, height }: LineSvgProps) {
+/** `step`-th entries of `values`, always keeping the first. */
+function thin<T>(values: readonly T[], maxCount: number): T[] {
+  const step = Math.max(1, Math.ceil(values.length / maxCount));
+  return values.filter((_, i) => i % step === 0);
+}
+
+function LineSvg({ series, seriesColor, visible, previousSeries, granularity, width, height }: LineSvgProps) {
   const {
     showTooltip, hideTooltip, tooltipData, tooltipLeft, tooltipTop, tooltipOpen,
   } = useTooltip<TooltipPayload>();
@@ -91,6 +103,15 @@ function LineSvg({ series, seriesColor, visible, previousSeries, width, height }
     range: [innerH, 0],
     nice: true,
   }), [maxY, innerH]);
+
+  const periodGranularity = granularity !== undefined && isPeriodGranularity(granularity) ? granularity : undefined;
+  const periodLabel = (key: string): string => periodGranularity === undefined
+    ? key
+    : formatPeriodLabel(asDateString(key.slice(0, 10)), periodGranularity);
+  const numTicks = Math.min(6, Math.max(2, Math.floor(innerW / 80)));
+  // A period axis ticks at the periods themselves: a generic time scale would
+  // land on arbitrary days and mislabel them.
+  const periodTicks = periodGranularity === undefined ? undefined : thin(sortedDates, numTicks).map(d => new Date(d));
 
   const handleMove = useCallback((event: React.MouseEvent<SVGRectElement>) => {
     const point = localPoint(event);
@@ -134,9 +155,11 @@ function LineSvg({ series, seriesColor, visible, previousSeries, width, height }
           <AxisBottom
             top={innerH}
             scale={xScale}
-            numTicks={Math.min(6, Math.max(2, Math.floor(innerW / 80)))}
+            numTicks={numTicks}
+            tickValues={periodTicks ?? xScale.ticks(numTicks)}
             tickFormat={(v) => {
               const d = v instanceof Date ? v : new Date(v.valueOf());
+              if (periodGranularity !== undefined) return periodLabel(d.toISOString());
               return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
             }}
             stroke="var(--color-text-muted)"
@@ -205,7 +228,7 @@ function LineSvg({ series, seriesColor, visible, previousSeries, width, height }
       {tooltipOpen && tooltipData !== undefined && tooltipLeft !== undefined && tooltipTop !== undefined && (
         <TooltipWithBounds left={tooltipLeft} top={tooltipTop} style={TOOLTIP_STYLES}>
           <div className="flex flex-col gap-0.5">
-            <span className="font-medium text-text-primary mb-1">{tooltipData.date}</span>
+            <span className="font-medium text-text-primary mb-1">{periodLabel(tooltipData.date)}</span>
             {tooltipData.entries.map(e => (
               <span key={e.name} className="flex items-center gap-1.5">
                 <span className="inline-block w-2 h-2 rounded-sm" style={{ background: e.color }} />
@@ -220,7 +243,7 @@ function LineSvg({ series, seriesColor, visible, previousSeries, width, height }
   );
 }
 
-export function LineChart({ series, previousSeries, title, subtitle, height = 320, onSeriesClick }: LineChartProps) {
+export function LineChart({ series, previousSeries, title, subtitle, height = 320, granularity, onSeriesClick }: LineChartProps) {
   // Hiding a series leaves the others' colors alone: rank every series.
   const seriesTotals = useMemo(
     () => series.map(s => ({ name: s.name, cost: s.points.reduce((sum, p) => sum + p.cost, 0) })),
@@ -258,7 +281,7 @@ export function LineChart({ series, previousSeries, title, subtitle, height = 32
         <ParentSize>
           {({ width, height: h }) => (
             width > 10 && h > 10 ? (
-              <LineSvg series={series} seriesColor={seriesColor} visible={visible} previousSeries={visiblePrev} width={width} height={h} />
+              <LineSvg series={series} seriesColor={seriesColor} visible={visible} previousSeries={visiblePrev} granularity={granularity} width={width} height={h} />
             ) : null
           )}
         </ParentSize>

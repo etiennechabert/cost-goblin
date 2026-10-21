@@ -3,7 +3,7 @@ import { useDailyWidgetQuery } from '../hooks/use-widget-query.js';
 import { HeatmapChart } from '../components/heatmap-chart.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import type { HeatmapCell } from '../components/heatmap-chart.js';
-import { asTagValue, type DailyCostsResult, type DimensionId } from '@costgoblin/core/browser';
+import { asTagValue, type DailyCostsResult, type DimensionId, type Granularity } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
 import { dimensionLabelFor, topNFor } from './widget.js';
 import { GroupByTitle } from '../components/group-by-title.js';
@@ -37,6 +37,12 @@ function buildCells(data: DailyCostsResult | null, topN: number): BuiltCells {
     groups: top,
     dates: data.days.map(d => d.date),
   };
+}
+
+function columnUnit(granularity: Granularity): string {
+  if (granularity === 'monthly') return 'Month';
+  if (granularity === 'weekly') return 'Week';
+  return 'Day';
 }
 
 export function HeatmapWidget({
@@ -80,7 +86,8 @@ export function HeatmapWidget({
       cells={cells}
       groups={groups}
       dates={dates}
-      title={spec.title ?? <GroupByTitle dimensions={dimensions} currentGroupBy={activeGroupBy} onGroupByChange={setGroupByOverride} label={label} suffix="× Day" />}
+      title={spec.title ?? <GroupByTitle dimensions={dimensions} currentGroupBy={activeGroupBy} onGroupByChange={setGroupByOverride} label={label} suffix={`× ${columnUnit(granularity)}`} />}
+      granularity={granularity}
       subtitle="Click a cell to filter"
       onCellClick={(group) => { onSetFilter(activeGroupBy, asTagValue(group)); }}
     />

@@ -114,6 +114,7 @@ export function LineWidget({
     <LineChart
       series={series}
       previousSeries={compareEnabled ? previousSeries : undefined}
+      granularity={granularity}
       title={spec.title ?? <GroupByTitle dimensions={dimensions} currentGroupBy={activeGroupBy} onGroupByChange={setGroupByOverride} label={label} suffix="over time" />}
       subtitle={`Top ${String(topN)} • Click to filter, dbl-click to hide`}
       onSeriesClick={(name) => { onSetFilter(activeGroupBy, asTagValue(name)); }}

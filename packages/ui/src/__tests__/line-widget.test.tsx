@@ -8,6 +8,7 @@ import type {
   DateRange,
   Dimension,
   DimensionId,
+  Granularity,
   TagValue,
   WidgetSpec,
 } from '@costgoblin/core/browser';
@@ -85,6 +86,8 @@ interface RenderOptions {
   readonly spec?: WidgetSpec;
   readonly api?: DailyApi;
   readonly compareEnabled?: boolean;
+  readonly granularity?: Granularity;
+  readonly dateRange?: DateRange;
 }
 
 function renderWidget(opts: RenderOptions = {}) {
@@ -96,10 +99,10 @@ function renderWidget(opts: RenderOptions = {}) {
       <CostApiProvider value={api}>
         <LineWidget
           spec={opts.spec ?? SPEC}
-          dateRange={RANGE}
+          dateRange={opts.dateRange ?? RANGE}
           previousDateRange={PREV_RANGE}
           compareEnabled={opts.compareEnabled ?? false}
-          granularity="daily"
+          granularity={opts.granularity ?? 'daily'}
           globalFilters={{}}
           dimensions={DIMS}
           onSetFilter={onSetFilter}
@@ -187,6 +190,36 @@ describe('LineWidget', () => {
     await act(async () => { await new Promise(resolve => { setTimeout(resolve, 0); }); });
     expect(api.calls).toHaveLength(0);
     expect(container.innerHTML).toBe('');
+  });
+});
+
+describe('LineWidget — weekly and monthly', () => {
+  it('labels the x axis with month names in Monthly', async () => {
+    const api = new DailyApi();
+    api.current = () => Promise.resolve(daily([
+      ['2026-08-01', { platform: 50, data: 30 }],
+      ['2026-09-01', { platform: 60, data: 30 }],
+      ['2026-10-01', { platform: 70, data: 30 }],
+    ]));
+    const dateRange: DateRange = { start: asDateString('2026-08-01'), end: asDateString('2026-10-31') };
+    const { container } = renderWidget({ api, granularity: 'monthly', dateRange });
+
+    await waitFor(() => { expect(lines(container)).toHaveLength(2); });
+    for (const label of ['Aug 2026', 'Sep 2026', 'Oct 2026']) expect(screen.getByText(label)).toBeDefined();
+  });
+
+  it('labels the x axis with ISO weeks in Weekly', async () => {
+    const api = new DailyApi();
+    api.current = () => Promise.resolve(daily([
+      ['2026-10-05', { platform: 50 }],
+      ['2026-10-12', { platform: 60 }],
+      ['2026-10-19', { platform: 70 }],
+    ]));
+    const dateRange: DateRange = { start: asDateString('2026-10-05'), end: asDateString('2026-10-25') };
+    const { container } = renderWidget({ api, granularity: 'weekly', dateRange });
+
+    await waitFor(() => { expect(lines(container)).toHaveLength(1); });
+    for (const label of ['W41 2026', 'W42 2026', 'W43 2026']) expect(screen.getByText(label)).toBeDefined();
   });
 });
 

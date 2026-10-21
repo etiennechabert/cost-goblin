@@ -3,28 +3,39 @@ import { useDailyWidgetQuery } from '../hooks/use-widget-query.js';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { StackedBarChart, bucketBars, type BarDay } from '../components/stacked-bar-chart.js';
-import { asDateString, asHourString, asTagValue } from '@costgoblin/core/browser';
+import { asDateString, asHourString, asTagValue, isPeriodGranularity, periodStartsInRange } from '@costgoblin/core/browser';
 import { useCostFocus, useCostFocusDispatch } from '../hooks/use-cost-focus.js';
 import type { DailyCostsResult, DateRange, DateString, DimensionId, Granularity } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
 import { dimensionLabelFor, filtersKey, hasSufficientDailyCoverage } from './widget.js';
 import { GroupByTitle } from '../components/group-by-title.js';
+import { costsTitle } from '../lib/dates.js';
 import { computeBucketedHourRange, computeBucketedRange } from '../lib/drag-select.js';
 
 const MAX_BARS = 170;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-function fillDateRange(bars: BarDay[], start: string, end: string): BarDay[] {
-  const existing = new Set(bars.map(b => b.date));
-  const result = [...bars];
+/** The bucket keys the range covers: every day, or in Weekly/Monthly every
+ *  period start (the newest period may be unfinished or still without data). */
+function expectedBucketKeys(start: string, end: string, granularity: Granularity): string[] {
+  if (isPeriodGranularity(granularity)) {
+    return periodStartsInRange({ start: asDateString(start), end: asDateString(end) }, granularity);
+  }
+  const keys: string[] = [];
   const current = new Date(start + 'T00:00:00Z');
   const last = new Date(end + 'T00:00:00Z');
   while (current <= last) {
-    const dateStr = current.toISOString().slice(0, 10);
-    if (!existing.has(dateStr)) {
-      result.push({ date: dateStr, total: 0, breakdown: {} });
-    }
+    keys.push(current.toISOString().slice(0, 10));
     current.setTime(current.getTime() + DAY_MS);
+  }
+  return keys;
+}
+
+function fillDateRange(bars: BarDay[], start: string, end: string, granularity: Granularity): BarDay[] {
+  const existing = new Set(bars.map(b => b.date));
+  const result = [...bars];
+  for (const key of expectedBucketKeys(start, end, granularity)) {
+    if (!existing.has(key)) result.push({ date: key, total: 0, breakdown: {} });
   }
   return result.sort((a, b) => a.date.localeCompare(b.date));
 }
@@ -116,7 +127,7 @@ export function StackedBarWidget({
   const barDays = useMemo(
     () => {
       const raw = dailyToBarDays(dailyResult);
-      const filled = granularity === 'daily' ? fillDateRange(raw, dateRange.start, dateRange.end) : raw;
+      const filled = granularity === 'hourly' ? raw : fillDateRange(raw, dateRange.start, dateRange.end, granularity);
       return bucketBars(filled, MAX_BARS);
     },
     [dailyResult, granularity, dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour],
@@ -138,7 +149,7 @@ export function StackedBarWidget({
 
   const loading = query.status === 'loading';
 
-  const defaultTitle = granularity === 'hourly' ? 'Hourly Costs' : 'Daily Costs';
+  const defaultTitle = costsTitle(granularity);
   let title: React.ReactNode = spec.title ?? defaultTitle;
   if (spec.title === undefined && activeGroupBy !== undefined) {
     const label = dimensionLabelFor(dimensions, activeGroupBy);
@@ -159,6 +170,7 @@ export function StackedBarWidget({
       title={title}
       loading={loading}
       onSegmentClick={activeGroupBy === undefined ? undefined : (name) => { onSetFilter(activeGroupBy, asTagValue(name)); }}
+      granularity={granularity}
       previousTotals={compareEnabled ? previousTotals : undefined}
       onRangeSelect={onDateRangeChange === undefined ? undefined : handleRangeSelect}
       onSegmentHover={activeGroupBy === undefined ? undefined : (name) => {

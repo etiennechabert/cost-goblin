@@ -1,7 +1,19 @@
-import type { DateString } from '@costgoblin/core/browser';
+import type { DateString, Granularity } from '@costgoblin/core/browser';
 import { asDateString } from '@costgoblin/core/browser';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+const COSTS_TITLES: Readonly<Record<Granularity, string>> = {
+  monthly: 'Monthly Costs',
+  weekly: 'Weekly Costs',
+  daily: 'Daily Costs',
+  hourly: 'Hourly Costs',
+};
+
+/** The default title of a cost-over-time chart at `granularity`. */
+export function costsTitle(granularity: Granularity): string {
+  return COSTS_TITLES[granularity];
+}
 
 /** Inclusive count of days between two ISO date strings. */
 export function daysBetween(start: string, end: string): number {
