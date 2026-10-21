@@ -19,6 +19,7 @@ import type {
   DimensionId,
   DimensionsConfig,
   ProviderSourceSpec,
+  ProviderType,
   TagValue,
 } from '@costgoblin/core';
 import { BaselineStore, type BaselineEngineDeps } from '../main/baselines-store.js';
@@ -667,8 +668,8 @@ describe('BaselineStore — discovery', () => {
 describe('BaselineStore — rollup routing', () => {
   const ORG_ACCOUNTS = JSON.stringify({ accounts: [{ id: '111', ouPath: 'Engineering', tags: {} }] });
   const ROLLUP = "read_parquet(['/data/aws-main/rollup/daily-2026-03/rollup.parquet'])";
-  const signatureFor = (orgJson: string): string =>
-    computeShapeSignature({ providerType: 'aws', dimensions: DIMS, costMetric: 'billed', rules: [], orgAccountsDigest: computeOrgAccountsDigest(orgJson) });
+  const signatureFor = (orgJson: string, providerType: ProviderType = 'aws'): string =>
+    computeShapeSignature({ providerType, dimensions: DIMS, costMetric: 'billed', rules: [], orgAccountsDigest: computeOrgAccountsDigest(orgJson) });
 
   it('routes discovery and drift through the rollup built for the same basis and org accounts', async () => {
     const dir = await newStateDir();
@@ -705,6 +706,27 @@ describe('BaselineStore — rollup routing', () => {
 
     expect(engine.callsOf('totals').map(c => c.materialized)).toEqual([false]);
     expect(engine.callsOf('totals')[0]?.sql).not.toContain(ROLLUP);
+  });
+
+  it("signs a GCP estate's rollup as GCP's: matched, it is read; signed as AWS, it is not", async () => {
+    // The GCP projection reads Region and Pricing Category differently, so an
+    // AWS-signed rollup does not hold what a raw GCP query returns.
+    const gcp: readonly ProviderSourceSpec[] = [{ name: PROVIDER, type: 'gcp', availablePeriods: ['2025-12', '2026-01', '2026-02', '2026-03'] }];
+    const cases: readonly (readonly [ProviderType, boolean])[] = [['gcp', true], ['aws', false]];
+    for (const [built, materialized] of cases) {
+      const dir = await newStateDir();
+      const engine = new FakeEngine();
+      engine.totals = [{ account_id: '111', service: 'EC2', total: 5000 }];
+      const store = new BaselineStore(dir, clock);
+      const deps = makeDeps(dir, engine, {
+        getQueryProviders: () => Promise.resolve(gcp),
+        rollupStore: { getBuiltSignature: () => signatureFor('', built), resolveSource: () => ROLLUP },
+      });
+
+      await store.recompute(deps);
+
+      expect(engine.callsOf('totals').map(c => c.materialized), built).toEqual([materialized]);
+    }
   });
 
   it('reads raw data for a multi-provider estate, since the rollup holds only the first provider', async () => {

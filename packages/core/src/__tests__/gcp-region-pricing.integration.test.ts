@@ -11,8 +11,10 @@ import { FIXTURE_GCP_PROVIDER_NAME, FIXTURE_PROVIDER_NAME } from '../__fixtures_
 import { writeSampleParquet } from '../__fixtures__/focus-1-2/load.js';
 import { SAMPLE_MONTH } from '../__fixtures__/focus-1-2/samples.js';
 import type { CostScopeConfig } from '../types/cost-scope.js';
+import type { FilterMap } from '../types/query.js';
 import type { DimensionsConfig } from '../types/config.js';
-import { asDateString, asDimensionId, asDollars, asProviderName } from '../types/branded.js';
+import { asDateString, asDimensionId, asDollars, asProviderName, asTagValue } from '../types/branded.js';
+import type { DimensionId } from '../types/branded.js';
 
 /**
  * Layer 2: what Region and Pricing Category read on GCP rows.
@@ -78,7 +80,7 @@ function opts(providers: readonly ProviderSourceSpec[], dataDir = SYNTHETIC_DIR)
 }
 
 /** Entity → total of a cost query (its rows repeat per top service). */
-async function costByEntity(groupBy: typeof REGION, providers: readonly ProviderSourceSpec[], dateRange = JAN_FEB, dataDir = SYNTHETIC_DIR, filters = {}): Promise<Map<string, number>> {
+async function costByEntity(groupBy: DimensionId, providers: readonly ProviderSourceSpec[], dateRange = JAN_FEB, dataDir = SYNTHETIC_DIR, filters: FilterMap = {}): Promise<Map<string, number>> {
   const q = buildCostQuery({ groupBy, dateRange, filters }, opts(providers, dataDir));
   const totals = new Map<string, number>();
   for (const r of await rowsOf(q.sql, q.params)) totals.set(String(r['entity']), num(r['total_cost']));
@@ -185,7 +187,7 @@ describe('GCP Region falls back to x_Location', () => {
   });
 
   it('keeps a Region filter on the location to exactly its rows', async () => {
-    const services = await costByEntity(SERVICE, [GCP_SPEC], JAN_FEB, SYNTHETIC_DIR, { [REGION]: ['us'] });
+    const services = await costByEntity(SERVICE, [GCP_SPEC], JAN_FEB, SYNTHETIC_DIR, { [REGION]: [asTagValue('us')] });
     expect([...services.keys()]).toEqual(['Cloud Storage']);
   });
 

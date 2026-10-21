@@ -52,6 +52,10 @@ function table(result: JsonResult, titlePrefix?: string): readonly Readonly<Reco
   return found.rows;
 }
 
+function num(v: unknown): number {
+  return typeof v === 'number' ? v : Number.NaN;
+}
+
 function sorted(values: readonly unknown[]): unknown[] {
   return [...values].sort((a, b) => String(a).localeCompare(String(b)));
 }
@@ -89,13 +93,14 @@ describe('MCP tools over a GCP workspace', () => {
 
   it('query_costs files the empty-RegionId spend under its location', async () => {
     const byRegion = parseJsonResult(resultText(await queryCosts(ctx, { groupBy: 'region', dateRange: RANGE, format: 'json' })));
-    const regions = new Map(table(byRegion).map(r => [r['entity'], r['cost']]));
+    const regions = new Map(table(byRegion).map(r => [r['entity'], num(r['cost'])]));
     expect(sorted([...regions.keys()])).toEqual(REGIONS);
 
     const byService = parseJsonResult(resultText(await queryCosts(ctx, { groupBy: 'service', dateRange: RANGE, format: 'json' })));
-    const services = new Map(table(byService).map(r => [r['entity'], r['cost']]));
-    expect(regions.get('us')).toBe(services.get('Cloud Storage'));
-    expect(regions.get('global')).toBe(services.get('Networking'));
+    const services = new Map(table(byService).map(r => [r['entity'], num(r['cost'])]));
+    // Same rows, summed under two GROUP BYs: the order of the additions differs.
+    expect(regions.get('us')).toBeCloseTo(services.get('Cloud Storage') ?? Number.NaN, 6);
+    expect(regions.get('global')).toBeCloseTo(services.get('Networking') ?? Number.NaN, 6);
   });
 
   it('query_daily_costs and query_trends group by the same locations', async () => {
