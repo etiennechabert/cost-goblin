@@ -101,6 +101,27 @@ test.describe('MCP queries run on a sandboxed DuckDB instance', () => {
     expect(text).toMatch(/Latest day: \d{4}-\d{2}-\d{2}/);
   });
 
+  // The worker hands rows back by structured clone, which drops DuckDB's value
+  // classes: a DATE, TIMESTAMP or DECIMAL used to come back as an empty cell.
+  test('run_sql returns dates, timestamps and decimals through the worker', async () => {
+    const { text, isError } = await callTool('run_sql', {
+      sql: "SELECT MIN(usage_date) AS d, date_trunc('month', MIN(usage_date)) AS m, 0.0732 AS dec FROM costs",
+      dateRange,
+      format: 'json',
+    });
+    expect(isError).toBe(false);
+    const parsed: unknown = JSON.parse(text);
+    expect(parsed).toMatchObject({
+      tables: [{ columns: [{ key: 'd', type: 'string' }, { key: 'm', type: 'string' }, { key: 'dec', type: 'number' }] }],
+    });
+    const tables = isRecord(parsed) ? parsed['tables'] : undefined;
+    const table: unknown = Array.isArray(tables) ? tables[0] : undefined;
+    const rows = isRecord(table) ? table['rows'] : undefined;
+    const row: unknown = Array.isArray(rows) ? rows[0] : undefined;
+    expect(Array.isArray(row) ? row.slice(1) : row).toEqual(['2026-01-01 00:00:00', 0.0732]);
+    expect(Array.isArray(row) ? row[0] : row).toMatch(/^2026-01-\d{2}$/);
+  });
+
   test('a guard-bypassing read gets the generic refusal and no file contents', async () => {
     const creds = join(scratch, 'creds.txt').replaceAll('\\', '/');
     const { text, isError } = await callTool('run_sql', {
