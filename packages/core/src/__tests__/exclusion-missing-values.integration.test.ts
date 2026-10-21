@@ -4,9 +4,9 @@ import type { DuckDBConnection } from '@duckdb/node-api';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildEntityDetailQuery, buildExclusionClauses, buildFilterClauses, buildRollupPartitionQuery, buildRuleMatchExpr, buildSource, sqlStringLiteral } from '../query/builder.js';
+import { buildCostQuery, buildEntityDetailQuery, buildExclusionClauses, buildFilterClauses, buildRollupPartitionQuery, buildRuleMatchExpr, buildSource, buildTrendQuery, sqlStringLiteral } from '../query/builder.js';
 import { QueryBuilder } from '../query/parameterized.js';
-import { asDateString, asDimensionId, asEntityRef, asProviderName, asTagValue, tagDimColumn } from '../types/branded.js';
+import { asDateString, asDimensionId, asDollars, asEntityRef, asProviderName, asTagValue, tagDimColumn } from '../types/branded.js';
 import type { DimensionsConfig, TagDimension } from '../types/config.js';
 import type { ExclusionCondition, ExclusionRule } from '../types/cost-scope.js';
 import type { FilterMap } from '../types/query.js';
@@ -20,7 +20,7 @@ import type { FilterMap } from '../types/query.js';
  * exclusions: a live query's bound WHERE, a rollup partition's literal WHERE,
  * and the preview's CASE WHEN. A dashboard filter on '' (a click on a
  * widget's group of rows with no value) is checked on the live source and a
- * rollup.
+ * rollup, and the cost and trend group-bys return that group as one row.
  */
 
 const PROVIDER = asProviderName('aws');
@@ -49,6 +49,8 @@ async function runPrepared(conn: DuckDBConnection, sql: string, params: readonly
   try {
     params.forEach((value, i) => {
       if (typeof value === 'string') stmt.bindVarchar(i + 1, value);
+      else if (typeof value === 'number' && Number.isInteger(value)) stmt.bindInteger(i + 1, value);
+      else if (typeof value === 'number') stmt.bindDouble(i + 1, value);
       else throw new Error(`unexpected query parameter ${String(value)}`);
     });
     const reader = await stmt.runAndReadAll();
@@ -218,5 +220,39 @@ describe('exclusion rules and missing values (DuckDB execution)', () => {
     };
     expect(await detailTotal('')).toBe(ROW_COST.untagged + ROW_COST.emptyTag);
     expect(await detailTotal('sandbox')).toBe(ROW_COST.sandbox);
+  });
+
+  // The rows read NULL as '' (and '' is what the filter above keeps), so an
+  // untagged group beside an empty-valued one came back as two rows read
+  // alike: one was dropped where rows are kept per entity, and the untagged
+  // one never joined its per-service breakdown.
+  const JANUARY = { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') };
+  const PLATFORM = ROW_COST.platform + ROW_COST.noAccount + ROW_COST.noRegion;
+  const NO_VALUE = ROW_COST.untagged + ROW_COST.emptyTag;
+
+  it("groups costs with no value as one '' entity, its service breakdown included", async () => {
+    const { sql, params } = buildCostQuery(
+      { groupBy: TEAM_ID, dateRange: JANUARY, filters: {} },
+      { dataDir, dimensions, providers: [{ name: PROVIDER, availablePeriods: ['2026-01'] }] },
+    );
+    const rows = await runPrepared(conn, sql, params);
+    expect(rows.map(r => ({ entity: r['entity'], total: Number(r['total_cost']), service: r['service'], serviceCost: Number(r['service_cost']) }))).toEqual([
+      { entity: 'platform', total: PLATFORM, service: 'Amazon EC2', serviceCost: PLATFORM },
+      { entity: '', total: NO_VALUE, service: 'Amazon EC2', serviceCost: NO_VALUE },
+      { entity: 'sandbox', total: ROW_COST.sandbox, service: 'Amazon EC2', serviceCost: ROW_COST.sandbox },
+    ]);
+  });
+
+  it("compares costs with no value as one '' trend row", async () => {
+    const { sql, params } = buildTrendQuery(
+      { groupBy: TEAM_ID, dateRange: JANUARY, filters: {}, deltaThreshold: asDollars(0), percentThreshold: 0 },
+      { dataDir, dimensions, providers: [{ name: PROVIDER, availablePeriods: ['2026-01'] }] },
+    );
+    const rows = await runPrepared(conn, sql, params);
+    expect(rows.map(r => [r['entity'], Number(r['current_cost']), Number(r['previous_cost'])])).toEqual([
+      ['platform', PLATFORM, 0],
+      ['', NO_VALUE, 0],
+      ['sandbox', ROW_COST.sandbox, 0],
+    ]);
   });
 });

@@ -149,7 +149,7 @@ describe('get_cost_overview', () => {
   it('keeps the first row per service, merges accounts by display name and lists enabled dimensions', async () => {
     const { ctx } = harness({
       accountMap: new Map([['111', 'Prod'], ['222', 'Prod']]),
-      rows: (sql) => sql.includes('account_id AS entity')
+      rows: (sql) => sql.includes("COALESCE(account_id, '') AS entity")
         ? [{ entity: '111', total_cost: 70 }, { entity: '222', total_cost: 30 }, { entity: '333', total_cost: 5 }]
         // The cost query returns one row per (entity, top service): only the
         // first carries the entity total that is kept.
@@ -173,7 +173,7 @@ describe('get_cost_overview', () => {
 
   it('shows 0% shares for a zero total and drops the accounts table when there are none', async () => {
     const { ctx } = harness({
-      rows: (sql) => (sql.includes('account_id AS entity') ? [] : [{ entity: 'EC2', total_cost: 0 }]),
+      rows: (sql) => (sql.includes("COALESCE(account_id, '') AS entity") ? [] : [{ entity: 'EC2', total_cost: 0 }]),
     });
     const result = json(await getCostOverview(ctx, { dateRange: JAN, format: 'json' }));
     expect(result.tables.map(t => t.title)).toEqual(['Top Services']);

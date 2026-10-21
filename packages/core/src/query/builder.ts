@@ -222,6 +222,15 @@ function missingValueSql(resolved: ResolvedDimension): string {
   return `(${empty} OR ${resolved.rawField} = '${NO_ACCOUNT_SENTINEL}')`;
 }
 
+/** The value a cost or trend group-by files a row under. Results read NULL as
+ *  '', so a tag the resource lacks and a tag set to '' are one group, the one
+ *  a filter on '' keeps (missingValueSql). Grouped bare, they came back as two
+ *  rows read alike: where rows are kept per entity one was dropped, and the
+ *  NULL one never joined its per-service breakdown. */
+function groupValueSql(resolved: ResolvedDimension): string {
+  return `COALESCE(${resolved.fieldExpr}, '')`;
+}
+
 /** SQL for one rule condition: true when the row's value is one of the
  *  condition's values or, with `matchMissing`, when it has none. Never NULL:
  *  `x IN (…)` is NULL when x is, and an exclusion's `NOT (NULL)` drops the row
@@ -739,7 +748,7 @@ export function buildCostQuery(
   const sql = `
     WITH base AS (
       SELECT
-        ${groupByResolved.fieldExpr} AS entity,
+        ${groupValueSql(groupByResolved)} AS entity,
         service,
         SUM(cost) AS cost
       FROM ${source}
@@ -818,7 +827,7 @@ export function buildTrendQuery(
   const sql = `
     WITH bucketed AS (
       SELECT
-        ${groupByResolved.fieldExpr} AS entity,
+        ${groupValueSql(groupByResolved)} AS entity,
         CASE
           WHEN usage_date BETWEEN ${startDatePlaceholder} AND ${endDatePlaceholder} THEN 'current'
           ELSE 'previous'
