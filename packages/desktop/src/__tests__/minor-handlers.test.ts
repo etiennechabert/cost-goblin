@@ -1,4 +1,4 @@
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parse } from 'yaml';
@@ -129,6 +129,14 @@ describe('savings preferences', () => {
     expect(saved).toEqual({ hiddenActionTypes: ['Delete'], preferredCommitment: { term: null, paymentOption: 'AllUpfront' } });
     await h.ipc.invoke('savings:save-preferences', 'not an object');
     expect(JSON.parse(await readFile(join(h.ws.stateDir, 'savings-preferences.json'), 'utf-8'))).toEqual(saved);
+  });
+
+  it('rejects a preferences file that is there but cannot be read, rather than reporting defaults', async () => {
+    const h = await harness();
+    registerSavingsHandlers(h.app);
+    // A directory where the file should be: EISDIR, like EACCES, is not "absent".
+    await mkdir(join(h.ws.stateDir, 'savings-preferences.json'));
+    await expect(h.ipc.invoke('savings:get-preferences')).rejects.toThrow(/EISDIR/);
   });
 
   it('ignores a malformed saved list and an unknown commitment term', async () => {

@@ -177,6 +177,56 @@ describe('Savings — one option per resource and per commitment pool', () => {
   });
 });
 
+describe('Savings — settings and filters across recounts', () => {
+  it('shows every row again when a recount leaves the filtered type without one', async () => {
+    const { user } = renderSavings(new SavingsApi(ALL, { hiddenActionTypes: ['PurchaseSavingsPlans'] }));
+    await screen.findByText('2 actions · $63.32/mo potential savings');
+    await user.click(screen.getByRole('button', { name: /^Purchase Reserved Instances \(1\)/ }));
+    expect(screen.getByText('1 action · $43.46/mo potential savings')).toBeDefined();
+
+    // Showing Savings Plans folds the t2 RIs under the Compute SP.
+    await user.click(screen.getByRole('button', { name: 'Savings settings' }));
+    await user.click(screen.getByRole('checkbox', { name: /^Purchase Savings Plans/ }));
+    expect(screen.getByText('2 actions · $259.86/mo potential savings')).toBeDefined();
+    expect(screen.queryByRole('button', { name: /^Purchase Reserved Instances/ })).toBeNull();
+    expect(screen.getByRole('button', { name: /^All \(2\)/ }).className).toContain('text-accent');
+  });
+
+  it('opens the settings only once the saved preferences are in, so a change never overwrites them', async () => {
+    let resolvePrefs: (prefs: SavingsPreferences) => void = () => undefined;
+    const api = new SavingsApi(ALL);
+    api.getSavingsPreferences = () => new Promise<SavingsPreferences>(resolve => { resolvePrefs = resolve; });
+    const { user } = renderSavings(api);
+    await screen.findByText('2 actions · $259.86/mo potential savings');
+
+    await user.click(screen.getByRole('button', { name: 'Savings settings' }));
+    expect(screen.queryByText('Visible recommendation types')).toBeNull();
+
+    resolvePrefs({ hiddenActionTypes: ['Upgrade'], preferredCommitment: { term: null, paymentOption: null } });
+    expect(await screen.findByText('Visible recommendation types')).toBeDefined();
+    expect(screen.getByRole('checkbox', { name: /^Upgrade/ })).toHaveProperty('checked', false);
+    expect(api.savedSavingsPreferences).toEqual([]);
+  });
+});
+
+describe('Savings — settings that could not be read', () => {
+  it('applies changes to the visit but saves nothing, and says so', async () => {
+    const api = new SavingsApi(ALL);
+    api.getSavingsPreferences = () => Promise.reject(new Error('EACCES: permission denied'));
+    const { user } = renderSavings(api);
+    await screen.findByText('2 actions · $259.86/mo potential savings');
+
+    await user.click(screen.getByRole('button', { name: 'Savings settings' }));
+    expect(screen.getByRole('status').textContent).toBe('Your saved Savings settings could not be read, so changes here are not saved and last until you leave this view.');
+    await user.click(screen.getByRole('checkbox', { name: /^Upgrade/ }));
+    await user.selectOptions(screen.getByRole('combobox', { name: /^Term/ }), '1-year');
+    // The view recounts ($80 plan + $19.86), and the unreadable file is left alone.
+    expect(screen.getByText('2 actions · $99.86/mo potential savings')).toBeDefined();
+    expect(screen.getByText('1 type hidden.')).toBeDefined();
+    expect(api.savedSavingsPreferences).toEqual([]);
+  });
+});
+
 describe('Savings — commitments after resource actions', () => {
   it('shrinks a commitment by the eligible spend the counted actions remove, and says why', async () => {
     const { user } = renderSavings(new SavingsApi([PLAN_3Y_ALL, FARGATE]));

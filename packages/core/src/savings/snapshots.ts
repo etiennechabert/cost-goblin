@@ -39,16 +39,16 @@ export async function latestCostOptSnapshot(dataDir: string, provider: ProviderN
     .map(name => SNAPSHOT_DIR.exec(name)?.[1])
     .filter((date): date is string => date !== undefined)
     .sort(newestFirst);
-  for (const date of dates) {
-    let files: string[];
+  // An empty directory (an interrupted download) is no snapshot.
+  const populated = await Promise.all(dates.map(async date => {
     try {
-      files = await readdir(join(rawDir, `cost-opt-${date}`));
+      return (await readdir(join(rawDir, `cost-opt-${date}`))).some(f => f.endsWith('.parquet'));
     } catch {
-      continue;
+      return false; // not a directory, or gone mid-scan
     }
-    if (files.some(f => f.endsWith('.parquet'))) return { providerName: String(provider), date };
-  }
-  return null;
+  }));
+  const date = dates.find((_, i) => populated[i] === true);
+  return date === undefined ? null : { providerName: String(provider), date };
 }
 
 /** SELECT one snapshot's recommendations, aliased for `parseSavingsRow`. */
@@ -86,37 +86,72 @@ export interface LoadedSavings {
   readonly snapshots: readonly SavingsSnapshot[];
 }
 
+interface ProviderSnapshot {
+  readonly snapshot: SavingsSnapshot;
+  readonly recommendations: readonly SavingsRecommendation[];
+  /** The COH export the provider syncs: its cost-optimization bucket path. */
+  readonly exportKey: string;
+}
+
+/** `s3://bucket/prefix` with no trailing slash, so `prefix/` and `prefix` match. */
+function exportKeyOf(bucket: string): string {
+  let end = bucket.length;
+  while (end > 0 && bucket[end - 1] === '/') end -= 1;
+  return bucket.slice(0, end);
+}
+
+async function readProviderSnapshot(
+  dataDir: string,
+  provider: ProviderName,
+  exportKey: string,
+  runQuery: (sql: string) => Promise<readonly Row[]>,
+): Promise<ProviderSnapshot | null> {
+  const snapshot = await latestCostOptSnapshot(dataDir, provider);
+  if (snapshot === null) return null;
+  try {
+    const rows = await runQuery(buildSavingsQuery(dataDir, provider, snapshot.date));
+    return { snapshot, recommendations: rows.map(row => parseSavingsRow(row, String(provider))), exportKey };
+  } catch (err: unknown) {
+    logger.warn(`savings: cannot read ${String(provider)} cost-opt-${snapshot.date}: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
 /** Every recommendation of each provider's latest snapshot. A provider whose
  *  snapshot can't be read is left out (and logged) rather than failing the
- *  others; two providers syncing the same export list each recommendation once. */
+ *  others. Two providers whose cost-optimization tier points at the same
+ *  bucket path sync the same export: only the newest snapshot is read, or the
+ *  older one would bring back what has since been implemented. Different
+ *  exports can still share recommendations (a member account's own export
+ *  next to the payer's): each is listed once, from the newer snapshot. */
 export async function loadSavingsRecommendations(
   dataDir: string,
   providers: readonly ProviderConfig[],
   runQuery: (sql: string) => Promise<readonly Row[]>,
 ): Promise<LoadedSavings> {
+  const read = await Promise.all(providers.flatMap(provider => {
+    const tier = provider.sync.costOptimization;
+    return tier === undefined ? [] : [readProviderSnapshot(dataDir, provider.name, exportKeyOf(String(tier.bucket)), runQuery)];
+  }));
+  // Newest snapshot first; a stable sort keeps the config order on a tie.
+  const newestFirstRead = read
+    .filter((r): r is ProviderSnapshot => r !== null)
+    .sort((a, b) => newestFirst(a.snapshot.date, b.snapshot.date));
+
   const recommendations: SavingsRecommendation[] = [];
   const snapshots: SavingsSnapshot[] = [];
+  const seenExports = new Set<string>();
   const seen = new Set<string>();
-  for (const provider of providers) {
-    if (provider.sync.costOptimization === undefined) continue;
-    const snapshot = await latestCostOptSnapshot(dataDir, provider.name);
-    if (snapshot === null) continue;
-    let rows: readonly Row[];
-    try {
-      rows = await runQuery(buildSavingsQuery(dataDir, provider.name, snapshot.date));
-    } catch (err: unknown) {
-      logger.warn(`savings: cannot read ${String(provider.name)} cost-opt-${snapshot.date}: ${err instanceof Error ? err.message : String(err)}`);
+  for (const { snapshot, recommendations: recs, exportKey } of newestFirstRead) {
+    if (seenExports.has(exportKey)) {
+      logger.info(`savings: ${snapshot.providerName} syncs the same Cost Optimization Hub export as a provider with a newer snapshot; skipping its cost-opt-${snapshot.date}`);
       continue;
     }
+    seenExports.add(exportKey);
+    const fresh = recs.filter(r => r.recommendationId === '' || !seen.has(r.recommendationId));
+    for (const rec of recs) if (rec.recommendationId !== '') seen.add(rec.recommendationId);
     snapshots.push(snapshot);
-    for (const row of rows) {
-      const rec = parseSavingsRow(row, String(provider.name));
-      if (rec.recommendationId !== '') {
-        if (seen.has(rec.recommendationId)) continue;
-        seen.add(rec.recommendationId);
-      }
-      recommendations.push(rec);
-    }
+    recommendations.push(...fresh);
   }
   return { recommendations, snapshots };
 }

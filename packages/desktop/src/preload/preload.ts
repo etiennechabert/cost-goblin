@@ -32,6 +32,7 @@ import type {
   GcsDownloadCheckResult,
   AccountMappingStatus,
   SavingsPreferences,
+  SavingsPreferencesUpdate,
   UIPreferences,
   PerformanceInfo,
   PerformanceSettings,
@@ -265,7 +266,7 @@ const api: CostApi = {
   getSavingsPreferences(): Promise<SavingsPreferences> {
     return invoke<SavingsPreferences>('savings:get-preferences');
   },
-  saveSavingsPreferences(prefs: SavingsPreferences): Promise<void> {
+  saveSavingsPreferences(prefs: SavingsPreferencesUpdate): Promise<void> {
     return invoke<undefined>('savings:save-preferences', prefs).then(() => undefined);
   },
   getUIPreferences(): Promise<UIPreferences> {

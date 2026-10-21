@@ -125,7 +125,7 @@ describe('list_savings_recommendations', () => {
     expect(result.title).toBe('Cost optimization recommendations (3)');
     expect(result.meta.get('Counted savings/mo')).toBeCloseTo(241.62, 6);
     expect(result.meta.get('Alternatives not counted')).toBe(2);
-    expect(result.meta.get('Commitments counted at')).toBe('highest savings');
+    expect(result.meta.get('Commitments counted at')).toBe('the highest-savings option');
     expect(result.meta.get('Snapshot')).toBe('aws-main 2026-10-13');
     expect(result.meta.get('Hidden in the Savings view')).toBe('none');
     const [table] = result.tables;

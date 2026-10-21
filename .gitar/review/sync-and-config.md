@@ -33,6 +33,7 @@ Calendar windows (retention, default ranges, previews, baselines) use `IpcContex
 
 ## Providers and exporters
 
+- Two providers syncing one export are matched by their configured bucket path, never by overlapping ids or rows: churn makes the same export look different.
 - A new provider type touches: the provider union and `validateProvider`, `ProviderAuth` and `isProviderAuth`, the object-store handle, `resolveBucketPath`, the sync-worker dispatch, the error classifiers, config upsert, the sharing bundle and the e2e cloud sandbox. Many of these are `gcp ? … : aws` branches that tsc won't flag.
 - GCP output, once canonicalized, keeps every required column, `Tags` as a VARCHAR map, DOUBLE costs and naive-UTC `ChargePeriodStart`.
 - A change to the exports stack regenerates `scripts/aws-exports/costgoblin-exports.yaml` with `scripts/aws-exports/write-template.ts`. The GCP exporter's `billing_period=YYYY-MM` layout is a contract with core. Its DATE and TIMESTAMP parameters must be wrapped (`temporalParam`), since an unwrapped one binds as NULL and publishes an empty shard.
