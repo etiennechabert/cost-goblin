@@ -171,6 +171,21 @@ describe('get_cost_overview', () => {
     ]);
   });
 
+  it("counts a NULL entity and a '' one, which read alike, as one row", async () => {
+    const { ctx } = harness({
+      rows: (sql) => sql.includes('account_id AS entity')
+        ? [{ entity: null, total_cost: 3 }, { entity: '', total_cost: 4 }, { entity: '', total_cost: 999 }]
+        : [{ entity: 'EC2', total_cost: 13 }, { entity: null, total_cost: 3 }, { entity: '', total_cost: 4 }],
+    });
+    const result = json(await getCostOverview(ctx, { dateRange: JAN, format: 'json' }));
+    expect(result.meta.get('Total Cost')).toBe(20);
+    expect(tableRows(result, 'Top Services')).toEqual([
+      { service: 'EC2', cost: 13, pct: 65 },
+      { service: '', cost: 7, pct: 35 },
+    ]);
+    expect(tableRows(result, 'Top Accounts')).toEqual([{ account: '', cost: 7 }]);
+  });
+
   it('shows 0% shares for a zero total and drops the accounts table when there are none', async () => {
     const { ctx } = harness({
       rows: (sql) => (sql.includes('account_id AS entity') ? [] : [{ entity: 'EC2', total_cost: 0 }]),

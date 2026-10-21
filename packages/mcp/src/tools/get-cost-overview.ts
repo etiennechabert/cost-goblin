@@ -24,15 +24,17 @@ import type { FilterMap } from '@costgoblin/core';
 
 /** Each entity's total cost, summed per `nameOf(entity)`. buildCostQuery
  *  returns one row per (entity, top service) and repeats the entity's total on
- *  each of them, so only an entity's first row counts. */
+ *  each of them, so only an entity's first row counts. A NULL entity and a ''
+ *  one are separate groups that read alike, so both count, summed under ''. */
 function totalsByName(rows: readonly RawRow[], nameOf: (entity: string) => string): [string, number][] {
-  const seen = new Set<string>();
+  const seen = new Set<string | null>();
   const totals = new Map<string, number>();
   for (const row of rows) {
-    const entity = toStr(row['entity']);
-    if (seen.has(entity)) continue;
-    seen.add(entity);
-    const name = nameOf(entity);
+    const raw = row['entity'];
+    const key = raw === null || raw === undefined ? null : toStr(raw);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const name = nameOf(toStr(raw));
     totals.set(name, (totals.get(name) ?? 0) + toNum(row['total_cost']));
   }
   return [...totals.entries()].sort((a, b) => b[1] - a[1]);
