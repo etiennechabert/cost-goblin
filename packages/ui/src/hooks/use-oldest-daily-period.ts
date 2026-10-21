@@ -18,13 +18,15 @@ export function useOldestDailyPeriod(enabled = true): DateString | null {
     if (api === null || !enabled) return;
     let cancelled = false;
     api.getConfig().then(async config => {
-      const inventories = await Promise.all(
+      // One provider that fails to list must not hide the others' data.
+      const results = await Promise.allSettled(
         config.providers.map(provider => api.getDataInventory('daily', provider.name)),
       );
       if (cancelled) return;
       let earliest: string | null = null;
-      for (const inventory of inventories) {
-        for (const { period, localStatus } of inventory.periods) {
+      for (const result of results) {
+        if (result.status === 'rejected') continue;
+        for (const { period, localStatus } of result.value.periods) {
           if (localStatus === 'missing' || !PERIOD_PATTERN.test(period)) continue;
           if (earliest === null || period < earliest) earliest = period;
         }

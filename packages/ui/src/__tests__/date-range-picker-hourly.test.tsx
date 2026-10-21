@@ -1,6 +1,6 @@
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_LAG_DAYS, asBucketPath, asDateString, asHourString } from '@costgoblin/core/browser';
 import type { CostGoblinConfig } from '@costgoblin/core/browser';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
@@ -97,8 +97,17 @@ describe('DateRangePicker — hour bounds', () => {
 });
 
 describe('DateRangePicker — with the hourly tier configured', () => {
-  it('enables the Hourly toggle and switches granularity, keeping a day range that fits the retention', async () => {
-    const value = lastNDaysRange(14, DEFAULT_LAG_DAYS);
+  // Hourly data reaches back to the first day of the month `retentionDays` ago,
+  // so whether a range fits depends on today's date: pin it (Date only, so
+  // waitFor and userEvent keep their timers).
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-21T12:00:00Z'));
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('enables the Hourly toggle and switches granularity, keeping the day range', async () => {
+    const value = getDefaultDateRange();
     const { onChange, user } = renderPicker({ value });
     const hourly = await hourlyEnabled();
     expect(hourly.getAttribute('title')).toBeNull();
@@ -111,7 +120,7 @@ describe('DateRangePicker — with the hourly tier configured', () => {
     expect(onChange).toHaveBeenLastCalledWith(value, 'hourly');
   });
 
-  it('falls back to the last 7 days when the day range outlasts the hourly retention', async () => {
+  it('falls back to the last 7 days when the day range starts before the hourly retention', async () => {
     const { onChange, user } = renderPicker({ value: lastNDaysRange(90, DEFAULT_LAG_DAYS) });
     await user.click(await hourlyEnabled());
     expect(onChange).toHaveBeenLastCalledWith(lastNDaysRange(7, DEFAULT_LAG_DAYS), 'hourly');

@@ -1,6 +1,6 @@
 import { render, screen, cleanup, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { afterEach, describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { asDateString, asHourString } from '@costgoblin/core/browser';
 import type { DataInventoryResult } from '@costgoblin/core/browser';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
@@ -320,6 +320,12 @@ describe('switchGranularity', () => {
   const ctx = { newestDay: asDateString('2026-10-19'), hourlyRetentionDays: 30 };
   const march15: DateRange = { start: asDateString('2026-03-15'), end: asDateString('2026-10-19') };
 
+  // Today is 2026-10-21: with 30 days of hourly retention, hourly data reaches
+  // back to the first day of the month of 2026-09-21, i.e. 2026-09-01.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-21T12:00:00Z'));
+  });
   afterEach(() => { vi.useRealTimers(); });
 
   it('widens daily and hourly ranges to the periods covering them', () => {
@@ -355,9 +361,14 @@ describe('switchGranularity', () => {
     expect(switchGranularity(thisMonth, 'monthly', 'hourly', ctx)).toEqual({ start: '2026-10-01', end: '2026-10-19' });
   });
 
+  it('keeps a range starting on the first day of the retention month, and not one starting the day before', () => {
+    const onBoundary: DateRange = { start: asDateString('2026-09-01'), end: asDateString('2026-10-19') };
+    expect(switchGranularity(onBoundary, 'daily', 'hourly', ctx)).toEqual(onBoundary);
+    const dayBefore: DateRange = { start: asDateString('2026-08-31'), end: asDateString('2026-10-19') };
+    expect(switchGranularity(dayBefore, 'daily', 'hourly', ctx)).toEqual(lastNDaysRange(7, 2));
+  });
+
   it('lands on the last 7 days when a long range does not fit hourly retention', () => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date('2026-10-21T12:00:00Z'));
     const twoYears: DateRange = { start: asDateString('2024-11-01'), end: asDateString('2026-10-31') };
     expect(switchGranularity(twoYears, 'monthly', 'hourly', ctx)).toEqual(lastNDaysRange(7, 2));
     expect(switchGranularity(march15, 'daily', 'hourly', ctx)).toEqual(lastNDaysRange(7, 2));

@@ -12,7 +12,7 @@ import {
   periodEnd,
   widenToPeriods,
 } from '@costgoblin/core/browser';
-import { daysAgo, daysBetween, getThisMonth, getLastMonth, getCurrentQuarter, getLastQuarter, getYTD, getLastYear, shiftDay } from '../lib/dates.js';
+import { daysAgo, getThisMonth, getLastMonth, getCurrentQuarter, getLastQuarter, getYTD, getLastYear, shiftDay } from '../lib/dates.js';
 import { shouldAutoSwitchToHourly } from '../lib/drag-select.js';
 import { useHourlyRetentionDays } from '../hooks/use-hourly-configured.js';
 import { useOldestDailyPeriod } from '../hooks/use-oldest-daily-period.js';
@@ -172,11 +172,18 @@ export function lastNDaysRange(days: number, lagDays: number): DateRange {
   return { start: daysAgo(days + lagDays), end: daysAgo(lagDays) };
 }
 
+/** The first day hourly data can reach back to. The sync prunes whole months
+ *  (it keeps every month from the one `retentionDays` ago), so it is the first
+ *  day of that UTC month, not `retentionDays` days back. */
+function hourlyRetentionStart(retentionDays: number): DateString {
+  return asDateString(`${daysAgo(retentionDays).slice(0, 7)}-01`);
+}
+
 /** The range a mode switch lands on: widen, never cut. Daily and hourly ranges
  *  grow to the whole weeks or months covering them; a weekly or monthly range
  *  keeps its days for Daily, ending no later than the newest day with data;
- *  Hourly keeps the range when it fits the hourly retention and falls back to
- *  the last 7 days when it does not. */
+ *  Hourly keeps the range when it starts inside the hourly retention and falls
+ *  back to the last 7 days when it does not. */
 export function switchGranularity(
   range: DateRange,
   from: Granularity,
@@ -190,7 +197,7 @@ export function switchGranularity(
   const fitted = isPeriodGranularity(from) ? capToNewestDay(days, ctx.newestDay) : range;
   const fits = ctx.hourlyRetentionDays !== null
     && fitted.start <= ctx.newestDay
-    && daysBetween(fitted.start, ctx.newestDay) <= ctx.hourlyRetentionDays;
+    && fitted.start >= hourlyRetentionStart(ctx.hourlyRetentionDays);
   return fits ? fitted : { start: shiftDay(ctx.newestDay, -7), end: ctx.newestDay };
 }
 
