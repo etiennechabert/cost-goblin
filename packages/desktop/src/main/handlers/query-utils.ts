@@ -33,8 +33,6 @@ import type {
 import type { RawRow } from '../duckdb-client.js';
 import type { RollupStore } from '../rollup-store.js';
 
-export type EffortLevel = 'VeryLow' | 'Low' | 'Medium' | 'High';
-
 /** Quoted SQL literal for a glob under a provider's raw tier directory
  *  (`<dataDir>/<provider>/raw/<subPath>`), for hand-built `read_parquet`
  *  calls. The data dir comes from userData or an env override and can hold
@@ -98,12 +96,6 @@ export function providersEmptyForRange(
 ): boolean {
   const required = computePeriodsInRange(dateRange);
   return !providers.some(p => p.availablePeriods === undefined || required.some(m => p.availablePeriods?.includes(m)));
-}
-
-const EFFORT_LEVELS = new Set<string>(['VeryLow', 'Low', 'Medium', 'High']);
-
-export function toEffort(v: string): EffortLevel {
-  return EFFORT_LEVELS.has(v) ? v as EffortLevel : 'Medium';
 }
 
 export function toNum(v: unknown): number {

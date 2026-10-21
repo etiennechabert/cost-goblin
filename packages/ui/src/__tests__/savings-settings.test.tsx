@@ -1,13 +1,15 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { SavingsPreferences, SavingsRecommendation, SavingsResult } from '@costgoblin/core/browser';
+import type { SavingsPreferences, SavingsPreferencesUpdate, SavingsRecommendation, SavingsResult } from '@costgoblin/core/browser';
 import { asDollars } from '@costgoblin/core/browser';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
+import { commitmentPurchase, resourceAction } from '../__fixtures__/savings-recommendations.js';
 import { Savings } from '../views/savings.js';
 
-const BASE: SavingsRecommendation = {
+const BASE: SavingsRecommendation = resourceAction({
+  recommendationId: 'rightsize-big',
   accountId: '111111111111',
   accountName: 'Production',
   actionType: 'Rightsize',
@@ -25,7 +27,7 @@ const BASE: SavingsRecommendation = {
   restartNeeded: true,
   rollbackPossible: false,
   recommendationSource: 'ComputeOptimizer',
-};
+});
 
 /** A rightsizing with every shape of resource detail the parser handles:
  *  nested and flat configuration, numeric / string / missing usage fields,
@@ -52,6 +54,7 @@ const RIGHTSIZE_BIG: SavingsRecommendation = {
 /** Same action type (so the type counts 2), with unparseable details. */
 const RIGHTSIZE_SMALL: SavingsRecommendation = {
   ...BASE,
+  recommendationId: 'rightsize-small',
   summary: 'Downsize to t3.small',
   monthlySavings: asDollars(100),
   effort: 'Medium',
@@ -64,6 +67,7 @@ const RIGHTSIZE_SMALL: SavingsRecommendation = {
 
 const DELETE_VOLUME: SavingsRecommendation = {
   ...BASE,
+  recommendationId: 'delete-volume',
   accountId: '222222222222',
   accountName: 'Staging',
   actionType: 'Delete',
@@ -76,8 +80,9 @@ const DELETE_VOLUME: SavingsRecommendation = {
   recommendedDetails: JSON.stringify({ ebsVolume: 5 }),
 };
 
-const SAVINGS_PLAN: SavingsRecommendation = {
+const SAVINGS_PLAN: SavingsRecommendation = commitmentPurchase({
   ...BASE,
+  recommendationId: 'savings-plan',
   actionType: 'PurchaseSavingsPlans',
   resourceType: 'ComputeSavingsPlans',
   summary: 'Buy a 1-year compute plan',
@@ -87,26 +92,26 @@ const SAVINGS_PLAN: SavingsRecommendation = {
   currentDetails: JSON.stringify({ savingsPlans: { configuration: 'n/a', costCalculation: 5 } }),
   recommendedDetails: JSON.stringify({ savingsPlans: { configuration: {}, costCalculation: { usages: 'none' } } }),
   recommendationSource: 'CostExplorer',
-};
+}, { pool: 'compute', poolLabel: 'Compute Savings Plans', term: 'OneYear', paymentOption: 'NoUpfront' });
 
 const RECS: readonly SavingsRecommendation[] = [RIGHTSIZE_BIG, RIGHTSIZE_SMALL, DELETE_VOLUME, SAVINGS_PLAN];
 
 class SavingsApi extends MockCostApi {
   recommendations: readonly SavingsRecommendation[] = RECS;
   hidden: readonly string[] = [];
-  readonly saved: SavingsPreferences[] = [];
+  readonly saved: SavingsPreferencesUpdate[] = [];
 
   override querySavings(): Promise<SavingsResult> {
     const total = this.recommendations.reduce((s, r) => s + r.monthlySavings, 0);
-    return Promise.resolve({ recommendations: this.recommendations, totalMonthlySavings: asDollars(total) });
+    return Promise.resolve({ recommendations: this.recommendations, totalMonthlySavings: asDollars(total), snapshots: [] });
   }
 
-  override getSavingsPreferences(): Promise<{ hiddenActionTypes: readonly string[] }> {
-    return Promise.resolve({ hiddenActionTypes: this.hidden });
+  override getSavingsPreferences(): Promise<SavingsPreferences> {
+    return Promise.resolve({ hiddenActionTypes: this.hidden, preferredCommitment: { term: null, paymentOption: null } });
   }
 
-  override saveSavingsPreferences(prefs?: SavingsPreferences): Promise<void> {
-    if (prefs !== undefined) this.saved.push(prefs);
+  override saveSavingsPreferences(prefs: SavingsPreferencesUpdate): Promise<void> {
+    this.saved.push(prefs);
     return Promise.resolve();
   }
 }
@@ -125,7 +130,7 @@ function renderSavings(api: SavingsApi = new SavingsApi()) {
 }
 
 function settingsButton(): HTMLElement {
-  return screen.getByTitle('Configure visible recommendation types');
+  return screen.getByRole('button', { name: 'Savings settings' });
 }
 
 function typeCheckbox(label: string): HTMLElement {
@@ -158,22 +163,19 @@ afterEach(() => {
 describe('Savings — visible recommendation types', () => {
   it('hides and re-shows types from the settings panel, persisting each change', async () => {
     const { api, user } = renderSavings();
-    await screen.findByText('4 recommendations · $3.3k/mo potential savings');
+    await screen.findByText('4 actions · $3.3k/mo potential savings');
 
     await user.click(settingsButton());
     expect(screen.getByText('Visible recommendation types')).toBeDefined();
-    // Every type is listed with its item count and savings, biggest first.
-    expect(screen.getByText('(2 items, $1.0k/mo)')).toBeDefined();
+    // Every type COH listed, with how many, most listed first.
+    expect(screen.getByText('(2 items)')).toBeDefined();
     const labels = screen.getAllByRole('checkbox').map(c => c.closest('label')?.textContent ?? '');
-    expect(labels).toHaveLength(3);
-    expect(labels[0]).toMatch(/^Purchase Savings Plans\(1 items?, \$2\.0k\/mo\)$/);
-    expect(labels[1]).toBe('Rightsize(2 items, $1.0k/mo)');
-    expect(labels[2]).toMatch(/^Delete\(1 items?, \$300\.00\/mo\)$/);
+    expect(labels).toEqual(['Rightsize(2 items)', 'Delete(1 item)', 'Purchase Savings Plans(1 item)']);
 
     await user.click(typeCheckbox('Rightsize'));
     expect(api.saved.at(-1)).toEqual({ hiddenActionTypes: ['Rightsize'] });
     expect(screen.getByText('1 type hidden. Settings saved automatically.')).toBeDefined();
-    expect(screen.getByText('2 recommendations · $2.3k/mo potential savings')).toBeDefined();
+    expect(screen.getByText('2 actions · $2.3k/mo potential savings')).toBeDefined();
     expect(screen.queryByText('Downsize to m5.xlarge')).toBeNull();
 
     await user.click(typeCheckbox('Delete'));
@@ -195,7 +197,7 @@ describe('Savings — visible recommendation types', () => {
     api.hidden = ['Delete'];
     const { user } = renderSavings(api);
 
-    expect(await screen.findByText('3 recommendations · $3.0k/mo potential savings')).toBeDefined();
+    expect(await screen.findByText('3 actions · $3.0k/mo potential savings')).toBeDefined();
     expect(screen.getByRole('button', { name: /^All \(3\)/ })).toBeDefined();
     expect(screen.queryByText('Delete idle volume')).toBeNull();
 
@@ -206,29 +208,29 @@ describe('Savings — visible recommendation types', () => {
 
   it('drops the active filter when its type gets hidden', async () => {
     const { user } = renderSavings();
-    await screen.findByText('4 recommendations · $3.3k/mo potential savings');
+    await screen.findByText('4 actions · $3.3k/mo potential savings');
 
     await user.click(screen.getByRole('button', { name: /^Delete \(1\)/ }));
-    expect(screen.getByText(/^1 recommendations? · \$300\.00\/mo potential savings$/)).toBeDefined();
+    expect(screen.getByText('1 action · $300.00/mo potential savings')).toBeDefined();
 
     await user.click(settingsButton());
     await user.click(typeCheckbox('Delete'));
     // Back to every visible type rather than an empty, hidden filter.
-    expect(screen.getByText('3 recommendations · $3.0k/mo potential savings')).toBeDefined();
+    expect(screen.getByText('3 actions · $3.0k/mo potential savings')).toBeDefined();
     expect(screen.getByRole('button', { name: /^All \(3\)/ }).className).toContain('text-accent');
   });
 
   it('clears a type filter when its badge is clicked again', async () => {
     const { user } = renderSavings();
-    await screen.findByText('4 recommendations · $3.3k/mo potential savings');
+    await screen.findByText('4 actions · $3.3k/mo potential savings');
 
     const rightsize = screen.getByRole('button', { name: /^Rightsize \(2\)/ });
     await user.click(rightsize);
-    expect(screen.getByText('2 recommendations · $1.0k/mo potential savings')).toBeDefined();
+    expect(screen.getByText('2 actions · $1.0k/mo potential savings')).toBeDefined();
     expect(rightsize.className).toContain('text-accent');
 
     await user.click(rightsize);
-    expect(screen.getByText('4 recommendations · $3.3k/mo potential savings')).toBeDefined();
+    expect(screen.getByText('4 actions · $3.3k/mo potential savings')).toBeDefined();
   });
 });
 
@@ -294,7 +296,7 @@ describe('Savings — recommendation details', () => {
 describe('Savings — states', () => {
   it('labels each effort level, falling back to a neutral badge for an unknown one', async () => {
     const api = new SavingsApi();
-    api.recommendations = [...RECS, withUnknownEffort({ ...BASE, summary: 'Migrate to Graviton' }, 'Undefined')];
+    api.recommendations = [...RECS, withUnknownEffort({ ...BASE, recommendationId: 'graviton', resourceArn: '', summary: 'Migrate to Graviton' }, 'Undefined')];
     renderSavings(api);
     await screen.findByText('Migrate to Graviton');
 
@@ -317,7 +319,7 @@ describe('Savings — states', () => {
     const { user } = renderSavings(api);
 
     expect(await screen.findByText(/No cost optimization data available/)).toBeDefined();
-    expect(screen.getByText('0 recommendations · $0.00/mo potential savings')).toBeDefined();
+    expect(screen.getByText('0 actions · $0.00/mo potential savings')).toBeDefined();
     // Nothing to configure: the settings toggle opens no panel.
     await user.click(settingsButton());
     await waitFor(() => { expect(settingsButton().className.split(' ')).toContain('bg-bg-tertiary'); });

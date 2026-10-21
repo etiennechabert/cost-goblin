@@ -90,19 +90,60 @@ describe('rollup channels', () => {
 });
 
 describe('savings preferences', () => {
-  it('defaults to nothing hidden and round-trips a saved list', async () => {
+  const HIGHEST = { term: null, paymentOption: null };
+
+  it('defaults to nothing hidden and the highest-savings commitment, and round-trips a save', async () => {
     const h = await harness();
     registerSavingsHandlers(h.app);
-    expect(await h.ipc.invoke('savings:get-preferences')).toEqual({ hiddenActionTypes: [] });
+    expect(await h.ipc.invoke('savings:get-preferences')).toEqual({ hiddenActionTypes: [], preferredCommitment: HIGHEST });
     await h.ipc.invoke('savings:save-preferences', { hiddenActionTypes: ['Delete', 'Upgrade'] });
-    expect(await h.ipc.invoke('savings:get-preferences')).toEqual({ hiddenActionTypes: ['Delete', 'Upgrade'] });
+    expect(await h.ipc.invoke('savings:get-preferences')).toEqual({ hiddenActionTypes: ['Delete', 'Upgrade'], preferredCommitment: HIGHEST });
   });
 
-  it('ignores a malformed saved list', async () => {
+  it('merges each save into the file, so saving one field keeps the other', async () => {
     const h = await harness();
     registerSavingsHandlers(h.app);
-    await writeFile(join(h.ws.stateDir, 'savings-preferences.json'), JSON.stringify({ hiddenActionTypes: ['Delete', 3] }));
-    expect(await h.ipc.invoke('savings:get-preferences')).toEqual({ hiddenActionTypes: [] });
+    await h.ipc.invoke('savings:save-preferences', { hiddenActionTypes: ['Delete'] });
+    await h.ipc.invoke('savings:save-preferences', { preferredCommitment: { term: 'OneYear', paymentOption: 'NoUpfront' } });
+    expect(await h.ipc.invoke('savings:get-preferences')).toEqual({
+      hiddenActionTypes: ['Delete'],
+      preferredCommitment: { term: 'OneYear', paymentOption: 'NoUpfront' },
+    });
+    await h.ipc.invoke('savings:save-preferences', { hiddenActionTypes: [] });
+    expect(await h.ipc.invoke('savings:get-preferences')).toEqual({
+      hiddenActionTypes: [],
+      preferredCommitment: { term: 'OneYear', paymentOption: 'NoUpfront' },
+    });
+  });
+
+  it('writes only the valid fields of a save payload', async () => {
+    const h = await harness();
+    registerSavingsHandlers(h.app);
+    await h.ipc.invoke('savings:save-preferences', { hiddenActionTypes: ['Delete'] });
+    await h.ipc.invoke('savings:save-preferences', {
+      hiddenActionTypes: 'Delete',
+      preferredCommitment: { term: 'FiveYears', paymentOption: 'AllUpfront' },
+      injected: true,
+    });
+    const saved: unknown = JSON.parse(await readFile(join(h.ws.stateDir, 'savings-preferences.json'), 'utf-8'));
+    expect(saved).toEqual({ hiddenActionTypes: ['Delete'], preferredCommitment: { term: null, paymentOption: 'AllUpfront' } });
+    await h.ipc.invoke('savings:save-preferences', 'not an object');
+    expect(JSON.parse(await readFile(join(h.ws.stateDir, 'savings-preferences.json'), 'utf-8'))).toEqual(saved);
+  });
+
+  it('ignores a malformed saved list and an unknown commitment term', async () => {
+    const h = await harness();
+    registerSavingsHandlers(h.app);
+    await writeFile(join(h.ws.stateDir, 'savings-preferences.json'), JSON.stringify({
+      hiddenActionTypes: ['Delete', 3],
+      preferredCommitment: { term: 'ThreeYears', paymentOption: 'Monthly' },
+    }));
+    expect(await h.ipc.invoke('savings:get-preferences')).toEqual({
+      hiddenActionTypes: [],
+      preferredCommitment: { term: 'ThreeYears', paymentOption: null },
+    });
+    await writeFile(join(h.ws.stateDir, 'savings-preferences.json'), '{not json');
+    expect(await h.ipc.invoke('savings:get-preferences')).toEqual({ hiddenActionTypes: [], preferredCommitment: HIGHEST });
   });
 });
 

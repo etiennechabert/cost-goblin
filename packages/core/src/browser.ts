@@ -74,3 +74,8 @@ export type {
 } from './rollup/estimator.js';
 export { computeRollupEstimate, emptyRollupEstimate, classifySizeBand } from './rollup/estimator.js';
 export { runRateSeries } from './baseline/window.js';
+// The Savings view recounts COH recommendations when the user hides an action
+// type or picks a commitment term. Leaf modules with no Node imports.
+export { countSavings, HIGHEST_SAVINGS } from './savings/count.js';
+export type { SavingsCount, SavingsGroup } from './savings/count.js';
+export { SAVINGS_PREFERENCES_DEFAULTS } from './savings/preferences.js';

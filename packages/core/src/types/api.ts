@@ -58,6 +58,8 @@ import type {
   EntityDetailResult,
   MissingTagsParams,
   MissingTagsResult,
+  CommitmentPaymentOption,
+  CommitmentTerm,
   SavingsResult,
   SyncStatus,
   SyncLogLine,
@@ -68,7 +70,20 @@ import type {
 
 export interface SavingsPreferences {
   readonly hiddenActionTypes: readonly string[];
+  readonly preferredCommitment: PreferredCommitment;
 }
+
+/** The commitment option the Savings totals count in each pool, like Cost
+ *  Optimization Hub's "Commitment preferences". A null field means the option
+ *  with the highest savings; a pool that has no option matching the preference
+ *  falls back to its highest-savings option, as COH does. */
+export interface PreferredCommitment {
+  readonly term: CommitmentTerm | null;
+  readonly paymentOption: CommitmentPaymentOption | null;
+}
+
+/** A save sends only the fields it changes; the rest of the file is kept. */
+export type SavingsPreferencesUpdate = Partial<SavingsPreferences>;
 
 /** The chart palettes a user can pick (ui-preferences.json `palette`). */
 export type ChartPalette = 'standard' | 'vivid' | 'colorblind';
@@ -380,7 +395,7 @@ export interface CostApi {
    *  which is exactly the friction this exists to remove. Defaults to `aws`. */
   scaffoldConfig(providerType?: 'aws' | 'gcp'): Promise<void>;
   getSavingsPreferences(): Promise<SavingsPreferences>;
-  saveSavingsPreferences(prefs: SavingsPreferences): Promise<void>;
+  saveSavingsPreferences(prefs: SavingsPreferencesUpdate): Promise<void>;
   getUIPreferences(): Promise<UIPreferences>;
   saveUIPreferences(prefs: UIPreferences): Promise<void>;
   discoverTagKeys(): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }>;

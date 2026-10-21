@@ -324,6 +324,7 @@ export function McpView() {
               ['query_trends', 'Period-over-period changes'],
               ['query_entity_detail', 'Deep dive on one entity'],
               ['query_missing_tags', 'Find untagged resources'],
+              ['list_savings_recommendations', 'Deduplicated COH savings'],
               ['list_dimensions', 'Available group-by fields'],
               ['get_filter_values', 'Values for a dimension'],
               ['explore_data', 'Browse raw line items'],

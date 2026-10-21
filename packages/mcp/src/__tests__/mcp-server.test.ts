@@ -380,7 +380,8 @@ describe('MCP server E2E', () => {
     expect(names).toContain('run_sql');
     expect(names).toContain('list_baselines');
     expect(names).toContain('get_baseline_drift');
-    expect(tools).toHaveLength(12);
+    expect(names).toContain('list_savings_recommendations');
+    expect(tools).toHaveLength(13);
   });
 
   it('initialize returns instructions that flag tool results as untrusted', () => {
@@ -394,7 +395,7 @@ describe('MCP server E2E', () => {
 
   it('every tool description carries the untrusted-data note', async () => {
     const tools = await client.listTools();
-    expect(tools).toHaveLength(12);
+    expect(tools).toHaveLength(13);
     for (const tool of tools) {
       expect(tool.description, tool.name).toContain(UNTRUSTED_DATA_NOTE);
     }
@@ -404,7 +405,7 @@ describe('MCP server E2E', () => {
     const client2 = await createMcpClient(port, TEST_TOKEN);
     expect(client2.sessionId).not.toBe(client.sessionId);
     const tools = await client2.listTools();
-    expect(tools).toHaveLength(12);
+    expect(tools).toHaveLength(13);
     await client2.close();
   });
 
@@ -901,7 +902,7 @@ describe('MCP server E2E', () => {
     const queryToken = await fetch(`${mcpUrl()}?token=${TEST_TOKEN}`, { method: 'POST', headers: sessionHeaders, body });
     expect(queryToken.status).toBe(401);
     // The session itself is untouched: the real client still works.
-    expect(await client.listTools()).toHaveLength(12);
+    expect(await client.listTools()).toHaveLength(13);
   });
 
   it.each([

@@ -24,6 +24,8 @@ import {
   type OrgNode,
   type ProviderConfig,
   type PruneResult,
+  type SavingsPreferences,
+  type SavingsPreferencesUpdate,
   type SavingsResult,
   type SyncStatus,
   type SyncLogLine,
@@ -71,8 +73,9 @@ import {
   type ExplorerPreferencesUpdate,
   type UIPreferences,
 } from '@costgoblin/core/browser';
-import { DEFAULT_COST_SCOPE, DEFAULT_EXPLORER_HIDDEN_COLUMNS, computeRollupEstimate, tagSqlColumn } from '@costgoblin/core/browser';
+import { DEFAULT_COST_SCOPE, DEFAULT_EXPLORER_HIDDEN_COLUMNS, SAVINGS_PREFERENCES_DEFAULTS, computeRollupEstimate, tagSqlColumn } from '@costgoblin/core/browser';
 import { daysBetween } from '../lib/dates.js';
+import { commitmentPurchase, resourceAction } from './savings-recommendations.js';
 
 const MOCK_PEER_HOST = 'mock-peer.local';
 
@@ -316,11 +319,15 @@ export class MockCostApi implements CostApi {
   querySavings(): Promise<SavingsResult> {
     return Promise.resolve({
       recommendations: [
-        { accountId: '111111111111', accountName: 'Production', actionType: 'PurchaseReservedInstances', resourceType: 'RdsReservedInstances', summary: '10 db.t4g.micro MariaDB in eu-central-1', region: 'eu-central-1', monthlySavings: asDollars(3000), monthlyCost: asDollars(5500), savingsPercentage: 55, effort: 'VeryLow', resourceArn: '', currentDetails: '', recommendedDetails: '', currentSummary: '', restartNeeded: false, rollbackPossible: false, recommendationSource: 'CostExplorer' },
-        { accountId: '222222222222', accountName: 'Staging', actionType: 'Delete', resourceType: 'EbsVolume', summary: 'Detach and delete unused volume', region: 'us-east-1', monthlySavings: asDollars(800), monthlyCost: asDollars(800), savingsPercentage: 100, effort: 'Low', resourceArn: 'arn:aws:ec2:us-east-1:222222222222:volume/vol-abc123', currentDetails: '{"ebsVolume":{"configuration":{"storage":{"type":"gp3","sizeInGb":1024}}}}', recommendedDetails: '', currentSummary: 'vol-abc123', restartNeeded: false, rollbackPossible: false, recommendationSource: 'ComputeOptimizer' },
-        { accountId: '111111111111', accountName: 'Production', actionType: 'Rightsize', resourceType: 'Ec2Instance', summary: 'Downsize to t3.medium', region: 'eu-central-1', monthlySavings: asDollars(150), monthlyCost: asDollars(400), savingsPercentage: 37, effort: 'Medium', resourceArn: 'arn:aws:ec2:eu-central-1:111111111111:instance/i-xyz789', currentDetails: '{"ec2Instance":{"configuration":{"instance":{"type":"m5.xlarge"}}}}', recommendedDetails: '{"ec2Instance":{"configuration":{"instance":{"type":"t3.medium"}}}}', currentSummary: 'i-xyz789', restartNeeded: true, rollbackPossible: true, recommendationSource: 'ComputeOptimizer' },
+        commitmentPurchase(
+          { recommendationId: 'rds-ri', actionType: 'PurchaseReservedInstances', resourceType: 'RdsReservedInstances', summary: '10 db.t4g.micro MariaDB in eu-central-1', monthlySavings: asDollars(3000), monthlyCost: asDollars(5500), savingsPercentage: 55 },
+          { pool: 'rds-db.t4g-eu-central-1', poolLabel: 'RDS Reserved Instances · db.t4g · eu-central-1 · MariaDB · Single-AZ', term: 'ThreeYears', paymentOption: 'AllUpfront' },
+        ),
+        resourceAction({ recommendationId: 'vol-delete', accountId: '222222222222', accountName: 'Staging', actionType: 'Delete', resourceType: 'EbsVolume', summary: 'Detach and delete unused volume', region: 'us-east-1', monthlySavings: asDollars(800), monthlyCost: asDollars(800), savingsPercentage: 100, effort: 'Low', resourceArn: 'arn:aws:ec2:us-east-1:222222222222:volume/vol-abc123', currentDetails: '{"ebsVolume":{"configuration":{"storage":{"type":"gp3","sizeInGb":1024}}}}', currentSummary: 'vol-abc123' }),
+        resourceAction({ recommendationId: 'i-rightsize', actionType: 'Rightsize', resourceType: 'Ec2Instance', summary: 'Downsize to t3.medium', monthlySavings: asDollars(150), monthlyCost: asDollars(400), savingsPercentage: 37, effort: 'Medium', resourceArn: 'arn:aws:ec2:eu-central-1:111111111111:instance/i-xyz789', currentDetails: '{"ec2Instance":{"configuration":{"instance":{"type":"m5.xlarge"}}}}', recommendedDetails: '{"ec2Instance":{"configuration":{"instance":{"type":"t3.medium"}}}}', currentSummary: 'i-xyz789', restartNeeded: true, rollbackPossible: true, usage: { family: 'm5', targetFamily: 't3', deployment: null } }),
       ],
       totalMonthlySavings: asDollars(3950),
+      snapshots: [{ providerName: 'aws-main', date: '2026-06-14' }],
     });
   }
   queryEntityDetail(): Promise<EntityDetailResult> { return Promise.resolve(entityDetailResult); }
@@ -490,8 +497,13 @@ export class MockCostApi implements CostApi {
   readonly writtenConfigs: Parameters<CostApi['writeConfig']>[0][] = [];
   removeProvider(): Promise<void> { return Promise.resolve(); }
   updateAwsProfile(): Promise<void> { return Promise.resolve(); }
-  getSavingsPreferences(): Promise<{ hiddenActionTypes: readonly string[] }> { return Promise.resolve({ hiddenActionTypes: [] }); }
-  saveSavingsPreferences(): Promise<void> { return Promise.resolve(); }
+  getSavingsPreferences(): Promise<SavingsPreferences> { return Promise.resolve(SAVINGS_PREFERENCES_DEFAULTS); }
+  /** Every save, in order, for tests to assert on. */
+  readonly savedSavingsPreferences: SavingsPreferencesUpdate[] = [];
+  saveSavingsPreferences(prefs: SavingsPreferencesUpdate): Promise<void> {
+    this.savedSavingsPreferences.push(prefs);
+    return Promise.resolve();
+  }
   getUIPreferences(): Promise<UIPreferences> { return Promise.resolve({ theme: 'dark', palette: 'standard' }); }
   saveUIPreferences(): Promise<void> { return Promise.resolve(); }
   syncOrgAccounts(): Promise<{ accounts: readonly never[]; orgId: string; syncedAt: string }> { return Promise.resolve({ accounts: [], orgId: 'mock', syncedAt: new Date().toISOString() }); }
