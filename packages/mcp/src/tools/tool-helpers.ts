@@ -265,14 +265,16 @@ export async function computeDataCoverage(
   if (latestMonth !== undefined) {
     // The overall latest day lives in the overall latest month — but more than
     // one provider may hold that month, so MAX() must span every provider that
-    // has it, not just the first.
-    const globs = providers
+    // has it, not just the first. One read per provider: read together, the
+    // first file's timestamp type wins, and a naive GCP timestamp read as an
+    // AWS file's TIMESTAMPTZ is taken in the session zone.
+    const perProvider = providers
       .filter(p => (p.availablePeriods ?? []).includes(latestMonth))
-      .map(p => sqlStringLiteral(`${ctx.dataDir}/${String(p.name)}/raw/daily-${latestMonth}/*.parquet`));
-    if (globs.length > 0) {
+      .map(p => `SELECT MAX(${CHARGE_PERIOD_START_UTC_SQL}) AS t FROM read_parquet(${sqlStringLiteral(`${ctx.dataDir}/${String(p.name)}/raw/daily-${latestMonth}/*.parquet`)})`);
+    if (perProvider.length > 0) {
       try {
         const rows = await ctx.runQuery(
-          `SELECT MAX(${CHARGE_PERIOD_START_UTC_SQL})::DATE::VARCHAR AS d FROM read_parquet([${globs.join(', ')}])`,
+          `SELECT MAX(t)::DATE::VARCHAR AS d FROM (${perProvider.join(' UNION ALL ')})`,
         );
         const v = rows[0]?.['d'];
         if (typeof v === 'string' && v.length >= 10) latestDay = v.slice(0, 10);

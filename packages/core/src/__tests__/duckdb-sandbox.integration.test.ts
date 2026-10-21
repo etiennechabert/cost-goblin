@@ -186,6 +186,14 @@ describe('DuckDB sandbox (real DuckDB)', () => {
       );
       expect(rows[0]?.['d']).toBe('2026-01-06');
     });
+
+    it('takes the UTC day of a tz-aware timestamp, as AWS writes them', async () => {
+      const rows = await queryAll(
+        sandbox,
+        `SELECT MAX(${CHARGE_PERIOD_START_UTC_SQL})::DATE::VARCHAR AS d FROM (SELECT TIMESTAMPTZ '2026-01-06 23:00:00+00' AS ChargePeriodStart)`,
+      );
+      expect(rows[0]?.['d']).toBe('2026-01-06');
+    });
   });
 
   describe('reproduced run_sql bypasses are refused', () => {

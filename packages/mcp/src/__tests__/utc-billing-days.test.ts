@@ -11,6 +11,7 @@ import { queryCosts } from '../tools/query-costs.js';
 import { queryDailyCosts } from '../tools/query-daily-costs.js';
 import { queryTrends } from '../tools/query-trends.js';
 import { runSql } from '../tools/run-sql.js';
+import { computeDataCoverage } from '../tools/tool-helpers.js';
 import { fetchRows, fetchRowsPrepared } from './helpers/duckdb-rows.js';
 import { parseJsonResult, resultText } from './helpers/json-result.js';
 import type { JsonResult } from './helpers/json-result.js';
@@ -139,5 +140,63 @@ describe.each(['America/Los_Angeles', 'Europe/Berlin'])('MCP cost tools with the
   it('reports the latest UTC day in the coverage banner', async () => {
     const costs = parseJsonResult(resultText(await queryCosts(ctx, { groupBy: 'service', dateRange: RANGE, format: 'json' })));
     expect(costs.coverage?.['latestDay']).toBe('2026-10-15');
+  });
+});
+
+// AWS files hold tz-aware timestamps and canonical GCP files naive ones. Read
+// in one scan, the first file's type wins: a GCP row at 2026-10-19 00:00
+// read as an AWS file's TIMESTAMPTZ was taken as Berlin time, 10-18 22:00 UTC.
+describe('the coverage banner over a tz-aware and a naive provider', () => {
+  let root: string;
+  let db: DuckDBInstance;
+  let conn: DuckDBConnection;
+
+  beforeAll(async () => {
+    root = (await mkdtemp(join(tmpdir(), 'cg-mcp-utc-latest-'))).replaceAll('\\', '/');
+    db = await DuckDBInstance.create(':memory:', { TimeZone: 'Europe/Berlin' });
+    conn = await db.connect();
+    const write = async (provider: string, start: string): Promise<void> => {
+      const dir = join(root, provider, 'raw', 'daily-2026-10');
+      await mkdir(dir, { recursive: true });
+      await conn.run(`COPY (SELECT ${start} AS ChargePeriodStart) TO ${sqlStringLiteral(join(dir, 'data.parquet').replaceAll('\\', '/'))} (FORMAT PARQUET)`);
+    };
+    await write('aws', "TIMESTAMPTZ '2026-10-18 23:00:00+00'");
+    await write('gcp', "TIMESTAMP '2026-10-19 00:00:00'");
+  });
+
+  afterAll(async () => {
+    conn.disconnectSync();
+    db.closeSync();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it('takes each provider\'s latest day in UTC', async () => {
+    const config: CostGoblinConfig = {
+      providers: [
+        ...CONFIG.providers,
+        {
+          name: asProviderName('gcp'), type: 'gcp',
+          sync: { daily: { bucket: asBucketPath('gs://b/d'), retentionDays: 90 }, costOptimization: undefined, intervalMinutes: 60 },
+        },
+      ],
+      defaults: CONFIG.defaults,
+    };
+    const ctx: McpContext = {
+      dataDir: root,
+      stateDir: root,
+      runQuery: (sql) => fetchRows(conn, sql),
+      runPreparedQuery: (sql, params) => fetchRowsPrepared(conn, sql, params),
+      getConfig: () => Promise.resolve(config),
+      getDimensions: () => Promise.resolve(DIMENSIONS),
+      getQueryDimensions: () => Promise.resolve(DIMENSIONS),
+      getCostScope: () => Promise.resolve({ costMetric: 'effective', rules: [], lagDays: 2 }),
+      getAccountMap: () => Promise.resolve(new Map<string, string>()),
+      getAccountReverseMap: () => Promise.resolve(new Map<string, readonly string[]>()),
+      getOrgAccountsPath: () => Promise.resolve(undefined),
+      materializedBase: { getSource: () => undefined },
+      warmup: () => Promise.resolve(),
+      now: () => Date.UTC(2026, 9, 20, 12),
+    };
+    expect((await computeDataCoverage(ctx)).latestDay).toBe('2026-10-19');
   });
 });
