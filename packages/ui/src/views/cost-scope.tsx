@@ -170,7 +170,7 @@ function ConditionRow({ condition, dimensions, suggestions, onUpdate, onRemove, 
         {currentDimId.length === 0 && <option value="">— pick dimension —</option>}
         {/* A dimension the workspace doesn't have (a GCP-only workspace has no
             Service Code) isn't listed; without its own option the select
-            would show the first one. The query skips such a condition. */}
+            would show the first one. Its rule matches nothing. */}
         {currentDimId.length > 0 && currentDim === undefined && (
           <option value={currentDimId} disabled>{currentDimId} (not configured)</option>
         )}

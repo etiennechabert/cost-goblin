@@ -55,6 +55,13 @@ describe('buildExplorerFilterPredicate against DuckDB', () => {
     expect(await kept({ [TEAM_ID]: ['web'], region: ['eu-west-1'] })).toBe(1);
   });
 
+  // An Explorer column can have no configured dimension (SKU Meter in a
+  // GCP-only workspace). Its filter is left out, where an exclusion rule's
+  // condition would match nothing.
+  it('leaves out a filter on a column with no configured dimension', async () => {
+    expect(await kept({ [TEAM_ID]: ['web'], sku_meter: ['77F2-CE67-FC93'] })).toBe(9);
+  });
+
   it('adds nothing without a filter value', () => {
     expect(buildExplorerFilterPredicate({}, dimensions, new Map())).toBeNull();
     expect(buildExplorerFilterPredicate({ [TEAM_ID]: [] }, dimensions, new Map())).toBeNull();

@@ -81,7 +81,7 @@ const RETIRED_BUILTIN_DIM_NAMES: ReadonlySet<string> = new Set(
  *  one blank (or opaque) value per row. With no providers configured (fresh
  *  install, or a costgoblin.yaml that doesn't load) nothing is dropped. A
  *  mixed workspace keeps the dim because at least one provider can fill it. */
-function isAbsentForAllProviders(name: string, providerTypes: readonly TemplateProviderType[]): boolean {
+export function isAbsentForAllProviders(name: string, providerTypes: readonly TemplateProviderType[]): boolean {
   return providerTypes.length > 0
     && providerTypes.every(t => PROVIDER_ABSENT_DIMENSIONS[t].has(name));
 }

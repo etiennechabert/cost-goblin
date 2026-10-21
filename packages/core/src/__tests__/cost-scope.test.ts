@@ -241,7 +241,7 @@ describe('exclusion clauses', () => {
     expect(params).not.toContain('Tax');
   });
 
-  it('partially applies a rule when only some conditions are resolvable', () => {
+  it('applies no part of a rule with a condition on a dimension the config lacks', () => {
     const result = buildCostQuery(
       baseParams,
       { dataDir: '/data', dimensions, providers: [{ name: PROVIDER }], costScope: {
@@ -253,9 +253,10 @@ describe('exclusion clauses', () => {
       } },
       5,
     );
-    // Resolvable condition still applies; dangling one is silently dropped.
-    expect(result.sql).toMatch(/NOT \(COALESCE\(service IN \(\$\d+\), FALSE\)\)/);
-    expect(result.params).toContain('EC2');
+    // Applying the resolvable condition alone would exclude all of EC2, more
+    // than the rule says. No parameter is left bound for the dropped rule.
+    expect(result.sql).not.toContain('NOT (');
+    expect(result.params).not.toContain('EC2');
     expect(result.sql).not.toContain('nonexistent_dim');
   });
 });
@@ -512,9 +513,8 @@ describe('validateCostScope: legacy metric migration', () => {
   });
 
   it('migrates CUR-era dimension ids in rule conditions (user rules included)', () => {
-    // Without the rename a user rule on a retired dim silently no-ops at
-    // query time — or, in a multi-condition rule, drops one AND-leg and
-    // excludes MORE than the user asked for.
+    // Without the rename a user rule on a retired dim names a dimension the
+    // config no longer has, and matches nothing at query time.
     const result = validateCostScope({
       costMetric: 'effective',
       rules: [{

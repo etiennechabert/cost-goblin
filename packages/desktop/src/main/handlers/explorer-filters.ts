@@ -3,7 +3,9 @@ import type { DimensionsConfig, ExclusionRule, ExplorerFilterMap } from '@costgo
 
 /** The Explorer's filters as one SQL predicate, or null when none has a value.
  *  As in a dashboard filter (buildFilterClauses), '' keeps the rows with no
- *  value, a tag the resource lacks (NULL) as much as an empty one. */
+ *  value, a tag the resource lacks (NULL) as much as an empty one. A filter on
+ *  a column with no configured dimension (SKU Meter in a GCP-only workspace)
+ *  is left out, where an exclusion rule would match nothing. */
 export function buildExplorerFilterPredicate(
   filters: ExplorerFilterMap,
   dimensions: DimensionsConfig,
@@ -24,5 +26,5 @@ export function buildExplorerFilterPredicate(
     builtIn: false,
     conditions,
   };
-  return buildRuleMatchExpr(synthetic, dimensions, accountReverseMap);
+  return buildRuleMatchExpr(synthetic, dimensions, accountReverseMap, undefined, 'skip');
 }

@@ -40,10 +40,10 @@ function validateCondition(raw: unknown, ctx: string, liveDimensionIds?: Readonl
     throw new ConfigValidationError(`${ctx}.values must have at least one entry unless matchMissing is true`);
   }
   // Persisted rules (cost-scope.yaml and every baseline basis routed through
-  // validateCostScope) may reference CUR-era dimension ids. Without the
-  // rename, buildConditionSql silently drops the condition at query time:
-  // a single-condition rule stops excluding, and a multi-condition rule
-  // loses one AND-leg and excludes MORE than the user asked for.
+  // validateCostScope) may reference retired dimension ids. Without the
+  // rename, the condition names a dimension the config no longer has, and
+  // the whole rule matches nothing at query time (buildRuleMatchExpr): it
+  // silently stops excluding.
   return {
     dimensionId: asDimensionId(migrateLegacyDimensionId(raw['dimensionId'], liveDimensionIds)),
     values,
