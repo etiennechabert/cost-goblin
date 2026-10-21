@@ -89,13 +89,27 @@ function lastNWeeks(n: number): PeriodPreset {
   return { label: `Last ${String(n)} weeks`, type: 'periods', granularity: 'weekly', getRange: newestDay => lastNPeriodsRange(n, 'weekly', newestDay) };
 }
 
+function yearOf(day: DateString): number {
+  return Number(day.slice(0, 4));
+}
+
+function yearStart(year: number): DateString {
+  return asDateString(`${String(year)}-01-01`);
+}
+
+function yearEnd(year: number): DateString {
+  return asDateString(`${String(year)}-12-31`);
+}
+
 const MONTH_PRESETS: readonly PresetSection[] = [
   { section: 'Months', items: [lastNMonths(3), lastNMonths(6), lastNMonths(12), lastNMonths(24)] },
   {
     section: 'Period',
     items: [
-      { label: 'This year', type: 'periods', granularity: 'monthly', getRange: () => getYTD() },
-      { label: 'Last year', type: 'periods', granularity: 'monthly', getRange: () => getLastYear() },
+      // Both read the year off the newest day, like the month grid and "Last N
+      // months": "This year" stops at the current month, never later ones.
+      { label: 'This year', type: 'periods', granularity: 'monthly', getRange: newestDay => ({ start: yearStart(yearOf(newestDay)), end: periodEnd(newestDay, 'monthly') }) },
+      { label: 'Last year', type: 'periods', granularity: 'monthly', getRange: newestDay => ({ start: yearStart(yearOf(newestDay) - 1), end: yearEnd(yearOf(newestDay) - 1) }) },
     ],
   },
 ];

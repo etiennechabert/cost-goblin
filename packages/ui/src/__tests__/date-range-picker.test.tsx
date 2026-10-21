@@ -191,16 +191,15 @@ describe('DateRangePicker calendar periods and the freshness lag', () => {
   });
 });
 
-/** A mock whose daily tier holds local data back to January 2025 (and one
- *  period that is only on the remote, which must not count as local). */
+/** A mock whose daily tier holds local data back to January 2025. The remote
+ *  listing is not stubbed: the picker must not reach for it. */
 class InventoryApi extends MockCostApi {
-  override getDataInventory(): Promise<DataInventoryResult> {
-    const period = (name: string, localStatus: 'missing' | 'repartitioned') => ({ period: name, files: [], totalSize: 0, localStatus });
+  override getLocalDataInventory(): Promise<DataInventoryResult> {
     return Promise.resolve({
-      periods: [period('2024-11', 'missing'), period('2025-01', 'repartitioned'), period('2026-09', 'repartitioned')],
+      periods: [],
       totalRemoteSize: 0,
       totalLocalPeriods: 2,
-      totalRemotePeriods: 3,
+      totalRemotePeriods: 0,
       lastSync: null,
       local: { periods: ['2025-01', '2026-09'], diskBytes: 0, oldestPeriod: '2025-01', newestPeriod: '2026-09' },
     });
@@ -262,11 +261,11 @@ describe('DateRangePicker monthly and weekly modes', () => {
     expect(onChange).toHaveBeenCalledWith({ start: '2026-08-01', end: '2026-10-31' }, 'monthly', undefined);
   });
 
-  it('gives whole calendar years for "This year" and "Last year"', async () => {
+  it('stops "This year" at the current month, and gives the whole previous calendar year for "Last year"', async () => {
     const { onChange, user } = renderMode('monthly', MARCH_TO_OCT_2026);
     await user.click(screen.getByRole('button', { name: /Mar 2026/ }));
     await user.click(screen.getByRole('button', { name: 'This year' }));
-    expect(onChange).toHaveBeenLastCalledWith({ start: '2026-01-01', end: '2026-12-31' }, 'monthly', undefined);
+    expect(onChange).toHaveBeenLastCalledWith({ start: '2026-01-01', end: '2026-10-31' }, 'monthly', undefined);
     await user.click(screen.getByRole('button', { name: /Mar 2026/ }));
     await user.click(screen.getByRole('button', { name: 'Last year' }));
     expect(onChange).toHaveBeenLastCalledWith({ start: '2025-01-01', end: '2025-12-31' }, 'monthly', undefined);
