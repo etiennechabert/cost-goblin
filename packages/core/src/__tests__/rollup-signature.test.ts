@@ -9,6 +9,7 @@ import {
   ROLLUP_SCHEMA_VERSION,
 } from '../rollup/shape-signature.js';
 import { validateManifest, computePartitionEtagHash, type RollupManifest } from '../rollup/manifest.js';
+import { buildRuleMatchExpr } from '../query/builder.js';
 import { validateDimensions } from '../config/validator.js';
 
 function baseDims(): DimensionsConfig {
@@ -106,6 +107,53 @@ describe('computeShapeSignature', () => {
     it('CHANGES when the target service differs', () => {
       const other = { enabled: true, rules: [{ service: 'Amazon SageMaker', operations: ['InvokeModelInference', 'InvokeModelStreamingInference'] }] };
       expect(sig({ marketplaceAttribution: bedrock })).not.toBe(sig({ marketplaceAttribution: other }));
+    });
+  });
+
+  // A rule with a condition on a dimension the config lacks matches nothing
+  // when a partition is built (buildRuleMatchExpr); it used to drop just that
+  // AND-leg. Partitions built that way must re-roll, and the dimension coming
+  // back (a provider that fills it) must re-roll them again.
+  describe('rules on a dimension the config lacks', () => {
+    const onMissing = (...extra: ExclusionCondition[]): ExclusionRule[] => [
+      ...rulesOnService(),
+      { id: 'gone', name: 'Gone', enabled: true, builtIn: false, conditions: [{ dimensionId: asDimensionId('service_code'), values: ['x'] }, ...extra] },
+    ];
+    const withServiceCode = (): DimensionsConfig => ({
+      ...baseDims(),
+      builtIn: [...baseDims().builtIn, { name: asDimensionId('service_code'), label: 'Service Code', field: 'service_code', enabled: false }],
+    });
+
+    it('leaves such a rule out, like a disabled one', () => {
+      expect(sig({ rules: onMissing() })).toBe(sig());
+      expect(sig({ rules: onMissing({ dimensionId: asDimensionId('account'), values: ['111'] }) })).toBe(sig());
+    });
+
+    it('CHANGES once the dimension exists, even disabled', () => {
+      expect(sig({ dimensions: withServiceCode(), rules: onMissing() })).not.toBe(sig({ dimensions: withServiceCode() }));
+    });
+
+    it('leaves out exactly the rules buildRuleMatchExpr turns into no exclusion', () => {
+      const cases: ExclusionCondition[][] = [
+        [{ dimensionId: asDimensionId('service_code'), values: ['x'] }],
+        [{ dimensionId: asDimensionId('service_code'), values: [], matchMissing: true }],
+        [{ dimensionId: asDimensionId('account'), values: ['111'] }, { dimensionId: asDimensionId('service_code'), values: ['x'] }],
+        [{ dimensionId: asDimensionId('account'), values: ['111'] }, { dimensionId: asDimensionId('service_code'), values: [] }],
+        [{ dimensionId: asDimensionId('tag_sb_team'), values: ['architects'] }],
+      ];
+      for (const conditions of cases) {
+        const rule: ExclusionRule = { id: 'c', name: 'c', enabled: true, builtIn: false, conditions };
+        const inert = buildRuleMatchExpr(rule, baseDims()) === null;
+        expect(sig({ rules: [...rulesOnService(), rule] }) === sig(), JSON.stringify(conditions)).toBe(inert);
+      }
+    });
+
+    it('keeps a rule whose only condition on the missing dimension is an empty draft', () => {
+      const draft: ExclusionRule[] = [...rulesOnService(), {
+        id: 'draft', name: 'Draft', enabled: true, builtIn: false,
+        conditions: [{ dimensionId: asDimensionId('account'), values: ['111'] }, { dimensionId: asDimensionId('service_code'), values: [] }],
+      }];
+      expect(sig({ rules: draft })).not.toBe(sig());
     });
   });
 
