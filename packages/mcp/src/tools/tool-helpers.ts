@@ -270,7 +270,10 @@ export async function computeDataCoverage(
     // AWS file's TIMESTAMPTZ is taken in the session zone.
     const perProvider = providers
       .filter(p => (p.availablePeriods ?? []).includes(latestMonth))
-      .map(p => `SELECT MAX(${CHARGE_PERIOD_START_UTC_SQL}) AS t FROM read_parquet(${sqlStringLiteral(`${ctx.dataDir}/${String(p.name)}/raw/daily-${latestMonth}/*.parquet`)})`);
+      .map(p => {
+        const glob = sqlStringLiteral(`${ctx.dataDir}/${String(p.name)}/raw/daily-${latestMonth}/*.parquet`);
+        return `SELECT MAX(${CHARGE_PERIOD_START_UTC_SQL}) AS t FROM read_parquet(${glob})`;
+      });
     if (perProvider.length > 0) {
       try {
         const rows = await ctx.runQuery(
