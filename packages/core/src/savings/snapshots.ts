@@ -89,18 +89,26 @@ export interface LoadedSavings {
 interface ProviderSnapshot {
   readonly snapshot: SavingsSnapshot;
   readonly recommendations: readonly SavingsRecommendation[];
+  /** The COH export the provider syncs: its cost-optimization bucket path. */
+  readonly exportKey: string;
+}
+
+/** `s3://bucket/prefix` with no trailing slash, so `prefix/` and `prefix` match. */
+function exportKeyOf(bucket: string): string {
+  return bucket.replace(/\/+$/, '');
 }
 
 async function readProviderSnapshot(
   dataDir: string,
   provider: ProviderName,
+  exportKey: string,
   runQuery: (sql: string) => Promise<readonly Row[]>,
 ): Promise<ProviderSnapshot | null> {
   const snapshot = await latestCostOptSnapshot(dataDir, provider);
   if (snapshot === null) return null;
   try {
     const rows = await runQuery(buildSavingsQuery(dataDir, provider, snapshot.date));
-    return { snapshot, recommendations: rows.map(row => parseSavingsRow(row, String(provider))) };
+    return { snapshot, recommendations: rows.map(row => parseSavingsRow(row, String(provider))), exportKey };
   } catch (err: unknown) {
     logger.warn(`savings: cannot read ${String(provider)} cost-opt-${snapshot.date}: ${err instanceof Error ? err.message : String(err)}`);
     return null;
@@ -109,20 +117,20 @@ async function readProviderSnapshot(
 
 /** Every recommendation of each provider's latest snapshot. A provider whose
  *  snapshot can't be read is left out (and logged) rather than failing the
- *  others. Recommendation ids are unique to an export, so a provider whose ids
- *  were mostly seen in a newer snapshot syncs the same export: it is skipped,
- *  or its older snapshot would bring back what has since been implemented. A
- *  smaller overlap (a member account's own export next to the payer's) keeps
- *  the provider and lists each shared recommendation once, from the newer
- *  snapshot. */
+ *  others. Two providers whose cost-optimization tier points at the same
+ *  bucket path sync the same export: only the newest snapshot is read, or the
+ *  older one would bring back what has since been implemented. Different
+ *  exports can still share recommendations (a member account's own export
+ *  next to the payer's): each is listed once, from the newer snapshot. */
 export async function loadSavingsRecommendations(
   dataDir: string,
   providers: readonly ProviderConfig[],
   runQuery: (sql: string) => Promise<readonly Row[]>,
 ): Promise<LoadedSavings> {
-  const read = await Promise.all(providers
-    .filter(provider => provider.sync.costOptimization !== undefined)
-    .map(provider => readProviderSnapshot(dataDir, provider.name, runQuery)));
+  const read = await Promise.all(providers.flatMap(provider => {
+    const tier = provider.sync.costOptimization;
+    return tier === undefined ? [] : [readProviderSnapshot(dataDir, provider.name, exportKeyOf(String(tier.bucket)), runQuery)];
+  }));
   // Newest snapshot first; a stable sort keeps the config order on a tie.
   const newestFirstRead = read
     .filter((r): r is ProviderSnapshot => r !== null)
@@ -130,16 +138,16 @@ export async function loadSavingsRecommendations(
 
   const recommendations: SavingsRecommendation[] = [];
   const snapshots: SavingsSnapshot[] = [];
+  const seenExports = new Set<string>();
   const seen = new Set<string>();
-  for (const { snapshot, recommendations: recs } of newestFirstRead) {
-    const ids = recs.map(r => r.recommendationId).filter(id => id !== '');
-    const repeated = ids.filter(id => seen.has(id)).length;
-    if (ids.length > 0 && repeated * 2 >= ids.length) {
+  for (const { snapshot, recommendations: recs, exportKey } of newestFirstRead) {
+    if (seenExports.has(exportKey)) {
       logger.info(`savings: ${snapshot.providerName} syncs the same Cost Optimization Hub export as a provider with a newer snapshot; skipping its cost-opt-${snapshot.date}`);
       continue;
     }
+    seenExports.add(exportKey);
     const fresh = recs.filter(r => r.recommendationId === '' || !seen.has(r.recommendationId));
-    for (const id of ids) seen.add(id);
+    for (const rec of recs) if (rec.recommendationId !== '') seen.add(rec.recommendationId);
     snapshots.push(snapshot);
     recommendations.push(...fresh);
   }

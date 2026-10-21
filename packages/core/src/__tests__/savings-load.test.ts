@@ -13,18 +13,22 @@ import type { ProviderConfig } from '../types/config.js';
 
 type Row = Readonly<Record<string, unknown>>;
 
-function provider(name: string, costOptimization: boolean): Record<string, unknown> {
+/** An AWS provider; with a cost-optimization tier, it syncs `costOptExport`
+ *  (each provider its own export unless one is named). */
+function provider(name: string, costOptimization: boolean, costOptExport = `s3://bucket/${name}/cost-opt/`): Record<string, unknown> {
   return {
     name,
     type: 'aws',
     credentialsProfile: 'test-profile',
     sync: {
-      daily: { bucket: 's3://bucket/daily/', retentionDays: 365 },
-      ...(costOptimization ? { costOptimization: { bucket: 's3://bucket/cost-opt/', retentionDays: 90 } } : {}),
+      daily: { bucket: `s3://bucket/${name}/daily/`, retentionDays: 365 },
+      ...(costOptimization ? { costOptimization: { bucket: costOptExport, retentionDays: 90 } } : {}),
       intervalMinutes: 60,
     },
   };
 }
+
+const SHARED_EXPORT = 's3://payer-exports/cost-optimization/';
 
 function providers(...entries: readonly Record<string, unknown>[]): readonly ProviderConfig[] {
   return validateConfig({ providers: entries, defaults: { periodDays: 30, costMetric: 'unblended_cost', lagDays: 1 } }).providers;
@@ -78,18 +82,27 @@ describe('loadSavingsRecommendations', () => {
   });
 
   it('reads only the newest snapshot of two providers that sync the same export', async () => {
-    // aws-a stopped syncing on Oct 12: "old" was implemented since and must
-    // not come back, and the shared recommendation keeps aws-b's value.
+    // aws-a stopped syncing on Oct 12 (its bucket path differs only by the
+    // trailing slash). Three of its four recommendations were implemented
+    // since: none may come back, and the remaining one keeps aws-b's value.
     const loaded = await loadSavingsRecommendations(
       dataDir,
-      providers(provider('aws-a', true), provider('aws-b', true)),
-      runner({ 'aws-a': [row('shared', 9), row('old', 4)], 'aws-b': [row('shared', 7)] }, []),
+      providers(provider('aws-a', true, SHARED_EXPORT.slice(0, -1)), provider('aws-b', true, SHARED_EXPORT)),
+      runner({ 'aws-a': [row('kept', 9), row('done-1', 4), row('done-2', 3), row('done-3', 2)], 'aws-b': [row('kept', 7)] }, []),
     );
     expect(loaded.snapshots).toEqual([{ providerName: 'aws-b', date: '2026-10-13' }]);
-    expect(loaded.recommendations.map(r => [r.recommendationId, r.monthlySavings])).toEqual([['shared', 7]]);
+    expect(loaded.recommendations.map(r => [r.recommendationId, r.monthlySavings])).toEqual([['kept', 7]]);
+
+    // Everything implemented: the newer snapshot is empty, and still current.
+    const allDone = await loadSavingsRecommendations(
+      dataDir,
+      providers(provider('aws-a', true, SHARED_EXPORT), provider('aws-b', true, SHARED_EXPORT)),
+      runner({ 'aws-a': [row('done-1', 4)], 'aws-b': [] }, []),
+    );
+    expect(allDone).toEqual({ recommendations: [], snapshots: [{ providerName: 'aws-b', date: '2026-10-13' }] });
   });
 
-  it('keeps a provider whose export only partly overlaps a newer one, listing each shared recommendation once', async () => {
+  it('keeps a provider whose different export shares recommendations with a newer one, listing each once', async () => {
     // aws-b is a member account's own export; aws-a, the payer's, also
     // lists that account's recommendation next to every other account's.
     const loaded = await loadSavingsRecommendations(
