@@ -3,14 +3,14 @@ import { useDailyWidgetQuery } from '../hooks/use-widget-query.js';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { StackedBarChart, bucketBars, type BarDay } from '../components/stacked-bar-chart.js';
-import { asDateString, asHourString, asTagValue, isPeriodGranularity, periodStartsInRange } from '@costgoblin/core/browser';
+import { asDateString, asHourString, asTagValue, isPeriodGranularity, periodEnd, periodStart, periodStartsInRange } from '@costgoblin/core/browser';
 import { useCostFocus, useCostFocusDispatch } from '../hooks/use-cost-focus.js';
 import type { DailyCostsResult, DateRange, DateString, DimensionId, Granularity } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
 import { dimensionLabelFor, filtersKey, hasSufficientDailyCoverage } from './widget.js';
 import { GroupByTitle } from '../components/group-by-title.js';
 import { costsTitle } from '../lib/dates.js';
-import { computeBucketedHourRange, computeBucketedRange } from '../lib/drag-select.js';
+import { bucketKeyToDate, computeBucketedHourRange, computeBucketedRange } from '../lib/drag-select.js';
 
 const MAX_BARS = 170;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -84,6 +84,17 @@ function resolveRangeSelect(
       endHour: asHourString(hourRange.endHour),
     };
   }
+  if (isPeriodGranularity(granularity)) {
+    // A bar is a whole period keyed by its first day: the selection runs from
+    // the first bar's period start to the last bar's period end.
+    const first = barDays[startIdx];
+    const last = barDays[endIdx];
+    if (first === undefined || last === undefined) return null;
+    return {
+      start: periodStart(asDateString(bucketKeyToDate(first.date)), granularity),
+      end: periodEnd(asDateString(bucketKeyToDate(last.date)), granularity),
+    };
+  }
   const range = computeBucketedRange(barDays, startIdx, endIdx, rangeEnd);
   if (range === null) return null;
   return { start: asDateString(range.startDate), end: asDateString(range.endDate) };
@@ -133,7 +144,7 @@ export function StackedBarWidget({
     [dailyResult, granularity, dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour],
   );
 
-  const prevHasCoverage = prevQuery.status === 'success' && prevQuery.data !== null && hasSufficientDailyCoverage(prevQuery.data, previousDateRange);
+  const prevHasCoverage = prevQuery.status === 'success' && prevQuery.data !== null && hasSufficientDailyCoverage(prevQuery.data, previousDateRange, granularity);
   const previousTotals = useMemo(
     () => bucketTotals(dailyToTotals(prevHasCoverage ? prevQuery.data : null)),
     [prevHasCoverage, prevQuery],

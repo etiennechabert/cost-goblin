@@ -1,8 +1,12 @@
-import { asDateString, formatPeriodLabel, isPeriodGranularity } from '@costgoblin/core/browser';
+import { asDateString, countPeriods, formatPeriodLabel, isPeriodGranularity } from '@costgoblin/core/browser';
+import type { PeriodGranularity } from '@costgoblin/core/browser';
 import type { Granularity } from '../components/date-range-picker.js';
 import { daysBetween } from './dates.js';
 
 const HOURLY_THRESHOLD_DAYS = 7;
+/** A drag over this many periods or fewer zooms into days: a bar or two is too
+ *  coarse to explore, and a couple of months or three weeks is a daily window. */
+const MAX_PERIODS_TO_ZOOM_TO_DAILY: Readonly<Record<PeriodGranularity, number>> = { monthly: 2, weekly: 3 };
 const PERIOD_KEY = /^\d{4}-\d{2}-\d{2}/;
 
 export function pixelToIndex(x: number, containerWidth: number, bucketCount: number): number {
@@ -81,13 +85,28 @@ export function formatBucketKey(key: string, granularity?: Granularity): string 
   return dateLabel;
 }
 
+/** The granularity a drag-zoom onto `range` lands on: Monthly and Weekly drop
+ *  to Daily for a short selection, Daily drops to Hourly for a window of a week
+ *  or less, anything else stays. `hourly` only says the window is short enough;
+ *  whether an hourly tier exists is the caller's check. */
+export function zoomGranularity(
+  range: { readonly start: string; readonly end: string },
+  current: Granularity,
+): Granularity {
+  if (isPeriodGranularity(current)) {
+    const periods = countPeriods({ start: asDateString(range.start), end: asDateString(range.end) }, current);
+    return periods <= MAX_PERIODS_TO_ZOOM_TO_DAILY[current] ? 'daily' : current;
+  }
+  if (current === 'daily' && daysBetween(range.start, range.end) <= HOURLY_THRESHOLD_DAYS) return 'hourly';
+  return current;
+}
+
 export function shouldAutoSwitchToHourly(
   startDate: string,
   endDate: string,
   currentGranularity: Granularity,
 ): boolean {
-  if (currentGranularity !== 'daily') return false;
-  return daysBetween(startDate, endDate) <= HOURLY_THRESHOLD_DAYS;
+  return currentGranularity === 'daily' && zoomGranularity({ start: startDate, end: endDate }, currentGranularity) === 'hourly';
 }
 
 interface BucketLike {

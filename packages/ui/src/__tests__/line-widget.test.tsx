@@ -72,11 +72,11 @@ class DailyApi extends MockCostApi {
   override queryDailyCosts(params?: DailyCostsParams): Promise<DailyCostsResult> {
     if (params === undefined) return Promise.reject(new Error('queryDailyCosts called without params'));
     this.calls.push(params);
-    return params.dateRange.start === PREV_RANGE.start ? this.previous() : this.current();
+    return params.origin?.endsWith('/prev') === true ? this.previous() : this.current();
   }
 
   previousCalls(): DailyCostsParams[] {
-    return this.calls.filter(c => c.dateRange.start === PREV_RANGE.start);
+    return this.calls.filter(c => c.origin?.endsWith('/prev') === true);
   }
 }
 
@@ -88,6 +88,7 @@ interface RenderOptions {
   readonly compareEnabled?: boolean;
   readonly granularity?: Granularity;
   readonly dateRange?: DateRange;
+  readonly previousDateRange?: DateRange;
 }
 
 function renderWidget(opts: RenderOptions = {}) {
@@ -100,7 +101,7 @@ function renderWidget(opts: RenderOptions = {}) {
         <LineWidget
           spec={opts.spec ?? SPEC}
           dateRange={opts.dateRange ?? RANGE}
-          previousDateRange={PREV_RANGE}
+          previousDateRange={opts.previousDateRange ?? PREV_RANGE}
           compareEnabled={opts.compareEnabled ?? false}
           granularity={opts.granularity ?? 'daily'}
           globalFilters={{}}
@@ -224,6 +225,24 @@ describe('LineWidget — weekly and monthly', () => {
 });
 
 describe('LineWidget — previous period', () => {
+  it('counts a monthly previous result with one bucket per month as sufficient coverage', async () => {
+    const months = ['2026-03-01', '2026-04-01', '2026-05-01', '2026-06-01', '2026-07-01', '2026-08-01', '2026-09-01', '2026-10-01'];
+    const previousMonths = ['2025-07-01', '2025-08-01', '2025-09-01', '2025-10-01', '2025-11-01', '2025-12-01', '2026-01-01', '2026-02-01'];
+    const api = new DailyApi();
+    api.current = () => Promise.resolve(daily(months.map(m => [m, { platform: 50, data: 30 }] as const)));
+    api.previous = () => Promise.resolve(daily(previousMonths.map(m => [m, { platform: 40, data: 20 }] as const)));
+    const { container } = renderWidget({
+      api,
+      compareEnabled: true,
+      granularity: 'monthly',
+      dateRange: { start: asDateString('2026-03-01'), end: asDateString('2026-10-31') },
+      previousDateRange: { start: asDateString('2025-07-01'), end: asDateString('2026-02-28') },
+    });
+
+    // Eight months of data is not "8 of 242 days": the overlay draws.
+    await waitFor(() => { expect(ghostLines(container)).toHaveLength(2); });
+  });
+
   it('overlays a ghost line per series, aligned day by day', async () => {
     const { api, container } = renderWidget({ compareEnabled: true });
 

@@ -94,7 +94,7 @@ export function LineWidget({
     [dailyResult],
   );
 
-  const prevHasCoverage = prevQuery.status === 'success' && prevQuery.data !== null && hasSufficientDailyCoverage(prevQuery.data, previousDateRange);
+  const prevHasCoverage = prevQuery.status === 'success' && prevQuery.data !== null && hasSufficientDailyCoverage(prevQuery.data, previousDateRange, granularity);
   const previousSeries = useMemo(
     () => buildPreviousSeries(prevHasCoverage ? prevQuery.data : null, series, currentDates),
     [prevHasCoverage, prevQuery, series, currentDates],

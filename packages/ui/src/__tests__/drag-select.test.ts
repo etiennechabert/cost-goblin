@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { pixelToIndex, bucketKeyToDate, computeBucketedHourRange, normalizeHourKey, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
+import { pixelToIndex, bucketKeyToDate, computeBucketedHourRange, normalizeHourKey, shouldAutoSwitchToHourly, zoomGranularity } from '../lib/drag-select.js';
 
 describe('pixelToIndex', () => {
   it('maps the left edge to index 0', () => {
@@ -114,5 +114,28 @@ describe('shouldAutoSwitchToHourly', () => {
   it('never switches away from hourly', () => {
     expect(shouldAutoSwitchToHourly('2026-04-01', '2026-04-01', 'hourly')).toBe(false);
     expect(shouldAutoSwitchToHourly('2026-04-01', '2026-04-07', 'hourly')).toBe(false);
+  });
+});
+
+describe('zoomGranularity', () => {
+  it('drops a Monthly selection of two months or fewer to Daily, and keeps three', () => {
+    expect(zoomGranularity({ start: '2026-08-01', end: '2026-08-31' }, 'monthly')).toBe('daily');
+    expect(zoomGranularity({ start: '2026-08-01', end: '2026-09-30' }, 'monthly')).toBe('daily');
+    expect(zoomGranularity({ start: '2026-08-01', end: '2026-10-31' }, 'monthly')).toBe('monthly');
+  });
+
+  it('drops a Weekly selection of three weeks or fewer to Daily, and keeps four', () => {
+    expect(zoomGranularity({ start: '2026-10-05', end: '2026-10-11' }, 'weekly')).toBe('daily');
+    expect(zoomGranularity({ start: '2026-10-05', end: '2026-10-25' }, 'weekly')).toBe('daily');
+    expect(zoomGranularity({ start: '2026-10-05', end: '2026-11-01' }, 'weekly')).toBe('weekly');
+  });
+
+  it('zooms a Daily window of a week or less to Hourly, and keeps a longer one', () => {
+    expect(zoomGranularity({ start: '2026-04-01', end: '2026-04-07' }, 'daily')).toBe('hourly');
+    expect(zoomGranularity({ start: '2026-04-01', end: '2026-04-08' }, 'daily')).toBe('daily');
+  });
+
+  it('keeps Hourly', () => {
+    expect(zoomGranularity({ start: '2026-04-01', end: '2026-04-01' }, 'hourly')).toBe('hourly');
   });
 });
