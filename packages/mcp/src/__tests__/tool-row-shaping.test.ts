@@ -146,13 +146,13 @@ describe('get_cost_overview', () => {
     });
   });
 
-  it('keeps the first row per service, merges accounts by display name and lists enabled dimensions', async () => {
+  it('keeps the first row per entity, merges accounts by display name and lists enabled dimensions', async () => {
     const { ctx } = harness({
       accountMap: new Map([['111', 'Prod'], ['222', 'Prod']]),
+      // The cost query returns one row per (entity, top service), each with
+      // the entity's total: only the first row of an entity is kept.
       rows: (sql) => sql.includes('account_id AS entity')
-        ? [{ entity: '111', total_cost: 70 }, { entity: '222', total_cost: 30 }, { entity: '333', total_cost: 5 }]
-        // The cost query returns one row per (entity, top service): only the
-        // first carries the entity total that is kept.
+        ? [{ entity: '111', total_cost: 70 }, { entity: '111', total_cost: 999 }, { entity: '222', total_cost: 30 }, { entity: '333', total_cost: 5 }]
         : [{ entity: 'EC2', total_cost: 60 }, { entity: 'EC2', total_cost: 999 }, { entity: 'S3', total_cost: 40 }],
     });
     const result = json(await getCostOverview(ctx, { format: 'json' }));

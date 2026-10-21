@@ -3,13 +3,15 @@ import {
   buildCostQuery,
   logger,
 } from '@costgoblin/core';
-import type { McpContext } from '../context.js';
+import type { McpContext, RawRow } from '../context.js';
+import { truncateFooter, truncateRows } from '../formatters/cost.js';
 import type { Cell, Column, StructuredResult, Table } from '../formatters/result.js';
 import {
   buildQueryContextOpts,
   computeDataCoverage,
   emptyRangeResult,
   getQueryProviders,
+  resolveEntityName,
   resolveFormat,
   resolveToolDateRange,
   structuredToolResult,
@@ -19,6 +21,22 @@ import {
   withinLagResult,
 } from './tool-helpers.js';
 import type { FilterMap } from '@costgoblin/core';
+
+/** Each entity's total cost, summed per `nameOf(entity)`. buildCostQuery
+ *  returns one row per (entity, top service) and repeats the entity's total on
+ *  each of them, so only an entity's first row counts. */
+function totalsByName(rows: readonly RawRow[], nameOf: (entity: string) => string): [string, number][] {
+  const seen = new Set<string>();
+  const totals = new Map<string, number>();
+  for (const row of rows) {
+    const entity = toStr(row['entity']);
+    if (seen.has(entity)) continue;
+    seen.add(entity);
+    const name = nameOf(entity);
+    totals.set(name, (totals.get(name) ?? 0) + toNum(row['total_cost']));
+  }
+  return [...totals.entries()].sort((a, b) => b[1] - a[1]);
+}
 
 export async function getCostOverview(
   ctx: McpContext,
@@ -60,28 +78,15 @@ export async function getCostOverview(
     ctx.runPreparedQuery(accountQuery.sql, accountQuery.params),
   ]);
 
-  const serviceMap = new Map<string, number>();
-  for (const row of serviceRows) {
-    const entity = toStr(row['entity']);
-    const cost = toNum(row['total_cost']);
-    if (!serviceMap.has(entity)) serviceMap.set(entity, cost);
-  }
-  const topServices = [...serviceMap.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 10);
-  const serviceTotalCost = topServices.reduce((sum, [, cost]) => sum + cost, 0);
+  // The cost query returns every service, so the total covers the ones past
+  // the ten listed too.
+  const services = totalsByName(serviceRows, entity => entity);
+  const totalCost = services.reduce((sum, [, cost]) => sum + cost, 0);
+  const shownServices = truncateRows(services, 10, ([, cost]) => cost);
 
   const accountMap = await ctx.getAccountMap();
-  const accountCosts = new Map<string, number>();
-  for (const row of accountRows) {
-    const entity = toStr(row['entity']);
-    const cost = toNum(row['total_cost']);
-    const name = accountMap.get(entity) ?? entity;
-    accountCosts.set(name, (accountCosts.get(name) ?? 0) + cost);
-  }
-  const topAccounts = [...accountCosts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5);
+  const accounts = totalsByName(accountRows, entity => resolveEntityName(entity, accountMap));
+  const shownAccounts = truncateRows(accounts, 5, ([, cost]) => cost);
 
   const dimensions = await ctx.getDimensions();
   const enabledDims = [
@@ -94,24 +99,30 @@ export async function getCostOverview(
     { key: 'cost', header: 'Cost', type: 'currency' },
     { key: 'pct', header: '% of Total', type: 'percent' },
   ];
-  const svcRows: Cell[][] = topServices.map(([name, cost]) => [
+  const svcRows: Cell[][] = shownServices.visible.map(([name, cost]) => [
     name,
     cost,
-    serviceTotalCost > 0 ? (cost / serviceTotalCost) * 100 : 0,
+    totalCost > 0 ? (cost / totalCost) * 100 : 0,
   ]);
 
   const tables: Table[] = [
-    { title: 'Top Services', columns: svcColumns, rows: svcRows },
+    {
+      title: 'Top Services',
+      columns: svcColumns,
+      rows: svcRows,
+      footer: truncateFooter(shownServices.hiddenCount, shownServices.hiddenCost),
+    },
   ];
 
-  if (topAccounts.length > 0) {
+  if (accounts.length > 0) {
     tables.push({
       title: 'Top Accounts',
       columns: [
         { key: 'account', header: 'Account' },
         { key: 'cost', header: 'Cost', type: 'currency' },
       ],
-      rows: topAccounts.map(([name, cost]): Cell[] => [name, cost]),
+      rows: shownAccounts.visible.map(([name, cost]): Cell[] => [name, cost]),
+      footer: truncateFooter(shownAccounts.hiddenCount, shownAccounts.hiddenCost),
     });
   }
 
@@ -120,7 +131,7 @@ export async function getCostOverview(
     title: `Cost Overview (${dateRange.start} to ${dateRange.end})`,
     coverage,
     meta: [
-      { label: 'Total Cost', value: serviceTotalCost, type: 'currency' },
+      { label: 'Total Cost', value: totalCost, type: 'currency' },
       { label: 'Available Dimensions', value: enabledDims.join(', ') },
     ],
     tables,
