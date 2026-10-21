@@ -1,8 +1,9 @@
-import { writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { sqlStringLiteral } from '@costgoblin/core';
 import { registerQueryHandlers } from '../main/handlers/query.js';
-import { at, createHarness, FEBRUARY_READABLE_NOW_MS, list, num, setCostScopeLag, str, type Harness, type HarnessOptions } from './helpers/ipc-harness.js';
+import { at, createHarness, FEBRUARY_READABLE_NOW_MS, FIXTURE_AWS_PROVIDER, list, num, setCostScopeLag, str, type Harness, type HarnessOptions } from './helpers/ipc-harness.js';
 
 /** The dashboard query channels — costs, daily costs, entity detail, trends,
  *  filter values, missing tags and savings — run end to end against a real
@@ -16,6 +17,7 @@ vi.mock('@sentry/electron/main', async () => (await import('./helpers/electron-f
 const FEBRUARY = { start: '2026-02-01', end: '2026-02-28' };
 const NO_DATA = { start: '2025-03-01', end: '2025-03-31' };
 const EC2 = 'Amazon Elastic Compute Cloud';
+const S3 = 'Amazon Simple Storage Service';
 
 const ORG = JSON.stringify({
   orgId: 'o-1',
@@ -147,6 +149,60 @@ describe('query:entity-detail', () => {
     expect(await h.ipc.invoke('query:entity-detail', { entity: EC2, dimension: 'service', dateRange: NO_DATA, filters: {} })).toEqual({
       entity: EC2, totalCost: 0, previousCost: 0, percentChange: 0, dailyCosts: [], byAccount: [], byService: [], bySubEntity: [],
     });
+  });
+});
+
+// One power of two per row, so each figure names the rows it counts.
+const NO_VALUE_ROWS = { emptyTag: 8, untagged: 4, tagged: 1 } as const;
+
+/** January line items whose environment tag is empty, missing, and set. */
+async function writeEnvironmentRows(h: Harness): Promise<void> {
+  const dir = join(h.ws.dataDir, FIXTURE_AWS_PROVIDER, 'raw', 'daily-2026-01');
+  await mkdir(dir, { recursive: true });
+  const row = (service: string, cost: number, tags: string): string =>
+    `(TIMESTAMP '2026-01-05 00:00:00', '111', 'Acct', 'eu-west-1', '${service}', 'x', 'Compute', 'usage',
+      1.0, ${String(cost)}::DOUBLE, ${String(cost)}::DOUBLE, 'arn:res', ${String(cost)}::DOUBLE,
+      'Usage', 'Standard', '', 'Op', 'Meter', ${tags})`;
+  await h.db.runQuery(`
+    COPY (
+      SELECT * FROM (VALUES
+        ${row(EC2, NO_VALUE_ROWS.emptyTag, "MAP {'environment': ''}")},
+        ${row(S3, NO_VALUE_ROWS.untagged, "MAP {'team': 'payments'}")},
+        ${row(EC2, NO_VALUE_ROWS.tagged, "MAP {'environment': 'prod'}")}
+      ) AS t(ChargePeriodStart, SubAccountId, SubAccountName, RegionId,
+             ServiceName, x_ServiceCode, ServiceCategory, ChargeDescription,
+             ConsumedQuantity, ListCost, BilledCost, ResourceId, EffectiveCost,
+             ChargeCategory, PricingCategory, CommitmentDiscountStatus,
+             x_Operation, SkuMeter, Tags)
+    ) TO ${sqlStringLiteral(join(dir, 'data.parquet'))} (FORMAT PARQUET)
+  `);
+}
+
+// The rows read a missing tag as '', the value of the group a filter on ''
+// keeps, so an untagged group and an empty-valued one are one row.
+describe('a tag group-by with rows that have no value', () => {
+  const JANUARY = { start: '2026-01-01', end: '2026-01-31' };
+  const NO_VALUE = NO_VALUE_ROWS.emptyTag + NO_VALUE_ROWS.untagged;
+
+  it("query:costs totals them as one '' row, with the services of each", async () => {
+    const h = await queryApp({ data: 'none' });
+    await writeEnvironmentRows(h);
+    const result = await h.ipc.invoke('query:costs', { groupBy: 'tag_environment', dateRange: JANUARY, filters: {} });
+    expect(num(at(result, 'totalCost'))).toBe(NO_VALUE + NO_VALUE_ROWS.tagged);
+    expect(list(at(result, 'rows')).map(r => ({ entity: str(at(r, 'entity')), totalCost: num(at(r, 'totalCost')), serviceCosts: at(r, 'serviceCosts') }))).toEqual([
+      { entity: '', totalCost: NO_VALUE, serviceCosts: { [EC2]: NO_VALUE_ROWS.emptyTag, [S3]: NO_VALUE_ROWS.untagged } },
+      { entity: 'production', totalCost: NO_VALUE_ROWS.tagged, serviceCosts: { [EC2]: NO_VALUE_ROWS.tagged } },
+    ]);
+  });
+
+  it("query:trends compares them as one '' row", async () => {
+    const h = await queryApp({ data: 'none' });
+    await writeEnvironmentRows(h);
+    const result = await h.ipc.invoke('query:trends', { groupBy: 'tag_environment', dateRange: JANUARY, filters: {}, deltaThreshold: 0, percentThreshold: 0 });
+    expect(list(at(result, 'increases')).map(r => [str(at(r, 'entity')), num(at(r, 'currentCost'))])).toEqual([
+      ['', NO_VALUE],
+      ['production', NO_VALUE_ROWS.tagged],
+    ]);
   });
 });
 

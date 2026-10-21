@@ -210,14 +210,23 @@ function tryExpandAccountIds(
   return `${rawField} IN (${list})`;
 }
 
+/** The value a cost or trend group-by files a row under. Results read NULL as
+ *  '', so a tag the resource lacks and a tag set to '' are one group, the one
+ *  a filter on '' keeps (missingValueSql). Grouped bare, they came back as two
+ *  rows read alike: where rows are kept per entity one was dropped, and the
+ *  NULL one never joined its per-service breakdown. */
+function groupValueSql(resolved: ResolvedDimension): string {
+  return `COALESCE(${resolved.fieldExpr}, '')`;
+}
+
 /** Rows with no value for the dimension: NULL (a tag the resource lacks) or ''
  *  (buildSource coalesces a missing built-in field to ''), read off the
- *  normalized/aliased expression the app displays and filters on. For the
- *  account, also NO_ACCOUNT_SENTINEL, which stands in for a NULL
- *  SubAccountId; checked on the raw column, where no normalize rule can have
- *  reshaped it. Never NULL. */
+ *  normalized/aliased expression the app displays and filters on: the rows a
+ *  group-by files under ''. For the account, also NO_ACCOUNT_SENTINEL, which
+ *  stands in for a NULL SubAccountId; checked on the raw column, where no
+ *  normalize rule can have reshaped it. Never NULL. */
 function missingValueSql(resolved: ResolvedDimension): string {
-  const empty = `COALESCE(${resolved.fieldExpr}, '') = ''`;
+  const empty = `${groupValueSql(resolved)} = ''`;
   if (resolved.rawField !== 'account_id') return empty;
   return `(${empty} OR ${resolved.rawField} = '${NO_ACCOUNT_SENTINEL}')`;
 }
@@ -739,7 +748,7 @@ export function buildCostQuery(
   const sql = `
     WITH base AS (
       SELECT
-        ${groupByResolved.fieldExpr} AS entity,
+        ${groupValueSql(groupByResolved)} AS entity,
         service,
         SUM(cost) AS cost
       FROM ${source}
@@ -818,7 +827,7 @@ export function buildTrendQuery(
   const sql = `
     WITH bucketed AS (
       SELECT
-        ${groupByResolved.fieldExpr} AS entity,
+        ${groupValueSql(groupByResolved)} AS entity,
         CASE
           WHEN usage_date BETWEEN ${startDatePlaceholder} AND ${endDatePlaceholder} THEN 'current'
           ELSE 'previous'

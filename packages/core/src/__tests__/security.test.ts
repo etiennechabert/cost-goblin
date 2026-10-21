@@ -251,7 +251,7 @@ describe('SQL Injection Prevention', () => {
         },
         { dataDir: '/data', dimensions, providers },
       );
-      expect(validResult.sql).toContain('service AS entity');
+      expect(validResult.sql).toContain("COALESCE(service, '') AS entity");
     });
 
     it('rejects unknown dimension IDs with SecurityError', () => {

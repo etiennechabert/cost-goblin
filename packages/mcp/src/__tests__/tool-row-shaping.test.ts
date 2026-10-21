@@ -151,7 +151,7 @@ describe('get_cost_overview', () => {
       accountMap: new Map([['111', 'Prod'], ['222', 'Prod']]),
       // The cost query returns one row per (entity, top service), each with
       // the entity's total: only the first row of an entity is kept.
-      rows: (sql) => sql.includes('account_id AS entity')
+      rows: (sql) => sql.includes("COALESCE(account_id, '') AS entity")
         ? [{ entity: '111', total_cost: 70 }, { entity: '111', total_cost: 999 }, { entity: '222', total_cost: 30 }, { entity: '333', total_cost: 5 }]
         : [{ entity: 'EC2', total_cost: 60 }, { entity: 'EC2', total_cost: 999 }, { entity: 'S3', total_cost: 40 }],
     });
@@ -173,7 +173,7 @@ describe('get_cost_overview', () => {
 
   it("counts a NULL entity and a '' one, which read alike, as one row", async () => {
     const { ctx } = harness({
-      rows: (sql) => sql.includes('account_id AS entity')
+      rows: (sql) => sql.includes("COALESCE(account_id, '') AS entity")
         ? [{ entity: null, total_cost: 3 }, { entity: '', total_cost: 4 }, { entity: '', total_cost: 999 }]
         : [{ entity: 'EC2', total_cost: 13 }, { entity: null, total_cost: 3 }, { entity: '', total_cost: 4 }],
     });
@@ -188,7 +188,7 @@ describe('get_cost_overview', () => {
 
   it('shows 0% shares for a zero total and drops the accounts table when there are none', async () => {
     const { ctx } = harness({
-      rows: (sql) => (sql.includes('account_id AS entity') ? [] : [{ entity: 'EC2', total_cost: 0 }]),
+      rows: (sql) => (sql.includes("COALESCE(account_id, '') AS entity") ? [] : [{ entity: 'EC2', total_cost: 0 }]),
     });
     const result = json(await getCostOverview(ctx, { dateRange: JAN, format: 'json' }));
     expect(result.tables.map(t => t.title)).toEqual(['Top Services']);
