@@ -146,13 +146,13 @@ describe('get_cost_overview', () => {
     });
   });
 
-  it('keeps the first row per service, merges accounts by display name and lists enabled dimensions', async () => {
+  it('keeps the first row per entity, merges accounts by display name and lists enabled dimensions', async () => {
     const { ctx } = harness({
       accountMap: new Map([['111', 'Prod'], ['222', 'Prod']]),
+      // The cost query returns one row per (entity, top service), each with
+      // the entity's total: only the first row of an entity is kept.
       rows: (sql) => sql.includes('account_id AS entity')
-        ? [{ entity: '111', total_cost: 70 }, { entity: '222', total_cost: 30 }, { entity: '333', total_cost: 5 }]
-        // The cost query returns one row per (entity, top service): only the
-        // first carries the entity total that is kept.
+        ? [{ entity: '111', total_cost: 70 }, { entity: '111', total_cost: 999 }, { entity: '222', total_cost: 30 }, { entity: '333', total_cost: 5 }]
         : [{ entity: 'EC2', total_cost: 60 }, { entity: 'EC2', total_cost: 999 }, { entity: 'S3', total_cost: 40 }],
     });
     const result = json(await getCostOverview(ctx, { format: 'json' }));
@@ -169,6 +169,21 @@ describe('get_cost_overview', () => {
       { account: 'Prod', cost: 100 },
       { account: '333', cost: 5 },
     ]);
+  });
+
+  it("counts a NULL entity and a '' one, which read alike, as one row", async () => {
+    const { ctx } = harness({
+      rows: (sql) => sql.includes('account_id AS entity')
+        ? [{ entity: null, total_cost: 3 }, { entity: '', total_cost: 4 }, { entity: '', total_cost: 999 }]
+        : [{ entity: 'EC2', total_cost: 13 }, { entity: null, total_cost: 3 }, { entity: '', total_cost: 4 }],
+    });
+    const result = json(await getCostOverview(ctx, { dateRange: JAN, format: 'json' }));
+    expect(result.meta.get('Total Cost')).toBe(20);
+    expect(tableRows(result, 'Top Services')).toEqual([
+      { service: 'EC2', cost: 13, pct: 65 },
+      { service: '', cost: 7, pct: 35 },
+    ]);
+    expect(tableRows(result, 'Top Accounts')).toEqual([{ account: '', cost: 7 }]);
   });
 
   it('shows 0% shares for a zero total and drops the accounts table when there are none', async () => {
