@@ -437,6 +437,10 @@ describe('switchGranularity', () => {
     expect(switchGranularity(march, 'monthly', 'daily', ctx)).toEqual({ start: '2026-03-01', end: '2026-10-19' });
     const past: DateRange = { start: asDateString('2026-03-01'), end: asDateString('2026-05-31') };
     expect(switchGranularity(past, 'monthly', 'daily', ctx)).toEqual({ start: '2026-03-01', end: '2026-05-31' });
+    // A restored current month that now lies past the newest day (the lag grew)
+    // lands on that day instead of a range ending before it starts.
+    const october: DateRange = { start: asDateString('2026-10-01'), end: asDateString('2026-10-31') };
+    expect(switchGranularity(october, 'monthly', 'daily', { ...ctx, newestDay: asDateString('2026-09-28') })).toEqual({ start: '2026-09-28', end: '2026-09-28' });
   });
 
   it('drops hour bounds going from hourly to daily', () => {

@@ -5,11 +5,6 @@ import { CostApiContext } from './use-cost-api.js';
 
 const PERIOD_PATTERN = /^\d{4}-\d{2}$/;
 
-/** What each api already answered, so re-entering Monthly (the picker mounts
- *  the hook again) doesn't read the data folders again. Only a found period
- *  is kept: "nothing local yet" and a failure are asked again. */
-const resolved = new WeakMap<CostApi, DateString>();
-
 async function readOldestLocalPeriod(api: CostApi): Promise<DateString | null> {
   const config = await api.getConfig();
   // One provider that fails to read must not hide the others' data.
@@ -30,22 +25,17 @@ async function readOldestLocalPeriod(api: CostApi): Promise<DateString | null> {
  *  configured provider ("All synced data" starts there), or `null` until the
  *  inventories load and when nothing is local. Reads the data folders only:
  *  no remote listing, so a month held locally but expired in the bucket still
- *  counts and mounting costs no network call. `enabled: false` skips the
- *  reads: only Monthly mode has an "All synced data" preset to feed. */
+ *  counts and mounting costs no network call. Each mount reads again, so a
+ *  sync or prune since the last visit to Monthly shows. `enabled: false`
+ *  skips the reads: only Monthly mode has an "All synced data" preset to feed. */
 export function useOldestDailyPeriod(enabled = true): DateString | null {
   const api = useContext(CostApiContext);
   const [oldest, setOldest] = useState<DateString | null>(null);
 
   useEffect(() => {
     if (api === null || !enabled) return;
-    const known = resolved.get(api);
-    if (known !== undefined) {
-      setOldest(known);
-      return;
-    }
     let cancelled = false;
     readOldestLocalPeriod(api).then(period => {
-      if (period !== null) resolved.set(api, period);
       if (!cancelled) setOldest(period);
     }).catch(() => {
       if (!cancelled) setOldest(null);

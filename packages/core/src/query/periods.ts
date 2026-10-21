@@ -125,9 +125,13 @@ export function previousPeriodRange(range: DayRange, g: PeriodGranularity): DayR
   };
 }
 
-/** The range with its end pulled back to `newestDay`, only when it is past it. */
+/** The range with its end pulled back to `newestDay`, only when it is past it.
+ *  A start past it too (the range is all after the newest data, as when the
+ *  freshness lag grew since it was picked) comes back to it as well, so the
+ *  result never ends before it starts. */
 export function capToNewestDay(range: DayRange, newestDay: DateString): DayRange {
-  return range.end > newestDay ? { start: range.start, end: newestDay } : range;
+  if (range.end <= newestDay) return range;
+  return { start: range.start > newestDay ? newestDay : range.start, end: newestDay };
 }
 
 /** `W42 2026` (ISO week and week-year) or `Oct 2026`. */

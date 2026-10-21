@@ -91,18 +91,19 @@ describe('useOldestDailyPeriod', () => {
     expect(api.remoteListings).toBe(0);
   });
 
-  it('answers a second mount from the first read instead of reading again', async () => {
+  it('reads again on the next mount, so an older month synced since then counts', async () => {
+    let secondaryOldest = '2025-02';
     const api = new TwoProviderApi({
       'aws-main': () => Promise.resolve(inventory('2025-04')),
-      'aws-secondary': () => Promise.resolve(inventory('2025-02')),
+      'aws-secondary': () => Promise.resolve(inventory(secondaryOldest)),
     });
     const first = renderOldest(api);
     await waitFor(() => { expect(first.result.current).toBe('2025-02-01'); });
-    const readsAfterFirst = api.localReads;
     first.unmount();
 
+    secondaryOldest = '2024-11';
     const second = renderOldest(api);
-    await waitFor(() => { expect(second.result.current).toBe('2025-02-01'); });
-    expect(api.localReads).toBe(readsAfterFirst);
+    await waitFor(() => { expect(second.result.current).toBe('2024-11-01'); });
+    expect(api.remoteListings).toBe(0);
   });
 });

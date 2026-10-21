@@ -207,6 +207,9 @@ describe('explorer:query-aggregated-table', () => {
     });
     const wholeMonth = await h.ipc.invoke('explorer:query-aggregated-table', { filters: {}, dateRange: FEBRUARY, groupByColumns: ['service'], rowLimit: 1000 });
     expect(at(drilled, 'totalRows')).toBe(at(wholeMonth, 'totalRows'));
+    // The cost is what a single day's filter can't reach: all of February.
+    const drilledCost = list(at(drilled, 'rows')).map(r => num(at(r, 'cost'))).reduce((sum, n) => sum + n, 0);
+    expect(drilledCost).toBeCloseTo(dayTotal, 4);
 
     const byWeek = await h.ipc.invoke('explorer:query-aggregated-table', { filters: {}, dateRange: FEBRUARY, groupByColumns: ['usage_date'], rowLimit: 1000, granularity: 'weekly' });
     expect(at(byWeek, 'totalRows')).toBe(5);
