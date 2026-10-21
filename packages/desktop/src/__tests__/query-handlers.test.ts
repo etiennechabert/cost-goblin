@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { sqlStringLiteral } from '@costgoblin/core';
 import { registerQueryHandlers } from '../main/handlers/query.js';
 import { at, createHarness, FEBRUARY_READABLE_NOW_MS, FIXTURE_AWS_PROVIDER, list, num, setCostScopeLag, str, type Harness, type HarnessOptions } from './helpers/ipc-harness.js';
 
@@ -173,7 +174,7 @@ async function writeEnvironmentRows(h: Harness): Promise<void> {
              ConsumedQuantity, ListCost, BilledCost, ResourceId, EffectiveCost,
              ChargeCategory, PricingCategory, CommitmentDiscountStatus,
              x_Operation, SkuMeter, Tags)
-    ) TO '${join(dir, 'data.parquet')}' (FORMAT PARQUET)
+    ) TO ${sqlStringLiteral(join(dir, 'data.parquet'))} (FORMAT PARQUET)
   `);
 }
 

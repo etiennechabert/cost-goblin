@@ -210,18 +210,6 @@ function tryExpandAccountIds(
   return `${rawField} IN (${list})`;
 }
 
-/** Rows with no value for the dimension: NULL (a tag the resource lacks) or ''
- *  (buildSource coalesces a missing built-in field to ''), read off the
- *  normalized/aliased expression the app displays and filters on. For the
- *  account, also NO_ACCOUNT_SENTINEL, which stands in for a NULL
- *  SubAccountId; checked on the raw column, where no normalize rule can have
- *  reshaped it. Never NULL. */
-function missingValueSql(resolved: ResolvedDimension): string {
-  const empty = `COALESCE(${resolved.fieldExpr}, '') = ''`;
-  if (resolved.rawField !== 'account_id') return empty;
-  return `(${empty} OR ${resolved.rawField} = '${NO_ACCOUNT_SENTINEL}')`;
-}
-
 /** The value a cost or trend group-by files a row under. Results read NULL as
  *  '', so a tag the resource lacks and a tag set to '' are one group, the one
  *  a filter on '' keeps (missingValueSql). Grouped bare, they came back as two
@@ -229,6 +217,18 @@ function missingValueSql(resolved: ResolvedDimension): string {
  *  NULL one never joined its per-service breakdown. */
 function groupValueSql(resolved: ResolvedDimension): string {
   return `COALESCE(${resolved.fieldExpr}, '')`;
+}
+
+/** Rows with no value for the dimension: NULL (a tag the resource lacks) or ''
+ *  (buildSource coalesces a missing built-in field to ''), read off the
+ *  normalized/aliased expression the app displays and filters on: the rows a
+ *  group-by files under ''. For the account, also NO_ACCOUNT_SENTINEL, which
+ *  stands in for a NULL SubAccountId; checked on the raw column, where no
+ *  normalize rule can have reshaped it. Never NULL. */
+function missingValueSql(resolved: ResolvedDimension): string {
+  const empty = `${groupValueSql(resolved)} = ''`;
+  if (resolved.rawField !== 'account_id') return empty;
+  return `(${empty} OR ${resolved.rawField} = '${NO_ACCOUNT_SENTINEL}')`;
 }
 
 /** SQL for one rule condition: true when the row's value is one of the
