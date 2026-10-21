@@ -330,9 +330,9 @@ describe('SetupWizard workspace naming', () => {
   });
 
   // Defense in depth: the host holds the wizard until the workspaces info is
-  // loaded, but if the prop ever arrives after mount anyway, the name state
-  // must still pick up the initial name instead of staying empty+invalid.
-  it('seeds the name state when workspaceNaming arrives after mount', async () => {
+  // loaded, but if the prop ever arrives after mount anyway, the field must
+  // still show the initial name instead of staying empty+invalid.
+  it('shows the initial name when workspaceNaming arrives after mount', async () => {
     const api = new MockCostApi();
     const onComplete = vi.fn();
     const user = userEvent.setup();
@@ -348,7 +348,7 @@ describe('SetupWizard workspace naming', () => {
       </CostApiProvider>,
     );
     // The wizard stays on the hub (it mounted without a naming step), but the
-    // way back to naming appears and the field arrives seeded.
+    // way back to naming appears and the field shows the initial name.
     await user.click(await screen.findByText('← Change workspace name'));
     await waitFor(() => {
       expect(screen.getByLabelText('Workspace name')).toHaveProperty('value', 'default');
