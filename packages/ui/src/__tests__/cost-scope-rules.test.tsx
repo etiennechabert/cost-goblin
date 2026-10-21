@@ -481,6 +481,19 @@ describe('CostScopeView — metric, freshness, marketplace and saving', () => {
     expect('lagDays' in saved).toBe(false);
   });
 
+  it('steps the lag up past a week', async () => {
+    const api = new ScopeApi();
+    api.scope = { costMetric: 'effective', lagDays: 7, rules: BUILTIN_EXCLUSION_RULES };
+    const { user } = renderView(api);
+    const lag = await screen.findByRole('spinbutton');
+    if (!(lag instanceof HTMLInputElement)) throw new Error('lag field missing');
+    // What the field's up arrow does: step the value, then fire input.
+    lag.stepUp();
+    fireEvent.input(lag);
+    expect(lag.value).toBe('8');
+    expect((await save(user, api)).lagDays).toBe(8);
+  });
+
   it.each([
     { name: 'absent', marketplace: undefined },
     { name: 'without rules', marketplace: { enabled: false, rules: [] } },
