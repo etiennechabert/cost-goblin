@@ -504,7 +504,8 @@ function buildParquetSource(dataDir: string, branch: ProviderSourceBranch, tier:
     }).join(', ');
     read = `read_parquet([${paths}], union_by_name=true)`;
   } else {
-    read = `read_parquet(${sqlStringLiteral(`${rawRoot}/${tier}-*/*.parquet`)}, union_by_name=true)`;
+    const wildcard = sqlStringLiteral(`${rawRoot}/${tier}-*/*.parquet`);
+    read = `read_parquet(${wildcard}, union_by_name=true)`;
   }
   // A column absent from EVERY file is still a binder error: the columns a
   // provider's projection may find missing get their NULL fill here.
