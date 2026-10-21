@@ -1,13 +1,15 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
+  commitmentOptionLabel,
   countSavings,
   loadSavingsRecommendations,
   parseJsonObject,
   parseSavingsPreferences,
+  preferredCommitmentLabel,
   SAVINGS_PREFERENCES_DEFAULTS,
 } from '@costgoblin/core';
-import type { PreferredCommitment, SavingsGroup, SavingsPreferences, SavingsRecommendation } from '@costgoblin/core';
+import type { SavingsGroup, SavingsPreferences } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
 import type { Cell, Column, MetaField, StructuredResult } from '../formatters/result.js';
 import { resolveFormat, structuredToolResult, toolResult } from './tool-helpers.js';
@@ -21,9 +23,6 @@ import { resolveFormat, structuredToolResult, toolResult } from './tool-helpers.
 
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 200;
-
-const TERM_LABELS: Readonly<Record<string, string>> = { OneYear: '1-year', ThreeYears: '3-year' };
-const PAYMENT_LABELS: Readonly<Record<string, string>> = { NoUpfront: 'no upfront', PartialUpfront: 'partial upfront', AllUpfront: 'all upfront' };
 
 const COLUMNS: readonly Column[] = [
   { key: 'action', header: 'Action' },
@@ -46,28 +45,12 @@ async function readPreferences(stateDir: string): Promise<SavingsPreferences> {
   }
 }
 
-/** `3-year, all upfront, Standard` for a commitment; '' for a resource action. */
-function optionLabel(rec: SavingsRecommendation): string {
-  const c = rec.commitment;
-  if (c === null) return '';
-  return [c.term === null ? '' : TERM_LABELS[c.term] ?? '', c.paymentOption === null ? '' : PAYMENT_LABELS[c.paymentOption] ?? '', c.offeringClass]
-    .filter(p => p.length > 0)
-    .join(', ');
-}
-
-function preferenceLabel(preferred: PreferredCommitment): string {
-  if (preferred.term === null && preferred.paymentOption === null) return 'highest savings';
-  const term = preferred.term === null ? 'highest-savings term' : TERM_LABELS[preferred.term] ?? preferred.term;
-  const payment = preferred.paymentOption === null ? 'highest-savings payment' : PAYMENT_LABELS[preferred.paymentOption] ?? preferred.paymentOption;
-  return `${term}, ${payment}`;
-}
-
 function row(group: SavingsGroup): Cell[] {
   const rec = group.counted;
   return [
     rec.actionType,
     rec.commitment === null ? rec.resourceArn : rec.commitment.poolLabel,
-    optionLabel(rec),
+    rec.commitment === null ? '' : commitmentOptionLabel(rec.commitment),
     rec.accountName,
     rec.accountId,
     rec.region,
@@ -102,7 +85,7 @@ export async function listSavingsRecommendations(
     { label: 'Counted savings/mo', value: groups.reduce((sum, g) => sum + g.monthlySavings, 0), type: 'currency' },
     { label: 'Actions', value: groups.length, type: 'number' },
     { label: 'Alternatives not counted', value: visible.length - counted.groups.length, type: 'number' },
-    { label: 'Commitments counted at', value: preferenceLabel(prefs.preferredCommitment) },
+    { label: 'Commitments counted at', value: preferredCommitmentLabel(prefs.preferredCommitment) },
     { label: 'Snapshot', value: snapshots.map(s => `${s.providerName} ${s.date}`).join(', ') },
     { label: 'Hidden in the Savings view', value: prefs.hiddenActionTypes.length > 0 ? prefs.hiddenActionTypes.join(', ') : 'none' },
   ];

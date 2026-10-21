@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { countSavings, HIGHEST_SAVINGS } from '../savings/count.js';
+import { countSavings } from '../savings/count.js';
+import { HIGHEST_SAVINGS } from '../savings/labels.js';
 import { parseSavingsRow } from '../savings/coh-rows.js';
 import type { CommitmentPaymentOption, CommitmentTerm, SavingsRecommendation } from '../types/query.js';
 

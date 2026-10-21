@@ -1,13 +1,22 @@
 import type {
-  CommitmentPaymentOption,
-  CommitmentTerm,
   PreferredCommitment,
   SavingsGroup,
   SavingsRecommendation,
   SavingsResult,
   SavingsSnapshot,
 } from '@costgoblin/core/browser';
-import { countSavings, SAVINGS_PREFERENCES_DEFAULTS } from '@costgoblin/core/browser';
+import {
+  COMMITMENT_PAYMENT_LABELS,
+  COMMITMENT_PAYMENT_OPTIONS,
+  COMMITMENT_TERM_LABELS,
+  COMMITMENT_TERMS,
+  commitmentOptionLabel,
+  countSavings,
+  parseCommitmentPaymentOption,
+  parseCommitmentTerm,
+  preferredCommitmentLabel,
+  SAVINGS_PREFERENCES_DEFAULTS,
+} from '@costgoblin/core/browser';
 import type { SortingState } from '@tanstack/react-table';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
@@ -19,14 +28,6 @@ import { useState, useMemo, Fragment } from 'react';
 
 const EFFORT_ORDER: Record<string, number> = { 'VeryLow': 0, 'Low': 1, 'Medium': 2, 'High': 3 };
 
-const TERM_LABELS: Readonly<Record<CommitmentTerm, string>> = { OneYear: '1-year', ThreeYears: '3-year' };
-const PAYMENT_LABELS: Readonly<Record<CommitmentPaymentOption, string>> = {
-  NoUpfront: 'no upfront',
-  PartialUpfront: 'partial upfront',
-  AllUpfront: 'all upfront',
-};
-const TERMS: readonly CommitmentTerm[] = ['OneYear', 'ThreeYears'];
-const PAYMENT_OPTIONS: readonly CommitmentPaymentOption[] = ['NoUpfront', 'PartialUpfront', 'AllUpfront'];
 /** The select value standing for "highest savings" (a null preference). */
 const HIGHEST = 'highest';
 
@@ -59,18 +60,8 @@ function plural(n: number, word: string): string {
 
 /** `3-year, all upfront, Standard` — or COH's summary when the export didn't say. */
 function optionLabel(rec: SavingsRecommendation): string {
-  const c = rec.commitment;
-  if (c === null) return rec.summary;
-  const parts = [c.term === null ? '' : TERM_LABELS[c.term], c.paymentOption === null ? '' : PAYMENT_LABELS[c.paymentOption], c.offeringClass]
-    .filter(p => p.length > 0);
-  return parts.length > 0 ? parts.join(', ') : rec.summary;
-}
-
-function preferenceLabel(preferred: PreferredCommitment): string {
-  if (preferred.term === null && preferred.paymentOption === null) return 'the highest-savings option';
-  const term = preferred.term === null ? 'highest-savings term' : TERM_LABELS[preferred.term];
-  const payment = preferred.paymentOption === null ? 'highest-savings payment' : PAYMENT_LABELS[preferred.paymentOption];
-  return `${term}, ${payment}`;
+  const label = rec.commitment === null ? '' : commitmentOptionLabel(rec.commitment);
+  return label.length > 0 ? label : rec.summary;
 }
 
 function snapshotLabel(snapshots: readonly SavingsSnapshot[]): string {
@@ -78,14 +69,6 @@ function snapshotLabel(snapshots: readonly SavingsSnapshot[]): string {
   const [only] = snapshots;
   if (snapshots.length === 1 && only !== undefined) return `COH export of ${only.date}`;
   return `COH exports: ${snapshots.map(s => `${s.providerName} ${s.date}`).join(', ')}`;
-}
-
-function isTerm(v: string): v is CommitmentTerm {
-  return v === 'OneYear' || v === 'ThreeYears';
-}
-
-function isPaymentOption(v: string): v is CommitmentPaymentOption {
-  return v === 'NoUpfront' || v === 'PartialUpfront' || v === 'AllUpfront';
 }
 
 interface ParsedDetails {
@@ -304,18 +287,20 @@ export function Savings() {
   const actionTypes = useMemo(() => typeTotals(counted.groups), [counted]);
   const allActionTypes = useMemo(() => (data === null ? [] : listedTypes(data.recommendations)), [data]);
 
+  // The settings edit what was saved, so they wait for it: a save from the
+  // defaults would overwrite the saved list.
+  const prefsReady = prefsLoaded || prefsQuery.status === 'error';
+
   function toggleHiddenType(actionType: string) {
-    setHiddenTypes(prev => {
-      const next = new Set(prev);
-      if (next.has(actionType)) {
-        next.delete(actionType);
-      } else {
-        next.add(actionType);
-        if (activeFilter === actionType) setActiveFilter(null);
-      }
-      api.saveSavingsPreferences({ hiddenActionTypes: [...next] }).catch(() => undefined);
-      return next;
-    });
+    const next = new Set(hiddenTypes);
+    if (next.has(actionType)) {
+      next.delete(actionType);
+    } else {
+      next.add(actionType);
+      if (activeFilter === actionType) setActiveFilter(null);
+    }
+    setHiddenTypes(next);
+    api.saveSavingsPreferences({ hiddenActionTypes: [...next] }).catch(() => undefined);
   }
 
   function choosePreferred(next: PreferredCommitment) {
@@ -323,10 +308,13 @@ export function Savings() {
     api.saveSavingsPreferences({ preferredCommitment: next }).catch(() => undefined);
   }
 
+  // A recount can leave the filtered type without a row (showing Savings
+  // Plans again folds the EC2 RIs under the Compute SP): show everything then.
+  const filter = activeFilter !== null && actionTypes.some(at => at.type === activeFilter) ? activeFilter : null;
   const filtered = useMemo(() => {
-    if (activeFilter === null) return counted.groups;
-    return counted.groups.filter(g => g.counted.actionType === activeFilter);
-  }, [counted, activeFilter]);
+    if (filter === null) return counted.groups;
+    return counted.groups.filter(g => g.counted.actionType === filter);
+  }, [counted, filter]);
 
   const filteredSavings = filtered.reduce((s, g) => s + g.monthlySavings, 0);
   const notCounted = visibleRecs.length - counted.groups.length;
@@ -344,7 +332,7 @@ export function Savings() {
               {data.recommendations.length > 0 && (
                 <p className="text-[11px] text-text-muted mt-0.5">
                   {[
-                    `One option counted per resource and per commitment pool, commitments at ${preferenceLabel(preferred)}`,
+                    `One option counted per resource and per commitment pool, commitments at ${preferredCommitmentLabel(preferred)}`,
                     notCounted > 0 ? `${plural(notCounted, 'alternative')} not counted` : '',
                     snapshotLabel(data.snapshots),
                   ].filter(p => p.length > 0).join(' · ')}
@@ -374,7 +362,7 @@ export function Savings() {
         )}
       </div>
 
-      {showSettings && allActionTypes.length > 0 && (
+      {showSettings && prefsReady && allActionTypes.length > 0 && (
         <SavingsSettings
           types={allActionTypes}
           hiddenTypes={hiddenTypes}
@@ -391,7 +379,7 @@ export function Savings() {
             onClick={() => { setActiveFilter(null); }}
             className={[
               'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
-              activeFilter === null
+              filter === null
                 ? 'border-accent/50 bg-accent/10 text-accent'
                 : 'border-border bg-bg-tertiary/30 text-text-secondary hover:text-text-primary',
             ].join(' ')}
@@ -402,10 +390,10 @@ export function Savings() {
             <button
               key={at.type}
               type="button"
-              onClick={() => { setActiveFilter(activeFilter === at.type ? null : at.type); }}
+              onClick={() => { setActiveFilter(filter === at.type ? null : at.type); }}
               className={[
                 'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
-                activeFilter === at.type
+                filter === at.type
                   ? 'border-accent/50 bg-accent/10 text-accent'
                   : 'border-border bg-bg-tertiary/30 text-text-secondary hover:text-text-primary',
               ].join(' ')}
@@ -495,11 +483,11 @@ function SavingsSettings({ types, hiddenTypes, onToggleType, preferred, onChoose
               value={preferred.term ?? HIGHEST}
               onChange={e => {
                 const v = e.target.value;
-                onChoosePreferred({ ...preferred, term: isTerm(v) ? v : null });
+                onChoosePreferred({ ...preferred, term: parseCommitmentTerm(v) });
               }}
             >
               <option value={HIGHEST}>Highest savings</option>
-              {TERMS.map(t => <option key={t} value={t}>{TERM_LABELS[t]}</option>)}
+              {COMMITMENT_TERMS.map(t => <option key={t} value={t}>{COMMITMENT_TERM_LABELS[t]}</option>)}
             </select>
           </label>
           <label className="flex items-center gap-2 text-text-secondary">
@@ -509,11 +497,11 @@ function SavingsSettings({ types, hiddenTypes, onToggleType, preferred, onChoose
               value={preferred.paymentOption ?? HIGHEST}
               onChange={e => {
                 const v = e.target.value;
-                onChoosePreferred({ ...preferred, paymentOption: isPaymentOption(v) ? v : null });
+                onChoosePreferred({ ...preferred, paymentOption: parseCommitmentPaymentOption(v) });
               }}
             >
               <option value={HIGHEST}>Highest savings</option>
-              {PAYMENT_OPTIONS.map(p => <option key={p} value={p}>{PAYMENT_LABELS[p]}</option>)}
+              {COMMITMENT_PAYMENT_OPTIONS.map(p => <option key={p} value={p}>{COMMITMENT_PAYMENT_LABELS[p]}</option>)}
             </select>
           </label>
         </div>
@@ -554,8 +542,8 @@ function Alternatives({ group }: Readonly<{ group: SavingsGroup }>) {
     <div className="mt-4 pt-3 border-t border-border-subtle text-xs">
       <h4 className="text-text-muted uppercase tracking-wider text-[10px] font-medium mb-2">Not counted · instead of the option above</h4>
       <ul className="space-y-1">
-        {sameTarget.map(alt => (
-          <li key={alt.recommendationId} className="flex items-baseline justify-between gap-6">
+        {sameTarget.map((alt, i) => (
+          <li key={alt.recommendationId === '' ? `alternative-${String(i)}` : alt.recommendationId} className="flex items-baseline justify-between gap-6">
             <span className="text-text-secondary truncate" title={alt.summary}>
               {alt.commitment === null ? `${humanizeAction(alt.actionType)} · ${alt.summary}` : optionLabel(alt)}
             </span>

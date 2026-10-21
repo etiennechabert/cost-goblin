@@ -1,14 +1,13 @@
 import { asDollars } from '../types/branded.js';
 import type {
   CommitmentDetails,
-  CommitmentPaymentOption,
-  CommitmentTerm,
   CommitmentUsageScope,
   ImplementationEffort,
   ResourceUsage,
   SavingsRecommendation,
 } from '../types/query.js';
 import { isStringRecord, parseJsonObject } from '../utils/json.js';
+import { parseCommitmentPaymentOption, parseCommitmentTerm } from './labels.js';
 
 // One row of the Savings query (Cost Optimization Hub export columns, aliased
 // by `buildSavingsQuery`) → a SavingsRecommendation. The details columns are
@@ -79,14 +78,6 @@ function effort(v: string): ImplementationEffort {
   }
 }
 
-function term(v: unknown): CommitmentTerm | null {
-  return v === 'OneYear' || v === 'ThreeYears' ? v : null;
-}
-
-function paymentOption(v: unknown): CommitmentPaymentOption | null {
-  return v === 'NoUpfront' || v === 'PartialUpfront' || v === 'AllUpfront' ? v : null;
-}
-
 /** The single resource entry of a details column, or null. */
 function detailsEntry(json: string): JsonObject | null {
   if (json.length === 0) return null;
@@ -96,7 +87,7 @@ function detailsEntry(json: string): JsonObject | null {
 }
 
 /** `t2.large` → `t2`, `db.t3.small` → `db.t3`, `cache.r6g.large` → `cache.r6g`. */
-export function instanceFamily(instanceType: string): string | null {
+function instanceFamily(instanceType: string): string | null {
   const dot = instanceType.lastIndexOf('.');
   return dot > 0 ? instanceType.slice(0, dot) : null;
 }
@@ -297,8 +288,8 @@ function commitmentDetails(input: CoverageInput & { readonly entry: JsonObject |
   const eligible = amount(pricing?.['monthlySavingsPlansEligibleCost']) ?? amount(pricing?.['monthlyReservationEligibleCost']) ?? monthlyCost;
   const upfrontCost = amount(config?.['upfrontCost']);
   return {
-    term: term(config?.['term']),
-    paymentOption: paymentOption(config?.['paymentOption']),
+    term: parseCommitmentTerm(config?.['term']),
+    paymentOption: parseCommitmentPaymentOption(config?.['paymentOption']),
     offeringClass: str(config?.['offeringClass']),
     upfrontCost: upfrontCost === null ? null : asDollars(upfrontCost),
     eligibleMonthlyCost: asDollars(eligible),

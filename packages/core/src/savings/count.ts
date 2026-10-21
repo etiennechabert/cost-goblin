@@ -2,6 +2,7 @@ import type { PreferredCommitment } from '../types/api.js';
 import { asDollars } from '../types/branded.js';
 import type { Dollars } from '../types/branded.js';
 import type { CommitmentDetails, CommitmentUsageScope, ResourceUsage, SavingsRecommendation } from '../types/query.js';
+import { HIGHEST_SAVINGS } from './labels.js';
 
 // Cost Optimization Hub lists every way to act on a resource and every way to
 // buy the same commitment, each with savings computed as if it were the only
@@ -19,9 +20,6 @@ import type { CommitmentDetails, CommitmentUsageScope, ResourceUsage, SavingsRec
 //
 // No Node imports: the Savings view recounts in the renderer when the user
 // hides an action type or picks a commitment term.
-
-/** Count each pool at its highest-savings option, COH's default. */
-export const HIGHEST_SAVINGS: PreferredCommitment = { term: null, paymentOption: null };
 
 /** One row of the Savings view: a resource or a commitment pool. */
 export interface SavingsGroup {

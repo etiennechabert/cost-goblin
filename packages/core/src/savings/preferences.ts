@@ -1,6 +1,6 @@
 import type { PreferredCommitment, SavingsPreferences, SavingsPreferencesUpdate } from '../types/api.js';
-import type { CommitmentPaymentOption, CommitmentTerm } from '../types/query.js';
 import { isStringArray, isStringRecord } from '../utils/json.js';
+import { HIGHEST_SAVINGS, parseCommitmentPaymentOption, parseCommitmentTerm } from './labels.js';
 
 // savings-preferences.json is read by the app and by the MCP server, and
 // written from renderer payloads: both directions go through these parsers,
@@ -9,20 +9,12 @@ import { isStringArray, isStringRecord } from '../utils/json.js';
 
 export const SAVINGS_PREFERENCES_DEFAULTS: SavingsPreferences = {
   hiddenActionTypes: [],
-  preferredCommitment: { term: null, paymentOption: null },
+  preferredCommitment: HIGHEST_SAVINGS,
 };
-
-function parseTerm(v: unknown): CommitmentTerm | null {
-  return v === 'OneYear' || v === 'ThreeYears' ? v : null;
-}
-
-function parsePaymentOption(v: unknown): CommitmentPaymentOption | null {
-  return v === 'NoUpfront' || v === 'PartialUpfront' || v === 'AllUpfront' ? v : null;
-}
 
 function parsePreferredCommitment(raw: unknown): PreferredCommitment | undefined {
   if (!isStringRecord(raw)) return undefined;
-  return { term: parseTerm(raw['term']), paymentOption: parsePaymentOption(raw['paymentOption']) };
+  return { term: parseCommitmentTerm(raw['term']), paymentOption: parseCommitmentPaymentOption(raw['paymentOption']) };
 }
 
 /** The fields of `raw` that are valid preferences; anything else is dropped.
