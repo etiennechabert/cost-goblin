@@ -246,6 +246,25 @@ describe('StackedBarWidget — weekly and monthly bars', () => {
   });
 });
 
+describe('StackedBarWidget — Monthly compare', () => {
+  it('aligns a previous result that lacks a month by period, not by position', async () => {
+    const current = daily(['2026-06-01', '2026-07-01', '2026-08-01', '2026-09-01', '2026-10-01'].map(m => [m, { platform: 100 }] as const));
+    const range: DateRange = { start: asDateString('2026-06-01'), end: asDateString('2026-10-31') };
+    const previousRange: DateRange = { start: asDateString('2026-01-01'), end: asDateString('2026-05-31') };
+    // March (the third month) has no spend, so the monthly query omits it.
+    const previous = daily([['2026-01-01', { platform: 10 }], ['2026-02-01', { platform: 20 }], ['2026-04-01', { platform: 40 }], ['2026-05-01', { platform: 50 }]]);
+    const api = new DailyApi();
+    api.current = (p) => Promise.resolve(p.dateRange.start === previousRange.start ? previous : current);
+
+    const { container } = renderWidget({ api, compareEnabled: true, granularity: 'monthly', dateRange: range, previousDateRange: previousRange });
+    await bars(container, 5);
+
+    // Five points, March a zero in third place: 10, 20, 0, 40, 50 of a 100 max.
+    await waitFor(() => { expect(container.querySelector('polyline')).not.toBeNull(); });
+    expect(container.querySelector('polyline')?.getAttribute('points')).toBe('0,900 250,800 500,1000 750,600 1000,500');
+  });
+});
+
 describe('StackedBarWidget — cross-chart focus and filtering', () => {
   it('filters on a segment click and broadcasts segment hovers', async () => {
     const { container, onSetFilter, dispatch } = renderWidget();

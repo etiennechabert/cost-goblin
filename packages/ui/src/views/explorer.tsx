@@ -26,6 +26,7 @@ import { HourlyHintBanner } from '../components/hourly-hint-banner.js';
 import { getDimensionId } from '../lib/dimensions.js';
 import { bucketKeyToDate, formatBucketKey, normalizeHourKey, periodBarsRange, resolveZoomDrag, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
 import { daysAgo, totalTitle } from '../lib/dates.js';
+import { fillPeriodBuckets } from '../lib/period-fill.js';
 import { focusOnMount } from '../lib/focus-on-mount.js';
 import type { TableColumn } from '../lib/table-types.js';
 
@@ -41,6 +42,9 @@ interface OverviewState {
   data: ExplorerOverviewResult | null;
   loading: boolean;
   error: string | null;
+  /** What `data` answered: the histogram fills its empty periods over this
+   *  range, not over the picker's (which may already have moved on). */
+  request: { readonly range: DateRange; readonly granularity: Granularity } | null;
 }
 
 interface RowsState {
@@ -101,7 +105,7 @@ export function ExplorerView(): React.JSX.Element {
   const [granularity, setGranularity] = useState<Granularity>('daily');
   const [applyCostScope, setApplyCostScope] = useState(false);
   const [costMetric, setCostMetric] = useState<CostMetric>('effective');
-  const [overview, setOverview] = useState<OverviewState>({ data: null, loading: true, error: null });
+  const [overview, setOverview] = useState<OverviewState>({ data: null, loading: true, error: null, request: null });
   const [rows, setRows] = useState<RowsState>({ data: null, loading: true, error: null });
   const [hiddenColumns, setHiddenColumns] = useState<readonly string[]>([...DEFAULT_EXPLORER_HIDDEN_COLUMNS]);
   const [columnOrder, setColumnOrder] = useState<readonly string[]>([]);
@@ -217,12 +221,12 @@ export function ExplorerView(): React.JSX.Element {
         if (reqId !== overviewReqIdRef.current) return;
         // Transition: keep the histogram render interruptible so input isn't
         // starved while it commits (see use-query.ts for the rationale).
-        startTransition(() => { setOverview({ data, loading: false, error: null }); });
+        startTransition(() => { setOverview({ data, loading: false, error: null, request: { range, granularity: gran } }); });
       })
       .catch((err: unknown) => {
         if (reqId !== overviewReqIdRef.current) return;
         const message = err instanceof Error ? err.message : String(err);
-        setOverview(prev => ({ data: prev.data, loading: false, error: message }));
+        setOverview(prev => ({ data: prev.data, loading: false, error: message, request: prev.request }));
       });
   }, [api]);
 
@@ -383,7 +387,14 @@ export function ExplorerView(): React.JSX.Element {
 
   const activeFilterCount = Object.values(filters).reduce((n, vs) => n + vs.length, 0);
   const overviewData = overview.data;
-  const dailyTotals = useMemo(() => overviewData?.dailyTotals ?? [], [overviewData]);
+  const overviewRequest = overview.request;
+  // Weekly/Monthly: every period of the request gets a bar, the current
+  // unfinished one included.
+  const dailyTotals = useMemo(() => {
+    const totals = overviewData?.dailyTotals ?? [];
+    if (overviewRequest === null) return totals;
+    return fillPeriodBuckets(totals, overviewRequest.range, overviewRequest.granularity, date => ({ date, cost: 0, rows: 0 }));
+  }, [overviewData, overviewRequest]);
 
   const handleHistogramRangeSelect = useCallback((startIdx: number, endIdx: number) => {
     const startBar = dailyTotals[startIdx];

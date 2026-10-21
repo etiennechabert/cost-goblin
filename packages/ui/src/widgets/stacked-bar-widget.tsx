@@ -3,7 +3,7 @@ import { useDailyWidgetQuery } from '../hooks/use-widget-query.js';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { StackedBarChart, bucketBars, type BarDay } from '../components/stacked-bar-chart.js';
-import { asDateString, asHourString, asTagValue, isPeriodGranularity, periodStartsInRange } from '@costgoblin/core/browser';
+import { asDateString, asHourString, asTagValue, isPeriodGranularity } from '@costgoblin/core/browser';
 import { useCostFocus, useCostFocusDispatch } from '../hooks/use-cost-focus.js';
 import type { DailyCostsResult, DateRange, DateString, DimensionId, Granularity } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
@@ -11,31 +11,26 @@ import { dimensionLabelFor, filtersKey, hasSufficientDailyCoverage } from './wid
 import { GroupByTitle } from '../components/group-by-title.js';
 import { costsTitle } from '../lib/dates.js';
 import { computeBucketedHourRange, computeBucketedRange, periodBarsRange } from '../lib/drag-select.js';
+import { fillPeriodBuckets, fillPeriodDays } from '../lib/period-fill.js';
 
 const MAX_BARS = 170;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** The bucket keys the range covers: every day, or in Weekly/Monthly every
- *  period start (the newest period may be unfinished or still without data). */
-function expectedBucketKeys(start: string, end: string, granularity: Granularity): string[] {
+/** The days of the range with no bar yet get an empty one; in Weekly/Monthly
+ *  every period start does (the newest period may be unfinished or still
+ *  without data). */
+function fillDateRange(bars: BarDay[], start: string, end: string, granularity: Granularity): BarDay[] {
   if (isPeriodGranularity(granularity)) {
-    return periodStartsInRange({ start: asDateString(start), end: asDateString(end) }, granularity);
+    return fillPeriodBuckets(bars, { start, end }, granularity, date => ({ date, total: 0, breakdown: {} }));
   }
-  const keys: string[] = [];
+  const existing = new Set(bars.map(b => b.date));
+  const result = [...bars];
   const current = new Date(start + 'T00:00:00Z');
   const last = new Date(end + 'T00:00:00Z');
   while (current <= last) {
-    keys.push(current.toISOString().slice(0, 10));
-    current.setTime(current.getTime() + DAY_MS);
-  }
-  return keys;
-}
-
-function fillDateRange(bars: BarDay[], start: string, end: string, granularity: Granularity): BarDay[] {
-  const existing = new Set(bars.map(b => b.date));
-  const result = [...bars];
-  for (const key of expectedBucketKeys(start, end, granularity)) {
+    const key = current.toISOString().slice(0, 10);
     if (!existing.has(key)) result.push({ date: key, total: 0, breakdown: {} });
+    current.setTime(current.getTime() + DAY_MS);
   }
   return result.sort((a, b) => a.date.localeCompare(b.date));
 }
@@ -49,9 +44,11 @@ function dailyToBarDays(data: DailyCostsResult | null): BarDay[] {
   }));
 }
 
-function dailyToTotals(data: DailyCostsResult | null): readonly number[] {
+function dailyToTotals(data: DailyCostsResult | null, range: DateRange, granularity: Granularity): readonly number[] {
   if (data === null) return [];
-  return data.days.map(d => d.total);
+  // Weekly/Monthly: one total per period of the range, so index i is the i-th
+  // period and lines up with the i-th current bar.
+  return fillPeriodDays(data, range, granularity).map(d => d.total);
 }
 
 function bucketTotals(raw: readonly number[]): readonly number[] {
@@ -140,8 +137,8 @@ export function StackedBarWidget({
 
   const prevHasCoverage = prevQuery.status === 'success' && prevQuery.data !== null && hasSufficientDailyCoverage(prevQuery.data, previousDateRange, granularity);
   const previousTotals = useMemo(
-    () => bucketTotals(dailyToTotals(prevHasCoverage ? prevQuery.data : null)),
-    [prevHasCoverage, prevQuery],
+    () => bucketTotals(dailyToTotals(prevHasCoverage ? prevQuery.data : null, { start: previousDateRange.start, end: previousDateRange.end }, granularity)),
+    [prevHasCoverage, prevQuery, previousDateRange.start, previousDateRange.end, granularity],
   );
 
   const handleRangeSelect = useCallback((startIdx: number, endIdx: number) => {

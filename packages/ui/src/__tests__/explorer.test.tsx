@@ -700,6 +700,23 @@ describe('ExplorerView — Weekly and Monthly', () => {
     expect(await screen.findByText('Weekly total')).toBeDefined();
   });
 
+  it('gives the current month a bar when the overview returned none for it', async () => {
+    class NoCurrentMonthApi extends MonthlyExplorerApi {
+      override queryExplorerOverview(params?: ExplorerOverviewParams): Promise<ExplorerOverviewResult> {
+        return super.queryExplorerOverview(params).then(result => (
+          params?.granularity === 'monthly'
+            ? { ...result, dailyTotals: result.dailyTotals.filter(d => d.date !== '2026-10-01') }
+            : result
+        ));
+      }
+    }
+    renderExplorer(new NoCurrentMonthApi());
+
+    // The range runs to Oct 31: October is the sixth bar, empty.
+    expect(await screen.findByRole('img', { name: /^Oct 2026: / })).toBeDefined();
+    expect(screen.getAllByRole('img', { name: /^[A-Z][a-z]{2} 2026: / })).toHaveLength(6);
+  });
+
   it('drags two monthly bars to Daily over those whole months', async () => {
     const { api } = await openMonthly();
 

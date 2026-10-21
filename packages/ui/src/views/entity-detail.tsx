@@ -23,6 +23,7 @@ import type { BarDay, HistogramTab } from '../components/stacked-bar-chart.js';
 import { getDimensionId, getDimensionLabel, isEnvironmentDimension, isOwnerDimension, isProductDimension, isUnitDimension } from '../lib/dimensions.js';
 import { computeBucketedHourRange, computeBucketedRange, periodBarsRange, resolveZoomDrag, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
 import { costsTitle, daysAgo, dateColumnHeader } from '../lib/dates.js';
+import { fillPeriodBuckets } from '../lib/period-fill.js';
 import { BaselineMicroBar } from '../components/baseline-micro-bar.js';
 import { enabledGroupBys } from '../widgets/enabled-group-by.js';
 
@@ -227,7 +228,17 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
     () => api.queryDailyCosts({ groupBy: histogramDimId, dateRange, filters: entityFilter, granularity, origin: `entity-detail:histogram:${String(histogramDimId)}` }),
     [histogramDimId, dateRangeKey, filterKey, granularity, api],
   );
-  const barDays = bucketBars(dailyCostsToBarDays(dailyQuery.status === 'success' ? dailyQuery.data : null), 170);
+  // Weekly/Monthly: every period of the selection gets a bar, the current
+  // unfinished one included.
+  const barDays = bucketBars(
+    fillPeriodBuckets(
+      dailyCostsToBarDays(dailyQuery.status === 'success' ? dailyQuery.data : null),
+      dateRange,
+      granularity,
+      date => ({ date, total: 0, breakdown: {} }),
+    ),
+    170,
+  );
 
   const handleHistogramRangeSelect = useCallback((startIdx: number, endIdx: number) => {
     if (granularity === 'hourly') {

@@ -128,4 +128,17 @@ describe('heatmap widget periods', () => {
     expect(await screen.findByRole('button', { name: 'Service × Day' })).toBeDefined();
     expect(await screen.findByText('10-05')).toBeDefined();
   });
+
+  it('gives the current month a column even before it has any data', async () => {
+    renderHeatmap('monthly', ['2026-08-01', '2026-09-01'], { start: asDateString('2026-08-01'), end: asDateString('2026-10-31') });
+
+    for (const label of ['Aug 2026', 'Sep 2026', 'Oct 2026']) expect(await screen.findByText(label)).toBeDefined();
+  });
+
+  it('does not add columns for missing days in Daily', async () => {
+    renderHeatmap('daily', ['2026-10-05', '2026-10-07'], { start: asDateString('2026-10-05'), end: asDateString('2026-10-07') });
+
+    expect(await screen.findByText('10-07')).toBeDefined();
+    expect(screen.queryByText('10-06')).toBeNull();
+  });
 });

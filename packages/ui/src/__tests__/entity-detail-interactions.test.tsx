@@ -667,6 +667,24 @@ describe('EntityDetail — Weekly', () => {
     expect(screen.getByText('W42 2026')).toBeDefined();
   });
 
+  it('gives the current week a bar even though the query returned none for it', async () => {
+    class NoCurrentWeekApi extends WeeklyDetailApi {
+      override queryDailyCosts(params?: DailyCostsParams): Promise<DailyCostsResult> {
+        return super.queryDailyCosts(params).then(result => (
+          params?.granularity === 'weekly'
+            ? { ...result, days: result.days.filter(d => d.date !== '2026-10-19') }
+            : result
+        ));
+      }
+    }
+    const api = new NoCurrentWeekApi();
+    renderDetail(api);
+
+    await screen.findByText('W36 2026');
+    // The range runs to Sun Oct 25, so the current week is the eighth bar, empty.
+    await waitFor(() => { expect(document.querySelectorAll('.group.relative')).toHaveLength(8); });
+  });
+
   it('drags three weekly bars to Daily over those whole weeks', async () => {
     const api = await openWeekly();
 

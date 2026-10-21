@@ -224,6 +224,46 @@ describe('LineWidget — weekly and monthly', () => {
   });
 });
 
+describe('LineWidget — whole periods on the axis', () => {
+  const MONTHS = { start: asDateString('2026-08-01'), end: asDateString('2026-10-31') };
+
+  it('draws the current month on the x axis even though it has no data yet', async () => {
+    const api = new DailyApi();
+    api.current = () => Promise.resolve(daily([
+      ['2026-08-01', { platform: 50, data: 30 }],
+      ['2026-09-01', { platform: 60, data: 30 }],
+    ]));
+    const { container } = renderWidget({ api, granularity: 'monthly', dateRange: MONTHS });
+
+    await waitFor(() => { expect(lines(container)).toHaveLength(2); });
+    for (const label of ['Aug 2026', 'Sep 2026', 'Oct 2026']) expect(screen.getByText(label)).toBeDefined();
+  });
+
+  it('aligns a previous result that lacks a month by period, not by position', async () => {
+    const current = daily(['2026-06-01', '2026-07-01', '2026-08-01', '2026-09-01', '2026-10-01'].map(m => [m, { platform: 50 }] as const));
+    const range: DateRange = { start: asDateString('2026-06-01'), end: asDateString('2026-10-31') };
+    const previousRange: DateRange = { start: asDateString('2026-01-01'), end: asDateString('2026-05-31') };
+    // March (the third month) has no spend; the monthly query then omits it.
+    const withoutMarch = daily([['2026-01-01', { platform: 10 }], ['2026-02-01', { platform: 20 }], ['2026-04-01', { platform: 40 }], ['2026-05-01', { platform: 50 }]]);
+    const explicitZero = daily([['2026-01-01', { platform: 10 }], ['2026-02-01', { platform: 20 }], ['2026-03-01', { platform: 0 }], ['2026-04-01', { platform: 40 }], ['2026-05-01', { platform: 50 }]]);
+
+    const ghostPath = async (previous: DailyCostsResult): Promise<string | null> => {
+      const api = new DailyApi();
+      api.current = () => Promise.resolve(current);
+      api.previous = () => Promise.resolve(previous);
+      const { container, unmount } = renderWidget({ api, compareEnabled: true, granularity: 'monthly', dateRange: range, previousDateRange: previousRange });
+      await waitFor(() => { expect(ghostLines(container)).toHaveLength(1); });
+      const path = ghostLines(container)[0]?.getAttribute('d') ?? null;
+      unmount();
+      return path;
+    };
+
+    const gapped = await ghostPath(withoutMarch);
+    expect(gapped).not.toBeNull();
+    expect(gapped).toBe(await ghostPath(explicitZero));
+  });
+});
+
 describe('LineWidget — previous period', () => {
   it('counts a monthly previous result with one bucket per month as sufficient coverage', async () => {
     const months = ['2026-03-01', '2026-04-01', '2026-05-01', '2026-06-01', '2026-07-01', '2026-08-01', '2026-09-01', '2026-10-01'];
