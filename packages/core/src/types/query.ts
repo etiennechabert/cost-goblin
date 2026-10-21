@@ -1,7 +1,7 @@
 import type { DateString, DimensionId, Dollars, EntityRef, HourString, TagValue } from './branded.js';
 import { asDimensionId, asTagValue } from './branded.js';
 
-export type Granularity = 'daily' | 'hourly';
+export type Granularity = 'monthly' | 'weekly' | 'daily' | 'hourly';
 
 /**
  * A date range. `start`/`end` are always present and authoritative for whole-day

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { CalendarIcon, ChevronDown } from 'lucide-react';
 import type { DateRange as DayPickerRange } from 'react-day-picker';
-import type { DateString, HourString } from '@costgoblin/core/browser';
+import type { DateString, Granularity, HourString } from '@costgoblin/core/browser';
 import { DEFAULT_LAG_DAYS, asDateString } from '@costgoblin/core/browser';
 import { daysAgo, getThisMonth, getLastMonth, getCurrentQuarter, getLastQuarter, getYTD, getLastYear } from '../lib/dates.js';
 import { shouldAutoSwitchToHourly } from '../lib/drag-select.js';
@@ -9,7 +9,7 @@ import { useHourlyConfigured } from '../hooks/use-hourly-configured.js';
 import { Calendar } from './ui/calendar.js';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover.js';
 
-export type Granularity = 'daily' | 'hourly';
+export type { Granularity } from '@costgoblin/core/browser';
 
 type DayPreset = {
   readonly label: string;
