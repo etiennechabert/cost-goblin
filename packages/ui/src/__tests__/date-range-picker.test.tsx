@@ -358,6 +358,41 @@ describe('DateRangePicker monthly and weekly modes', () => {
     expect(monday.closest('tr')?.querySelector('[role="rowheader"]')?.textContent).toBe('42');
   });
 
+  it('widens the popover for the Weekly custom calendar only, so the week-number column fits', async () => {
+    const { user } = renderMode('weekly', { start: asDateString('2026-09-28'), end: asDateString('2026-10-25') });
+    await user.click(screen.getByRole('button', { name: 'Last 4 weeks' }));
+    expect(screen.getByRole('dialog').className).toContain('w-72');
+    await user.click(screen.getByText('Custom range…'));
+    expect(screen.getByRole('dialog').className).toContain('w-80');
+    expect(screen.getByRole('dialog').className).not.toContain('w-72');
+    await user.click(screen.getByText('Custom range…'));
+    expect(screen.getByRole('dialog').className).toContain('w-72');
+  });
+
+  it('anchors the Weekly calendar month arrows to the calendar, not the Daily one', async () => {
+    const weekly = renderMode('weekly', { start: asDateString('2026-09-28'), end: asDateString('2026-10-25') });
+    await weekly.user.click(screen.getByRole('button', { name: 'Last 4 weeks' }));
+    await weekly.user.click(screen.getByText('Custom range…'));
+    expect(screen.getByRole('grid').closest('.rdp-root')?.className).toContain('relative');
+    cleanup();
+    const daily = renderMode('daily', getDefaultDateRange(2));
+    await daily.user.click(screen.getByRole('button', { name: /Last 30 days/ }));
+    await daily.user.click(screen.getByText('Custom range…'));
+    expect(screen.getByRole('grid').closest('.rdp-root')?.className).not.toContain('relative');
+  });
+
+  it('keeps the popover width for the Daily and Monthly custom ranges', async () => {
+    const daily = renderMode('daily', getDefaultDateRange(2));
+    await daily.user.click(screen.getByRole('button', { name: /Last 30 days/ }));
+    await daily.user.click(screen.getByText('Custom range…'));
+    expect(screen.getByRole('dialog').className).toContain('w-72');
+    cleanup();
+    const monthly = renderMode('monthly', MARCH_TO_OCT_2026);
+    await monthly.user.click(screen.getByRole('button', { name: /Mar 2026/ }));
+    await monthly.user.click(screen.getByText('Custom range…'));
+    expect(screen.getByRole('dialog').className).toContain('w-72');
+  });
+
   it('highlights the whole week of the first day picked while the end is pending', async () => {
     const { user } = renderMode('weekly', { start: asDateString('2026-09-28'), end: asDateString('2026-10-25') });
     await user.click(screen.getByRole('button', { name: 'Last 4 weeks' }));

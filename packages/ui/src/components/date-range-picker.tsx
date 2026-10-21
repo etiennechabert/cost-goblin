@@ -359,7 +359,9 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
           <ChevronDown className="h-3 w-3 text-text-muted" />
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-72 p-0" align="end">
+      {/* The weekly calendar adds a week-number column: eight 36px columns plus
+          the calendar's padding need more than w-72 leaves. */}
+      <PopoverContent className={showCustom && granularity === 'weekly' ? 'w-80 p-0' : 'w-72 p-0'} align="end">
         <div className="flex flex-col">
           {sections.map(({ section, items }) => (
             <div key={section}>
@@ -438,6 +440,11 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
                     {...(granularity === 'weekly' ? {
                       ISOWeek: true,
                       showWeekNumber: true,
+                      // The month arrows are absolutely positioned with no
+                      // positioned ancestor but the popover: anchor them to the
+                      // calendar, on the caption row, so they stay clear of the
+                      // week-number and Sunday columns.
+                      className: 'relative [&_nav_button]:top-3 [&_nav_button:first-child]:left-3 [&_nav_button:last-child]:right-3',
                       modifiers: { weekHighlight: draftWeeks ?? [] },
                       modifiersClassNames: { weekHighlight: '[&:not([aria-selected])]:bg-accent/20 rounded-md' },
                     } : {})}
