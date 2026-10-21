@@ -109,9 +109,12 @@ async function readProviderSnapshot(
 
 /** Every recommendation of each provider's latest snapshot. A provider whose
  *  snapshot can't be read is left out (and logged) rather than failing the
- *  others. Two providers syncing the same export share recommendation ids:
- *  only the newest of their snapshots is read, or the older one would bring
- *  back what has since been implemented. */
+ *  others. Recommendation ids are unique to an export, so a provider whose ids
+ *  were mostly seen in a newer snapshot syncs the same export: it is skipped,
+ *  or its older snapshot would bring back what has since been implemented. A
+ *  smaller overlap (a member account's own export next to the payer's) keeps
+ *  the provider and lists each shared recommendation once, from the newer
+ *  snapshot. */
 export async function loadSavingsRecommendations(
   dataDir: string,
   providers: readonly ProviderConfig[],
@@ -129,13 +132,16 @@ export async function loadSavingsRecommendations(
   const snapshots: SavingsSnapshot[] = [];
   const seen = new Set<string>();
   for (const { snapshot, recommendations: recs } of newestFirstRead) {
-    if (recs.some(r => r.recommendationId !== '' && seen.has(r.recommendationId))) {
+    const ids = recs.map(r => r.recommendationId).filter(id => id !== '');
+    const repeated = ids.filter(id => seen.has(id)).length;
+    if (ids.length > 0 && repeated * 2 >= ids.length) {
       logger.info(`savings: ${snapshot.providerName} syncs the same Cost Optimization Hub export as a provider with a newer snapshot; skipping its cost-opt-${snapshot.date}`);
       continue;
     }
-    for (const rec of recs) if (rec.recommendationId !== '') seen.add(rec.recommendationId);
+    const fresh = recs.filter(r => r.recommendationId === '' || !seen.has(r.recommendationId));
+    for (const id of ids) seen.add(id);
     snapshots.push(snapshot);
-    recommendations.push(...recs);
+    recommendations.push(...fresh);
   }
   return { recommendations, snapshots };
 }

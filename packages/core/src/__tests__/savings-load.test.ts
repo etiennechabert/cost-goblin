@@ -89,6 +89,20 @@ describe('loadSavingsRecommendations', () => {
     expect(loaded.recommendations.map(r => [r.recommendationId, r.monthlySavings])).toEqual([['shared', 7]]);
   });
 
+  it('keeps a provider whose export only partly overlaps a newer one, listing each shared recommendation once', async () => {
+    // aws-b is a member account's own export; aws-a, the payer's, also
+    // lists that account's recommendation next to every other account's.
+    const loaded = await loadSavingsRecommendations(
+      dataDir,
+      providers(provider('aws-a', true), provider('aws-b', true)),
+      runner({ 'aws-a': [row('member', 9), row('p1', 4), row('p2', 3), row('p3', 2)], 'aws-b': [row('member', 7)] }, []),
+    );
+    expect(loaded.snapshots).toEqual([{ providerName: 'aws-b', date: '2026-10-13' }, { providerName: 'aws-a', date: '2026-10-12' }]);
+    expect(loaded.recommendations.map(r => [r.providerName, r.recommendationId, r.monthlySavings])).toEqual([
+      ['aws-b', 'member', 7], ['aws-a', 'p1', 4], ['aws-a', 'p2', 3], ['aws-a', 'p3', 2],
+    ]);
+  });
+
   it('leaves out a provider whose snapshot cannot be read, not the others', async () => {
     const loaded = await loadSavingsRecommendations(
       dataDir,
