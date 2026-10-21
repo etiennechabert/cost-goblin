@@ -1,6 +1,6 @@
 # Weekly and Monthly granularity — design
 
-Status: draft for review · 2026-10-21
+Status: approved · 2026-10-21
 
 ## Why
 

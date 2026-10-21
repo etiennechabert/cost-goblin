@@ -38,9 +38,13 @@ export function isPeriodGranularity(g: Granularity): g is PeriodGranularity {
   return g === 'weekly' || g === 'monthly';
 }
 
+/** Throws on anything that is not a `YYYY-MM-DD` day: a NaN would never
+ *  advance the period loops below. */
 function toUtcMs(day: DateString): number {
   const [year, month, date] = day.split('-').map(Number);
-  return Date.UTC(year ?? Number.NaN, (month ?? Number.NaN) - 1, date ?? Number.NaN);
+  const ms = Date.UTC(year ?? Number.NaN, (month ?? Number.NaN) - 1, date ?? Number.NaN);
+  if (!Number.isFinite(ms)) throw new Error(`Invalid date: ${day}`);
+  return ms;
 }
 
 function fromUtcMs(ms: number): DateString {
@@ -86,7 +90,8 @@ export function widenToPeriods(range: DayRange, g: PeriodGranularity): DayRange 
   return { start: periodStart(range.start, g), end: periodEnd(range.end, g) };
 }
 
-/** The start of every period the range touches, oldest first. */
+/** The start of every period the range touches, oldest first. Expects
+ *  `start <= end` (a reversed range yields no periods) and valid dates. */
 export function periodStartsInRange(range: DayRange, g: PeriodGranularity): DateString[] {
   const last = periodStart(range.end, g);
   const starts: DateString[] = [];
@@ -98,18 +103,19 @@ export function periodStartsInRange(range: DayRange, g: PeriodGranularity): Date
   return starts;
 }
 
-/** How many periods the range touches. */
+/** How many periods the range touches. Expects `start <= end`. */
 export function countPeriods(range: DayRange, g: PeriodGranularity): number {
   return periodStartsInRange(range, g).length;
 }
 
 /** The last `n` whole periods ending with the one `newestDay` falls in, the
- *  current unfinished period counting as one of the `n`. */
+ *  current unfinished period counting as one of the `n`. Expects `n >= 1`. */
 export function lastNPeriodsRange(n: number, g: PeriodGranularity, newestDay: DateString): DayRange {
   return { start: shiftPeriodStart(newestDay, g, -(n - 1)), end: periodEnd(newestDay, g) };
 }
 
-/** The same number of whole periods immediately before the range. */
+/** The same number of whole periods immediately before the range. Expects
+ *  `start <= end`. */
 export function previousPeriodRange(range: DayRange, g: PeriodGranularity): DayRange {
   const whole = widenToPeriods(range, g);
   const count = countPeriods(whole, g);

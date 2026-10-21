@@ -87,4 +87,11 @@ describe('period math', () => {
     expect(capToNewestDay({ start: d('2026-10-01'), end: d('2026-10-31') }, d('2026-10-19'))).toEqual({ start: '2026-10-01', end: '2026-10-19' });
     expect(capToNewestDay({ start: d('2026-09-01'), end: d('2026-09-30') }, d('2026-10-19'))).toEqual({ start: '2026-09-01', end: '2026-09-30' });
   });
+
+  it('throws on a date it cannot parse instead of looping forever', () => {
+    const bad = d('not-a-date');
+    expect(() => periodStart(bad, 'weekly')).toThrow(/invalid date/i);
+    expect(() => periodStartsInRange({ start: bad, end: d('2026-10-01') }, 'monthly')).toThrow(/invalid date/i);
+    expect(() => periodStartsInRange({ start: d('2026-10-01'), end: bad }, 'weekly')).toThrow(/invalid date/i);
+  });
 });
