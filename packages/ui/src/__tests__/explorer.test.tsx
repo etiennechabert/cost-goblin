@@ -722,7 +722,7 @@ describe('ExplorerView — Weekly and Monthly', () => {
     expect(screen.getByText('Monthly total')).toBeDefined();
   });
 
-  it('caps a Daily drop at the newest scoped day when the drag reaches the current month', async () => {
+  it('caps a Daily drop at the newest day when the drag reaches the current month, scope on', async () => {
     const { api, user } = await openMonthly();
     await user.click(screen.getByRole('checkbox', { name: /Apply Cost Scope/ }));
     await waitFor(() => { expect(api.overviewCalls.at(-1)?.applyCostScope).toBe(true); });
@@ -734,13 +734,14 @@ describe('ExplorerView — Weekly and Monthly', () => {
     expect(api.overviewCalls.at(-1)?.dateRange).toEqual({ start: '2026-09-01', end: '2026-10-19' });
   });
 
-  it('caps at today instead while the cost scope is off, which reads the newest days', async () => {
+  it('caps at the same newest day while the cost scope is off, as the picker does', async () => {
     const { api } = await openMonthly();
 
     dragHistogram(205, 295); // Sep and Oct
 
     await waitFor(() => { expect(api.overviewCalls.at(-1)?.granularity).toBe('daily'); });
-    expect(api.overviewCalls.at(-1)?.dateRange).toEqual({ start: '2026-09-01', end: '2026-10-21' });
+    expect(api.overviewCalls.at(-1)?.applyCostScope).toBe(false);
+    expect(api.overviewCalls.at(-1)?.dateRange).toEqual({ start: '2026-09-01', end: '2026-10-19' });
   });
 
   it('keeps line items at day level in Monthly: the row dates are not bucketed', async () => {

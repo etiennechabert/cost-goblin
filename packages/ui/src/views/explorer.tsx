@@ -406,11 +406,11 @@ export function ExplorerView(): React.JSX.Element {
     }
     if (isPeriodGranularity(granularity)) {
       // A bar is a whole week or month: the drag selects those periods, then
-      // zooms like a dashboard drag. The newest day is the cost scope's lag,
-      // or today when the scope is off and the newest days are readable.
+      // zooms like a dashboard drag. The newest day is the picker's (today minus
+      // the lag) in both scope modes, so a drag and a Daily toggle agree.
       const periods = periodBarsRange(dailyTotals, startIdx, endIdx, granularity);
       if (periods === null) return;
-      const zoom = resolveZoomDrag(periods, granularity, daysAgo(applyCostScope ? lagDays : 0));
+      const zoom = resolveZoomDrag(periods, granularity, daysAgo(lagDays));
       if (zoom === null) return;
       setDateRange(zoom.range);
       setGranularity(zoom.granularity);
@@ -430,7 +430,7 @@ export function ExplorerView(): React.JSX.Element {
     } else {
       setHourlyHint(false);
     }
-  }, [dailyTotals, granularity, hourlyConfigured, applyCostScope, lagDays]);
+  }, [dailyTotals, granularity, hourlyConfigured, lagDays]);
 
   useEffect(() => {
     if (!shouldAutoSwitchToHourly(dateRange.start, dateRange.end, granularity)) {
