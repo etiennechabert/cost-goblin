@@ -365,6 +365,6 @@ describe('query:missing-tags and query:savings', () => {
 
   it('savings are empty while no provider has cost-optimization data', async () => {
     const h = await queryApp({ data: 'none' });
-    expect(await h.ipc.invoke('query:savings')).toEqual({ recommendations: [], totalMonthlySavings: 0 });
+    expect(await h.ipc.invoke('query:savings')).toEqual({ recommendations: [], totalMonthlySavings: 0, snapshots: [] });
   });
 });

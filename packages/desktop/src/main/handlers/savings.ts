@@ -1,7 +1,8 @@
 import { ipcMain } from 'electron';
-import { parseJsonObject } from '@costgoblin/core';
+import { parseJsonObject, parseSavingsPreferences, parseSavingsPreferencesUpdate, SAVINGS_PREFERENCES_DEFAULTS } from '@costgoblin/core';
 import type { SavingsPreferences } from '@costgoblin/core';
 import { type AppContext, prefsPath } from './context.js';
+import { updatePrefsFile } from './prefs-file.js';
 
 export function registerSavingsHandlers(app: AppContext): void {
   const { ctx } = app;
@@ -11,20 +12,17 @@ export function registerSavingsHandlers(app: AppContext): void {
   ipcMain.handle('savings:get-preferences', async (): Promise<SavingsPreferences> => {
     const fs = await import('node:fs/promises');
     try {
-      const raw = await fs.readFile(await savingsPrefsPath(), 'utf-8');
-      const obj = parseJsonObject(raw);
-      const hiddenActionTypes = obj?.['hiddenActionTypes'];
-      if (Array.isArray(hiddenActionTypes) && hiddenActionTypes.every((v): v is string => typeof v === 'string')) {
-        return { hiddenActionTypes };
-      }
+      return parseSavingsPreferences(parseJsonObject(await fs.readFile(await savingsPrefsPath(), 'utf-8')));
     } catch {
       // file doesn't exist yet
+      return SAVINGS_PREFERENCES_DEFAULTS;
     }
-    return { hiddenActionTypes: [] };
   });
 
-  ipcMain.handle('savings:save-preferences', async (_event, prefs: SavingsPreferences): Promise<void> => {
-    const fs = await import('node:fs/promises');
-    await fs.writeFile(await savingsPrefsPath(), JSON.stringify(prefs, null, 2));
+  // The view sends only the fields it changed (hidden types, or the counted
+  // commitment term): merge them into the file, so one never resets the other.
+  ipcMain.handle('savings:save-preferences', async (_event, update: unknown): Promise<void> => {
+    const fields = parseSavingsPreferencesUpdate(update);
+    await updatePrefsFile(await savingsPrefsPath(), current => ({ ...current, ...fields }));
   });
 }

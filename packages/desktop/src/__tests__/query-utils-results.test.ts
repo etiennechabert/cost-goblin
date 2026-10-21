@@ -22,7 +22,6 @@ import {
   mergeTrendRowsByEntity,
   resolveAvailablePeriods,
   resolveEntityName,
-  toEffort,
   toNum,
   toStr,
 } from '../main/handlers/query-utils.js';
@@ -65,14 +64,6 @@ function rowFor(result: CostResult, entity: string): CostRow {
   if (row === undefined) throw new Error(`no row for ${entity}`);
   return row;
 }
-
-describe('toEffort', () => {
-  it('keeps each known implementation-effort level and maps anything else to Medium', () => {
-    expect(['VeryLow', 'Low', 'Medium', 'High'].map(toEffort)).toEqual(['VeryLow', 'Low', 'Medium', 'High']);
-    expect(toEffort('Extreme')).toBe('Medium');
-    expect(toEffort('')).toBe('Medium');
-  });
-});
 
 describe('toNum', () => {
   it('passes numbers through, converts DuckDB bigints, and reads anything else as 0', () => {

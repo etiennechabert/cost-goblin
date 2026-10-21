@@ -783,13 +783,16 @@ Replaces the spec's earlier "sync status indicator." A full view showing:
 Surfaces AWS Cost Optimization Hub recommendations (Reserved Instances, Savings Plans, rightsizing) downloaded from the cost-optimization tier.
 
 **Layout:**
-- Sortable table: account, action type, resource, monthly cost, monthly savings, savings %, effort.
+- Sortable table, one row per resource or commitment pool: account, action type, resource or pool, monthly cost, monthly savings, savings %, effort.
 - Effort-coloured chips (Very Low / Low / Medium / High).
-- Per-row expand panel: parsed recommendation `configuration` and `costCalculation.usages` (e.g., suggested instance config, current usage).
-- "Hide action type" toggles per category (e.g., hide all Rightsize) — persisted in `preferences.json` via `SavingsPreferences`.
+- Per-row expand panel: parsed recommendation `configuration` and `costCalculation.usages` (e.g., suggested instance config, current usage), and the alternatives the totals don't count.
+- Settings: "Hide action type" toggles per category (e.g., hide all Rightsize), and the commitment option counted (term: highest savings / 1-year / 3-year; payment: highest savings / no / partial / all upfront) — persisted in `savings-preferences.json` via `SavingsPreferences`.
 
 **Behavior:**
-- Pulls from the latest cost-optimization Parquet snapshot.
+- Pulls from each provider's latest cost-optimization snapshot (`cost-opt-YYYY-MM-DD/`). Older days are ignored: a recommendation missing from the latest one was implemented or superseded.
+- Counts what COH's own dashboard counts (`countSavings` in `packages/core/src/savings/count.ts`): one action per resource (the highest savings), and one option per commitment pool — the preferred term and payment option, else the highest savings. A Compute Savings Plan covers the EC2 Instance Savings Plans and EC2 RIs over the same usage, so those are its alternatives. A commitment shrinks by the eligible spend the counted resource actions remove: their savings, or the resource's whole cost when it is deleted or moved off the instance family a reservation is bound to.
+- Hidden action types neither count nor shrink a commitment.
+- The MCP tool `list_savings_recommendations` returns the same counted list, with the view's saved settings.
 - Recommendations are read-only — the app does not apply them.
 
 #### Feature: Update Notifications (MVP)

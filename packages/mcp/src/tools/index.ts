@@ -12,6 +12,7 @@ import { queryMissingTags } from './query-missing-tags.js';
 import { exploreData } from './explore-data.js';
 import { runSql } from './run-sql.js';
 import { listBaselines, getBaselineDrift } from './baselines.js';
+import { listSavingsRecommendations } from './savings.js';
 import { UNTRUSTED_DATA_NOTE } from '../server-instructions.js';
 import { toolError } from './tool-helpers.js';
 
@@ -248,6 +249,27 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
     async (params) => {
       try {
         return await runSql(ctx, params);
+      } catch (err: unknown) {
+        return toolError(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  server.registerTool(
+    'list_savings_recommendations',
+    {
+      description: describeTool('List AWS Cost Optimization Hub savings recommendations as the app\'s Savings view counts them: one action per resource and one option per commitment pool '
+        + '(other terms, and the EC2 Instance Savings Plans and RIs a Compute Savings Plan covers, are alternatives, not extra savings), commitments scaled down by the spend the counted resource actions remove. '
+        + 'Reads each provider\'s latest COH snapshot, with the commitment term and hidden action types set in the Savings view.'),
+      inputSchema: {
+        actionType: z.string().optional().describe('Only actions of this COH action type, e.g. "Rightsize", "MigrateToGraviton", "PurchaseSavingsPlans"'),
+        limit: z.number().int().min(1).optional().describe('Max actions to return (integer, default 25, values above 200 are clamped to 200), highest savings first'),
+        format: formatSchema,
+      },
+    },
+    async (params) => {
+      try {
+        return await listSavingsRecommendations(ctx, params);
       } catch (err: unknown) {
         return toolError(err instanceof Error ? err.message : String(err));
       }

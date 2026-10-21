@@ -9,6 +9,7 @@ export * from './models/index.js';
 export * from './query/index.js';
 export * from './rollup/index.js';
 export * from './baseline/index.js';
+export * from './savings/index.js';
 export * from './peer/index.js';
 export * from './sync/index.js';
 export * from './aws-setup/index.js';
