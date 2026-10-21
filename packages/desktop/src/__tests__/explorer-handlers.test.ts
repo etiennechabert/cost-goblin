@@ -91,6 +91,35 @@ describe('explorer:query-overview', () => {
     expect(list(at(unfiltered, 'dailyTotals'))).toHaveLength(28);
   });
 
+  it('buckets the daily tier by month or week, keeping the total of the daily overview', async () => {
+    const h = await explorerApp();
+    const daily = await h.ipc.invoke('explorer:query-overview', { filters: {}, dateRange: FEBRUARY, applyCostScope: false });
+    const monthly = await h.ipc.invoke('explorer:query-overview', { filters: {}, dateRange: FEBRUARY, applyCostScope: false, granularity: 'monthly' });
+    const months = list(at(monthly, 'dailyTotals'));
+    expect(months.map(d => at(d, 'date'))).toEqual(['2026-02-01']);
+    expect(num(at(months[0], 'cost'))).toBeCloseTo(num(at(daily, 'totalCost')), 4);
+    expect(num(at(monthly, 'totalCost'))).toBeCloseTo(num(at(daily, 'totalCost')), 4);
+    expect(at(monthly, 'totalRows')).toBe(at(daily, 'totalRows'));
+
+    const weekly = await h.ipc.invoke('explorer:query-overview', { filters: {}, dateRange: FEBRUARY, applyCostScope: false, granularity: 'weekly' });
+    const weeks = list(at(weekly, 'dailyTotals'));
+    // 2026-02-01 is a Sunday: its ISO week starts Monday 2026-01-26.
+    expect(weeks.map(d => at(d, 'date'))).toEqual(['2026-01-26', '2026-02-02', '2026-02-09', '2026-02-16', '2026-02-23']);
+    expect(weeks.map(d => num(at(d, 'cost'))).reduce((sum, n) => sum + n, 0)).toBeCloseTo(num(at(daily, 'totalCost')), 4);
+  });
+
+  it('buckets the rollup-served overview by month too', async () => {
+    const h = await explorerApp({ data: 'synthetic', rollupBuilds: true, now: () => FEBRUARY_READABLE_NOW_MS });
+    const raw = await h.ipc.invoke('explorer:query-overview', { filters: {}, dateRange: FEBRUARY, applyCostScope: true, granularity: 'monthly' });
+    h.app.warmupBase();
+    await h.app.awaitWarmup(10_000);
+    await vi.waitFor(() => { expect(h.app.rollupStore.getStatus().state).toBe('ready'); }, { timeout: 15_000 });
+    const rolled = await h.ipc.invoke('explorer:query-overview', { filters: {}, dateRange: FEBRUARY, applyCostScope: true, granularity: 'monthly' });
+    expect(h.db.statements.at(-1)).toContain('rollup.parquet');
+    expect(list(at(rolled, 'dailyTotals')).map(d => at(d, 'date'))).toEqual(['2026-02-01']);
+    expect(num(at(rolled, 'totalCost'))).toBeCloseTo(num(at(raw, 'totalCost')), 4);
+  });
+
   // Answering without it would show unscoped totals as if they were scoped.
   it('refuses to answer through a cost-scope.yaml that does not load, naming it', async () => {
     const h = await explorerApp();
@@ -163,6 +192,26 @@ describe('explorer:query-rows', () => {
 });
 
 describe('explorer:query-aggregated-table', () => {
+  it('groups usage_date by month, and a row filter on that month returns all of it', async () => {
+    const h = await explorerApp();
+    const byDay = await h.ipc.invoke('explorer:query-aggregated-table', { filters: {}, dateRange: FEBRUARY, groupByColumns: ['usage_date'], rowLimit: 1000 });
+    expect(at(byDay, 'totalRows')).toBe(28);
+    const byMonth = await h.ipc.invoke('explorer:query-aggregated-table', { filters: {}, dateRange: FEBRUARY, groupByColumns: ['usage_date'], rowLimit: 1000, granularity: 'monthly' });
+    expect(at(byMonth, 'totalRows')).toBe(1);
+    expect(at(byMonth, 'rows', 0, 'values', 'usage_date')).toBe('2026-02-01');
+    const dayTotal = list(at(byDay, 'rows')).map(r => num(at(r, 'cost'))).reduce((sum, n) => sum + n, 0);
+    expect(num(at(byMonth, 'rows', 0, 'cost'))).toBeCloseTo(dayTotal, 4);
+
+    const drilled = await h.ipc.invoke('explorer:query-aggregated-table', {
+      filters: {}, dateRange: FEBRUARY, groupByColumns: ['service'], rowLimit: 1000, granularity: 'monthly', rowFilters: { usage_date: '2026-02-01' },
+    });
+    const wholeMonth = await h.ipc.invoke('explorer:query-aggregated-table', { filters: {}, dateRange: FEBRUARY, groupByColumns: ['service'], rowLimit: 1000 });
+    expect(at(drilled, 'totalRows')).toBe(at(wholeMonth, 'totalRows'));
+
+    const byWeek = await h.ipc.invoke('explorer:query-aggregated-table', { filters: {}, dateRange: FEBRUARY, groupByColumns: ['usage_date'], rowLimit: 1000, granularity: 'weekly' });
+    expect(at(byWeek, 'totalRows')).toBe(5);
+  });
+
   it('totals the window in one row when nothing is grouped', async () => {
     const h = await explorerApp();
     const grouped = await h.ipc.invoke('explorer:query-aggregated-table', { filters: {}, dateRange: FEBRUARY, groupByColumns: ['service'], rowLimit: 1000 });

@@ -1,4 +1,5 @@
-import type { ExplorerSort } from '@costgoblin/core';
+import { usageDateBucketExpr } from '@costgoblin/core';
+import type { ExplorerSort, Granularity } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
 import { toStr } from './query-utils.js';
 
@@ -45,12 +46,21 @@ export function explorerOrderBy(sort: ExplorerSort | undefined, tagSqlColumns: R
   return `${column} ${sortDirection(sort)}`;
 }
 
+/** The expression a usage_date row or filter value stands for: the day
+ *  itself, or in weekly/monthly the bucket (Monday or first of the month)
+ *  the day falls in, cast to text as the renderer sees it. */
+function usageDateText(granularity: Granularity | undefined): string {
+  return `${usageDateBucketExpr(granularity)}::VARCHAR`;
+}
+
 /** `baseWhere` plus one equality per non-empty row filter on an allow-listed
- *  column; filters on anything else are dropped. */
+ *  column; filters on anything else are dropped. In weekly/monthly a usage_date
+ *  filter compares the bucket, so a "Oct 2026" row drills into all of October. */
 export function appendRowFilters(
   baseWhere: string,
   rowFilters: Record<string, string> | undefined,
   tagSqlColumns: ReadonlyMap<string, string>,
+  granularity?: Granularity,
 ): string {
   if (rowFilters === undefined) return baseWhere;
   const extra: string[] = [];
@@ -59,7 +69,7 @@ export function appendRowFilters(
     const col = explorerSqlColumn(id, tagSqlColumns);
     if (col === null) continue;
     const escaped = val.replaceAll("'", "''");
-    const colExpr = col === 'usage_date' ? `usage_date::VARCHAR` : col;
+    const colExpr = col === 'usage_date' ? usageDateText(granularity) : col;
     extra.push(`${colExpr} = '${escaped}'`);
   }
   return extra.length === 0 ? baseWhere : andWhere(baseWhere, extra.join(' AND '));
@@ -74,20 +84,43 @@ export function andWhere(where: string, condition: string): string {
 export interface GroupByColumn {
   readonly id: string;
   readonly column: string;
+  /** Weekly/monthly usage_date only: the bucket expression the column is
+   *  grouped, filtered and sorted by. The result still carries it under
+   *  `column`, as the SELECT list aliases it back. */
+  readonly bucket?: string;
 }
 
-/** The requested group-by ids that resolve to a column, in request order. */
-export function explorerGroupBy(ids: readonly string[], tagSqlColumns: ReadonlyMap<string, string>): GroupByColumn[] {
-  return ids.flatMap(id => {
+/** The requested group-by ids that resolve to a column, in request order.
+ *  A weekly/monthly usage_date groups by its bucket. */
+export function explorerGroupBy(
+  ids: readonly string[],
+  tagSqlColumns: ReadonlyMap<string, string>,
+  granularity?: Granularity,
+): GroupByColumn[] {
+  const dateBucket = usageDateBucketExpr(granularity);
+  return ids.flatMap((id): GroupByColumn[] => {
     const column = explorerSqlColumn(id, tagSqlColumns);
-    return column === null ? [] : [{ id, column }];
+    if (column === null) return [];
+    return column === 'usage_date' && dateBucket !== 'usage_date'
+      ? [{ id, column, bucket: dateBucket }]
+      : [{ id, column }];
   });
+}
+
+/** The SQL expression a group-by column is grouped and sorted by. */
+export function groupByExpression({ column, bucket }: GroupByColumn): string {
+  return bucket ?? column;
+}
+
+/** The group-by expressions, in column order. */
+export function groupByExpressions(groupBy: readonly GroupByColumn[]): string[] {
+  return groupBy.map(groupByExpression);
 }
 
 /** The group-by SELECT list; usage_date is cast so it survives IPC as a string. */
 export function groupBySelectList(groupBy: readonly GroupByColumn[]): string {
   return groupBy
-    .map(({ column }) => (column === 'usage_date' ? `usage_date::VARCHAR AS usage_date` : column))
+    .map(g => (g.column === 'usage_date' ? `${groupByExpression(g)}::VARCHAR AS usage_date` : g.column))
     .join(', ');
 }
 
@@ -116,6 +149,6 @@ export function aggregatedOrderBy(sort: ExplorerSort | undefined, groupBy: reado
   const fn = Object.hasOwn(AGG_SORT_COLUMNS, sort.column) ? AGG_SORT_COLUMNS[sort.column] : undefined;
   if (fn !== undefined) return fn(dir);
   const grouped = groupBy.find(g => g.id === sort.column);
-  if (grouped !== undefined) return `${grouped.column} ${dir}`;
+  if (grouped !== undefined) return `${groupByExpression(grouped)} ${dir}`;
   return 'SUM(cost) DESC';
 }
