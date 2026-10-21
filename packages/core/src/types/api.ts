@@ -321,6 +321,10 @@ export interface CostApi {
   /** Inventory for one provider's tier. `providerName` defaults to the
    *  first configured provider. */
   getDataInventory(tier?: DataTier, providerName?: string): Promise<DataInventoryResult>;
+  /** The same shape built from what is on disk alone: no remote listing and
+   *  no credentials, so `periods` are the local ones and the remote totals
+   *  are zero. */
+  getLocalDataInventory(tier?: DataTier, providerName?: string): Promise<DataInventoryResult>;
   syncPeriods(files: readonly { key: string; contentHash: string; size: number }[], syncId?: string): Promise<{ filesDownloaded: number; rowsProcessed: number }>;
   cancelSync(syncId?: string): Promise<void>;
   getFilterValues(dimensionId: string, filters: Record<string, readonly string[]>, dateRange?: { start: string; end: string }, opts?: { bypassCostScope?: boolean }, origin?: string): Promise<{ value: string; label: string; count: number }[]>;

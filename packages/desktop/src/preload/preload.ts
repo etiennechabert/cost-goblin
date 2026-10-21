@@ -188,6 +188,9 @@ const api: CostApi = {
   getDataInventory(tier?: DataTier, providerName?: string): Promise<DataInventoryResult> {
     return invoke<DataInventoryResult>('data:inventory', tier, providerName);
   },
+  getLocalDataInventory(tier?: DataTier, providerName?: string): Promise<DataInventoryResult> {
+    return invoke<DataInventoryResult>('data:local-inventory', tier, providerName);
+  },
   syncPeriods(files: readonly { key: string; contentHash: string; size: number }[], syncId?: string): Promise<{ filesDownloaded: number; rowsProcessed: number }> {
     return invoke<{ filesDownloaded: number; rowsProcessed: number }>('data:sync-periods', files, syncId);
   },

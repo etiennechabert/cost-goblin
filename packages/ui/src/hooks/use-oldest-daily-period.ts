@@ -1,40 +1,54 @@
 import { useContext, useEffect, useState } from 'react';
 import { asDateString } from '@costgoblin/core/browser';
-import type { DateString } from '@costgoblin/core/browser';
+import type { CostApi, DateString } from '@costgoblin/core/browser';
 import { CostApiContext } from './use-cost-api.js';
 
 const PERIOD_PATTERN = /^\d{4}-\d{2}$/;
 
+/** What each api already answered, so re-entering Monthly (the picker mounts
+ *  the hook again) doesn't read the data folders again. Only a found period
+ *  is kept: "nothing local yet" and a failure are asked again. */
+const resolved = new WeakMap<CostApi, DateString>();
+
+async function readOldestLocalPeriod(api: CostApi): Promise<DateString | null> {
+  const config = await api.getConfig();
+  // One provider that fails to read must not hide the others' data.
+  const results = await Promise.allSettled(
+    config.providers.map(provider => api.getLocalDataInventory('daily', provider.name)),
+  );
+  let earliest: string | null = null;
+  for (const result of results) {
+    if (result.status === 'rejected') continue;
+    const period = result.value.local.oldestPeriod;
+    if (period === null || !PERIOD_PATTERN.test(period)) continue;
+    if (earliest === null || period < earliest) earliest = period;
+  }
+  return earliest === null ? null : asDateString(`${earliest}-01`);
+}
+
 /** The first day of the oldest `YYYY-MM` daily period held locally by any
  *  configured provider ("All synced data" starts there), or `null` until the
- *  inventories load and when nothing is local. `enabled: false` skips the
- *  inventory calls, which list every provider's remote bucket: only Monthly
- *  mode has an "All synced data" preset to feed. */
+ *  inventories load and when nothing is local. Reads the data folders only:
+ *  no remote listing, so a month held locally but expired in the bucket still
+ *  counts and mounting costs no network call. `enabled: false` skips the
+ *  reads: only Monthly mode has an "All synced data" preset to feed. */
 export function useOldestDailyPeriod(enabled = true): DateString | null {
   const api = useContext(CostApiContext);
   const [oldest, setOldest] = useState<DateString | null>(null);
 
   useEffect(() => {
     if (api === null || !enabled) return;
+    const known = resolved.get(api);
+    if (known !== undefined) {
+      setOldest(known);
+      return;
+    }
     let cancelled = false;
-    api.getConfig().then(async config => {
-      // One provider that fails to list must not hide the others' data.
-      const results = await Promise.allSettled(
-        config.providers.map(provider => api.getDataInventory('daily', provider.name)),
-      );
-      if (cancelled) return;
-      let earliest: string | null = null;
-      for (const result of results) {
-        if (result.status === 'rejected') continue;
-        for (const { period, localStatus } of result.value.periods) {
-          if (localStatus === 'missing' || !PERIOD_PATTERN.test(period)) continue;
-          if (earliest === null || period < earliest) earliest = period;
-        }
-      }
-      setOldest(earliest === null ? null : asDateString(`${earliest}-01`));
+    readOldestLocalPeriod(api).then(period => {
+      if (period !== null) resolved.set(api, period);
+      if (!cancelled) setOldest(period);
     }).catch(() => {
-      if (cancelled) return;
-      setOldest(null);
+      if (!cancelled) setOldest(null);
     });
     return () => { cancelled = true; };
   }, [api, enabled]);
