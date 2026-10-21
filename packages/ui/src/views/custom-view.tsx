@@ -3,7 +3,6 @@ import {
   asDateString,
   asHourString,
   asTagValue,
-  capToNewestDay,
   isPeriodGranularity,
   previousPeriodRange,
 } from '@costgoblin/core/browser';
@@ -252,15 +251,20 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
       setHourlyHint(false);
       return;
     }
-    // A drag-zoom names no mode: Monthly and Weekly drop to Daily for a short
-    // selection (ending no later than the newest day with data), and a short
+    // A drag-zoom names no mode. Monthly and Weekly drop to Daily for a short
+    // selection, ending no later than the newest day with data; a selection
+    // that starts after it has no days to show, so the drag is ignored. A short
     // Daily window goes to Hourly when that tier exists, else shows the hint.
     const zoomed = zoomGranularity(range, granularity);
+    let next = range;
+    if (isPeriodGranularity(granularity)) {
+      const newestDay = daysAgo(lagDays);
+      if (range.start > newestDay) return;
+      if (zoomed === 'daily' && range.end > newestDay) next = { ...range, end: newestDay };
+    }
     const needsHourlyHint = zoomed === 'hourly' && granularity !== 'hourly' && !hourlyConfigured;
-    const target = needsHourlyHint ? granularity : zoomed;
-    const capped = target === 'daily' ? capToNewestDay({ start: range.start, end: range.end }, daysAgo(lagDays)) : range;
-    setDateRange(capped.end === range.end ? range : { ...range, end: capped.end });
-    setGranularity(target);
+    setDateRange(next);
+    setGranularity(needsHourlyHint ? granularity : zoomed);
     setHourlyHint(needsHourlyHint);
   }, [granularity, hourlyConfigured, lagDays, setDateRange]);
 

@@ -260,6 +260,20 @@ describe('CustomView — drag-to-zoom and compare in Monthly', () => {
     expect(api.dailyCalls.at(-1)?.dateRange).toEqual({ start: '2026-09-01', end: '2026-10-19' });
   });
 
+  it('ignores a drag over a period that starts after the newest day', async () => {
+    const { api } = await openMonthly('Last 6 months');
+    // Set the clock back after picking: the range's last month (Oct) now starts
+    // after the newest day, 2026-08-29, and has no days to show.
+    vi.setSystemTime(new Date('2026-08-31T12:00:00Z'));
+    const calls = api.dailyCalls.length;
+
+    await dragBars(255, 295); // the last bar only
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+    expect(api.dailyCalls).toHaveLength(calls);
+    expect(api.dailyCalls.at(-1)).toMatchObject({ dateRange: { start: '2026-05-01', end: '2026-10-31' }, granularity: 'monthly' });
+    expect(screen.queryByText(/hourly tier isn/)).toBeNull();
+  });
+
   it('keeps Monthly when the drag covers more than two months', async () => {
     const { api } = await openMonthly('Last 6 months');
 
