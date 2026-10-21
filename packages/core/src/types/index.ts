@@ -33,6 +33,7 @@ export type {
   NormalizationRule,
   ConceptType,
   ProviderConfig,
+  ProviderType,
   AwsProviderConfig,
   GcpProviderConfig,
   SyncConfig,

@@ -85,7 +85,7 @@ describe('get_cost_overview over the synthetic fixtures', () => {
       dataDir: SYNTHETIC_DIR,
       tier: 'daily',
       dimensions,
-      providers: config.providers.map(p => ({ name: p.name })),
+      providers: config.providers.map(p => ({ name: p.name, type: p.type })),
       costMetric: costScope.costMetric,
       marketplaceAttribution: costScope.marketplaceAttribution,
     });

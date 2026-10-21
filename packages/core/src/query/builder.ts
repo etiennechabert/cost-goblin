@@ -1,4 +1,4 @@
-import type { BuiltInDimension, DimensionsConfig, TagDimension } from '../types/config.js';
+import type { BuiltInDimension, DimensionsConfig, ProviderType, TagDimension } from '../types/config.js';
 import type { CostQueryParams, DailyCostsParams, DateRange, FilterMap, TrendQueryParams, MissingTagsParams, EntityDetailParams } from '../types/query.js';
 import { DEFAULT_PLACEHOLDER_PATTERNS } from '../types/query.js';
 import type { DimensionId, ProviderName } from '../types/branded.js';
@@ -13,6 +13,7 @@ import { assertBillingPeriod, assertDateString, assertHourString, assertSafeColu
 import { rollupGrainColumns, rollupGrainDimensions } from '../rollup/grain.js';
 import { sqlEscapeString, sqlStringLiteral } from './sql-escape.js';
 import { previousTrendPeriod, trendPercentChangeSql } from './trend-change.js';
+import { providerColumnExprs, withOptionalSourceColumns } from './provider-projection.js';
 
 /** Label for rows whose SubAccountId is NULL. FOCUS allows a null SubAccountId
  *  and GCP emits it for charges not tied to a project (account-level taxes,
@@ -380,18 +381,21 @@ function applyPathSegment(expr: string, pathSegment: { separator: string; index:
 
 /** One provider's contribution to a query source. `periods` follows the
  *  pre-#516 single-provider contract: an explicit list produces per-month
- *  globs, an empty list the tier wildcard (see `buildParquetSource`). */
+ *  globs, an empty list the tier wildcard (see `buildParquetSource`). `type`
+ *  picks how the provider's columns are read (`providerColumnExprs`). */
 export interface ProviderSourceBranch {
   readonly name: ProviderName;
+  readonly type: ProviderType;
   readonly periods?: readonly string[] | undefined;
 }
 
-/** One provider's query-time context: what's on disk for the queried tier.
- *  The month intersection with a query's date range happens per provider —
- *  DuckDB errors on globs matching zero files, and providers sync
+/** One provider's query-time context: its type and what's on disk for the
+ *  queried tier. The month intersection with a query's date range happens per
+ *  provider — DuckDB errors on globs matching zero files, and providers sync
  *  independently. */
 export interface ProviderSourceSpec {
   readonly name: ProviderName;
+  readonly type: ProviderType;
   readonly availablePeriods?: readonly string[] | undefined;
 }
 
@@ -475,7 +479,7 @@ function buildRawTagSelects(dimensions: DimensionsConfig): string[] {
   return selects;
 }
 
-function buildParquetSource(dataDir: string, provider: ProviderName, tier: string, periods: readonly string[] | undefined): string {
+function buildParquetSource(dataDir: string, branch: ProviderSourceBranch, tier: string): string {
   // The path components land inside a single-quoted SQL glob literal, so each
   // untrusted-shaped one is validated at this interpolation site: tier and
   // every period must match their allow-list/pattern (provider names are
@@ -490,15 +494,21 @@ function buildParquetSource(dataDir: string, provider: ProviderName, tier: strin
   // columns over time, so a multi-month read can still span two export
   // revisions; without union_by_name DuckDB throws a Binder Error on any
   // read spanning a month that omits a referenced column.
-  const rawRoot = `${dataDir}/${String(provider)}/raw`;
+  const rawRoot = `${dataDir}/${String(branch.name)}/raw`;
+  const { periods } = branch;
+  let read: string;
   if (periods !== undefined && periods.length > 0) {
     const paths = periods.map(p => {
       assertBillingPeriod(p);
       return sqlStringLiteral(`${rawRoot}/${tier}-${p}/*.parquet`);
     }).join(', ');
-    return `read_parquet([${paths}], union_by_name=true)`;
+    read = `read_parquet([${paths}], union_by_name=true)`;
+  } else {
+    read = `read_parquet(${sqlStringLiteral(`${rawRoot}/${tier}-*/*.parquet`)}, union_by_name=true)`;
   }
-  return `read_parquet(${sqlStringLiteral(`${rawRoot}/${tier}-*/*.parquet`)}, union_by_name=true)`;
+  // A column absent from EVERY file is still a binder error: the columns a
+  // provider's projection may find missing get their NULL fill here.
+  return withOptionalSourceColumns(read, branch.type);
 }
 
 function buildFromClause(
@@ -581,33 +591,35 @@ export function buildSource(opts: BuildSourceOptions): string {
     ? `\n    WHERE COALESCE(${tablePrefix}ChargeCategory, '') IN (${usageOnlyCategoryLiterals})`
     : '';
 
-  // One SELECT branch per provider. Branches differ in two ways only: the
-  // Parquet glob and the injected constant `provider` column. The provider
-  // name is a validated `ProviderName` (path- and quote-safe); escaping is
-  // defense in depth.
+  // One SELECT branch per provider. Branches differ in the Parquet glob, the
+  // injected constant `provider` column, and the columns whose raw source
+  // differs by provider type (providerColumnExprs). The provider name is a
+  // validated `ProviderName` (path- and quote-safe); escaping is defense in
+  // depth.
   const orgJoinPath = needsOrgJoin ? orgAccountsPath : undefined;
   const costExpr = costMetric === 'list'
     ? marketplaceListFallback(tablePrefix, costExprFor(costMetric, tablePrefix), mktMatch)
     : costExprFor(costMetric, tablePrefix);
   const branches = providers.map(branch => {
-    const parquetSource = buildParquetSource(dataDir, branch.name, tier, branch.periods);
+    const parquetSource = buildParquetSource(dataDir, branch, tier);
     const fromClause = orgJoinPath !== undefined
       ? buildFromClause(parquetSource, dimensions, orgJoinPath)
       : parquetSource;
+    const typed = providerColumnExprs(branch.type, tablePrefix);
 
     return `SELECT
       '${sqlEscapeString(String(branch.name))}' AS provider,
       ${dateExpr},
       COALESCE(${tablePrefix}SubAccountId, '${NO_ACCOUNT_SENTINEL}') AS account_id,
       COALESCE(${tablePrefix}SubAccountName, '') AS account_name,
-      COALESCE(${tablePrefix}RegionId, '') AS region,
+      ${typed.region} AS region,
       ${serviceExpr} AS service,
       COALESCE(${tablePrefix}x_ServiceCode, '') AS service_code,
       COALESCE(${tablePrefix}ServiceCategory, '') AS service_category,${flexColumns}
       COALESCE(${tablePrefix}ResourceId, '') AS resource_id,
       ${costExpr} AS cost,
       COALESCE(${tablePrefix}ChargeCategory, '') AS charge_category,
-      COALESCE(${tablePrefix}PricingCategory, '') AS pricing_category,
+      ${typed.pricingCategory} AS pricing_category,
       COALESCE(${tablePrefix}CommitmentDiscountStatus, '') AS commitment_status,
       COALESCE(${tablePrefix}x_Operation, '') AS operation,
       COALESCE(${tablePrefix}SkuMeter, '') AS sku_meter${tagClause}
@@ -637,7 +649,7 @@ function resolveProviderBranches(
       ? [...requiredPeriods]
       : requiredPeriods.filter(m => p.availablePeriods?.includes(m));
     return {
-      branch: { name: p.name, periods },
+      branch: { name: p.name, type: p.type, periods },
       hasData: p.availablePeriods === undefined || p.availablePeriods.length > 0,
     };
   });
@@ -1300,7 +1312,7 @@ export function buildRollupPartitionQuery(
   // provider whose store is being (re)built, with the explicit period.
   const source = buildSource({
     dataDir, tier, dimensions, orgAccountsPath,
-    providers: providers.map(pr => ({ name: pr.name, periods: [period] })),
+    providers: providers.map(pr => ({ name: pr.name, type: pr.type, periods: [period] })),
     costMetric,
     marketplaceAttribution: costScope?.marketplaceAttribution,
     includeRawTags: false, slim: true,
@@ -1365,7 +1377,7 @@ export function buildGrainProbeQuery(
 
   const source = buildSource({
     dataDir, tier: 'daily', dimensions, orgAccountsPath,
-    providers: providers.map(pr => ({ name: pr.name, periods: [period] })),
+    providers: providers.map(pr => ({ name: pr.name, type: pr.type, periods: [period] })),
     costMetric,
     marketplaceAttribution: costScope?.marketplaceAttribution,
     includeRawTags: false, slim: true,

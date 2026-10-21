@@ -115,8 +115,8 @@ async function seedGcp(rows: readonly string[]): Promise<void> {
 
 function branches(): ProviderSourceBranch[] {
   return [
-    { name: AWS, periods: [PERIOD] },
-    { name: GCP, periods: [PERIOD] },
+    { name: AWS, type: 'aws', periods: [PERIOD] },
+    { name: GCP, type: 'gcp', periods: [PERIOD] },
   ];
 }
 
@@ -229,8 +229,8 @@ describe('aws + gcp in one union (DuckDB end-to-end)', () => {
       {
         dataDir, dimensions,
         providers: [
-          { name: AWS, availablePeriods: [PERIOD] },
-          { name: GCP, availablePeriods: [PERIOD] },
+          { name: AWS, type: 'aws', availablePeriods: [PERIOD] },
+          { name: GCP, type: 'gcp', availablePeriods: [PERIOD] },
         ],
       },
     );

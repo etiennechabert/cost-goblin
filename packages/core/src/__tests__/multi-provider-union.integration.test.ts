@@ -107,8 +107,8 @@ describe('multi-provider union (DuckDB end-to-end)', () => {
 
   function branches(): ProviderSourceBranch[] {
     return [
-      { name: PAYER_A, periods: ['2026-01', '2026-02'] },
-      { name: PAYER_B, periods: ['2026-01'] },
+      { name: PAYER_A, type: 'aws', periods: ['2026-01', '2026-02'] },
+      { name: PAYER_B, type: 'aws', periods: ['2026-01'] },
     ];
   }
 
@@ -151,8 +151,8 @@ describe('multi-provider union (DuckDB end-to-end)', () => {
     const source = buildSource({
       dataDir, tier: 'daily', dimensions,
       providers: [
-        { name: PAYER_A, periods: ['2026-01'] },
-        { name: PAYER_B, periods: ['2026-01'] },
+        { name: PAYER_A, type: 'aws', periods: ['2026-01'] },
+        { name: PAYER_B, type: 'aws', periods: ['2026-01'] },
       ],
       costMetric: 'effective',
     });
@@ -169,9 +169,9 @@ describe('multi-provider union (DuckDB end-to-end)', () => {
       {
         dataDir, dimensions,
         providers: [
-          { name: PAYER_A, availablePeriods: ['2026-01', '2026-02'] },
-          { name: asProviderName('payer-never-synced'), availablePeriods: [] },
-          { name: PAYER_B, availablePeriods: ['2026-01'] },
+          { name: PAYER_A, type: 'aws', availablePeriods: ['2026-01', '2026-02'] },
+          { name: asProviderName('payer-never-synced'), type: 'aws', availablePeriods: [] },
+          { name: PAYER_B, type: 'aws', availablePeriods: ['2026-01'] },
         ],
       },
     );

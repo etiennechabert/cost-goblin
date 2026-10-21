@@ -1,11 +1,14 @@
-import type { BuiltInDimension, DimensionsConfig, TagDimension } from '../types/config.js';
+import type { BuiltInDimension, DimensionsConfig, ProviderType, TagDimension } from '../types/config.js';
 import type { CostMetric, ExclusionCondition, ExclusionRule, MarketplaceAttributionConfig } from '../types/cost-scope.js';
 import { tagDimColumn, tagSqlColumn } from '../types/branded.js';
 import { normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
+import { SOURCE_PROJECTION_REVISION } from '../query/provider-projection.js';
 import { canonicalJson, sha256Hex } from './digest.js';
 
 /** Bump to invalidate every persisted rollup partition (e.g. when the stored
  *  partition schema or build semantics change in a backwards-incompatible way).
+ *  A change to how one provider type's columns are read bumps that type's
+ *  SOURCE_PROJECTION_REVISION instead, so other providers' rollups stay.
  *  v2: FOCUS 1.2 migration (#515) — canonical columns and cost metrics changed,
  *  so every CUR-era partition is invalid.
  *  v3: tag columns are stored under `tagSqlColumn` instead of the `tag_<key>`
@@ -48,6 +51,9 @@ function missingForSignature(c: ExclusionCondition, dims: DimensionsConfig): { m
 }
 
 export interface ShapeSignatureInput {
+  /** Type of the provider whose rollup this is: it picks how that provider's
+   *  raw columns are read into the stored ones (SOURCE_PROJECTION_REVISION). */
+  readonly providerType: ProviderType;
   readonly dimensions: DimensionsConfig;
   readonly costMetric: CostMetric;
   /** All exclusion rules; only enabled ones contribute to the signature. */
@@ -130,6 +136,9 @@ export function computeShapeSignature(input: ShapeSignatureInput): string {
   // config hashes identically to a pre-feature build (no spurious re-roll);
   // only an active config shifts the signature.
   const marketplace = marketplaceForSignature(input.marketplaceAttribution);
+  // Same for the provider's projection: revision 0 adds nothing, so a
+  // provider's revision bump re-rolls its rollups alone.
+  const projectionRevision = SOURCE_PROJECTION_REVISION[input.providerType];
 
   return sha256Hex(canonicalJson({
     schemaVersion: ROLLUP_SCHEMA_VERSION,
@@ -138,6 +147,7 @@ export function computeShapeSignature(input: ShapeSignatureInput): string {
     costMetric,
     exclusionRules,
     ...(marketplace === null ? {} : { marketplaceAttribution: marketplace }),
+    ...(projectionRevision === 0 ? {} : { sourceProjection: { providerType: input.providerType, revision: projectionRevision } }),
     orgAccountsDigest,
   }));
 }

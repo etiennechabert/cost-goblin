@@ -624,7 +624,7 @@ export class BaselineStore {
 
     // Both discovery queries hit the same source/columns — resolve the rollup
     // once (computeShapeSignature isn't free).
-    const mat = this.matSource(deps, providers.length, costScope, dimensions, dateRange, [...grainCols, 'cost']);
+    const mat = this.matSource(deps, providers, costScope, dimensions, dateRange, [...grainCols, 'cost']);
 
     // 2) Cheap totals query — ONE row per tuple. Enumerates every scope without
     //    the per-day fan-out, so "discover everything" stays fast even on a big
@@ -761,7 +761,7 @@ export class BaselineStore {
         'cost',
       ]),
     ];
-    const mat = this.matSource(deps, providers.length, basisScope, dimensions, dateRange, neededColumns);
+    const mat = this.matSource(deps, providers, basisScope, dimensions, dateRange, neededColumns);
     const opts = {
       dataDir: deps.dataDir,
       dimensions,
@@ -837,7 +837,7 @@ export class BaselineStore {
       if (providers.length === 0) return new Map<string, number>();
       const range = { start: asDateString(winStart), end: asDateString(end) };
       if (providersEmptyForRange(providers, range)) return new Map<string, number>();
-      const mat = this.matSource(deps, providers.length, basisScope, dimensions, range, [columnForDimension(dimensions, childDimension), 'cost']);
+      const mat = this.matSource(deps, providers, basisScope, dimensions, range, [columnForDimension(dimensions, childDimension), 'cost']);
       const q = buildDailyCostsQuery(
         { dateRange: range, filters: scopeFilters(spec.scope), groupBy: child },
         {
@@ -872,7 +872,7 @@ export class BaselineStore {
 
   private matSource(
     deps: BaselineEngineDeps,
-    providerCount: number,
+    providers: readonly ProviderSourceSpec[],
     costScope: CostScopeConfig,
     dimensions: DimensionsConfig,
     dateRange: { start: string; end: string },
@@ -881,12 +881,14 @@ export class BaselineStore {
     // The rollup store is bound to the FIRST provider's tree — a
     // multi-provider baseline routed through it would drop every other
     // provider's spend. Multi-provider recomputes read raw via the union.
-    if (providerCount !== 1) return undefined;
+    const [provider, ...others] = providers;
+    if (provider === undefined || others.length > 0) return undefined;
     // Only use the rollup when the requested cost basis matches what the rollup
     // was built for — otherwise the pre-aggregated cost column is wrong.
     const built = deps.rollupStore.getBuiltSignature();
     if (built === null) return undefined;
     const sig = computeShapeSignature({
+      providerType: provider.type,
       dimensions,
       costMetric: costScope.costMetric,
       rules: costScope.rules,

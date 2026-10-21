@@ -49,7 +49,7 @@ const DIMS: DimensionsConfig = {
   tags: [],
 };
 const COST_SCOPE: CostScopeConfig = { costMetric: 'billed', rules: [], lagDays: 2 };
-const SYNCED: readonly ProviderSourceSpec[] = [{ name: PROVIDER, availablePeriods: ['2025-12', '2026-01', '2026-02', '2026-03'] }];
+const SYNCED: readonly ProviderSourceSpec[] = [{ name: PROVIDER, type: 'aws', availablePeriods: ['2025-12', '2026-01', '2026-02', '2026-03'] }];
 
 interface QueryCall { readonly sql: string; readonly params: readonly unknown[]; readonly materialized: boolean }
 type Answer = { readonly rows: readonly RawRow[] } | { readonly reject: unknown };
@@ -520,7 +520,7 @@ describe('BaselineStore — discovery', () => {
 
   it('skips discovery when no synced month falls inside the lookback', async () => {
     const store = new BaselineStore(dir, clock);
-    const deps = makeDeps(dir, engine, { getQueryProviders: () => Promise.resolve([{ name: PROVIDER, availablePeriods: ['2020-01'] }]) });
+    const deps = makeDeps(dir, engine, { getQueryProviders: () => Promise.resolve([{ name: PROVIDER, type: 'aws', availablePeriods: ['2020-01'] }]) });
     const created = await store.create(deps, { scope: filterScope({ service: ['EC2'] }) });
 
     await store.recompute(deps);
@@ -668,7 +668,7 @@ describe('BaselineStore — rollup routing', () => {
   const ORG_ACCOUNTS = JSON.stringify({ accounts: [{ id: '111', ouPath: 'Engineering', tags: {} }] });
   const ROLLUP = "read_parquet(['/data/aws-main/rollup/daily-2026-03/rollup.parquet'])";
   const signatureFor = (orgJson: string): string =>
-    computeShapeSignature({ dimensions: DIMS, costMetric: 'billed', rules: [], orgAccountsDigest: computeOrgAccountsDigest(orgJson) });
+    computeShapeSignature({ providerType: 'aws', dimensions: DIMS, costMetric: 'billed', rules: [], orgAccountsDigest: computeOrgAccountsDigest(orgJson) });
 
   it('routes discovery and drift through the rollup built for the same basis and org accounts', async () => {
     const dir = await newStateDir();
@@ -713,7 +713,7 @@ describe('BaselineStore — rollup routing', () => {
     engine.totals = [{ account_id: '111', service: 'EC2', total: 5000 }];
     const store = new BaselineStore(dir, clock);
     const deps = makeDeps(dir, engine, {
-      getQueryProviders: () => Promise.resolve([...SYNCED, { name: asProviderName('aws-second'), availablePeriods: ['2026-02'] }]),
+      getQueryProviders: () => Promise.resolve([...SYNCED, { name: asProviderName('aws-second'), type: 'aws', availablePeriods: ['2026-02'] }]),
       rollupStore: { getBuiltSignature: () => signatureFor(''), resolveSource: () => ROLLUP },
     });
 
@@ -733,7 +733,7 @@ describe('BaselineStore — getDrift', () => {
 
     const noProvider = makeDeps(dir, engine, { getQueryProviders: () => Promise.resolve([]) });
     await expect(store.getDrift(noProvider, created.spec.id, 'account_id')).resolves.toEqual([]);
-    const stale = makeDeps(dir, engine, { getQueryProviders: () => Promise.resolve([{ name: PROVIDER, availablePeriods: ['2020-01'] }]) });
+    const stale = makeDeps(dir, engine, { getQueryProviders: () => Promise.resolve([{ name: PROVIDER, type: 'aws', availablePeriods: ['2020-01'] }]) });
     await expect(store.getDrift(stale, created.spec.id, 'account_id')).resolves.toEqual([]);
     expect(engine.calls).toHaveLength(before);
   });

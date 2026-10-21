@@ -48,6 +48,11 @@ export interface GcpProviderConfig {
  *  `keyFile` only on the `gcp` one. */
 export type ProviderConfig = AwsProviderConfig | GcpProviderConfig;
 
+/** The `type` discriminant of a provider. Query code keys provider-specific
+ *  column projections on it (`buildSource`), so a new provider type fails to
+ *  compile until its projection is decided. */
+export type ProviderType = ProviderConfig['type'];
+
 export interface SyncConfig {
   readonly daily: SyncTierConfig;
   readonly hourly?: SyncTierConfig | undefined;

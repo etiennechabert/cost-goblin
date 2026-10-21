@@ -3,6 +3,7 @@ import { DuckDBInstance } from '@duckdb/node-api';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildGrainProbeQuery } from '../query/builder.js';
+import type { QueryContextOptions } from '../query/builder.js';
 import { SecurityError } from '../query/identifier-validator.js';
 import { rollupGrainColumns, rollupGrainDimensions } from '../rollup/grain.js';
 import { computeRollupEstimate } from '../rollup/estimator.js';
@@ -74,7 +75,7 @@ async function probe(
 ): Promise<{ lineItems: number; grainRows: number; cards: Map<string, number>; loo: Map<string, number> }> {
   const grain = rollupGrainColumns(dimensions);
   const grainDims = rollupGrainDimensions(dimensions);
-  const sql = buildGrainProbeQuery(PERIOD, grain, { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER }], costScope: scope });
+  const sql = buildGrainProbeQuery(PERIOD, grain, { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER, type: 'aws' }], costScope: scope });
   const row = (await queryAll(conn, sql))[0];
   const cards = new Map<string, number>();
   const loo = new Map<string, number>();
@@ -90,7 +91,7 @@ function dimInputs(cards: Map<string, number>, loo: Map<string, number>): { colu
 }
 
 describe('buildGrainProbeQuery identifier checks', () => {
-  const opts = { dataDir: SYNTHETIC_DIR, dimensions: stableGrain, providers: [{ name: PROVIDER }], costScope: scope };
+  const opts: QueryContextOptions = { dataDir: SYNTHETIC_DIR, dimensions: stableGrain, providers: [{ name: PROVIDER, type: 'aws' }], costScope: scope };
 
   it('rejects an unsafe caller-supplied grainColumns entry', () => {
     const grain = [...rollupGrainColumns(stableGrain), 'service) FROM x --'];

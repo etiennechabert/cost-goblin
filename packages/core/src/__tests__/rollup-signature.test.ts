@@ -35,6 +35,7 @@ function dimsWithTeamAliases(aliases: Record<string, string[]>): DimensionsConfi
 
 const sig = (over: Partial<Parameters<typeof computeShapeSignature>[0]> = {}) =>
   computeShapeSignature({
+    providerType: 'aws',
     dimensions: baseDims(),
     costMetric: 'list',
     rules: rulesOnService(),
@@ -136,6 +137,18 @@ describe('computeShapeSignature', () => {
 
     it('moves the digest of rules on tags, whose partitions dropped untagged rows', () => {
       expect(sig({ rules: teamRule() })).not.toBe('83acf0a17fa8d6f73b68b342e39e4aaed74ac2e52005c3729863781fc37b6677');
+    });
+  });
+
+  describe('provider type', () => {
+    // The base input's digest from before the provider type entered the
+    // signature. AWS columns are read as they were, so an AWS rollup keeps it.
+    it('keeps the earlier digest for an AWS rollup (no re-roll)', () => {
+      expect(sig()).toBe('233df2068a2cac4780a68e64eb1a32897332e47a472f7a150da9434c1ed4cdd4');
+    });
+
+    it('CHANGES for a GCP rollup, whose region and pricing_category are read differently', () => {
+      expect(sig({ providerType: 'gcp' })).not.toBe(sig());
     });
   });
 });

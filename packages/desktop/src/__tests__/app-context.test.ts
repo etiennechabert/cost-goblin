@@ -216,16 +216,16 @@ describe('createAppContext: config caches', () => {
     expect(await h.app.getQueryProviders('daily')).toEqual([]);
   });
 
-  it('lists every provider with its own months per tier', async () => {
+  it('lists every provider with its type and its own months per tier', async () => {
     const h = await harness({ config: 'multi', data: 'synthetic' });
     expect(await h.app.getFirstProviderName()).toBe(AWS);
     expect(await h.app.getQueryProviders('daily')).toEqual([
-      { name: AWS, availablePeriods: ['2026-01', '2026-02'] },
-      { name: FIXTURE_GCP_PROVIDER, availablePeriods: ['2026-01', '2026-02'] },
+      { name: AWS, type: 'aws', availablePeriods: ['2026-01', '2026-02'] },
+      { name: FIXTURE_GCP_PROVIDER, type: 'gcp', availablePeriods: ['2026-01', '2026-02'] },
     ]);
     expect(await h.app.getQueryProviders('hourly')).toEqual([
-      { name: AWS, availablePeriods: ['2026-02'] },
-      { name: FIXTURE_GCP_PROVIDER, availablePeriods: [] },
+      { name: AWS, type: 'aws', availablePeriods: ['2026-02'] },
+      { name: FIXTURE_GCP_PROVIDER, type: 'gcp', availablePeriods: [] },
     ]);
   });
 
@@ -449,6 +449,22 @@ describe('createAppContext: rollup lifecycle', () => {
     expect(await h.app.awaitWarmup(5_000)).toBe(false);
   });
 
+  it("builds a GCP provider's rollup with GCP's projection, under its own signature", async () => {
+    // Region is in the fixture's grain: the stored values must be the ones a
+    // raw GCP query reads, the multi-region and global locations included.
+    const h = await harness({ data: 'synthetic', rollupBuilds: true });
+    await writeFile(h.ws.configPath, configYaml(gcpProviderYaml(FIXTURE_GCP_PROVIDER)));
+    h.app.warmupBase();
+    await vi.waitFor(() => { expect(h.app.rollupStore.getStatus().state).toBe('ready'); }, { timeout: 15_000 });
+    const partition = join(h.ws.dataDir, FIXTURE_GCP_PROVIDER, 'rollup', 'daily-2026-01', 'rollup.parquet');
+    const rows = await h.app.runQuery(`SELECT DISTINCT region FROM read_parquet('${partition}') ORDER BY 1`);
+    expect(rows.map(r => r['region'])).toEqual(['europe-west1', 'global', 'us']);
+
+    const dims = await h.app.getQueryDimensions();
+    expect(h.app.rollupStore.getBuiltSignature()).toBe(await h.app.signatureForDimensions(dims, 'gcp'));
+    expect(await h.app.signatureForDimensions(dims, 'aws')).not.toBe(await h.app.signatureForDimensions(dims, 'gcp'));
+  });
+
   it('builds every local month in the background, then re-validates instead of rebuilding', async () => {
     const h = await built();
     expect([...h.app.rollupStore.getValidPeriods()].sort()).toEqual(['2026-01', '2026-02']);
@@ -578,14 +594,14 @@ describe('createAppContext: rollup lifecycle', () => {
   it('signs the rollup shape with the org data, and refuses a cost-scope.yaml that does not load', async () => {
     const h = await harness();
     const dims = await h.app.getDimensions();
-    const before = await h.app.signatureForDimensions(dims);
-    expect(await h.app.signatureForDimensions(dims)).toBe(before);
+    const before = await h.app.signatureForDimensions(dims, 'aws');
+    expect(await h.app.signatureForDimensions(dims, 'aws')).toBe(before);
     await writeFile(join(h.ws.stateDir, 'org-accounts.json'), JSON.stringify(ORG));
-    expect(await h.app.signatureForDimensions(dims)).not.toBe(before);
+    expect(await h.app.signatureForDimensions(dims, 'aws')).not.toBe(before);
     // A rollup built without the user's cost scope would serve unscoped totals.
     await writeFile(h.ws.costScopePath, 'rules: 42\n');
     h.app.state.costScope = null;
-    await expect(h.app.signatureForDimensions(dims)).rejects.toThrow("Couldn't load cost-scope.yaml");
+    await expect(h.app.signatureForDimensions(dims, 'aws')).rejects.toThrow("Couldn't load cost-scope.yaml");
   });
 
   it('recomputeBaselines hands the store its engine dependencies', async () => {

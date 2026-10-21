@@ -82,7 +82,7 @@ describe('tag dimensions whose keys differ only by case (DuckDB execution)', () 
 
   function optsFor(tags: readonly TagDimension[]): QueryContextOptions {
     const dimensions: DimensionsConfig = { builtIn: [], tags: [...tags] };
-    return { dataDir, dimensions, providers: [{ name: PROVIDER, availablePeriods: ['2026-01'] }] };
+    return { dataDir, dimensions, providers: [{ name: PROVIDER, type: 'aws', availablePeriods: ['2026-01'] }] };
   }
 
   function filterOn(tag: TagDimension, value: string): FilterMap {

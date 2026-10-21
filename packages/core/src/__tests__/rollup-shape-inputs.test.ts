@@ -32,7 +32,7 @@ function ruleOn(dimensionId: string, values: string[]): ExclusionRule[] {
 }
 
 const sig = (over: Partial<Parameters<typeof computeShapeSignature>[0]> = {}): string =>
-  computeShapeSignature({ dimensions: dims(), costMetric: 'effective', rules: [], orgAccountsDigest: 'org', ...over });
+  computeShapeSignature({ providerType: 'aws', dimensions: dims(), costMetric: 'effective', rules: [], orgAccountsDigest: 'org', ...over });
 
 describe('computeShapeSignature', () => {
   it('keeps the values of a condition on an unconfigured dimension verbatim', () => {

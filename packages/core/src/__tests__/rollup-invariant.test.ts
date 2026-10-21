@@ -54,14 +54,14 @@ describe('rollup multi-month glob == raw over the window', () => {
     for (const m of MONTHS) {
       const dir = join(rollupDir, `daily-${m}`);
       await mkdir(dir, { recursive: true });
-      await conn.run(buildRollupPartitionQuery(m, 'daily', join(dir, 'rollup.parquet'), { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER, availablePeriods: [m] }], costScope }));
+      await conn.run(buildRollupPartitionQuery(m, 'daily', join(dir, 'rollup.parquet'), { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER, type: 'aws', availablePeriods: [m] }], costScope }));
     }
     glob = `read_parquet('${join(rollupDir, 'daily-*', 'rollup.parquet').replaceAll('\\', '/')}')`;
   });
   afterAll(async () => { await rm(rollupDir, { recursive: true, force: true }); });
 
   const window = `usage_date >= '2026-01-01' AND usage_date < '2026-03-01'`;
-  const rawSrc = () => buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, providers: [{ name: PROVIDER, periods: MONTHS }], costMetric: 'effective' });
+  const rawSrc = () => buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, providers: [{ name: PROVIDER, type: 'aws', periods: MONTHS }], costMetric: 'effective' });
 
   it('total matches across the 2-month window', async () => {
     const raw = Number((await queryAll(conn, `SELECT CAST(SUM(cost) AS DOUBLE) t FROM ${rawSrc()} WHERE ${window}`))[0]?.['t']);

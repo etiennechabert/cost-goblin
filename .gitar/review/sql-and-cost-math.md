@@ -10,7 +10,7 @@ Covers `packages/core/src/query/`, `packages/core/src/normalize/`, `packages/cor
 - Bound integers are int32 (`bindInteger` in `packages/desktop/src/main/duckdb-worker.ts`), so epoch milliseconds, byte counts and large thresholds overflow.
 - `toNum` decodes only numbers and bigints: a DECIMAL result becomes 0 with no error. Cost columns are DOUBLE by contract, and hand-written aggregates need `CAST(SUM(…) AS DOUBLE)`.
 - Rows leave the DuckDB worker by structured clone, which drops DuckDB's value classes: a DATE arrives as `{ days }`, a TIMESTAMP as `{ micros }`, and the `toStr` helpers read them as '' or '[object Object]'. Select them as VARCHAR. `run_sql`, whose columns are unknown, has DuckDB write each one as JSON text (`to_json`).
-- A new raw FOCUS column in `buildSource` goes into `packages/core/src/sync/focus-contract.ts`, and `packages/core/src/sync/gcp-canonicalize.ts` must produce it, or GCP months fail to bind. Keep `union_by_name=true` and the table prefix on raw columns.
+- A new raw FOCUS column in `buildSource` goes into `packages/core/src/sync/focus-contract.ts`, and `packages/core/src/sync/gcp-canonicalize.ts` must produce it, or GCP months fail to bind. A column only one provider type reads is listed in its `OPTIONAL_SOURCE_COLUMNS` instead. Keep `union_by_name=true` and the table prefix on raw columns.
 - Intersect every glob with the months that provider actually has on disk: one glob matching nothing fails the whole UNION.
 
 ## NULLs and missing values
@@ -39,7 +39,7 @@ Covers `packages/core/src/query/`, `packages/core/src/normalize/`, `packages/cor
 
 - A rollup bakes in the metric, enabled exclusions, the marketplace rewrite and the tag projection, while aliases apply at query time. Queries over it add no exclusions, but the date filter must appear on both paths.
 - Route a query to the rollup only for a single provider, the daily tier, no hour bounds, valid periods and the global cost scope, and only when every column the SQL touches is in `neededColumns`. A request with its own cost basis compares `computeShapeSignature` or stays on raw.
-- Anything that changes stored bytes goes into `packages/core/src/rollup/shape-signature.ts` or bumps `ROLLUP_SCHEMA_VERSION`.
+- Anything that changes stored bytes goes into `packages/core/src/rollup/shape-signature.ts` or bumps `ROLLUP_SCHEMA_VERSION`. A change to how one provider type is read bumps its `SOURCE_PROJECTION_REVISION` (`packages/core/src/query/provider-projection.ts`).
 - The result cache is keyed on SQL text and parameters. An input that changes results but not the SQL (newly synced files, org accounts, account or region maps) must clear it.
 
 ## Normalization

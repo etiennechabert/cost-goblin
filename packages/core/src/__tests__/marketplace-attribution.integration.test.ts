@@ -24,7 +24,7 @@ async function serviceTotals(
   costMetric: CostMetric,
   marketplaceAttribution: MarketplaceAttributionConfig | undefined,
 ): Promise<Record<string, number>> {
-  const source = buildSource({ dataDir, tier: 'daily', dimensions, providers: [{ name: PROVIDER }], costMetric, marketplaceAttribution });
+  const source = buildSource({ dataDir, tier: 'daily', dimensions, providers: [{ name: PROVIDER, type: 'aws' }], costMetric, marketplaceAttribution });
   const result = await conn.run(`SELECT service, SUM(cost) AS cost FROM ${source} GROUP BY service`);
   const rows = await result.getRowObjects();
   const out: Record<string, number> = {};

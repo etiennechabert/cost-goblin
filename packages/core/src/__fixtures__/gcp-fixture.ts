@@ -22,7 +22,9 @@ type Conn = Awaited<ReturnType<Awaited<ReturnType<typeof DuckDBInstance.create>>
  * a mixed-workspace query has something to get WRONG. Only the SHAPE is
  * GCP-specific — tz-aware timestamps, DECIMAL costs, repeated-struct tags,
  * `x_ServiceId`/`SkuId`, and no ServiceCategory / CommitmentDiscountStatus /
- * x_ServiceCode / x_Operation / SkuMeter at all.
+ * x_ServiceCode / x_Operation / SkuMeter at all. As on a live export,
+ * multi-region and global rows leave `RegionId` empty and name their location
+ * in `x_Location`, and `PricingCategory` is lowercase.
  */
 export async function writeGcpProvider(
   conn: Conn,
@@ -53,10 +55,16 @@ export async function writeGcpProvider(
         WHEN 'AmazonCloudWatch' THEN 'Cloud Monitoring'
         ELSE 'Cloud Logging'
       END AS ServiceName,
-      'europe-west1' AS RegionId,
+      -- Google leaves RegionId empty on multi-region and global charges and
+      -- names the location in x_Location: here a US multi-region bucket and
+      -- global networking, as BigQuery's US multi-region and Vertex AI's
+      -- global endpoint are on a live export.
+      CASE x_ServiceCode WHEN 'AmazonS3' THEN '' WHEN 'AmazonVPC' THEN '' ELSE 'europe-west1' END AS RegionId,
+      CASE x_ServiceCode WHEN 'AmazonS3' THEN 'us' WHEN 'AmazonVPC' THEN 'global' ELSE 'europe-west1' END AS x_Location,
       ResourceId,
       ChargeCategory,
-      PricingCategory,
+      -- The live export writes 'standard' where FOCUS and AWS write 'Standard'.
+      lower(PricingCategory) AS PricingCategory,
       ChargeDescription,
       CAST(ConsumedQuantity AS DECIMAL(38,9)) AS ConsumedQuantity,
       list_transform(map_entries(Tags), e -> struct_pack(
