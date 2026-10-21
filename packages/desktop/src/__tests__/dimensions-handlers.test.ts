@@ -198,7 +198,7 @@ describe('dimensions:discover-column-values', () => {
     expect(byTag).toEqual(expect.arrayContaining(['pay', 'Cards Production']));
   });
 
-  it('maps region codes to friendly names, countries or continents, merging values that share a label', async () => {
+  it('previews region codes under their friendly names once synced, and only when asked', async () => {
     const h = await dimsApp();
     const codes = values(await h.ipc.invoke('dimensions:discover-column-values', 'region', { useRegionNames: true }));
     expect(codes).toContain('eu-central-1');
@@ -208,12 +208,6 @@ describe('dimensions:discover-column-values', () => {
     expect(values(await h.ipc.invoke('dimensions:discover-column-values', 'region'))).toContain('eu-central-1');
     expect(values(await h.ipc.invoke('dimensions:discover-column-values', 'region', { useRegionNames: true })))
       .toEqual(expect.arrayContaining(['Europe (Frankfurt)', 'US West (Oregon)', 'ap-southeast-1']));
-    const countries = values(await h.ipc.invoke('dimensions:discover-column-values', 'region', { dimName: 'region_country' }));
-    expect(countries).toEqual(expect.arrayContaining(['DE', 'IE', 'US']));
-    expect(countries.filter(c => c === 'US')).toHaveLength(1);
-    const continents = values(await h.ipc.invoke('dimensions:discover-column-values', 'region', { dimName: 'region_continent' }));
-    // us-east-1 has no continent on file: its code is kept rather than an empty label.
-    expect(continents).toEqual(expect.arrayContaining(['EU', 'NA', 'us-east-1', 'ap-southeast-1']));
   });
 
   // Without it the preview would run on the defaults, not the user's scope.

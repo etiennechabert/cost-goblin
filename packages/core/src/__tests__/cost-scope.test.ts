@@ -533,6 +533,23 @@ describe('validateCostScope: legacy metric migration', () => {
     ]);
   });
 
+  it('moves rule conditions on the retired Country and Continent dimensions to Region', () => {
+    // Their country and subdivision codes match no region value, so the
+    // condition now matches nothing: the rule excludes less, never more.
+    const result = validateCostScope({
+      costMetric: 'effective',
+      rules: [{
+        id: 'geo-rule', name: 'Exclude German EC2', enabled: true,
+        conditions: [
+          { dimensionId: 'region_country', values: ['DE'] },
+          { dimensionId: 'region_continent', values: ['DE-HE'] },
+          { dimensionId: 'service', values: ['Amazon EC2'] },
+        ],
+      }],
+    });
+    expect(result.rules[0]?.conditions.map(c => c.dimensionId)).toEqual(['region', 'region', 'service']);
+  });
+
   it('migrates the CUR-era marketplace attribution target AmazonBedrock to the ServiceName value', () => {
     const result = validateCostScope({
       costMetric: 'effective',

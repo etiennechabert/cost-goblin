@@ -440,7 +440,7 @@ function stripIssueMessages(issues: StripPatternIssues): string[] {
 }
 
 function buildDiscoverOptions(
-  dim: { name: string; field: string },
+  dim: { field: string },
   state: EditingBuiltIn,
   normalize: NormalizationRule | undefined,
   stripPatternList: string[],
@@ -454,7 +454,7 @@ function buildDiscoverOptions(
       nameStripPatterns: stripPatternList,
       ...(state.accountNameFromTag.length > 0 ? { accountNameFromTag: state.accountNameFromTag } : {}),
     } : {}),
-    ...(isAnyRegionDim ? { dimName: dim.name, useRegionNames: state.useRegionNames } : {}),
+    ...(isAnyRegionDim ? { useRegionNames: state.useRegionNames } : {}),
   };
 }
 
@@ -465,11 +465,9 @@ function computeEnrichmentWarnings(
   orgQuery: { status: string; data?: unknown },
 ): { regionWarning: { kind: 'missing' | 'error'; message?: string } | null; accountWarning: boolean } {
   const isRegionDim = dim.name === 'region';
-  const isRegionCountryDim = dim.name === 'region_country';
-  const isRegionContinentDim = dim.name === 'region_continent';
   const isAccountDim = dim.field === 'account_id';
 
-  const wantsRegionEnrichment = (isRegionDim && state.useRegionNames) || isRegionCountryDim || isRegionContinentDim;
+  const wantsRegionEnrichment = isRegionDim && state.useRegionNames;
   let regionWarning: { kind: 'missing' | 'error'; message?: string } | null = null;
   if (wantsRegionEnrichment && regionInfoQuery.status === 'success') {
     const regionInfo = regionInfoQuery.data ?? null;
@@ -1848,9 +1846,8 @@ function RawOnlyBadge({ cardinality }: Readonly<{ cardinality: number | undefine
 }
 
 /** The enabled dimension a rollup grain column comes from, as its list key and
- *  label. Several can be views of one column (Region, Country and Continent
- *  all read `region`) and the grain probe lists the column once, so this is
- *  the first of them. */
+ *  label. Several built-ins can read one column and the grain probe lists the
+ *  column once, so this is the first of them. */
 function columnDimension(config: DimensionsConfig, column: string): { key: string; label: string } | undefined {
   const b = config.builtIn.find(d => d.enabled !== false && d.field === column);
   if (b !== undefined) return { key: builtInKey(b.name), label: b.label };

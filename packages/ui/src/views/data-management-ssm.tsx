@@ -30,7 +30,7 @@ function NoDataBanner({ hasError, info, syncState, profile, onSync }: Readonly<{
   const title = hasError ? 'Region Names sync failed' : 'Region Names not synced';
   const description = hasError
     ? (info?.lastError ?? 'Unknown error')
-    : 'Sync region friendly names from SSM to enrich the Region dimension with country and continent.';
+    : 'Sync region friendly names from SSM so the Region dimension shows Europe (Frankfurt) instead of eu-central-1.';
   const buttonLabel = hasError ? 'Retry sync' : 'Sync region names';
 
   return (
@@ -202,7 +202,7 @@ export function SsmParameterSection({ profile }: Readonly<{ profile: string | nu
       <ul className="px-4 pb-3 flex flex-col gap-1 text-xs">
         <li className="flex items-center gap-2">
           <span className="text-accent">✓</span>
-          <span className="text-text-secondary">{String(info.count)} regions enriched with longName + country + continent</span>
+          <span className="text-text-secondary">{String(info.count)} regions enriched with longName + country + subdivision</span>
           {info.syncedAt.length > 0 && (
             <span className="text-text-muted ml-auto">
               Synced {new Date(info.syncedAt).toLocaleString()}
@@ -232,7 +232,7 @@ export function SsmParameterSection({ profile }: Readonly<{ profile: string | nu
                   <th className="px-4 py-2 font-medium">Region Code</th>
                   <th className="px-4 py-2 font-medium">Friendly Name</th>
                   <th className="px-4 py-2 font-medium">Country</th>
-                  <th className="px-4 py-2 font-medium">Continent</th>
+                  <th className="px-4 py-2 font-medium" title="ISO 3166-2 code of the state or province the region is in">Subdivision</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border-subtle">
@@ -241,7 +241,7 @@ export function SsmParameterSection({ profile }: Readonly<{ profile: string | nu
                     <td className="px-4 py-1.5 font-mono text-text-secondary">{code}</td>
                     <td className="px-4 py-1.5 text-text-primary">{r.longName}</td>
                     <td className="px-4 py-1.5 text-text-muted font-mono">{r.country.length > 0 ? r.country : '—'}</td>
-                    <td className="px-4 py-1.5 text-text-muted">{r.continent.length > 0 ? r.continent : '—'}</td>
+                    <td className="px-4 py-1.5 text-text-muted font-mono">{r.continent.length > 0 ? r.continent : '—'}</td>
                   </tr>
                 ))}
               </tbody>
