@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { asDateString, asHourString, asTagValue } from '@costgoblin/core/browser';
-import { shouldAutoSwitchToHourly } from '../lib/drag-select.js';
+import {
+  asDateString,
+  asHourString,
+  asTagValue,
+  isPeriodGranularity,
+  previousPeriodRange,
+} from '@costgoblin/core/browser';
+import { resolveZoomDrag, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
 import { useHourlyConfigured } from '../hooks/use-hourly-configured.js';
 import { HourlyHintBanner } from '../components/hourly-hint-banner.js';
 import { UpdatingBadge } from '../components/updating-badge.js';
 import { RollupBuildingOverlay } from '../components/rollup-building-overlay.js';
-import { daysBetween } from '../lib/dates.js';
+import { daysAgo, daysBetween } from '../lib/dates.js';
 import { rollupGate } from '../lib/rollup-gate.js';
 import type {
   Dimension,
@@ -74,7 +80,9 @@ function formatHour(d: Date): string {
   return `${d.toISOString().slice(0, 10)} ${String(d.getUTCHours()).padStart(2, '0')}:00:00`;
 }
 
-function previousRangeFor(dr: DateRange): DateRange {
+function previousRangeFor(dr: DateRange, granularity: Granularity): DateRange {
+  // Weekly and Monthly compare the same number of whole periods just before.
+  if (isPeriodGranularity(granularity)) return previousPeriodRange(dr, granularity);
   // Sub-day window (drag-zoom into hours): shift back by the same hour duration
   // so the comparison is apples-to-apples (4 hours vs the prior 4 hours), not
   // 4 hours vs the 1–2 calendar days that contain them.
@@ -157,8 +165,8 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
   }
 
   const previousDateRange = useMemo(
-    () => previousRangeFor(dateRange),
-    [dateRange],
+    () => previousRangeFor(dateRange, granularity),
+    [dateRange, granularity],
   );
 
   // Cancel in-flight DuckDB queries when query-affecting state changes so
@@ -237,23 +245,23 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
   }
 
   const handleDateRangeChange = useCallback((range: DateRange, g?: Granularity) => {
-    setDateRange(range);
     if (g !== undefined) {
+      setDateRange(range);
       setGranularity(g);
       setHourlyHint(false);
       return;
     }
-    if (shouldAutoSwitchToHourly(range.start, range.end, granularity)) {
-      if (hourlyConfigured) {
-        setGranularity('hourly');
-        setHourlyHint(false);
-      } else {
-        setHourlyHint(true);
-      }
-    } else {
-      setHourlyHint(false);
-    }
-  }, [granularity, hourlyConfigured]);
+    // A drag-zoom names no mode. Monthly and Weekly drop to Daily for a short
+    // selection, ending no later than the newest day with data; a selection
+    // that starts after it has no days to show, so the drag is ignored. A short
+    // Daily window goes to Hourly when that tier exists, else shows the hint.
+    const zoom = resolveZoomDrag(range, granularity, daysAgo(lagDays));
+    if (zoom === null) return;
+    const needsHourlyHint = zoom.granularity === 'hourly' && granularity !== 'hourly' && !hourlyConfigured;
+    setDateRange(zoom.range);
+    setGranularity(needsHourlyHint ? granularity : zoom.granularity);
+    setHourlyHint(needsHourlyHint);
+  }, [granularity, hourlyConfigured, lagDays, setDateRange]);
 
   useEffect(() => {
     if (!shouldAutoSwitchToHourly(dateRange.start, dateRange.end, granularity)) {

@@ -1,8 +1,8 @@
-import { QueryBuilder, SecurityError } from '@costgoblin/core';
+import { isStringRecord, QueryBuilder, SecurityError } from '@costgoblin/core';
 import type { AggregatedTableRow, ExplorerSort } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
-import { aggregatedOrderBy, andWhere, groupBySelectList, groupByValues } from './explorer-columns.js';
-import type { GroupByColumn } from './explorer-columns.js';
+import { aggregatedOrderBy, andWhere, groupByList, groupBySelectList, groupByValues, groupValueExpr, rowFilterConditions } from './explorer-columns.js';
+import type { GroupByColumn, RowFilter } from './explorer-columns.js';
 import { toNum } from './query-utils.js';
 
 /** One group's values by group-by id, as in `AggregatedTableRow.values`. */
@@ -11,8 +11,16 @@ export type RowKey = Readonly<Record<string, string>>;
 /** Runs a query with its bound `$n` parameters. */
 export type RunSql = (sql: string, params: readonly unknown[]) => Promise<RawRow[]>;
 
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
+/** `raw` as an object of string values; `what` names it in the error.
+ *  @throws {SecurityError} for anything else */
+function parseStringValues(raw: unknown, what: string): Record<string, string> {
+  if (!isStringRecord(raw)) throw new SecurityError(`${what} must be an object`);
+  const values: Record<string, string> = {};
+  for (const [id, value] of Object.entries(raw)) {
+    if (typeof value !== 'string') throw new SecurityError(`${what} value for "${id}" must be a string`);
+    values[id] = value;
+  }
+  return values;
 }
 
 /** The renderer's `rowKeys`: none, or at most `max` objects of string values.
@@ -21,15 +29,13 @@ export function parseRowKeys(raw: unknown, max: number): readonly RowKey[] | und
   if (raw === undefined) return undefined;
   if (!Array.isArray(raw)) throw new SecurityError('rowKeys must be a list');
   if (raw.length > max) throw new SecurityError(`rowKeys has ${String(raw.length)} keys, more than the ${String(max)} rows a result can have`);
-  return raw.map((entry: unknown): RowKey => {
-    if (!isRecord(entry)) throw new SecurityError('each rowKeys entry must be an object');
-    const key: Record<string, string> = {};
-    for (const [id, value] of Object.entries(entry)) {
-      if (typeof value !== 'string') throw new SecurityError(`rowKeys value for "${id}" must be a string`);
-      key[id] = value;
-    }
-    return key;
-  });
+  return raw.map((entry: unknown): RowKey => parseStringValues(entry, 'each rowKeys entry'));
+}
+
+/** The renderer's `rowFilters`: none, or an object of string values.
+ *  @throws {SecurityError} for any other payload */
+export function parseRowFilters(raw: unknown): Readonly<Record<string, string>> | undefined {
+  return raw === undefined ? undefined : parseStringValues(raw, 'rowFilters');
 }
 
 /** Which groups a query keeps for its `rowKeys`. */
@@ -39,9 +45,9 @@ export type RowKeysFilter =
   | { readonly kind: 'some'; readonly condition: string };
 
 /** The groups `rowKeys` lists: a key keeps the group with its value on every
- *  group-by column, read as `groupByValues` reads it (a NULL reads as ''),
- *  and a key without such a value keeps none. The values are bound through
- *  `qb`; a table with no group-by has one total row, which any key keeps. */
+ *  group-by column, read as the rows read it (`groupValueExpr`), and a key
+ *  without such a value keeps none. The values are bound through `qb`; a
+ *  table with no group-by has one total row, which any key keeps. */
 export function rowKeysFilter(rowKeys: readonly RowKey[] | undefined, groupBy: readonly GroupByColumn[], qb: QueryBuilder): RowKeysFilter {
   if (rowKeys === undefined) return { kind: 'all' };
   if (groupBy.length === 0) return rowKeys.length === 0 ? { kind: 'none' } : { kind: 'all' };
@@ -49,16 +55,19 @@ export function rowKeysFilter(rowKeys: readonly RowKey[] | undefined, groupBy: r
   // read as a value.
   const usable = rowKeys.filter(key => groupBy.every(({ id }) => Object.hasOwn(key, id)));
   if (usable.length === 0) return { kind: 'none' };
-  const columns = groupBy.map(({ column }) => `COALESCE(CAST(${column} AS VARCHAR), '')`).join(', ');
+  const columns = groupBy.map(groupValueExpr).join(', ');
   const rows = usable.map(key => `row(${groupBy.map(({ id }) => qb.addParam(key[id])).join(', ')})`).join(', ');
   return { kind: 'some', condition: `row(${columns}) IN (${rows})` };
 }
 
 export interface AggregatedRowsQuery {
   readonly source: string;
-  /** The WHERE clause every line item must pass, or ''. */
+  /** The WHERE clause every line item must pass, or ''. It binds nothing:
+   *  the row filters and keys number their parameters from $1. */
   readonly where: string;
   readonly groupBy: readonly GroupByColumn[];
+  /** Only the line items with these values, e.g. a table row's group when it expands. */
+  readonly rowFilters: readonly RowFilter[];
   readonly sort: ExplorerSort | undefined;
   readonly rowLimit: number;
   readonly rowKeys: readonly RowKey[] | undefined;
@@ -77,10 +86,13 @@ function toAggregatedRow(r: RawRow, groupBy: readonly GroupByColumn[]): Aggregat
 /** The aggregated table's rows (the first `rowLimit` groups in `sort` order,
  *  or the one total row without a group-by) and how many groups pass. */
 export async function queryAggregatedRows(run: RunSql, q: AggregatedRowsQuery): Promise<{ rows: AggregatedTableRow[]; totalRows: number }> {
+  // One builder numbers every bound value, in WHERE order: the row filters', then the keys'.
   const qb = new QueryBuilder();
+  const filters = rowFilterConditions(q.rowFilters, qb);
   const keys = rowKeysFilter(q.rowKeys, q.groupBy, qb);
   if (keys.kind === 'none') return { rows: [], totalRows: 0 };
-  const where = keys.kind === 'some' ? andWhere(q.where, keys.condition) : q.where;
+  const conditions = keys.kind === 'some' ? [...filters, keys.condition] : filters;
+  const where = conditions.length === 0 ? q.where : andWhere(q.where, conditions.join(' AND '));
   const { params } = qb.build();
 
   if (q.groupBy.length === 0) {
@@ -98,11 +110,11 @@ export async function queryAggregatedRows(run: RunSql, q: AggregatedRowsQuery): 
     return { rows: [toAggregatedRow(r, q.groupBy)], totalRows: 1 };
   }
 
-  const groupByList = q.groupBy.map(g => g.column).join(', ');
+  const groupKeys = groupByList(q.groupBy);
   const countSql = `
     SELECT CAST(COUNT(*) AS DOUBLE) AS n FROM (
       SELECT 1 FROM ${q.source} ${where}
-      GROUP BY ${groupByList}
+      GROUP BY ${groupKeys}
     ) AS _cnt
   `.trim();
   const dataSql = `
@@ -114,7 +126,7 @@ export async function queryAggregatedRows(run: RunSql, q: AggregatedRowsQuery): 
       CAST(COUNT(*) AS DOUBLE) AS row_count
     FROM ${q.source}
     ${where}
-    GROUP BY ${groupByList}
+    GROUP BY ${groupKeys}
     ORDER BY ${aggregatedOrderBy(q.sort, q.groupBy)}
     LIMIT ${String(q.rowLimit)}
   `.trim();

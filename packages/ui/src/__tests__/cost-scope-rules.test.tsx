@@ -349,6 +349,23 @@ describe('CostScopeView — editing rules', () => {
     expect(saved.rules[0]?.conditions[0]?.dimensionId).toBe('charge_category');
   });
 
+  // A GCP-only workspace has no Service Code dimension, but the built-in
+  // AWS Premium Support rule still names it.
+  it('shows a condition on a dimension the workspace does not have under its own id', async () => {
+    const api = new ScopeApi();
+    api.dimensions = [{ name: asDimensionId('service'), label: 'Service', field: 'service' }];
+    const { user } = renderView(api);
+    const card = await ruleCard('AWS Premium Support');
+    const [select] = dimensionSelects(card);
+    if (select === undefined) throw new Error('condition picker missing');
+    expect(select.value).toBe('service_code');
+    expect(within(select).getByRole('option', { name: 'service_code (not configured)' })).toBeDefined();
+
+    await user.selectOptions(select, 'service');
+    const saved = await save(user, api);
+    expect(saved.rules.find(r => r.id === 'builtin:aws-premium-support')?.conditions[0]?.dimensionId).toBe('service');
+  });
+
   it('suggests values seen for a condition s dimension, and copes without any', async () => {
     const chargeCategory: Dimension = { name: asDimensionId('charge_category'), label: 'Charge category', field: 'charge_category' };
     const api = new ScopeApi();

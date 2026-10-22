@@ -90,3 +90,19 @@ export {
   preferredCommitmentLabel,
 } from './savings/labels.js';
 export { SAVINGS_PREFERENCES_DEFAULTS } from './savings/preferences.js';
+// Weekly and Monthly modes: pure UTC whole-period math (ISO weeks, calendar
+// months). Leaf module with no imports beyond types.
+export {
+  capToNewestDay,
+  countPeriods,
+  formatPeriodLabel,
+  isPeriodGranularity,
+  lastNPeriodsRange,
+  periodEnd,
+  periodStart,
+  periodStartsInRange,
+  previousPeriodRange,
+  shiftPeriodStart,
+  widenToPeriods,
+} from './query/periods.js';
+export type { PeriodGranularity } from './query/periods.js';

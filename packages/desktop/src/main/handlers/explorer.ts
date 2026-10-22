@@ -11,6 +11,7 @@ import {
   resolveField,
   tagDimColumn,
   tagSqlColumnsById,
+  usageDateBucketExpr,
 } from '@costgoblin/core';
 import type {
   ExplorerBaseParams,
@@ -34,9 +35,9 @@ import type {
 import type { RawRow } from '../duckdb-client.js';
 import { type AppContext, prefsPath } from './context.js';
 import { buildAccountReverseMap, columnForDimension, resolveRollupSource, tagSelectItems, tagValuesById, toNum, toStr } from './query-utils.js';
-import { parseRowKeys, queryAggregatedRows } from './aggregated-table.js';
+import { parseRowFilters, parseRowKeys, queryAggregatedRows } from './aggregated-table.js';
 import type { RunSql } from './aggregated-table.js';
-import { appendRowFilters, explorerGroupBy, explorerOrderBy } from './explorer-columns.js';
+import { explorerGroupBy, explorerOrderBy, explorerRowFilters } from './explorer-columns.js';
 import { buildExplorerFilterPredicate } from './explorer-filters.js';
 import { readExplorerPreferences, writeExplorerPreferences } from './explorer-prefs.js';
 import { resolveScopeMetric } from './explorer-scope.js';
@@ -290,7 +291,7 @@ export function registerExplorerHandlers(app: AppContext): void {
       // minutes before truncating so a fee at 11:56:32 lands in the 12:00
       // bucket instead of either getting its own bar (no truncation) or being
       // stuck in 11:00 (plain truncation).
-      bucketExpr = qc.tier === 'hourly' ? `date_trunc('hour', usage_hour + INTERVAL '30 minutes')` : 'usage_date';
+      bucketExpr = qc.tier === 'hourly' ? `date_trunc('hour', usage_hour + INTERVAL '30 minutes')` : usageDateBucketExpr(params.granularity);
     } else {
       // Exclusions are baked into the rollup, so only the date window + the
       // user's dashboard filters apply. line_items is the per-grain COUNT(*),
@@ -301,7 +302,8 @@ export function registerExplorerHandlers(app: AppContext): void {
       source = rollupSource;
       whereStr = `WHERE usage_date BETWEEN '${qc.startStr}' AND '${qc.endStr}'${filterClause}`;
       rowsExpr = 'COALESCE(SUM(line_items), 0)';
-      bucketExpr = 'usage_date';
+      // The rollup is daily-grained, so weekly/monthly buckets its days too.
+      bucketExpr = usageDateBucketExpr(params.granularity);
     }
 
     const totalsSql = `
@@ -399,11 +401,12 @@ export function registerExplorerHandlers(app: AppContext): void {
     return { sampleRows, tagColumns: qc.tagColumns };
   }));
 
-  // Without keys the queries take no parameters, so they keep the plain path.
+  // Without row filters or keys the queries take no parameters, so they keep the plain path.
   const runAggregatedSql: RunSql = (sql, bound) => bound.length === 0 ? runQuery(sql) : runPreparedQuery(sql, bound);
 
   ipcMain.handle('explorer:query-aggregated-table', (_event, payload: unknown): Promise<AggregatedTableResult> => originStore.run((payload as AggregatedTableParams).origin ?? null, async () => {
     const params = payload as AggregatedTableParams;
+    const rowFilters = parseRowFilters(params.rowFilters);
     const rowKeys = parseRowKeys(params.rowKeys, MAX_ROW_LIMIT);
     const qc = await prepareQueryContext(app, params);
 
@@ -411,8 +414,9 @@ export function registerExplorerHandlers(app: AppContext): void {
 
     const { rows, totalRows } = await queryAggregatedRows(runAggregatedSql, {
       source: qc.source,
-      where: appendRowFilters(qc.whereStr, params.rowFilters, qc.tagSqlColumns),
-      groupBy: explorerGroupBy(params.groupByColumns, qc.tagSqlColumns),
+      where: qc.whereStr,
+      groupBy: explorerGroupBy(params.groupByColumns, qc.tagSqlColumns, params.granularity),
+      rowFilters: explorerRowFilters(rowFilters, qc.tagSqlColumns, params.granularity),
       sort: params.sort,
       rowLimit: clampRowLimit(params.rowLimit),
       rowKeys,

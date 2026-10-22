@@ -104,8 +104,8 @@ describe('cloudSandboxEnv', () => {
     const paths = Object.values(pins).filter(value => isAbsolute(value));
     expect(paths.length).toBeGreaterThanOrEqual(6);
     for (const path of paths) expect(isInside(SANDBOX, path), path).toBe(true);
-    // Set, not unset: unset lets google-auth-library fall through to the ADC
-    // file under $HOME, which CLOUDSDK_CONFIG does not redirect.
+    // Set, not unset: unset, google-auth-library finds no ADC in the empty
+    // sandbox config dir, and @google-cloud/storage then retries anonymously.
     expect(env['GOOGLE_APPLICATION_CREDENTIALS']).toBe(join(SANDBOX, 'gcloud', 'application_default_credentials.json'));
     expect(cloudSandboxDirs(SANDBOX)).toEqual([env['CLOUDSDK_CONFIG']]);
   });

@@ -1,4 +1,5 @@
 import type { TelemetryStatus } from '@costgoblin/core/browser';
+import { SENTRY_DATA_COLLECTION, SENTRY_TRACE_LIFECYCLE } from '../../main/telemetry/sentry-privacy.js';
 
 let initialized = false;
 
@@ -31,8 +32,18 @@ export async function syncRendererTelemetry(status: TelemetryStatus): Promise<vo
   try {
     const Sentry = await import('@sentry/electron/renderer');
     Sentry.init({
+      // This client collects before it forwards, so it gets the main process's
+      // privacy settings too (see sentry-privacy.ts).
+      dataCollection: SENTRY_DATA_COLLECTION,
+      traceLifecycle: SENTRY_TRACE_LIFECYCLE,
       ...(wantTracing
-        ? { tracesSampleRate: status.tracesSampleRate, integrations: [Sentry.browserTracingIntegration()] }
+        ? {
+          tracesSampleRate: status.tracesSampleRate,
+          // INP is the one web vital sent as a standalone span rather than as
+          // part of the pageload transaction, so it would skip the main
+          // process's gate, scrub and audit outbox.
+          integrations: [Sentry.browserTracingIntegration({ webVitals: { ignore: ['inp'] } })],
+        }
         : {}),
     });
   } catch {

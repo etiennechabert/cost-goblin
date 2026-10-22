@@ -188,6 +188,9 @@ const api: CostApi = {
   getDataInventory(tier?: DataTier, providerName?: string): Promise<DataInventoryResult> {
     return invoke<DataInventoryResult>('data:inventory', tier, providerName);
   },
+  getLocalDataInventory(tier?: DataTier, providerName?: string): Promise<DataInventoryResult> {
+    return invoke<DataInventoryResult>('data:local-inventory', tier, providerName);
+  },
   syncPeriods(files: readonly { key: string; contentHash: string; size: number }[], syncId?: string): Promise<{ filesDownloaded: number; rowsProcessed: number }> {
     return invoke<{ filesDownloaded: number; rowsProcessed: number }>('data:sync-periods', files, syncId);
   },
@@ -296,7 +299,7 @@ const api: CostApi = {
   discoverTagKeys(): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }> {
     return invoke<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }>('dimensions:discover-tags');
   },
-  discoverColumnValues(field: string, opts?: { useOrgAccounts?: boolean; accountNameFromTag?: string; nameStripPatterns?: readonly string[]; normalize?: NormalizationRule; useRegionNames?: boolean; dimName?: string }): Promise<ColumnValuesPreview> {
+  discoverColumnValues(field: string, opts?: { useOrgAccounts?: boolean; accountNameFromTag?: string; nameStripPatterns?: readonly string[]; normalize?: NormalizationRule; useRegionNames?: boolean }): Promise<ColumnValuesPreview> {
     return invoke<ColumnValuesPreview>('dimensions:discover-column-values', field, opts);
   },
   getDimensionsConfig(): Promise<DimensionsConfig> {

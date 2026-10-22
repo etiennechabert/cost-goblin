@@ -1,11 +1,11 @@
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { asBucketPath, asDateString, asHourString } from '@costgoblin/core/browser';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { DEFAULT_LAG_DAYS, asBucketPath, asDateString, asHourString } from '@costgoblin/core/browser';
 import type { CostGoblinConfig } from '@costgoblin/core/browser';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
-import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
+import { DateRangePicker, getDefaultDateRange, lastNDaysRange } from '../components/date-range-picker.js';
 import type { DateRange, Granularity } from '../components/date-range-picker.js';
 
 /** A mock whose provider has the hourly tier, which lights up the toggle. */
@@ -97,6 +97,15 @@ describe('DateRangePicker — hour bounds', () => {
 });
 
 describe('DateRangePicker — with the hourly tier configured', () => {
+  // Hourly data reaches back to the first day of the month `retentionDays` ago,
+  // so whether a range fits depends on today's date: pin it (Date only, so
+  // waitFor and userEvent keep their timers).
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-21T12:00:00Z'));
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
   it('enables the Hourly toggle and switches granularity, keeping the day range', async () => {
     const value = getDefaultDateRange();
     const { onChange, user } = renderPicker({ value });
@@ -109,6 +118,12 @@ describe('DateRangePicker — with the hourly tier configured', () => {
 
     await user.click(hourly);
     expect(onChange).toHaveBeenLastCalledWith(value, 'hourly');
+  });
+
+  it('falls back to the last 7 days when the day range starts before the hourly retention', async () => {
+    const { onChange, user } = renderPicker({ value: lastNDaysRange(90, DEFAULT_LAG_DAYS) });
+    await user.click(await hourlyEnabled());
+    expect(onChange).toHaveBeenLastCalledWith(lastNDaysRange(7, DEFAULT_LAG_DAYS), 'hourly');
   });
 
   it('drops the hour bounds when switching back to Daily', async () => {

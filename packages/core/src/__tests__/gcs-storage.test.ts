@@ -3,21 +3,21 @@ import { GCS_READ_ONLY_SCOPE, createGcsStorage } from '../sync/gcs-storage.js';
 
 /** Both SDKs are replaced wholesale. `Storage` records the options it was
  *  built with. `GoogleAuth` records its options and stands in for Application
- *  Default Credentials: `getClient` hands back `state.adcClient`, `jsonContent`
- *  is the parsed ADC file, and `fromJSON` builds a tagged client from a
- *  credential body. `Impersonated` records its options. `JWT` and
- *  `BaseExternalAccountClient` stand in for a key and for federation, so a
- *  source that already IS the reader can be recognised. */
-const { storageOptions, googleAuthOptions, impersonatedOptions, fromJsonInputs, state, FakeJwt, FakeExternal, FakeImpersonated } = vi.hoisted(() => {
+ *  Default Credentials: `getClient` hands back `state.adcClient` and
+ *  `jsonContent` is the parsed ADC file. `Impersonated` records its options.
+ *  `JWT` and `BaseExternalAccountClient` stand in for a key and for
+ *  federation, so a source that already IS the reader can be recognised.
+ *  `JWT` and `UserRefreshClient` record the credential body their `fromJSON`
+ *  loads, the way a legacy file's source is unwrapped. */
+const { storageOptions, googleAuthOptions, impersonatedOptions, fromJsonInputs, state, FakeJwt, FakeExternal, FakeImpersonated, FakeUserRefresh } = vi.hoisted(() => {
   const storage: Record<string, unknown>[] = [];
   const googleAuth: Record<string, unknown>[] = [];
   const impersonated: Record<string, unknown>[] = [];
   const fromJson: unknown[] = [];
-  const adc: { adcClient: unknown; adcError: Error | undefined; adcFile: unknown; fromJsonClient: unknown } = {
+  const adc: { adcClient: unknown; adcError: Error | undefined; adcFile: unknown } = {
     adcClient: undefined,
     adcError: undefined,
     adcFile: null,
-    fromJsonClient: undefined,
   };
   class Impersonated {
     readonly options: Record<string, unknown>;
@@ -30,15 +30,29 @@ const { storageOptions, googleAuthOptions, impersonatedOptions, fromJsonInputs, 
       return typeof target === 'string' ? target : '';
     }
   }
+  /** Built with an email in these tests, or with `{ scopes }` (the SDK's
+   *  options) and then loaded with `fromJSON`. */
   class Jwt {
-    readonly email: string | undefined;
+    email: string | undefined;
     readonly scopes: readonly string[];
-    constructor(email: string | undefined, scopes: readonly string[] = []) {
-      this.email = email;
-      this.scopes = scopes;
+    constructor(emailOrOptions: string | { readonly scopes?: readonly string[] } | undefined, scopes: readonly string[] = []) {
+      this.email = typeof emailOrOptions === 'string' ? emailOrOptions : undefined;
+      this.scopes = typeof emailOrOptions === 'object' ? emailOrOptions.scopes ?? [] : scopes;
+    }
+    fromJSON(input: Record<string, unknown>): void {
+      fromJson.push(input);
+      const email = input['client_email'];
+      this.email = typeof email === 'string' ? email : undefined;
     }
     createScoped(scopes: readonly string[]): Jwt {
       return new Jwt(this.email, scopes);
+    }
+  }
+  class UserRefresh {
+    input: unknown = undefined;
+    fromJSON(input: Record<string, unknown>): void {
+      fromJson.push(input);
+      this.input = input;
     }
   }
   class External {
@@ -60,6 +74,7 @@ const { storageOptions, googleAuthOptions, impersonatedOptions, fromJsonInputs, 
     FakeJwt: Jwt,
     FakeExternal: External,
     FakeImpersonated: Impersonated,
+    FakeUserRefresh: UserRefresh,
   };
 });
 
@@ -85,12 +100,14 @@ vi.mock('google-auth-library', () => {
       if (state.adcError !== undefined) return Promise.reject(state.adcError);
       return Promise.resolve(state.adcClient);
     }
-    fromJSON(input: unknown): unknown {
-      fromJsonInputs.push(input);
-      return state.fromJsonClient ?? { kind: 'from-json', input };
-    }
   }
-  return { GoogleAuth, Impersonated: FakeImpersonated, JWT: FakeJwt, BaseExternalAccountClient: FakeExternal };
+  return {
+    GoogleAuth,
+    Impersonated: FakeImpersonated,
+    JWT: FakeJwt,
+    BaseExternalAccountClient: FakeExternal,
+    UserRefreshClient: FakeUserRefresh,
+  };
 });
 
 const READER_A = 'reader-a@personal-proj.iam.gserviceaccount.com';
@@ -133,7 +150,6 @@ beforeEach(() => {
   state.adcClient = userAdc;
   state.adcError = undefined;
   state.adcFile = null;
-  state.fromJsonClient = undefined;
 });
 
 describe('createGcsStorage without impersonation', () => {
@@ -194,7 +210,9 @@ describe('createGcsStorage with impersonateServiceAccount', () => {
 
     expect(fromJsonInputs).toEqual([{ type: 'authorized_user', client_id: 'cid', client_secret: 'secret', refresh_token: 'rt' }]);
     expect(impersonatedOptions).toHaveLength(1);
-    expect(impersonatedOptions[0]?.['sourceClient']).toEqual({ kind: 'from-json', input: fromJsonInputs[0] });
+    const sourceClient: unknown = impersonatedOptions[0]?.['sourceClient'];
+    expect(sourceClient).toBeInstanceOf(FakeUserRefresh);
+    expect(sourceClient).toMatchObject({ input: fromJsonInputs[0] });
     expect(impersonatedOptions[0]?.['targetPrincipal']).toBe(READER_A);
   });
 
@@ -251,11 +269,23 @@ describe('createGcsStorage with impersonateServiceAccount', () => {
       ...legacyAdcFile(READER_B),
       source_credentials: { type: 'service_account', client_email: READER_A, private_key: 'FAKE-KEY' },
     };
-    // fromJSON's client for a key is a JWT for that key.
-    state.fromJsonClient = new FakeJwt(READER_A);
     await createGcsStorage({ impersonateServiceAccount: READER_A });
+    // The key is loaded into a JWT, which is already the reader.
+    expect(fromJsonInputs).toEqual([{ type: 'service_account', client_email: READER_A, private_key: 'FAKE-KEY' }]);
     expect(impersonatedOptions).toEqual([]);
     expect(onlyStorageOptions()['authClient']).toMatchObject({ email: READER_A, scopes: [GCS_READ_ONLY_SCOPE] });
+  });
+
+  it('mints the reader from a legacy file whose key source is someone else, scoped for the IAM Credentials call', async () => {
+    state.adcFile = {
+      ...legacyAdcFile(READER_B),
+      source_credentials: { type: 'service_account', client_email: READER_B, private_key: 'FAKE-KEY' },
+    };
+    await createGcsStorage({ impersonateServiceAccount: READER_A });
+    const sourceClient: unknown = impersonatedOptions[0]?.['sourceClient'];
+    expect(sourceClient).toBeInstanceOf(FakeJwt);
+    expect(sourceClient).toMatchObject({ email: READER_B, scopes: [IAM_SCOPE] });
+    expect(impersonatedOptions[0]?.['targetPrincipal']).toBe(READER_A);
   });
 
   it('refuses to mint a reader from a legacy file it cannot unwrap, rather than chaining through it', async () => {

@@ -4,6 +4,9 @@ import { CoinRainLoader } from './coin-rain-loader.js';
 import { useSeriesColors } from '../hooks/use-palette.js';
 import type { SeriesColors } from '../lib/palette.js';
 import { useBarDragSelect } from '../hooks/use-bar-drag-select.js';
+import type { Granularity } from '@costgoblin/core/browser';
+import { isPeriodGranularity } from '@costgoblin/core/browser';
+import { costsTitle } from '../lib/dates.js';
 import { formatBucketKey } from '../lib/drag-select.js';
 
 export interface BarDay {
@@ -28,6 +31,9 @@ interface StackedBarChartProps {
    *  a dashed line overlay when present. */
   readonly previousTotals?: readonly number[] | undefined;
   readonly onRangeSelect?: ((startIdx: number, endIdx: number) => void) | undefined;
+  /** What a bar's `date` is: a weekly/monthly period start is labelled as its
+   *  period (`W43 2026`, `Oct 2026`) on the axis, the tooltip and the drag edges. */
+  readonly granularity?: Granularity | undefined;
   /** Fires when the focused series changes — either the user moused into a
    *  bar segment or hovered a row in the floating tooltip. Lets the host
    *  widget propagate to the global cross-chart focus so sibling pies dim
@@ -181,7 +187,7 @@ function BarColumn({ day, segments, segTotal, barPct, highlightedGroup, onSegmen
   );
 }
 
-export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expanded, onExpandToggle, title, loading, onSegmentClick, previousTotals, onRangeSelect, onSegmentHover }: StackedBarChartProps) {
+export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expanded, onExpandToggle, title, loading, onSegmentClick, previousTotals, onRangeSelect, granularity, onSegmentHover }: StackedBarChartProps) {
   const [hoveredDay, setHoveredDay] = useState<string | null>(null);
   const [hoveredSegment, setHoveredSegment] = useState<string | null>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
@@ -194,12 +200,16 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
     disabled: onRangeSelect === undefined || loading === true,
   });
 
+  const periodLabels = granularity !== undefined && isPeriodGranularity(granularity);
+  // Daily and hourly axes keep their compact MM-DD form.
+  const axisLabel = (date: string): string => periodLabels ? formatBucketKey(date, granularity) : date.slice(5);
+
   const dragLabels = (() => {
     if (selection === null) return null;
     const startBar = days[selection.startIdx];
     const endBar = days[selection.endIdx];
     if (startBar === undefined || endBar === undefined) return null;
-    return { start: formatBucketKey(startBar.date), end: formatBucketKey(endBar.date) };
+    return { start: formatBucketKey(startBar.date, granularity), end: formatBucketKey(endBar.date, granularity) };
   })();
 
   useEffect(() => {
@@ -240,7 +250,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
   return (
     <div className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-4 flex flex-col h-full overflow-hidden">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-medium text-text-secondary">{title ?? 'Daily Costs'}</h3>
+        <h3 className="text-sm font-medium text-text-secondary">{title ?? costsTitle(granularity ?? 'daily')}</h3>
         <div className="flex items-center gap-2">
         {tab !== undefined && onTabChange !== undefined && (
           <div className="flex items-center gap-1 rounded-lg border border-border bg-bg-tertiary/30 p-0.5">
@@ -333,7 +343,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                 <div className="rounded-lg bg-bg-secondary/95 px-4 py-3 text-[11px] text-text-primary whitespace-nowrap shadow-lg border border-border min-w-[280px] max-h-full overflow-y-auto">
                   <div className="mb-2 pb-2 border-b border-border-subtle flex flex-col gap-0.5">
                     <div className="flex items-center justify-between">
-                      <span className="font-semibold text-xs">{day.date}</span>
+                      <span className="font-semibold text-xs">{periodLabels ? axisLabel(day.date) : day.date}</span>
                       <span className="font-semibold text-xs">
                         Total: {formatDollars(day.total)}
                         {totalDelta !== undefined && (
@@ -478,7 +488,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                   className={`absolute text-[10px] text-text-muted whitespace-nowrap ${align}`}
                   style={{ left: `${String(pct)}%` }}
                 >
-                  {day.date.slice(5)}
+                  {axisLabel(day.date)}
                 </span>
               );
             })}

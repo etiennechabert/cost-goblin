@@ -35,9 +35,11 @@ const sig = (over: Partial<Parameters<typeof computeShapeSignature>[0]> = {}): s
   computeShapeSignature({ providerType: 'aws', dimensions: dims(), costMetric: 'effective', rules: [], orgAccountsDigest: 'org', ...over });
 
 describe('computeShapeSignature', () => {
-  it('keeps the values of a condition on an unconfigured dimension verbatim', () => {
-    // No dimension to normalize through: 'A' and 'a' drop different rows.
-    expect(sig({ rules: ruleOn('ghost', ['A']) })).not.toBe(sig({ rules: ruleOn('ghost', ['a']) }));
+  it('leaves out a rule on an unconfigured dimension, whatever its values', () => {
+    // Such a rule matches nothing at build time, so it stores the bytes of
+    // no rule; its values select nothing either.
+    expect(sig({ rules: ruleOn('ghost', ['A']) })).toBe(sig());
+    expect(sig({ rules: ruleOn('ghost', ['A']) })).toBe(sig({ rules: ruleOn('ghost', ['a']) }));
     // A configured dim's normalize rule makes the same two values one value.
     const teamId = tagDimColumn(TEAM);
     expect(sig({ rules: ruleOn(teamId, ['Prod']) })).toBe(sig({ rules: ruleOn(teamId, ['prod']) }));

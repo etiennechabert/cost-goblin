@@ -7,7 +7,7 @@ import type {
   EntityDetailResult,
   FilterMap,
 } from '@costgoblin/core/browser';
-import { asDateString, asDimensionId, asEntityRef, asHourString, asTagValue } from '@costgoblin/core/browser';
+import { asDateString, asDimensionId, asEntityRef, asHourString, asTagValue, isPeriodGranularity } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useViewDateRange } from '../hooks/use-view-date-range.js';
 import { useQuery } from '../hooks/use-query.js';
@@ -21,7 +21,9 @@ import type { PieSlice } from '../components/pie-chart.js';
 import { StackedBarChart, bucketBars } from '../components/stacked-bar-chart.js';
 import type { BarDay, HistogramTab } from '../components/stacked-bar-chart.js';
 import { getDimensionId, getDimensionLabel, isEnvironmentDimension, isOwnerDimension, isProductDimension, isUnitDimension } from '../lib/dimensions.js';
-import { computeBucketedHourRange, computeBucketedRange, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
+import { computeBucketedHourRange, computeBucketedRange, periodBarsRange, resolveZoomDrag, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
+import { costsTitle, daysAgo, dateColumnHeader } from '../lib/dates.js';
+import { fillPeriodBuckets } from '../lib/period-fill.js';
 import { BaselineMicroBar } from '../components/baseline-micro-bar.js';
 import { enabledGroupBys } from '../widgets/enabled-group-by.js';
 
@@ -50,13 +52,13 @@ function dailyCostsToBarDays(data: DailyCostsResult | null): BarDay[] {
   }));
 }
 
-function buildEntityCsv(data: EntityDetailResult): string {
+function buildEntityCsv(data: EntityDetailResult, granularity: Granularity): string {
   const lines: string[] = [
     `Entity,${String(data.entity)}`,
     `Total Cost,${String(data.totalCost)}`,
     `Percent Change,${String(data.percentChange)}`,
     '',
-    'Date,Cost',
+    `${dateColumnHeader(granularity)},Cost`,
     ...data.dailyCosts.map((d) => `${String(d.date)},${String(d.cost)}`),
     '',
     'Account,Cost,Percentage',
@@ -68,8 +70,8 @@ function buildEntityCsv(data: EntityDetailResult): string {
   return lines.join('\n');
 }
 
-function handleCsvExport(data: EntityDetailResult, entity: string) {
-  const csv = buildEntityCsv(data);
+function handleCsvExport(data: EntityDetailResult, entity: string, granularity: Granularity) {
+  const csv = buildEntityCsv(data, granularity);
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -226,7 +228,17 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
     () => api.queryDailyCosts({ groupBy: histogramDimId, dateRange, filters: entityFilter, granularity, origin: `entity-detail:histogram:${String(histogramDimId)}` }),
     [histogramDimId, dateRangeKey, filterKey, granularity, api],
   );
-  const barDays = bucketBars(dailyCostsToBarDays(dailyQuery.status === 'success' ? dailyQuery.data : null), 170);
+  // Weekly/Monthly: every period of the selection gets a bar, the current
+  // unfinished one included.
+  const barDays = bucketBars(
+    fillPeriodBuckets(
+      dailyCostsToBarDays(dailyQuery.status === 'success' ? dailyQuery.data : null),
+      dateRange,
+      granularity,
+      date => ({ date, total: 0, breakdown: {} }),
+    ),
+    170,
+  );
 
   const handleHistogramRangeSelect = useCallback((startIdx: number, endIdx: number) => {
     if (granularity === 'hourly') {
@@ -247,6 +259,18 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
       setHourlyHint(false);
       return;
     }
+    if (isPeriodGranularity(granularity)) {
+      // A bar is a whole week or month: the drag selects those periods, then
+      // zooms like a dashboard drag, ending no later than the newest day.
+      const periods = periodBarsRange(barDays, startIdx, endIdx, granularity);
+      if (periods === null) return;
+      const zoom = resolveZoomDrag(periods, granularity, daysAgo(lagDays));
+      if (zoom === null) return;
+      setDateRange(zoom.range);
+      setGranularity(zoom.granularity);
+      setHourlyHint(false);
+      return;
+    }
     const range = computeBucketedRange(barDays, startIdx, endIdx, dateRange.end);
     if (range === null) return;
     const { startDate, endDate } = range;
@@ -261,7 +285,7 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
     } else {
       setHourlyHint(false);
     }
-  }, [barDays, dateRange.end, granularity, hourlyConfigured]);
+  }, [barDays, dateRange.end, granularity, hourlyConfigured, lagDays]);
 
   useEffect(() => {
     if (!shouldAutoSwitchToHourly(dateRange.start, dateRange.end, granularity)) {
@@ -297,7 +321,7 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
           {data !== null && (
             <button
               type="button"
-              onClick={() => { handleCsvExport(data, entity); }}
+              onClick={() => { handleCsvExport(data, entity, granularity); }}
               className="flex items-center gap-1.5 rounded-lg border border-border bg-bg-tertiary/50 px-3 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary"
             >
               Export CSV
@@ -352,7 +376,8 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
                 onTabChange={setHistogramTab}
                 expanded={histogramExpanded}
                 onExpandToggle={() => { setHistogramExpanded(prev => !prev); }}
-                title={granularity === 'hourly' ? 'Hourly Costs' : 'Daily Costs'}
+                title={costsTitle(granularity)}
+                granularity={granularity}
                 loading={dailyQuery.status === 'loading'}
                 onRangeSelect={handleHistogramRangeSelect}
               />

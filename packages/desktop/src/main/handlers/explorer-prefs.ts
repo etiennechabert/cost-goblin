@@ -91,9 +91,11 @@ export async function readExplorerPreferences(
         }
       : null;
 
-  // Validate lastUsedGranularity: must be 'daily' or 'hourly'
+  // Validate lastUsedGranularity: one of the four modes
   const validGranularity =
-    rawGranularity === 'daily' || rawGranularity === 'hourly' ? rawGranularity : null;
+    rawGranularity === 'monthly' || rawGranularity === 'weekly' || rawGranularity === 'daily' || rawGranularity === 'hourly'
+      ? rawGranularity
+      : null;
 
   const rawCompare = obj?.['compareEnabled'];
   const compareEnabled = rawCompare === true ? true : undefined;

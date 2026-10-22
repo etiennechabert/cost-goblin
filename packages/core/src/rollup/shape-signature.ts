@@ -37,6 +37,17 @@ function findDim(dimensionId: string, dims: DimensionsConfig): BuiltInDimension 
   return dims.tags.find(t => tagDimColumn(t) === dimensionId);
 }
 
+/** True when a partition build applies none of the rule, mirroring builder.ts
+ *  `buildRuleMatchExpr`: a condition with something to match (values, or
+ *  matchMissing) names a dimension the config doesn't have. Such a rule stores
+ *  the same bytes as no rule. Builds before that change dropped just the
+ *  condition, so leaving the rule out of the digest re-rolls their partitions;
+ *  the dimension coming back puts it in again. */
+function matchesNothingAtBuild(rule: ExclusionRule, dims: DimensionsConfig): boolean {
+  return rule.conditions.some(c =>
+    (c.values.length > 0 || c.matchMissing === true) && findDim(c.dimensionId, dims) === undefined);
+}
+
 /** A condition's missing-value treatment, where it decides the stored bytes.
  *  Built-in columns are never NULL (buildSource coalesces them), so a condition
  *  on one without matchMissing builds what it always did and stays out of the
@@ -121,7 +132,7 @@ export function computeShapeSignature(input: ShapeSignatureInput): string {
     .sort((a, b) => a.column.localeCompare(b.column));
 
   const exclusionRules = rules
-    .filter(r => r.enabled)
+    .filter(r => r.enabled && !matchesNothingAtBuild(r, dimensions))
     .map(r => ({
       conditions: r.conditions.map(c => ({
         dimensionId: c.dimensionId,

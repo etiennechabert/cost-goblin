@@ -28,8 +28,8 @@ function dedupeByField(dims: readonly BuiltInDimension[]): readonly BuiltInDimen
  *  dimensions are never included (the no-tags rule). With no override, returns
  *  the enabled built-ins minus any the existing cardinality heuristic flags
  *  raw-only (e.g. `resource_id`) — so the default grain stays stable and the
- *  partition doesn't explode. Dimensions sharing a physical column (Region /
- *  Country / Continent) are collapsed to one. */
+ *  partition doesn't explode. Built-ins sharing a physical column are
+ *  collapsed to one. */
 export function resolveDiscoveryGrain(input: DiscoveryGrainInput): readonly BuiltInDimension[] {
   const enabled = input.dimensions.builtIn.filter((d) => d.enabled !== false);
   if (input.override.length > 0) {

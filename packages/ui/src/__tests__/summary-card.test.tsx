@@ -126,4 +126,24 @@ describe('SummaryCard', () => {
     expect(comparisonPanel()).toBeNull();
     expect(screen.queryByText(/Previous/)).toBeNull();
   });
+
+  it('divides the daily average by the days actually read, not the whole selection', () => {
+    // A Monthly "Last 3 months" (Aug 1 – Oct 31, 92 days) read up to Oct 19: 80 days.
+    const selection = { start: '2026-08-01', end: '2026-10-31' };
+    const read = { start: '2026-08-01', end: '2026-10-19' };
+    const previousSelection = { start: '2026-05-01', end: '2026-07-31' };
+    render(<SummaryCard
+      totalCost={8_000}
+      previousCost={9_200}
+      dateRange={selection}
+      previousDateRange={previousSelection}
+      coveredRange={read}
+      previousCoveredRange={previousSelection}
+    />);
+
+    // 8000 / 80 = $100 (not 8000 / 92 = $86.96); the previous period is whole: 9200 / 92 = $100.
+    expect(dailyAverageLine().textContent).toBe('$100.00(+$0.00)');
+    expect(screen.getByText('Previous: $100.00/day')).toBeDefined();
+    expect(screen.getByText('Aug 1, 2026 – Oct 31, 2026')).toBeDefined();
+  });
 });

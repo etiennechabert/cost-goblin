@@ -8,24 +8,18 @@ import { applyNormalizeAndStrip, mergeValuesByLabel, NO_STRIP_ISSUES, parsePrevi
 import { rawGlobLiteral, toNum, toStr } from './query-utils.js';
 import { tagDiscoverySince } from './query-windows.js';
 
+/** The Region editor's preview with friendly names on: each code under its
+ *  SSM long name (codes the snapshot doesn't name stay raw), merging values
+ *  that share one. */
 async function applyRegionPreview(
   values: ValueCostPair[],
-  opts: { dimName?: string; useRegionNames?: boolean } | undefined,
-  getRegionMap: () => Promise<ReadonlyMap<string, { longName: string; country: string; continent: string }>>,
+  getRegionMap: () => Promise<ReadonlyMap<string, { longName: string }>>,
 ): Promise<ValueCostPair[]> {
   const regionMap = await getRegionMap();
-  const pick: ((info: { longName: string; country: string; continent: string }) => string) | null = (() => {
-    if (opts?.dimName === 'region_country') return (i: { country: string }) => i.country;
-    if (opts?.dimName === 'region_continent') return (i: { continent: string }) => i.continent;
-    if (opts?.useRegionNames === true) return (i: { longName: string }) => i.longName;
-    return null;
-  })();
-  if (pick === null || regionMap.size === 0) return values;
+  if (regionMap.size === 0) return values;
   return mergeValuesByLabel(values, (raw) => {
-    const info = regionMap.get(raw);
-    if (info === undefined) return raw;
-    const label = pick(info);
-    return label.length > 0 ? label : raw;
+    const longName = regionMap.get(raw)?.longName ?? '';
+    return longName.length > 0 ? longName : raw;
   });
 }
 
@@ -146,7 +140,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
   // Distinct values + cost for a built-in column — powers the preview on the
   // built-in editor ("Service has 120 distinct values, top 20 by cost are...").
   // Scans the most recent daily period so the preview loads fast.
-  ipcMain.handle('dimensions:discover-column-values', async (_event, field: string, opts?: { useOrgAccounts?: boolean; accountNameFromTag?: string; nameStripPatterns?: readonly string[]; normalize?: NormalizationRule; useRegionNames?: boolean; dimName?: string }): Promise<ColumnValuesPreview> => {
+  ipcMain.handle('dimensions:discover-column-values', async (_event, field: string, opts?: { useOrgAccounts?: boolean; accountNameFromTag?: string; nameStripPatterns?: readonly string[]; normalize?: NormalizationRule; useRegionNames?: boolean }): Promise<ColumnValuesPreview> => {
     // Renderer input, run on the main thread: shape-check the strip patterns
     // (string[] within the save caps) before any other work, then use only
     // the parsed list. `opts?.` is safe on any IPC value (null, a number, ...).
@@ -207,8 +201,8 @@ export function registerDimensionsHandlers(app: AppContext): void {
       }
     }
 
-    if (field === 'region') {
-      values = await applyRegionPreview(values, opts, getRegionMap);
+    if (field === 'region' && opts?.useRegionNames === true) {
+      values = await applyRegionPreview(values, getRegionMap);
     }
 
     const transformed = applyNormalizeAndStrip(values, field, { normalize: opts?.normalize, nameStripPatterns });

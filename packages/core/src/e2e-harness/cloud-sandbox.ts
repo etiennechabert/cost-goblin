@@ -24,16 +24,18 @@
  * explicitly (a GCP `keyFile`) are used as named; the fixture configs name
  * none, so pointing a launch at a real config means accepting that.
  *
- * Checked against the SDKs and CLIs the app ships (google-auth-library 9,
- * gcp-metadata 6, @google-cloud/storage 8, @aws-sdk credential-provider-node
+ * Checked against the SDKs and CLIs the app ships (google-auth-library 11,
+ * gcp-metadata 9, @google-cloud/storage 8, @aws-sdk credential-provider-node
  * 3, the gcloud CLI):
  *
  * - `GOOGLE_APPLICATION_CREDENTIALS` must be SET, not merely unset. Unset (or
- *   empty), google-auth-library falls through to the well-known ADC file under
- *   `$HOME/.config/gcloud` (`%APPDATA%\gcloud` on Windows) and does NOT honour
- *   `CLOUDSDK_CONFIG` — only `$HOME`, which cannot be moved without also moving
- *   Electron's and the Keychain's view of home. Pointing it at a missing file
- *   makes ADC reject before that lookup happens.
+ *   empty), google-auth-library falls through to the well-known ADC file in
+ *   `CLOUDSDK_CONFIG` (pinned below, so the sandbox's empty one), and finding
+ *   none there is NO_ADC_FOUND, which @google-cloud/storage answers by
+ *   retrying anonymously. Pointing it at a missing file makes ADC reject
+ *   before that lookup happens. (`CLOUDSDK_CONFIG` also locates the SDK's
+ *   `certificate_config.json`, read only for a credential file that asks for
+ *   it.)
  *   Trade-off: the app then sees "The file at … does not exist", which it does
  *   not classify as a credential error, instead of the NO_ADC_FOUND a
  *   signed-out user gets. That is deliberate — on NO_ADC_FOUND,

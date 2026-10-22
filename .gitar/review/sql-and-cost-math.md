@@ -4,7 +4,7 @@ Covers `packages/core/src/query/`, `packages/core/src/normalize/`, `packages/cor
 
 ## Building SQL
 
-- Dimension ids from the renderer, a config or MCP reach SQL only through `resolveField` or `tryResolveField`. Rule conditions may skip an unknown id; filters and group-bys must throw. Other columns come from fixed allow-lists, so extend the list rather than interpolating.
+- Dimension ids from the renderer, a config or MCP reach SQL only through `resolveField` or `tryResolveField`. An exclusion rule with a condition on an unknown id matches nothing (never drop the AND-leg: that excludes more); the Explorer's filters skip it; filters and group-bys must throw. Other columns come from fixed allow-lists, so extend the list rather than interpolating.
 - A tag's id is not its SQL column, because DuckDB identifiers are case-insensitive even when quoted. SQL uses `tagSqlColumn`. The persisted `tagDimColumn` form, stored in views, baselines and bundles, must keep its format (`packages/core/src/types/branded.ts`).
 - DuckDB can't prepare DDL (`CREATE … AS`, `COPY … TO`). The rollup and grain-probe builders therefore inline escaped literals after `assertBillingPeriod` / `assertDateString`, and a `$n` placeholder in DDL stays unbound.
 - Bound integers are int32 (`bindInteger` in `packages/desktop/src/main/duckdb-worker.ts`), so epoch milliseconds, byte counts and large thresholds overflow.

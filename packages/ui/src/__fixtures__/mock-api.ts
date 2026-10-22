@@ -357,6 +357,10 @@ export class MockCostApi implements CostApi {
       local: { periods: [], diskBytes: 0, oldestPeriod: null, newestPeriod: null },
     });
   }
+  /** Mirrors the desktop handler: the empty fixture, no remote involved. */
+  getLocalDataInventory(tier?: DataTier, providerName?: string): Promise<DataInventoryResult> {
+    return this.getDataInventory(tier, providerName);
+  }
   // Property-style so the declared types keep the params (see getSyncStatus).
   syncPeriods: (files: readonly { key: string; contentHash: string; size: number }[], syncId?: string) => Promise<{ filesDownloaded: number; rowsProcessed: number }> =
     () => Promise.resolve({ filesDownloaded: 0, rowsProcessed: 0 });

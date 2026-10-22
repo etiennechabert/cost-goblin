@@ -1,7 +1,21 @@
+import {
+  asDateString,
+  capToNewestDay,
+  countPeriods,
+  formatPeriodLabel,
+  isPeriodGranularity,
+  periodEnd,
+  periodStart,
+} from '@costgoblin/core/browser';
+import type { DateRange, DateString, PeriodGranularity } from '@costgoblin/core/browser';
 import type { Granularity } from '../components/date-range-picker.js';
 import { daysBetween } from './dates.js';
 
 const HOURLY_THRESHOLD_DAYS = 7;
+/** A drag over this many periods or fewer zooms into days: a bar or two is too
+ *  coarse to explore, and a couple of months or three weeks is a daily window. */
+const MAX_PERIODS_TO_ZOOM_TO_DAILY: Readonly<Record<PeriodGranularity, number>> = { monthly: 2, weekly: 3 };
+const PERIOD_KEY = /^\d{4}-\d{2}-\d{2}/;
 
 export function pixelToIndex(x: number, containerWidth: number, bucketCount: number): number {
   if (bucketCount <= 0 || containerWidth <= 0) return 0;
@@ -53,10 +67,16 @@ export function bucketKeyToDate(key: string): string {
 
 /** Human-readable label for a bar's time bucket. Hourly bucket keys carry an
  *  `HH:MM` suffix (e.g. "2026-05-01 21:00") and we surface that; daily keys
- *  collapse to date-only ("May 1"). Used for the live drag-zoom edge labels
- *  so the user can see the period before releasing the mouse. */
-export function formatBucketKey(key: string): string {
+ *  collapse to date-only ("May 1"); weekly and monthly keys, which are their
+ *  period's first day, read as the period ("W43 2026", "Oct 2026"). Used for the live
+ *  drag-zoom edge labels so the user can see the period before releasing the
+ *  mouse. */
+export function formatBucketKey(key: string, granularity?: Granularity): string {
   if (key.length === 0) return '';
+  // A weekly/monthly bucket key is its period's first day.
+  if (granularity !== undefined && isPeriodGranularity(granularity)) {
+    return PERIOD_KEY.test(key) ? formatPeriodLabel(asDateString(key.slice(0, 10)), granularity) : key;
+  }
   const datePart = key.slice(0, 10);
   const [yearStr, monthStr, dayStr] = datePart.split('-');
   const year = Number(yearStr);
@@ -73,17 +93,67 @@ export function formatBucketKey(key: string): string {
   return dateLabel;
 }
 
+/** The granularity a drag-zoom onto `range` lands on: Monthly and Weekly drop
+ *  to Daily for a short selection, Daily drops to Hourly for a window of a week
+ *  or less, anything else stays. `hourly` only says the window is short enough;
+ *  whether an hourly tier exists is the caller's check. */
+export function zoomGranularity(
+  range: { readonly start: string; readonly end: string },
+  current: Granularity,
+): Granularity {
+  if (isPeriodGranularity(current)) {
+    const periods = countPeriods({ start: asDateString(range.start), end: asDateString(range.end) }, current);
+    return periods <= MAX_PERIODS_TO_ZOOM_TO_DAILY[current] ? 'daily' : current;
+  }
+  if (current === 'daily' && daysBetween(range.start, range.end) <= HOURLY_THRESHOLD_DAYS) return 'hourly';
+  return current;
+}
+
 export function shouldAutoSwitchToHourly(
   startDate: string,
   endDate: string,
   currentGranularity: Granularity,
 ): boolean {
-  if (currentGranularity !== 'daily') return false;
-  return daysBetween(startDate, endDate) <= HOURLY_THRESHOLD_DAYS;
+  return currentGranularity === 'daily' && zoomGranularity({ start: startDate, end: endDate }, currentGranularity) === 'hourly';
 }
 
 interface BucketLike {
   readonly date: string;
+}
+
+/** The whole periods a drag over weekly or monthly bars selects: the first
+ *  bar's period start to the last bar's period end (a bar is keyed by its
+ *  period's first day). Null when an index has no bar. */
+export function periodBarsRange(
+  bars: readonly BucketLike[],
+  startIdx: number,
+  endIdx: number,
+  granularity: PeriodGranularity,
+): { start: DateString; end: DateString } | null {
+  const first = bars[startIdx];
+  const last = bars[endIdx];
+  if (first === undefined || last === undefined) return null;
+  return {
+    start: periodStart(asDateString(bucketKeyToDate(first.date)), granularity),
+    end: periodEnd(asDateString(bucketKeyToDate(last.date)), granularity),
+  };
+}
+
+/** Where a drag-zoom onto `range` lands, from a chart in `current`: the zoomed
+ *  granularity and the range to show, or null when the drag changes nothing.
+ *  A drag in Weekly or Monthly runs over whole periods that can reach past the
+ *  newest day with data: one that starts after it has no days to show (null),
+ *  and one that drops to Daily ends no later than it. Daily and Hourly drags
+ *  keep their range as dragged. */
+export function resolveZoomDrag(
+  range: DateRange,
+  current: Granularity,
+  newestDay: DateString,
+): { readonly range: DateRange; readonly granularity: Granularity } | null {
+  const zoomed = zoomGranularity(range, current);
+  if (!isPeriodGranularity(current)) return { range, granularity: zoomed };
+  if (range.start > newestDay) return null;
+  return { range: zoomed === 'daily' ? capToNewestDay(range, newestDay) : range, granularity: zoomed };
 }
 
 // For bucketed bars (one bar can cover multiple days) the bar's date is the

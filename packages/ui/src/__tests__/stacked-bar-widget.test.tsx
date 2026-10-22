@@ -18,6 +18,7 @@ import type { CostFocusAction, CostFocusState } from '../hooks/use-cost-focus.js
 import { PaletteProvider } from '../hooks/use-palette.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { StackedBarWidget } from '../widgets/stacked-bar-widget.js';
+import { costsTitle } from '../lib/dates.js';
 import { deferred, settle } from './deferred.js';
 
 const SERVICE = asDimensionId('service');
@@ -203,6 +204,64 @@ describe('StackedBarWidget — daily bars', () => {
     await act(async () => { await new Promise(resolve => { setTimeout(resolve, 0); }); });
     expect(api.calls).toHaveLength(0);
     expect(container.innerHTML).toBe('');
+  });
+});
+
+describe('StackedBarWidget — weekly and monthly bars', () => {
+  it('shows the current unfinished month as an empty bar when it has no data yet', async () => {
+    const api = new DailyApi();
+    api.current = () => Promise.resolve(daily([
+      ['2026-08-01', { platform: 60, data: 40 }],
+      ['2026-09-01', { platform: 70, data: 30 }],
+    ]));
+    const monthRange: DateRange = { start: asDateString('2026-08-01'), end: asDateString('2026-10-31') };
+    const { container } = renderWidget({ api, granularity: 'monthly', dateRange: monthRange });
+
+    const cols = await bars(container, 3);
+    expect(segments(cols[0])).toHaveLength(2);
+    expect(segments(cols[2])).toHaveLength(0);
+    for (const label of ['Aug 2026', 'Sep 2026', 'Oct 2026']) expect(screen.getByText(label)).toBeDefined();
+    expect(api.calls[0]).toMatchObject({ dateRange: monthRange, granularity: 'monthly' });
+  });
+
+  it('fills missing weeks and labels them by ISO week', async () => {
+    const api = new DailyApi();
+    api.current = () => Promise.resolve(daily([
+      ['2026-09-28', { platform: 60 }],
+      ['2026-10-12', { platform: 70 }],
+    ]));
+    const weekRange: DateRange = { start: asDateString('2026-09-28'), end: asDateString('2026-10-18') };
+    const { container } = renderWidget({ api, granularity: 'weekly', dateRange: weekRange });
+
+    const cols = await bars(container, 3);
+    expect(segments(cols[1])).toHaveLength(0);
+    for (const label of ['W40 2026', 'W41 2026', 'W42 2026']) expect(screen.getByText(label)).toBeDefined();
+  });
+
+  it('titles a default chart by its granularity', () => {
+    expect(costsTitle('monthly')).toBe('Monthly Costs');
+    expect(costsTitle('weekly')).toBe('Weekly Costs');
+    expect(costsTitle('daily')).toBe('Daily Costs');
+    expect(costsTitle('hourly')).toBe('Hourly Costs');
+  });
+});
+
+describe('StackedBarWidget — Monthly compare', () => {
+  it('aligns a previous result that lacks a month by period, not by position', async () => {
+    const current = daily(['2026-06-01', '2026-07-01', '2026-08-01', '2026-09-01', '2026-10-01'].map(m => [m, { platform: 100 }] as const));
+    const range: DateRange = { start: asDateString('2026-06-01'), end: asDateString('2026-10-31') };
+    const previousRange: DateRange = { start: asDateString('2026-01-01'), end: asDateString('2026-05-31') };
+    // March (the third month) has no spend, so the monthly query omits it.
+    const previous = daily([['2026-01-01', { platform: 10 }], ['2026-02-01', { platform: 20 }], ['2026-04-01', { platform: 40 }], ['2026-05-01', { platform: 50 }]]);
+    const api = new DailyApi();
+    api.current = (p) => Promise.resolve(p.dateRange.start === previousRange.start ? previous : current);
+
+    const { container } = renderWidget({ api, compareEnabled: true, granularity: 'monthly', dateRange: range, previousDateRange: previousRange });
+    await bars(container, 5);
+
+    // Five points, March a zero in third place: 10, 20, 0, 40, 50 of a 100 max.
+    await waitFor(() => { expect(container.querySelector('polyline')).not.toBeNull(); });
+    expect(container.querySelector('polyline')?.getAttribute('points')).toBe('0,900 250,800 500,1000 750,600 1000,500');
   });
 });
 

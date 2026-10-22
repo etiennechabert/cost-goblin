@@ -64,12 +64,12 @@ describe('BuiltInEditor — Region dimension', () => {
     expect(await screen.findByText(/Use friendly names \(e\.g\. "Europe \(Frankfurt\)"\)/)).toBeDefined();
     const toggle = screen.getByRole('switch');
     expect(toggle.getAttribute('aria-checked')).toBe('true');
-    await waitFor(() => { expect(discover).toHaveBeenLastCalledWith('region', { dimName: 'region', useRegionNames: true }); });
+    await waitFor(() => { expect(discover).toHaveBeenLastCalledWith('region', { useRegionNames: true }); });
     expect(screen.queryByText(MISSING)).toBeNull();
 
     await user.click(toggle);
     expect(toggle.getAttribute('aria-checked')).toBe('false');
-    await waitFor(() => { expect(discover).toHaveBeenLastCalledWith('region', { dimName: 'region', useRegionNames: false }); });
+    await waitFor(() => { expect(discover).toHaveBeenLastCalledWith('region', { useRegionNames: false }); });
 
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await user.click(await screen.findByRole('button', { name: /Apply & rebuild/ }));
@@ -108,29 +108,6 @@ describe('BuiltInEditor — Region dimension', () => {
     const { regionInfoSpy, user } = renderView({ ...REGION, useRegionNames: false }, null);
     await openRegionEditor(user);
     await waitFor(() => { expect(regionInfoSpy).toHaveBeenCalled(); });
-    await screen.findByText(/Preview — 3 distinct values/);
-    expect(screen.queryByText(MISSING)).toBeNull();
-  });
-});
-
-describe('BuiltInEditor — Country and Continent dimensions', () => {
-  it.each([
-    ['region_country', 'Country'],
-    ['region_continent', 'Continent'],
-  ])('%s always needs the snapshot, and offers normalization instead of the toggle', async (name, label) => {
-    const dim: BuiltInDimension = { name: asDimensionId(name), label, field: 'region' };
-    const { discover, user } = renderView(dim, null);
-    await openRegionEditor(user);
-    expect(await screen.findByText(MISSING)).toBeDefined();
-    expect(screen.queryByRole('switch')).toBeNull();
-    expect(screen.getByLabelText('Normalization')).toBeDefined();
-    await waitFor(() => { expect(discover).toHaveBeenLastCalledWith('region', { dimName: name, useRegionNames: false }); });
-  });
-
-  it('does not warn once the snapshot is synced', async () => {
-    const dim: BuiltInDimension = { name: asDimensionId('region_country'), label: 'Country', field: 'region' };
-    const { user } = renderView(dim, regionInfo(30));
-    await openRegionEditor(user);
     await screen.findByText(/Preview — 3 distinct values/);
     expect(screen.queryByText(MISSING)).toBeNull();
   });

@@ -93,13 +93,19 @@ describe('readExplorerPreferences', () => {
       hiddenColumns: [],
       columnOrder: [],
       lastUsedDateRange: { start: 'garbage', end: '2026-07-31' },
-      lastUsedGranularity: 'weekly',
+      lastUsedGranularity: 'yearly',
       compareEnabled: 'yes',
     }));
     const rejected = await readExplorerPreferences(prefsFile, noLiveIds);
     expect(rejected.lastUsedDateRange).toBeUndefined();
     expect(rejected.lastUsedGranularity).toBeUndefined();
     expect(rejected.compareEnabled).toBeUndefined();
+  });
+
+  it.each(['monthly', 'weekly', 'daily', 'hourly'] as const)('round-trips lastUsedGranularity %s through save and load', async (granularity) => {
+    await writeExplorerPreferences(prefsFile, { lastUsedGranularity: granularity });
+    const prefs = await readExplorerPreferences(prefsFile, noLiveIds);
+    expect(prefs.lastUsedGranularity).toBe(granularity);
   });
 
   it('preserves a persisted hourly sub-window (startHour/endHour) across reload', async () => {
