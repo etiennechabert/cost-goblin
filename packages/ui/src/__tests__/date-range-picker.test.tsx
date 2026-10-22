@@ -209,15 +209,19 @@ class InventoryApi extends MockCostApi {
 const MARCH_TO_OCT_2026: DateRange = { start: asDateString('2026-03-01'), end: asDateString('2026-10-31') };
 
 describe('DateRangePicker monthly and weekly modes', () => {
+  // Fake only Date so userEvent's timers keep running. Today is 2026-10-21 and
+  // the lag is 2 days, so the newest day is 2026-10-19. Pinned before each test
+  // rather than inside renderMode, so a range built in the test's arguments
+  // (getDefaultDateRange) is computed on the same day the picker sees.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-21T12:00:00Z'));
+  });
   afterEach(() => { vi.useRealTimers(); });
 
   type OnChange = (range: DateRange, granularity: Granularity, lastNDays?: number) => void;
 
-  // Fake only Date so userEvent's timers keep running. Today is 2026-10-21 and
-  // the lag is 2 days, so the newest day is 2026-10-19.
   function renderMode(granularity: Granularity, value: DateRange, api: MockCostApi = new MockCostApi()) {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date('2026-10-21T12:00:00Z'));
     const onChange = vi.fn<OnChange>();
     render(
       <CostApiProvider value={api}>

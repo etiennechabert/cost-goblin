@@ -60,7 +60,8 @@ describe('SummaryWidget daily average', () => {
 
     await waitFor(() => { expect(screen.getByText('Total Cost').nextElementSibling?.textContent).toBe('$8.0k'); });
     // 8000 / 80 = $100.00 (8000 / 92 would be $86.96), against 9200 / 92 = $100.00 before: no fake drop.
-    expect(dailyAverage()).toBe('$100.00(+$0.00)');
+    // The previous period's query resolves on its own, so wait for its delta too.
+    await waitFor(() => { expect(dailyAverage()).toBe('$100.00(+$0.00)'); });
     expect(screen.getByText('Previous: $100.00/day')).toBeDefined();
   });
 

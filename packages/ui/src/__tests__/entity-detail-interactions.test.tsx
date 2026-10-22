@@ -656,6 +656,12 @@ describe('EntityDetail — Weekly', () => {
     expect(await screen.findByText('Weekly Costs')).toBeDefined();
     await waitFor(() => { expect(api.dailyCalls.at(-1)?.granularity).toBe('weekly'); });
     await screen.findByText('W36 2026');
+    // The period labels show while the histogram still loads (every week gets an
+    // empty bar), and a drag is ignored until it has loaded: wait for real bars.
+    await waitFor(() => {
+      const heights = [...document.querySelectorAll<HTMLElement>('.group.relative > .rounded-t-sm')].map(bar => bar.style.height);
+      expect(heights.some(height => height !== '' && height !== '0%')).toBe(true);
+    });
     return api;
   }
 
