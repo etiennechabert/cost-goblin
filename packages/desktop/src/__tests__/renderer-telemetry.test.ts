@@ -46,6 +46,7 @@ describe('renderer telemetry', () => {
       databaseQueryData: false,
       queues: false,
       stackFrameVariables: false,
+      frameContextLines: 5,
     });
     expect(options.traceLifecycle).toBe('static');
     expect('tracesSampleRate' in options).toBe(false);

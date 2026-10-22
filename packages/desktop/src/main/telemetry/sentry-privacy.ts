@@ -6,11 +6,12 @@ import type { ElectronMainOptions } from '@sentry/electron/main';
  * switches, and every one of them defaults to ON (`resolveDataCollectionOptions`
  * in @sentry/core), so each is turned off explicitly. Shared by the main and
  * renderer `Sentry.init` calls: the renderer's client collects with its own
- * options before forwarding to main. `frameContextLines` keeps its default: it
- * is our own bundled source around a stack frame, as the ContextLines
- * integration sent before.
+ * options before forwarding to main. `frameContextLines` stays at Sentry's
+ * default of 5: it is our own bundled source around a stack frame, as the
+ * ContextLines integration sent before. `Required` makes a category a later
+ * Sentry release adds (on by default) a type error here until it is decided.
  */
-export const SENTRY_DATA_COLLECTION: NonNullable<ElectronMainOptions['dataCollection']> = {
+export const SENTRY_DATA_COLLECTION: Required<NonNullable<ElectronMainOptions['dataCollection']>> = {
   userInfo: false,
   cookies: false,
   httpHeaders: false,
@@ -22,6 +23,7 @@ export const SENTRY_DATA_COLLECTION: NonNullable<ElectronMainOptions['dataCollec
   queues: false,
   // Local variables can hold cost rows, account ids and file paths.
   stackFrameVariables: false,
+  frameContextLines: 5,
 };
 
 /**

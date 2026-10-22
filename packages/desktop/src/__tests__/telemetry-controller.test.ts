@@ -42,7 +42,7 @@ const DSN = 'https://public@sentry.example.test/42';
 const OFF: TelemetryPreferences = TELEMETRY_DEFAULTS;
 const ERRORS_ONLY: TelemetryPreferences = { ...OFF, errorReports: true };
 const EVERYTHING: TelemetryPreferences = { errorReports: true, nativeCrashReports: true, performance: true, analytics: false };
-/** Every Sentry 11 data-collection category off; frameContextLines keeps its default. */
+/** Every Sentry 11 data-collection category off; frameContextLines at its default. */
 const COLLECT_NOTHING = {
   userInfo: false,
   cookies: false,
@@ -54,6 +54,7 @@ const COLLECT_NOTHING = {
   databaseQueryData: false,
   queues: false,
   stackFrameVariables: false,
+  frameContextLines: 5,
 };
 
 async function loadController(): Promise<typeof import('../main/telemetry/controller.js')['telemetry']> {
