@@ -11,11 +11,10 @@ import type { BuiltInDimension, DimensionsConfig } from '../types/config.js';
 
 /**
  * The SSM global-infrastructure snapshot (or a peer's shared copy of it) is
- * folded into the Region-family built-ins as aliases, so `region`,
- * `region_country` and `region_continent` all group the same raw `region`
- * column differently. The snapshot can arrive from a peer's pack, whose
- * labels are free text, and the local region-names.json is read without a
- * code grammar, so labels and codes alike end up as SQL string literals.
+ * folded into the Region built-in as aliases, so region codes group under
+ * their long names. The snapshot can arrive from a peer's pack, whose labels
+ * are free text, and the local region-names.json is read without a code
+ * grammar, so labels and codes alike end up as SQL string literals.
  */
 
 const REGION_MAP: ReadonlyMap<string, RegionEnrichment> = new Map([
@@ -29,8 +28,6 @@ function regionDim(over: Partial<BuiltInDimension> = {}): BuiltInDimension {
   return { name: asDimensionId('region'), label: 'Region', field: 'region', ...over };
 }
 
-const COUNTRY_DIM: BuiltInDimension = { name: asDimensionId('region_country'), label: 'Country', field: 'region' };
-const CONTINENT_DIM: BuiltInDimension = { name: asDimensionId('region_continent'), label: 'Continent', field: 'region' };
 const SERVICE_DIM: BuiltInDimension = { name: asDimensionId('service'), label: 'Service', field: 'service' };
 
 function dimsOf(...builtIn: BuiltInDimension[]): DimensionsConfig {
@@ -46,7 +43,7 @@ function onlyDim(dims: DimensionsConfig): BuiltInDimension {
 
 describe('applyRegionFriendlyNames', () => {
   it('returns the config itself when no SSM snapshot has been synced', () => {
-    const dims = dimsOf(regionDim({ useRegionNames: true }), COUNTRY_DIM);
+    const dims = dimsOf(regionDim({ useRegionNames: true }), SERVICE_DIM);
     expect(applyRegionFriendlyNames(dims, new Map())).toBe(dims);
   });
 
@@ -67,21 +64,18 @@ describe('applyRegionFriendlyNames', () => {
     }
   });
 
-  it('groups region_country by ISO country code, whatever useRegionNames says', () => {
-    for (const useRegionNames of [undefined, false, true]) {
-      const dim = onlyDim(applyRegionFriendlyNames(dimsOf({ ...COUNTRY_DIM, useRegionNames }), REGION_MAP));
-      expect(dim.aliases).toEqual({ DE: ['eu-central-1'], IE: ['eu-west-1'], US: ['us-east-1', 'us-east-2'] });
+  // Retired: Country split spend like Region, and SSM's "continent" is an
+  // ISO 3166-2 subdivision (IE-D, US-VA), so Continent was Region relabelled.
+  // A hand-edited config that still names them gets no snapshot labels.
+  it('gives the retired Country and Continent names no snapshot labels', () => {
+    for (const name of ['region_country', 'region_continent']) {
+      const dim: BuiltInDimension = { name: asDimensionId(name), label: name, field: 'region' };
+      expect(onlyDim(applyRegionFriendlyNames(dimsOf(dim), REGION_MAP))).toBe(dim);
     }
   });
 
-  it('groups region_continent by AWS geo bucket', () => {
-    const dim = onlyDim(applyRegionFriendlyNames(dimsOf(CONTINENT_DIM), REGION_MAP));
-    expect(dim.aliases).toEqual({ EU: ['eu-central-1', 'eu-west-1'], NA: ['us-east-1', 'us-east-2'] });
-    expect(resolveAlias('us-east-2', dim.aliases)).toBe('NA');
-  });
-
   it('only rewrites dims built on the region column and keeps the rest of the config', () => {
-    const notOnRegion: BuiltInDimension = { name: asDimensionId('region_country'), label: 'Location', field: 'location' };
+    const notOnRegion: BuiltInDimension = { name: asDimensionId('location'), label: 'Location', field: 'location', useRegionNames: true };
     const dims: DimensionsConfig = {
       builtIn: [SERVICE_DIM, notOnRegion, regionDim({ useRegionNames: true })],
       tags: [{ tagName: 'team', label: 'Team' }],
@@ -113,10 +107,15 @@ describe('applyRegionFriendlyNames', () => {
     // Frozen: a push into the caller's own array would throw in strict mode.
     const userList = Object.freeze(['dublin']);
     const dim = onlyDim(applyRegionFriendlyNames(
-      dimsOf({ ...CONTINENT_DIM, aliases: { EU: userList } }),
+      dimsOf(regionDim({ useRegionNames: true, aliases: { 'Europe (Ireland)': userList } })),
       REGION_MAP,
     ));
-    expect(dim.aliases).toEqual({ EU: ['dublin', 'eu-central-1', 'eu-west-1'], NA: ['us-east-1', 'us-east-2'] });
+    expect(dim.aliases).toEqual({
+      'Europe (Ireland)': ['dublin', 'eu-west-1'],
+      'Europe (Frankfurt)': ['eu-central-1'],
+      'US East (N. Virginia)': ['us-east-1'],
+      'US East (Ohio)': ['us-east-2'],
+    });
     expect(userList).toEqual(['dublin']);
   });
 
@@ -128,13 +127,6 @@ describe('applyRegionFriendlyNames', () => {
     const named = onlyDim(applyRegionFriendlyNames(dimsOf(regionDim({ useRegionNames: true })), sparse));
     expect(named.aliases).toEqual({ 'Europe (Frankfurt)': ['eu-central-1'] });
     expect(resolveAlias('xx-local-1', named.aliases)).toBe('xx-local-1');
-
-    const country = onlyDim(applyRegionFriendlyNames(dimsOf(COUNTRY_DIM), sparse));
-    expect(country.aliases).toEqual({ DE: ['eu-central-1'] });
-
-    // The same code still has a continent, so that grouping does pick it up.
-    const continent = onlyDim(applyRegionFriendlyNames(dimsOf(CONTINENT_DIM), sparse));
-    expect(continent.aliases).toEqual({ EU: ['eu-central-1', 'xx-local-1'] });
   });
 });
 
@@ -178,26 +170,25 @@ describe('region alias SQL from untrusted snapshot text (DuckDB execution)', () 
       // A code the snapshot does not know keeps its raw value.
       { region: 'zz-unknown-1', label: 'zz-unknown-1' },
     ]);
-
-    const country = onlyDim(applyRegionFriendlyNames(dimsOf(COUNTRY_DIM), regionMap));
-    const countryRows = await labelsFor(buildAliasSqlCase('region', country), "('eu-o''brien-1'), ('us-east-1')");
-    expect(countryRows).toEqual([
-      { region: hostileCode, label: "I'E" },
-      { region: 'us-east-1', label: 'US' },
-    ]);
   });
 
-  it('groups several codes under one continent in a single CASE arm', async () => {
-    const continent = onlyDim(applyRegionFriendlyNames(dimsOf(CONTINENT_DIM), REGION_MAP));
-    const sql = buildAliasSqlCase('region', continent);
+  it('groups several codes that share a long name in a single CASE arm', async () => {
+    const shared: ReadonlyMap<string, RegionEnrichment> = new Map([
+      ['eu-central-1', { longName: 'Europe', country: 'DE', continent: 'DE-HE' }],
+      ['eu-west-1', { longName: 'Europe', country: 'IE', continent: 'IE-D' }],
+      ['us-east-1', { longName: 'US East', country: 'US', continent: 'US-VA' }],
+      ['us-east-2', { longName: 'US East', country: 'US', continent: 'US-OH' }],
+    ]);
+    const named = onlyDim(applyRegionFriendlyNames(dimsOf(regionDim({ useRegionNames: true })), shared));
+    const sql = buildAliasSqlCase('region', named);
     expect(sql).toBe(
-      "CASE WHEN region IN ('eu-central-1', 'eu-west-1') THEN 'EU' WHEN region IN ('us-east-1', 'us-east-2') THEN 'NA' ELSE region END",
+      "CASE WHEN region IN ('eu-central-1', 'eu-west-1') THEN 'Europe' WHEN region IN ('us-east-1', 'us-east-2') THEN 'US East' ELSE region END",
     );
     const rows = await labelsFor(sql, "('eu-west-1'), ('us-east-2'), ('ap-south-1')");
     expect(rows).toEqual([
       { region: 'ap-south-1', label: 'ap-south-1' },
-      { region: 'eu-west-1', label: 'EU' },
-      { region: 'us-east-2', label: 'NA' },
+      { region: 'eu-west-1', label: 'Europe' },
+      { region: 'us-east-2', label: 'US East' },
     ]);
   });
 });

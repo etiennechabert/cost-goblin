@@ -1,13 +1,15 @@
 import { credentialChainProfile, logger, profileRegion } from '@costgoblin/core';
 
 /** Per-region metadata AWS publishes under global-infrastructure. We pull
- *  three fields per region — longName for display, country + continent for
- *  higher-level cost groupings (data residency, geo chargeback). */
+ *  three fields per region: longName labels the Region dimension; country and
+ *  continent are kept with the snapshot and shown in Data Management. */
 interface RegionInfo {
   longName: string;
   /** ISO 3166-1 alpha-2 country code (e.g. "DE", "US"). */
   country: string;
-  /** AWS geographic region bucket (e.g. "EU", "NA", "AS"). */
+  /** SSM's geolocationRegion: an ISO 3166-2 subdivision code ("IE-D",
+   *  "US-VA"), not a continent. The historical name stays because it is in
+   *  every region-names.json on disk and in the LAN sharing payload. */
   continent: string;
 }
 

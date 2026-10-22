@@ -25,6 +25,7 @@ import { browseS3, listS3Buckets, testS3Connection } from '../setup-s3.js';
 import { confirmAndFileBackfillCase } from '../aws-support.js';
 import type { ConfirmFiling } from '../aws-support.js';
 import type { AppContext } from './context.js';
+import { DEFAULT_BUILT_INS } from './dimensions-merge.js';
 
 /** Ceiling on `gcloud projects list`. The CLI can sit on a re-auth prompt it
  *  will never receive input for (stdin is ignored here), and an unbounded wait
@@ -47,6 +48,13 @@ const GCS_BROWSE_MAX_PAGES = 12;
 function normalizeGcsPrefix(prefix: string): string {
   if (prefix.length === 0) return '';
   return prefix.endsWith('/') ? prefix : `${prefix}/`;
+}
+
+/** A built-in's default description, so the wizard words a dimension the way
+ *  the load-time defaults do (a stored copy of an old one is rewritten there). */
+function defaultDescription(name: string): { description?: string } {
+  const description = DEFAULT_BUILT_INS.find(d => d.name === name)?.description;
+  return description === undefined ? {} : { description };
 }
 
 /** One-shot CLI flag the setup wizard's relaunch adds (see update.ts) so the
@@ -309,52 +317,23 @@ export function registerSetupHandlers(app: AppContext): void {
 
     await fs.writeFile(ctx.configPath, stringify(costgoblinYaml), 'utf-8');
 
+    const forGcp = wizardConfig.type === 'gcp';
     const builtInDimensions = [
       {
         name: 'account',
-        label: 'Account',
+        // A GCP sub-account is a project, as in the scaffolded template.
+        label: forGcp ? 'Project' : 'Account',
         field: 'account_id',
         displayField: 'account_name',
-        description: 'AWS account the cost was charged to. Main axis for org/team-level rollups.',
+        ...defaultDescription('account'),
         useOrgAccounts: true,
       },
-      {
-        name: 'region',
-        label: 'Region',
-        field: 'region',
-        description: 'AWS region where the resource ran. Useful for spotting unintended multi-region sprawl.',
-      },
-      {
-        name: 'service',
-        label: 'Service',
-        field: 'service',
-        description: 'Service the cost came from (FOCUS ServiceName, e.g. "Amazon Simple Storage Service") — the broadest "what cost me this?" view.',
-      },
-      {
-        name: 'service_category',
-        label: 'Service Category',
-        field: 'service_category',
-        description: 'Standardized FOCUS category (Compute, Storage, Databases). Good for exec summaries.',
-      },
-      {
-        name: 'charge_category',
-        label: 'Charge Category',
-        field: 'charge_category',
-        description: 'Usage vs Purchase vs Tax vs Credit vs Adjustment. Filter this to isolate real usage from billing events.',
-      },
-      {
-        name: 'sku_meter',
-        label: 'SKU Meter',
-        field: 'sku_meter',
-        description: 'Fine-grained usage meter like EUC1-Requests-Tier2. Use for instance/storage-tier breakdowns.',
-      },
-      {
-        name: 'operation',
-        label: 'Operation',
-        field: 'operation',
-        description: 'API operation billed for (RunInstances, GetObject). Useful for API-level cost attribution.',
-        enabled: false,
-      },
+      { name: 'region', label: 'Region', field: 'region', ...defaultDescription('region') },
+      { name: 'service', label: 'Service', field: 'service', ...defaultDescription('service') },
+      { name: 'service_category', label: 'Service Category', field: 'service_category', ...defaultDescription('service_category') },
+      { name: 'charge_category', label: 'Charge Category', field: 'charge_category', ...defaultDescription('charge_category') },
+      { name: 'sku_meter', label: 'SKU Meter', field: 'sku_meter', ...defaultDescription('sku_meter') },
+      { name: 'operation', label: 'Operation', field: 'operation', ...defaultDescription('operation'), enabled: false },
     ];
 
     const tagDimensions = (wizardConfig.tags ?? []).map(t => ({
@@ -363,13 +342,14 @@ export function registerSetupHandlers(app: AppContext): void {
       ...(t.concept === undefined ? {} : { concept: t.concept }),
     }));
 
-    // GCP's FOCUS export has no ServiceCategory, and the canonicalizer only
-    // NULL-fills x_Operation and SkuMeter — so scaffolding them for a gcp
-    // provider produces dimensions that render one blank value for every row.
-    // `buildDimensionsTemplate('gcp')` already drops them, and the default-
-    // dimension merge (context.ts) skips re-adding them; all three read the
-    // same PROVIDER_ABSENT_DIMENSIONS map so the routes cannot disagree.
-    const absentDims = wizardConfig.type === 'gcp' ? PROVIDER_ABSENT_DIMENSIONS.gcp : PROVIDER_ABSENT_DIMENSIONS.aws;
+    // GCP's FOCUS export has no ServiceCategory, and the canonicalizer
+    // NULL-fills x_Operation and fills SkuMeter with opaque SKU ids — so
+    // scaffolding them for a gcp provider produces dimensions with nothing to
+    // group by. `buildDimensionsTemplate('gcp')` already drops them, and the
+    // default-dimension merge (dimensions-merge.ts) drops them on load; all
+    // three read the same PROVIDER_ABSENT_DIMENSIONS map so the routes cannot
+    // disagree.
+    const absentDims = forGcp ? PROVIDER_ABSENT_DIMENSIONS.gcp : PROVIDER_ABSENT_DIMENSIONS.aws;
     const dimensionsYaml = {
       builtIn: builtInDimensions.filter(d => !absentDims.has(d.name)),
       tags: tagDimensions,

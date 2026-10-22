@@ -92,8 +92,9 @@ describe('rollupGrainDimensions', () => {
   });
 
   it('collapses derived dimensions that share one physical column to a single entry', () => {
-    // Region / Country / Continent are query-time views of the same `region`
-    // column — they must not produce duplicate, identically-attributed rows.
+    // Built-ins may read one column (the retired Country and Continent were
+    // views of `region`) — they must not produce duplicate, identically-
+    // attributed rows.
     const shared: DimensionsConfig = {
       builtIn: [
         { name: asDimensionId('region'), label: 'Region', field: 'region' },

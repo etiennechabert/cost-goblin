@@ -4,7 +4,7 @@ import { parse } from 'yaml';
 import { DEFAULT_COST_SCOPE } from '@costgoblin/core';
 import { registerCostScopeHandlers } from '../main/handlers/cost-scope.js';
 import { resetElectronFakes, shell } from './helpers/electron-fake.js';
-import { at, createHarness, FEBRUARY_READABLE_NOW_MS, list, num, type Harness, type HarnessOptions } from './helpers/ipc-harness.js';
+import { at, configYaml, createHarness, FEBRUARY_READABLE_NOW_MS, gcpProviderYaml, list, num, type Harness, type HarnessOptions } from './helpers/ipc-harness.js';
 
 /** The Cost Scope editor's IPC surface: seeding a missing config, validated
  *  saves (including the dangling-dimension guard), and the live preview —
@@ -82,6 +82,23 @@ describe('cost-scope:save-config', () => {
       .rejects.toThrow("Rule 'No EC2' references unknown dimension 'nope'. Available: ");
     await expect(h.ipc.invoke('cost-scope:save-config', { costMetric: 'billed' })).rejects.toThrow('costScope.rules');
     expect(await readFile(h.ws.costScopePath, 'utf-8')).toBe(before);
+  });
+
+  // A GCP-only workspace has no Service Code dimension (no provider fills
+  // it), but the built-in AWS Premium Support rule names it, and every save
+  // carries the built-in rules.
+  it('saves a rule on a dimension no configured provider fills, and still refuses an unknown one', async () => {
+    const h = await scopeApp({ data: 'none' });
+    await writeFile(h.ws.configPath, configYaml(gcpProviderYaml('gcp-only')));
+    h.app.invalidateConfig();
+    h.app.invalidateDimensions();
+    await h.ipc.invoke('cost-scope:save-config', DEFAULT_COST_SCOPE);
+    const saved = parse(await readFile(h.ws.costScopePath, 'utf-8'));
+    expect(list(at(saved, 'rules')).map(r => at(r, 'conditions', 0, 'dimensionId'))).toContain('service_code');
+
+    const dangling = { ...EXCLUDE_EC2, conditions: [{ dimensionId: 'nope', values: ['x'] }] };
+    await expect(h.ipc.invoke('cost-scope:save-config', scope([dangling])))
+      .rejects.toThrow("Rule 'No EC2' references unknown dimension 'nope'.");
   });
 });
 

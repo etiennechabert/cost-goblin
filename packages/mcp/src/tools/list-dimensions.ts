@@ -49,8 +49,8 @@ export async function listDimensions(
     notes: [
       'Use the `id` column value as the `groupBy`, `dimensionId`, or filter key in other tools.',
       'Use the `SQL Column` value to reference the dimension inside run_sql queries. It holds the RAW values: '
-        + 'normalization and aliases are not applied, and derived dimensions (e.g. Country, Continent) share their '
-        + 'source column (region). Use the other tools for the dimension as configured.',
+        + 'normalization and aliases are not applied (Region holds codes such as eu-west-1, not friendly names). '
+        + 'Use the other tools for the dimension as configured.',
     ],
   };
   return structuredToolResult(result, format);

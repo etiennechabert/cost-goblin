@@ -1,18 +1,30 @@
 import { tagDimColumn } from '../types/branded.js';
 import type { DimensionsConfig } from '../types/config.js';
 
-/** CUR-era → FOCUS 1.2 canonical dimension/column renames (#515).
+/** Retired dimension ids → the dimension that replaced them.
  *
- *  Persisted state written before the FOCUS migration references dimensions
- *  whose backing canonical columns no longer exist: saved views (widget
- *  groupBy/drillTo, table enabledColumns), baseline scope filters, explorer
- *  preferences (hidden/ordered column ids). Loaders route those ids through
- *  this map so old state keeps working — same pattern as the legacy cost
- *  metric migration in cost-scope-validator.ts. */
+ *  Persisted state can reference a dimension that no longer exists: saved
+ *  views (widget groupBy/drillTo, table enabledColumns), baseline scope
+ *  filters, explorer preferences (hidden/ordered column ids), cost-scope rule
+ *  conditions. Loaders route those ids through this map so old state keeps
+ *  working — same pattern as the legacy cost metric migration in
+ *  cost-scope-validator.ts. Every key is also dropped from a loaded
+ *  dimensions config, so a retired dimension never comes back.
+ *
+ *  - The CUR-era ids whose backing column the FOCUS 1.2 migration removed
+ *    (#515).
+ *  - Country and Continent, two views of the region column through the SSM
+ *    snapshot. Country split spend like Region, and SSM's "continent" is an
+ *    ISO 3166-2 subdivision (IE-D, US-VA), so Continent was Region under other
+ *    labels. A group-by moves to Region. Their country and subdivision values
+ *    match no region value, so a filter or rule condition on them now matches
+ *    nothing: a rule excludes less, never more. */
 export const LEGACY_DIMENSION_ID_RENAMES: Readonly<Record<string, string>> = {
   service_family: 'service_category',
   line_item_type: 'charge_category',
   usage_type: 'sku_meter',
+  region_country: 'region',
+  region_continent: 'region',
 };
 
 /** CUR-era tag dimension ids carried the `user_` prefix of their raw
@@ -38,9 +50,9 @@ export function dimensionIdSet(dimensions: DimensionsConfig): ReadonlySet<string
   return ids;
 }
 
-/** Rename a CUR-era dimension/column id to its FOCUS successor; pass-through
+/** Rename a retired dimension/column id to its successor; pass-through
  *  for everything else. Ids present in `liveDimensionIds` are current-config
- *  dimensions, not CUR leftovers — they are never renamed. The rename map is
+ *  dimensions, not retired leftovers — they are never renamed. The rename map is
  *  read with an own-property guard: ids come from git-shareable config files,
  *  so a key like `constructor` must not surface prototype members. */
 export function migrateLegacyDimensionId(id: string, liveDimensionIds?: ReadonlySet<string>): string {

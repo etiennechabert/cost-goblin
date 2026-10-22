@@ -51,10 +51,11 @@ export function rollupGrainColumns(dims: DimensionsConfig): string[] {
  *  rollupGrainColumns).
  *
  *  DEDUPED BY PRIMARY COLUMN: several dimensions can map to the SAME physical
- *  grain column — Region, Country and Continent are all query-time views of the
- *  one `region` column. They are not independent grain groups (the rollup stores
- *  the column once), so they collapse to a single entry; otherwise the probe
- *  would emit identical, mis-attributed duplicate rows. */
+ *  grain column — built-ins are free to share a `field` (the retired Country
+ *  and Continent were query-time views of `region`). They are not independent
+ *  grain groups (the rollup stores the column once), so they collapse to a
+ *  single entry; otherwise the probe would emit identical, mis-attributed
+ *  duplicate rows. */
 export function rollupGrainDimensions(dims: DimensionsConfig): { column: string; columns: string[] }[] {
   const out: { column: string; columns: string[] }[] = [];
   const seen = new Set<string>();
