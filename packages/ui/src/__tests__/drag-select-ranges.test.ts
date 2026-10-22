@@ -42,6 +42,17 @@ describe('formatBucketKey', () => {
     expect(formatBucketKey('')).toBe('');
   });
 
+  it('labels a weekly or monthly period start with its period', () => {
+    expect(formatBucketKey('2026-10-19', 'weekly')).toBe('W43 2026');
+    expect(formatBucketKey('2026-10-01', 'monthly')).toBe('Oct 2026');
+  });
+
+  it('is unchanged for an omitted, daily or hourly granularity', () => {
+    expect(formatBucketKey('2026-10-19')).toBe('Oct 19');
+    expect(formatBucketKey('2026-10-19', 'daily')).toBe('Oct 19');
+    expect(formatBucketKey('2026-10-19 21:00', 'hourly')).toBe('Oct 19 21:00');
+  });
+
   it.each(['abcd-05-01', '2026', '2026-05'])('returns %s unchanged when it is not a date', (key) => {
     expect(formatBucketKey(key)).toBe(key);
   });

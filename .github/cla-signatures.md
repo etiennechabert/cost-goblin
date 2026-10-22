@@ -10,3 +10,4 @@ its commits, or that edits an existing row.
 
 | GitHub | Full name | Date | CLA version |
 |---|---|---|---|
+| @quentinhayot | Quentin Hayot | 2026-10-22 | 1.0 |

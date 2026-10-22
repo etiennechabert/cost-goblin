@@ -205,6 +205,16 @@ export function registerSyncHandlers(app: AppContext): void {
     }
   });
 
+  // The on-disk periods alone: no object-store listing, no credentials. For
+  // callers that only need what is held locally (the Monthly picker's
+  // "All synced data" start) and must not pay a remote round trip for it.
+  ipcMain.handle('data:local-inventory', async (_event, tier?: ExpectedDataType, providerName?: string): Promise<DataInventoryResult> => {
+    const config = await getConfig();
+    const provider = resolveProvider(config.providers, providerName);
+    const local = await getLocalDataInventory(ctx.dataDir, provider.name, tier ?? 'daily');
+    return { ...local, provider: provider.name };
+  });
+
   ipcMain.handle('data:delete-period', async (_event, period: string, tier: ExpectedDataType = 'daily', providerName?: string): Promise<void> => {
     const config = await getConfig();
     const provider = resolveProvider(config.providers, providerName);

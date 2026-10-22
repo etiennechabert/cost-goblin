@@ -8,6 +8,7 @@ import type {
   DateRange,
   Dimension,
   DimensionId,
+  Granularity,
   TagValue,
   WidgetSpec,
 } from '@costgoblin/core/browser';
@@ -71,11 +72,11 @@ class DailyApi extends MockCostApi {
   override queryDailyCosts(params?: DailyCostsParams): Promise<DailyCostsResult> {
     if (params === undefined) return Promise.reject(new Error('queryDailyCosts called without params'));
     this.calls.push(params);
-    return params.dateRange.start === PREV_RANGE.start ? this.previous() : this.current();
+    return params.origin?.endsWith('/prev') === true ? this.previous() : this.current();
   }
 
   previousCalls(): DailyCostsParams[] {
-    return this.calls.filter(c => c.dateRange.start === PREV_RANGE.start);
+    return this.calls.filter(c => c.origin?.endsWith('/prev') === true);
   }
 }
 
@@ -85,6 +86,9 @@ interface RenderOptions {
   readonly spec?: WidgetSpec;
   readonly api?: DailyApi;
   readonly compareEnabled?: boolean;
+  readonly granularity?: Granularity;
+  readonly dateRange?: DateRange;
+  readonly previousDateRange?: DateRange;
 }
 
 function renderWidget(opts: RenderOptions = {}) {
@@ -96,10 +100,10 @@ function renderWidget(opts: RenderOptions = {}) {
       <CostApiProvider value={api}>
         <LineWidget
           spec={opts.spec ?? SPEC}
-          dateRange={RANGE}
-          previousDateRange={PREV_RANGE}
+          dateRange={opts.dateRange ?? RANGE}
+          previousDateRange={opts.previousDateRange ?? PREV_RANGE}
           compareEnabled={opts.compareEnabled ?? false}
-          granularity="daily"
+          granularity={opts.granularity ?? 'daily'}
           globalFilters={{}}
           dimensions={DIMS}
           onSetFilter={onSetFilter}
@@ -190,7 +194,95 @@ describe('LineWidget', () => {
   });
 });
 
+describe('LineWidget — weekly and monthly', () => {
+  it('labels the x axis with month names in Monthly', async () => {
+    const api = new DailyApi();
+    api.current = () => Promise.resolve(daily([
+      ['2026-08-01', { platform: 50, data: 30 }],
+      ['2026-09-01', { platform: 60, data: 30 }],
+      ['2026-10-01', { platform: 70, data: 30 }],
+    ]));
+    const dateRange: DateRange = { start: asDateString('2026-08-01'), end: asDateString('2026-10-31') };
+    const { container } = renderWidget({ api, granularity: 'monthly', dateRange });
+
+    await waitFor(() => { expect(lines(container)).toHaveLength(2); });
+    for (const label of ['Aug 2026', 'Sep 2026', 'Oct 2026']) expect(screen.getByText(label)).toBeDefined();
+  });
+
+  it('labels the x axis with ISO weeks in Weekly', async () => {
+    const api = new DailyApi();
+    api.current = () => Promise.resolve(daily([
+      ['2026-10-05', { platform: 50 }],
+      ['2026-10-12', { platform: 60 }],
+      ['2026-10-19', { platform: 70 }],
+    ]));
+    const dateRange: DateRange = { start: asDateString('2026-10-05'), end: asDateString('2026-10-25') };
+    const { container } = renderWidget({ api, granularity: 'weekly', dateRange });
+
+    await waitFor(() => { expect(lines(container)).toHaveLength(1); });
+    for (const label of ['W41 2026', 'W42 2026', 'W43 2026']) expect(screen.getByText(label)).toBeDefined();
+  });
+});
+
+describe('LineWidget — whole periods on the axis', () => {
+  const MONTHS = { start: asDateString('2026-08-01'), end: asDateString('2026-10-31') };
+
+  it('draws the current month on the x axis even though it has no data yet', async () => {
+    const api = new DailyApi();
+    api.current = () => Promise.resolve(daily([
+      ['2026-08-01', { platform: 50, data: 30 }],
+      ['2026-09-01', { platform: 60, data: 30 }],
+    ]));
+    const { container } = renderWidget({ api, granularity: 'monthly', dateRange: MONTHS });
+
+    await waitFor(() => { expect(lines(container)).toHaveLength(2); });
+    for (const label of ['Aug 2026', 'Sep 2026', 'Oct 2026']) expect(screen.getByText(label)).toBeDefined();
+  });
+
+  it('aligns a previous result that lacks a month by period, not by position', async () => {
+    const current = daily(['2026-06-01', '2026-07-01', '2026-08-01', '2026-09-01', '2026-10-01'].map(m => [m, { platform: 50 }] as const));
+    const range: DateRange = { start: asDateString('2026-06-01'), end: asDateString('2026-10-31') };
+    const previousRange: DateRange = { start: asDateString('2026-01-01'), end: asDateString('2026-05-31') };
+    // March (the third month) has no spend; the monthly query then omits it.
+    const withoutMarch = daily([['2026-01-01', { platform: 10 }], ['2026-02-01', { platform: 20 }], ['2026-04-01', { platform: 40 }], ['2026-05-01', { platform: 50 }]]);
+    const explicitZero = daily([['2026-01-01', { platform: 10 }], ['2026-02-01', { platform: 20 }], ['2026-03-01', { platform: 0 }], ['2026-04-01', { platform: 40 }], ['2026-05-01', { platform: 50 }]]);
+
+    const ghostPath = async (previous: DailyCostsResult): Promise<string | null> => {
+      const api = new DailyApi();
+      api.current = () => Promise.resolve(current);
+      api.previous = () => Promise.resolve(previous);
+      const { container, unmount } = renderWidget({ api, compareEnabled: true, granularity: 'monthly', dateRange: range, previousDateRange: previousRange });
+      await waitFor(() => { expect(ghostLines(container)).toHaveLength(1); });
+      const path = ghostLines(container)[0]?.getAttribute('d') ?? null;
+      unmount();
+      return path;
+    };
+
+    const gapped = await ghostPath(withoutMarch);
+    expect(gapped).not.toBeNull();
+    expect(gapped).toBe(await ghostPath(explicitZero));
+  });
+});
+
 describe('LineWidget — previous period', () => {
+  it('counts a monthly previous result with one bucket per month as sufficient coverage', async () => {
+    const months = ['2026-03-01', '2026-04-01', '2026-05-01', '2026-06-01', '2026-07-01', '2026-08-01', '2026-09-01', '2026-10-01'];
+    const previousMonths = ['2025-07-01', '2025-08-01', '2025-09-01', '2025-10-01', '2025-11-01', '2025-12-01', '2026-01-01', '2026-02-01'];
+    const api = new DailyApi();
+    api.current = () => Promise.resolve(daily(months.map(m => [m, { platform: 50, data: 30 }] as const)));
+    api.previous = () => Promise.resolve(daily(previousMonths.map(m => [m, { platform: 40, data: 20 }] as const)));
+    const { container } = renderWidget({
+      api,
+      compareEnabled: true,
+      granularity: 'monthly',
+      dateRange: { start: asDateString('2026-03-01'), end: asDateString('2026-10-31') },
+      previousDateRange: { start: asDateString('2025-07-01'), end: asDateString('2026-02-28') },
+    });
+
+    // Eight months of data is not "8 of 242 days": the overlay draws.
+    await waitFor(() => { expect(ghostLines(container)).toHaveLength(2); });
+  });
+
   it('overlays a ghost line per series, aligned day by day', async () => {
     const { api, container } = renderWidget({ compareEnabled: true });
 

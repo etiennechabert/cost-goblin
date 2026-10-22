@@ -13,7 +13,7 @@ import type {
   WidgetSpec,
   WidgetType,
 } from '@costgoblin/core/browser';
-import { asDimensionId } from '@costgoblin/core/browser';
+import { asDimensionId, countPeriods, isPeriodGranularity } from '@costgoblin/core/browser';
 import { getDimensionId, getDimensionLabel } from '../lib/dimensions.js';
 import { daysBetween } from '../lib/dates.js';
 
@@ -123,8 +123,17 @@ export function hasSufficientCoverage(result: CostResult, requested: DateRange):
   return actualDays >= requestedDays * COVERAGE_THRESHOLD;
 }
 
-/** Returns true if a DailyCostsResult covers at least 80% of the requested date range. */
-export function hasSufficientDailyCoverage(result: DailyCostsResult, requested: DateRange): boolean {
+/** Returns true if a DailyCostsResult covers at least 80% of the requested date range.
+ *  A weekly or monthly result has one bucket per period, so it is measured
+ *  against the number of periods the range touches, not its days. */
+export function hasSufficientDailyCoverage(
+  result: DailyCostsResult,
+  requested: DateRange,
+  granularity?: Granularity,
+): boolean {
+  if (granularity !== undefined && isPeriodGranularity(granularity)) {
+    return result.days.length >= countPeriods(requested, granularity) * COVERAGE_THRESHOLD;
+  }
   const requestedDays = daysBetween(requested.start, requested.end);
   return result.days.length >= requestedDays * COVERAGE_THRESHOLD;
 }

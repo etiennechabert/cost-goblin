@@ -11,6 +11,7 @@ import {
   resolveField,
   tagDimColumn,
   tagSqlColumnsById,
+  usageDateBucketExpr,
 } from '@costgoblin/core';
 import type {
   ExplorerBaseParams,
@@ -289,7 +290,7 @@ export function registerExplorerHandlers(app: AppContext): void {
       // minutes before truncating so a fee at 11:56:32 lands in the 12:00
       // bucket instead of either getting its own bar (no truncation) or being
       // stuck in 11:00 (plain truncation).
-      bucketExpr = qc.tier === 'hourly' ? `date_trunc('hour', usage_hour + INTERVAL '30 minutes')` : 'usage_date';
+      bucketExpr = qc.tier === 'hourly' ? `date_trunc('hour', usage_hour + INTERVAL '30 minutes')` : usageDateBucketExpr(params.granularity);
     } else {
       // Exclusions are baked into the rollup, so only the date window + the
       // user's dashboard filters apply. line_items is the per-grain COUNT(*),
@@ -300,7 +301,8 @@ export function registerExplorerHandlers(app: AppContext): void {
       source = rollupSource;
       whereStr = `WHERE usage_date BETWEEN '${qc.startStr}' AND '${qc.endStr}'${filterClause}`;
       rowsExpr = 'COALESCE(SUM(line_items), 0)';
-      bucketExpr = 'usage_date';
+      // The rollup is daily-grained, so weekly/monthly buckets its days too.
+      bucketExpr = usageDateBucketExpr(params.granularity);
     }
 
     const totalsSql = `
@@ -410,8 +412,8 @@ export function registerExplorerHandlers(app: AppContext): void {
 
     const { rows, totalRows } = await queryAggregatedRows(runAggregatedSql, {
       source: qc.source,
-      where: appendRowFilters(qc.whereStr, params.rowFilters, qc.tagSqlColumns),
-      groupBy: explorerGroupBy(params.groupByColumns, qc.tagSqlColumns),
+      where: appendRowFilters(qc.whereStr, params.rowFilters, qc.tagSqlColumns, params.granularity),
+      groupBy: explorerGroupBy(params.groupByColumns, qc.tagSqlColumns, params.granularity),
       sort: params.sort,
       rowLimit: clampRowLimit(params.rowLimit),
       rowKeys,

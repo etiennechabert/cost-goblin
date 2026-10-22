@@ -1,7 +1,7 @@
 import { QueryBuilder, SecurityError } from '@costgoblin/core';
 import type { AggregatedTableRow, ExplorerSort } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
-import { aggregatedOrderBy, andWhere, groupBySelectList, groupByValues } from './explorer-columns.js';
+import { aggregatedOrderBy, andWhere, groupByExpressions, groupBySelectList, groupByValues } from './explorer-columns.js';
 import type { GroupByColumn } from './explorer-columns.js';
 import { toNum } from './query-utils.js';
 
@@ -49,7 +49,7 @@ export function rowKeysFilter(rowKeys: readonly RowKey[] | undefined, groupBy: r
   // read as a value.
   const usable = rowKeys.filter(key => groupBy.every(({ id }) => Object.hasOwn(key, id)));
   if (usable.length === 0) return { kind: 'none' };
-  const columns = groupBy.map(({ column }) => `COALESCE(CAST(${column} AS VARCHAR), '')`).join(', ');
+  const columns = groupByExpressions(groupBy).map(expr => `COALESCE(CAST(${expr} AS VARCHAR), '')`).join(', ');
   const rows = usable.map(key => `row(${groupBy.map(({ id }) => qb.addParam(key[id])).join(', ')})`).join(', ');
   return { kind: 'some', condition: `row(${columns}) IN (${rows})` };
 }
@@ -98,7 +98,7 @@ export async function queryAggregatedRows(run: RunSql, q: AggregatedRowsQuery): 
     return { rows: [toAggregatedRow(r, q.groupBy)], totalRows: 1 };
   }
 
-  const groupByList = q.groupBy.map(g => g.column).join(', ');
+  const groupByList = groupByExpressions(q.groupBy).join(', ');
   const countSql = `
     SELECT CAST(COUNT(*) AS DOUBLE) AS n FROM (
       SELECT 1 FROM ${q.source} ${where}

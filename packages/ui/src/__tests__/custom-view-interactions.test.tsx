@@ -11,7 +11,7 @@ import type {
   ExplorerPreferencesUpdate,
   ViewSpec,
 } from '@costgoblin/core/browser';
-import { asBucketPath, asDateString, asDimensionId, asDollars, asProviderName } from '@costgoblin/core/browser';
+import { asBucketPath, asDateString, asDimensionId, asDollars, asProviderName, isPeriodGranularity, periodStartsInRange } from '@costgoblin/core/browser';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { PaletteProvider } from '../hooks/use-palette.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
@@ -206,6 +206,98 @@ describe('CustomView — drag-to-zoom from a widget', () => {
       });
     });
     expect(screen.queryByText(/hourly tier isn/)).toBeNull();
+  });
+});
+
+/** Weekly and Monthly buckets: one row per period, keyed by the period's first day. */
+class PeriodApi extends ViewApi {
+  override queryDailyCosts(params?: DailyCostsParams): Promise<DailyCostsResult> {
+    const g = params?.granularity;
+    if (params === undefined || g === undefined || !isPeriodGranularity(g)) return super.queryDailyCosts(params);
+    this.dailyCalls.push(params);
+    const keys = periodStartsInRange({ start: params.dateRange.start, end: params.dateRange.end }, g);
+    return Promise.resolve({
+      days: keys.map((date, i) => ({
+        date,
+        total: asDollars(100 + i),
+        breakdown: { 'Amazon EC2': asDollars(60 + i), 'Amazon S3': asDollars(40) },
+      })),
+      groups: ['Amazon EC2', 'Amazon S3'],
+      totalCost: asDollars(100 * keys.length),
+    });
+  }
+}
+
+describe('CustomView — drag-to-zoom and compare in Monthly', () => {
+  // Today is 2026-10-21 and the lag is 2 days: the newest day is 2026-10-19.
+  beforeEach(() => { vi.setSystemTime(new Date('2026-10-21T12:00:00Z')); });
+
+  async function openMonthly(preset: string) {
+    const rendered = renderView(STACKED, new PeriodApi());
+    await waitFor(() => { expect(rendered.api.dailyCalls.length).toBeGreaterThan(0); });
+    await rendered.user.click(screen.getByRole('button', { name: 'Monthly' }));
+    await rendered.user.click(screen.getByRole('button', { name: /Sep 2026/ }));
+    await rendered.user.click(screen.getByRole('button', { name: preset }));
+    await waitFor(() => { expect(rendered.api.dailyCalls.at(-1)?.granularity).toBe('monthly'); });
+    return rendered;
+  }
+
+  it('drags two monthly bars to Daily over those whole months', async () => {
+    const { api } = await openMonthly('Last 6 months'); // May–Oct: 50px per bar
+
+    await dragBars(155, 245); // Aug and Sep
+    await waitFor(() => { expect(api.dailyCalls.at(-1)?.granularity).toBe('daily'); });
+    expect(api.dailyCalls.at(-1)?.dateRange).toEqual({ start: '2026-08-01', end: '2026-09-30' });
+    expect(screen.getByRole('button', { name: /2026-08-01 → 2026-09-30/ })).toBeDefined();
+    expect(screen.queryByText(/hourly tier isn/)).toBeNull();
+  });
+
+  it('caps the Daily range at the newest day when the drag reaches the current month', async () => {
+    const { api } = await openMonthly('Last 6 months');
+
+    await dragBars(205, 295); // Sep and Oct
+    await waitFor(() => { expect(api.dailyCalls.at(-1)?.granularity).toBe('daily'); });
+    expect(api.dailyCalls.at(-1)?.dateRange).toEqual({ start: '2026-09-01', end: '2026-10-19' });
+  });
+
+  it('ignores a drag over a period that starts after the newest day', async () => {
+    const { api } = await openMonthly('Last 6 months');
+    // Set the clock back after picking: the range's last month (Oct) now starts
+    // after the newest day, 2026-08-29, and has no days to show.
+    vi.setSystemTime(new Date('2026-08-31T12:00:00Z'));
+    const calls = api.dailyCalls.length;
+
+    await dragBars(255, 295); // the last bar only
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+    expect(api.dailyCalls).toHaveLength(calls);
+    expect(api.dailyCalls.at(-1)).toMatchObject({ dateRange: { start: '2026-05-01', end: '2026-10-31' }, granularity: 'monthly' });
+    expect(screen.queryByText(/hourly tier isn/)).toBeNull();
+  });
+
+  it('keeps Monthly when the drag covers more than two months', async () => {
+    const { api } = await openMonthly('Last 6 months');
+
+    await dragBars(105, 295); // Jul, Aug, Sep and Oct
+    await waitFor(() => { expect(api.dailyCalls.at(-1)?.dateRange).toEqual({ start: '2026-07-01', end: '2026-10-31' }); });
+    expect(api.dailyCalls.at(-1)?.granularity).toBe('monthly');
+  });
+
+  it('compares against the same number of whole months immediately before', async () => {
+    const { api, user } = renderView(STACKED, new PeriodApi());
+    await waitFor(() => { expect(api.dailyCalls.length).toBeGreaterThan(0); });
+    await user.click(screen.getByRole('button', { name: 'Monthly' }));
+    await user.click(screen.getByRole('button', { name: /Sep 2026/ }));
+    await user.click(screen.getByText('Custom range…'));
+    await user.click(screen.getByRole('button', { name: 'Mar' }));
+    await user.click(screen.getByRole('button', { name: 'Oct' }));
+    await user.click(await screen.findByRole('checkbox', { name: 'Compare to previous period' }));
+
+    await waitFor(() => {
+      expect(api.dailyCalls.filter(c => c.origin === 'widget:stackedBar:service/prev').at(-1)?.dateRange).toEqual({
+        start: '2025-07-01',
+        end: '2026-02-28',
+      });
+    });
   });
 });
 

@@ -7,6 +7,7 @@ import {
   explorerGroupBy,
   explorerOrderBy,
   explorerSqlColumn,
+  groupByExpressions,
   groupBySelectList,
   groupByValues,
 } from '../main/handlers/explorer-columns.js';
@@ -61,6 +62,21 @@ describe('appendRowFilters', () => {
     expect(appendRowFilters('WHERE x = 1', { service: '' }, columns)).toBe('WHERE x = 1');
     expect(appendRowFilters('WHERE x = 1', undefined, columns)).toBe('WHERE x = 1');
   });
+
+  it('compares a monthly or weekly usage_date against its bucket, so a drill-down returns the whole period', () => {
+    expect(appendRowFilters('', { usage_date: '2026-10-01' }, columns, 'monthly'))
+      .toBe("WHERE CAST(date_trunc('month', usage_date) AS DATE)::VARCHAR = '2026-10-01'");
+    expect(appendRowFilters('', { usage_date: '2026-10-12' }, columns, 'weekly'))
+      .toBe("WHERE CAST(date_trunc('week', usage_date) AS DATE)::VARCHAR = '2026-10-12'");
+  });
+
+  it('leaves usage_date and the tag filters alone on daily and hourly', () => {
+    for (const granularity of ['daily', 'hourly'] as const) {
+      expect(appendRowFilters('', { usage_date: '2026-01-05' }, columns, granularity))
+        .toBe("WHERE usage_date::VARCHAR = '2026-01-05'");
+    }
+    expect(appendRowFilters('', { tag_STAGE: 'PROD' }, columns, 'monthly')).toBe(`WHERE ${UPPER} = 'PROD'`);
+  });
 });
 
 describe('aggregated table helpers', () => {
@@ -73,6 +89,27 @@ describe('aggregated table helpers', () => {
       { id: 'tag_stage', column: LOWER },
     ]);
     expect(groupBySelectList(groupBy)).toBe(`usage_date::VARCHAR AS usage_date, ${UPPER}, ${LOWER}`);
+  });
+
+  it('groups usage_date by its week or month bucket, still read back under usage_date', () => {
+    const monthly = explorerGroupBy(['usage_date', 'tag_STAGE'], columns, 'monthly');
+    const bucket = "CAST(date_trunc('month', usage_date) AS DATE)";
+    expect(groupBySelectList(monthly)).toBe(`${bucket}::VARCHAR AS usage_date, ${UPPER}`);
+    expect(groupByExpressions(monthly)).toEqual([bucket, UPPER]);
+    expect(groupByValues({ usage_date: '2026-10-01', [UPPER]: 'PROD' }, monthly))
+      .toEqual({ usage_date: '2026-10-01', tag_STAGE: 'PROD' });
+    expect(aggregatedOrderBy({ column: 'usage_date', direction: 'asc' }, monthly)).toBe(`${bucket} ASC`);
+    expect(groupBySelectList(explorerGroupBy(['usage_date'], columns, 'weekly')))
+      .toBe("CAST(date_trunc('week', usage_date) AS DATE)::VARCHAR AS usage_date");
+  });
+
+  it('keeps the daily output byte for byte, with or without a granularity', () => {
+    for (const granularity of [undefined, 'daily', 'hourly'] as const) {
+      const daily = explorerGroupBy(['usage_date', 'tag_STAGE'], columns, granularity);
+      expect(daily).toEqual([{ id: 'usage_date', column: 'usage_date' }, { id: 'tag_STAGE', column: UPPER }]);
+      expect(groupBySelectList(daily)).toBe(`usage_date::VARCHAR AS usage_date, ${UPPER}`);
+      expect(groupByExpressions(daily)).toEqual(['usage_date', UPPER]);
+    }
   });
 
   it('reads each value from its column back under the id', () => {

@@ -1,9 +1,12 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { Group } from '@visx/group';
 import { scaleBand, scaleLinear } from '@visx/scale';
 import { ParentSize } from '@visx/responsive';
 import { formatDollars, formatShortDate } from './format.js';
 import { useChartTooltip } from './chart-tooltip.js';
+import { isPeriodGranularity } from '@costgoblin/core/browser';
+import type { Granularity } from '@costgoblin/core/browser';
+import { formatBucketKey } from '../lib/drag-select.js';
 
 export interface HeatmapCell {
   readonly date: string;
@@ -18,6 +21,9 @@ interface HeatmapChartProps {
   readonly title?: React.ReactNode | undefined;
   readonly subtitle?: string | undefined;
   readonly height?: number | undefined;
+  /** Weekly/monthly columns are period starts, labelled as their period
+   *  (`W43 2026`, `Oct 2026`) on the axis and in the tooltip. */
+  readonly granularity?: Granularity | undefined;
   readonly onCellClick?: ((group: string, date: string) => void) | undefined;
 }
 
@@ -31,6 +37,7 @@ function HeatmapInner({
   dates,
   width,
   height,
+  granularity,
   onCellClick,
 }: Omit<HeatmapChartProps, 'title' | 'subtitle'> & { readonly width: number; readonly height: number }) {
   const tooltip = useChartTooltip();
@@ -66,6 +73,11 @@ function HeatmapInner({
   // the tooltip and one outline, not every cell (a year by ten groups is
   // thousands). show/hide are stable callbacks.
   const { show, hide, active } = tooltip;
+  const periodColumns = granularity !== undefined && isPeriodGranularity(granularity);
+  const columnLabel = useCallback(
+    (date: string) => periodColumns ? formatBucketKey(date, granularity) : formatShortDate(date),
+    [periodColumns, granularity],
+  );
   const cellLayer = useMemo(() => cells.map((c) => {
     const key = `${c.group}-${c.date}`;
     return (
@@ -81,13 +93,13 @@ function HeatmapInner({
         aria-label={`${c.group} • ${c.date} — ${formatDollars(c.cost)}`}
         onClick={() => { onCellClick?.(c.group, c.date); }}
         onMouseMove={(e) => {
-          show(e, { key, title: c.group, rows: [{ label: formatShortDate(c.date), value: formatDollars(c.cost) }] });
+          show(e, { key, title: c.group, rows: [{ label: columnLabel(c.date), value: formatDollars(c.cost) }] });
         }}
         onMouseLeave={hide}
         style={{ cursor: onCellClick === undefined ? 'default' : 'pointer' }}
       />
     );
-  }), [cells, xScale, yScale, cellW, cellH, colorScale, onCellClick, show, hide]);
+  }), [cells, xScale, yScale, cellW, cellH, colorScale, onCellClick, show, hide, columnLabel]);
   const cellByKey = useMemo(() => new Map(cells.map(c => [`${c.group}-${c.date}`, c])), [cells]);
   const hoveredCell = active === null ? undefined : cellByKey.get(active.key);
 
@@ -141,7 +153,7 @@ function HeatmapInner({
                     textAnchor="middle"
                     fill="var(--color-text-muted)"
                   >
-                    {d.slice(5)}
+                    {periodColumns ? columnLabel(d) : d.slice(5)}
                   </text>
                 );
               });
@@ -160,6 +172,7 @@ export function HeatmapChart({
   title,
   subtitle,
   height = 320,
+  granularity,
   onCellClick,
 }: HeatmapChartProps) {
   return (
@@ -183,6 +196,7 @@ export function HeatmapChart({
                   dates={dates}
                   width={width}
                   height={h}
+                  granularity={granularity}
                   onCellClick={onCellClick}
                 />
               ) : null
