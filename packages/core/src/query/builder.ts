@@ -242,6 +242,12 @@ function missingValueSql(resolved: ResolvedDimension): string {
   return `(${empty} OR ${resolved.rawField} = '${NO_ACCOUNT_SENTINEL}')`;
 }
 
+/** A condition with no values and no `matchMissing` is a draft: it constrains
+ *  nothing, so a rule skips it. */
+function matchesNothingYet(cond: ExclusionRule['conditions'][number]): boolean {
+  return cond.values.length === 0 && cond.matchMissing !== true;
+}
+
 /** SQL for one rule condition: true when the row's value is one of the
  *  condition's values or, with `matchMissing`, when it has none. Never NULL:
  *  `x IN (…)` is NULL when x is, and an exclusion's `NOT (NULL)` drops the row
@@ -255,7 +261,7 @@ function buildConditionSql(
   qb: QueryBuilder | undefined,
 ): string | null {
   const matchMissing = cond.matchMissing === true;
-  if (cond.values.length === 0 && !matchMissing) return null;
+  if (matchesNothingYet(cond)) return null;
   const resolved = tryResolveField(cond.dimensionId, dimensions);
   if (resolved === null) return null;
   const parts: string[] = [];
@@ -270,16 +276,34 @@ function buildConditionSql(
   return parts.length > 1 ? `(${sql})` : sql;
 }
 
+/** What a condition on a dimension the config doesn't have does to its rule.
+ *  `match-nothing` (exclusion rules): the rule matches no row. The dimension
+ *  was dropped (no configured provider fills it) or deleted, and skipping
+ *  just that AND-leg would exclude MORE than the rule says. `skip` (the
+ *  Explorer's filters, whose columns include ones with no configured
+ *  dimension, such as SKU Meter in a GCP-only workspace): the condition is
+ *  left out. */
+type UnknownDimensionCondition = 'match-nothing' | 'skip';
+
 /** Build the positive match expression for a single rule (AND of conditions,
  *  OR within each condition's values). Used both for NOT-exclusion in queries
  *  and for the positive preview queries. Never NULL (see buildConditionSql).
- *  Returns null when the rule has no valid conditions. */
+ *  Returns null when the rule matches no row: none of its conditions has
+ *  anything to match, or (`match-nothing`) one names a dimension the config
+ *  doesn't have. */
 export function buildRuleMatchExpr(
   rule: ExclusionRule,
   dimensions: DimensionsConfig,
   accountReverseMap?: ReadonlyMap<string, readonly string[]>,
   qb?: QueryBuilder,
+  unknownDimension: UnknownDimensionCondition = 'match-nothing',
 ): string | null {
+  // Checked before any condition binds a value on `qb`: an early return must
+  // leave no parameter behind that the SQL never references.
+  if (unknownDimension === 'match-nothing'
+    && rule.conditions.some(c => !matchesNothingYet(c) && tryResolveField(c.dimensionId, dimensions) === null)) {
+    return null;
+  }
   const conditionSqls: string[] = [];
   for (const cond of rule.conditions) {
     const sql = buildConditionSql(cond, dimensions, accountReverseMap, qb);

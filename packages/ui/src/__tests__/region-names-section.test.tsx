@@ -14,8 +14,9 @@ const CACHED: NonNullable<RegionInfo> = {
   syncedAt: '2026-10-01T08:00:00Z',
   lastError: null,
   regions: {
-    'us-east-1': { longName: 'US East (N. Virginia)', country: 'US', continent: 'North America' },
-    'eu-west-1': { longName: 'Europe (Ireland)', country: 'IE', continent: 'Europe' },
+    // SSM's geolocationRegion, stored as `continent`: an ISO 3166-2 subdivision.
+    'us-east-1': { longName: 'US East (N. Virginia)', country: 'US', continent: 'US-VA' },
+    'eu-west-1': { longName: 'Europe (Ireland)', country: 'IE', continent: 'IE-D' },
     'il-central-1': { longName: 'Israel (Tel Aviv)', country: '', continent: '' },
   },
 };
@@ -75,7 +76,7 @@ describe('SsmParameterSection — nothing cached', () => {
     expect(screen.queryByRole('button', { name: 'Sync region names' })).toBeNull();
 
     pending.resolve({ count: 3, syncedAt: CACHED.syncedAt });
-    expect(await screen.findByText('3 regions enriched with longName + country + continent')).toBeDefined();
+    expect(await screen.findByText('3 regions enriched with longName + country + subdivision')).toBeDefined();
   });
 
   it('shows the last SSM failure, and re-reads the cache after a retry fails too', async () => {
@@ -106,7 +107,7 @@ describe('SsmParameterSection — cached names', () => {
     const { user } = renderSection(new RegionApi([CACHED]));
     const toggle = await screen.findByRole('button', { name: /^Region Names/ });
     expect(toggle.textContent).toContain('▸');
-    expect(screen.getByText('3 regions enriched with longName + country + continent')).toBeDefined();
+    expect(screen.getByText('3 regions enriched with longName + country + subdivision')).toBeDefined();
     expect(screen.getByText(`Synced ${new Date('2026-10-01T08:00:00Z').toLocaleString()}`)).toBeDefined();
     expect(screen.queryByRole('table')).toBeNull();
 
@@ -125,7 +126,7 @@ describe('SsmParameterSection — cached names', () => {
 
   it('omits the synced time when the cache carries none', async () => {
     renderSection(new RegionApi([{ ...CACHED, count: 1, syncedAt: '' }]));
-    expect(await screen.findByText('1 regions enriched with longName + country + continent')).toBeDefined();
+    expect(await screen.findByText('1 regions enriched with longName + country + subdivision')).toBeDefined();
     expect(screen.queryByText(/^Synced /)).toBeNull();
   });
 
@@ -133,7 +134,7 @@ describe('SsmParameterSection — cached names', () => {
     { search: 'EU-WEST', expected: ['eu-west-1'], by: 'code' },
     { search: 'virginia', expected: ['us-east-1'], by: 'friendly name' },
     { search: 'ie', expected: ['eu-west-1'], by: 'country' },
-    { search: 'america', expected: ['us-east-1'], by: 'continent' },
+    { search: 'us-va', expected: ['us-east-1'], by: 'subdivision' },
   ])('filters the table by $by', async ({ search, expected }) => {
     const { user } = renderSection(new RegionApi([CACHED]));
     await user.click(await screen.findByRole('button', { name: /^Region Names/ }));
@@ -154,7 +155,7 @@ describe('SsmParameterSection — cached names', () => {
     expect(screen.getByText('Fetching region friendly names…')).toBeDefined();
 
     pending.resolve({ count: 4, syncedAt: '2026-10-02T08:00:00Z' });
-    expect(await screen.findByText('4 regions enriched with longName + country + continent')).toBeDefined();
+    expect(await screen.findByText('4 regions enriched with longName + country + subdivision')).toBeDefined();
     expect(resync).toHaveProperty('disabled', false);
   });
 

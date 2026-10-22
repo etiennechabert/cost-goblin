@@ -171,6 +171,20 @@ describe('exclusion rules and missing values (DuckDB execution)', () => {
       rule: rule(team(['sandbox'], true), { dimensionId: asDimensionId('region'), values: ['eu-west-1'] }),
       excluded: ROW_COST.sandbox + ROW_COST.untagged + ROW_COST.emptyTag,
     },
+    // A dimension the config doesn't have (dropped because no provider fills
+    // it, or deleted): skipping its AND-leg would exclude every 111 row.
+    {
+      name: 'a condition on a dimension the config lacks makes the rule match nothing',
+      rule: rule({ dimensionId: asDimensionId('account'), values: ['111'] }, { dimensionId: asDimensionId('service_code'), values: ['x'] }),
+      excluded: 0,
+    },
+    { name: 'a rule only on a missing dimension excludes nothing', rule: rule({ dimensionId: asDimensionId('service_code'), values: ['x'] }), excluded: 0 },
+    {
+      // An empty condition is a draft: it stays skipped, whatever its dimension.
+      name: 'an empty condition on a missing dimension is still skipped',
+      rule: rule(team(['sandbox']), { dimensionId: asDimensionId('service_code'), values: [] }),
+      excluded: ROW_COST.sandbox,
+    },
   ];
 
   for (const c of cases) {

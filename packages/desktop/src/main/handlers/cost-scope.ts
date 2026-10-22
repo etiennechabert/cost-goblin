@@ -24,9 +24,11 @@ import type {
   CostScopeSampleRow,
   DimensionsConfig,
 } from '@costgoblin/core';
+import type { TemplateProviderType } from '../config-templates.js';
 import type { RawRow } from '../duckdb-client.js';
 import type { AppContext } from './context.js';
 import { loadOrSeedCostScope } from './cost-scope-load.js';
+import { isAbsentForAllProviders } from './dimensions-merge.js';
 import { tagSelectItems, tagValuesById, toNum } from './query-utils.js';
 import { capPreviewWindow, costScopePreviewWindow } from './query-windows.js';
 
@@ -72,12 +74,21 @@ function logSettledError(label: string, result: PromiseSettledResult<unknown>): 
 // Dangling references silently become a bogus column reference in SQL, which
 // errors *every* query (exclusion clauses are threaded into all of them), so
 // catch it at save time rather than letting the whole app fail at query time.
-function assertRuleDimensionsExist(config: CostScopeConfig, dimensions: DimensionsConfig): void {
+/** Refuses a rule on a dimension the workspace doesn't know (a typo, a
+ *  deleted tag). A dimension no configured provider can fill is known: the
+ *  merge drops it from the config (a GCP-only workspace has no Service Code),
+ *  yet the built-in AWS Premium Support rule names it and rides along in
+ *  every save. Such a rule matches nothing until a provider can fill it. */
+function assertRuleDimensionsExist(
+  config: CostScopeConfig,
+  dimensions: DimensionsConfig,
+  providerTypes: readonly TemplateProviderType[],
+): void {
   const knownIds = dimensionIdSet(dimensions);
   for (const rule of config.rules) {
     for (const cond of rule.conditions) {
       const id = String(cond.dimensionId);
-      if (!knownIds.has(id)) {
+      if (!knownIds.has(id) && !isAbsentForAllProviders(id, providerTypes)) {
         throw new ConfigValidationError(
           `Rule '${rule.name}' references unknown dimension '${id}'. Available: ${[...knownIds].join(', ')}`,
         );
@@ -87,7 +98,7 @@ function assertRuleDimensionsExist(config: CostScopeConfig, dimensions: Dimensio
 }
 
 export function registerCostScopeHandlers(app: AppContext): void {
-  const { ctx, getCostScope, invalidateCostScope, getQueryDimensions, getAccountReverseMap, getOrgAccountsPath, getQueryProviders, runPreparedQuery } = app;
+  const { ctx, getConfig, getCostScope, invalidateCostScope, getQueryDimensions, getAccountReverseMap, getOrgAccountsPath, getQueryProviders, runPreparedQuery } = app;
 
   ipcMain.handle('cost-scope:get-config', (): Promise<CostScopeConfig> =>
     loadOrSeedCostScope({ costScopePath: ctx.costScopePath, getCostScope }));
@@ -95,7 +106,12 @@ export function registerCostScopeHandlers(app: AppContext): void {
   ipcMain.handle('cost-scope:save-config', async (_event, raw: unknown): Promise<void> => {
     const dimensions = await getQueryDimensions();
     const validated = validateCostScope(raw, dimensionIdSet(dimensions));
-    assertRuleDimensionsExist(validated, dimensions);
+    // As in the dimensions merge: a costgoblin.yaml that doesn't load
+    // exempts nothing.
+    const providerTypes = await getConfig()
+      .then(c => c.providers.map(p => p.type))
+      .catch((): TemplateProviderType[] => []);
+    assertRuleDimensionsExist(validated, dimensions, providerTypes);
     await writeFile(ctx.costScopePath, stringify(costScopeToYaml(validated)));
     invalidateCostScope();
   });

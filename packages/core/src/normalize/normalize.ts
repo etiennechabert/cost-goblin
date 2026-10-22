@@ -67,19 +67,17 @@ export function resolveAlias(
 }
 
 /** Per-region metadata extracted from the SSM global-infrastructure namespace.
- *  Shared shape for alias injection across the Region, Country, and Continent
- *  built-ins. */
+ *  Only `longName` labels a dimension. `country` and `continent` are stored
+ *  and shown with the snapshot; `continent` holds SSM's geolocationRegion, an
+ *  ISO 3166-2 subdivision ("IE-D"), under its historical name. */
 export interface RegionEnrichment {
   readonly longName: string;
   readonly country: string;
   readonly continent: string;
 }
 
-/** Injects SSM-derived aliases into the Region-family built-ins, so the same
- *  raw `region` column powers three distinct groupings:
- *   - `region`           + useRegionNames   → long names ("Europe (Frankfurt)")
- *   - `region_country`   → ISO country codes ("DE")
- *   - `region_continent` → AWS geo buckets ("EU")
+/** Injects SSM-derived aliases into the Region built-in when useRegionNames is
+ *  on, so raw codes group under long names ("Europe (Frankfurt)").
  *
  *  Reuses the alias machinery (SQL CASE, resolveAlias, filter expansion) so
  *  cost queries, filter dropdowns, and entity drill-ins pick up enriched
@@ -87,20 +85,11 @@ export interface RegionEnrichment {
  *
  *  User-defined aliases take precedence: if a region code is already covered
  *  by a user alias entry, we don't add an SSM-sourced entry that would
- *  compete. Codes with an empty value for the requested field are left alone
- *  so the raw code surfaces (better than collapsing everything unknown into
- *  a single bucket). */
-function pickRegionField(d: { name: string; useRegionNames?: boolean | undefined }): ((e: RegionEnrichment) => string) | null {
-  if (d.name === 'region_country') return (e) => e.country;
-  if (d.name === 'region_continent') return (e) => e.continent;
-  if (d.useRegionNames === true) return (e) => e.longName;
-  return null;
-}
-
+ *  compete. Codes with no long name are left alone so the raw code surfaces
+ *  (better than collapsing everything unknown into a single bucket). */
 function mergeRegionAliases(
   userAliases: Readonly<Record<string, readonly string[]>>,
   regionMap: ReadonlyMap<string, RegionEnrichment>,
-  pick: (e: RegionEnrichment) => string,
 ): Record<string, string[]> {
   const userCovered = new Set<string>();
   for (const list of Object.values(userAliases)) {
@@ -112,7 +101,7 @@ function mergeRegionAliases(
   }
   for (const [code, info] of regionMap) {
     if (userCovered.has(code)) continue;
-    const label = pick(info);
+    const label = info.longName;
     if (label.length === 0) continue;
     const existing = merged[label];
     if (existing === undefined) merged[label] = [code];
@@ -127,11 +116,8 @@ export function applyRegionFriendlyNames(
 ): import('../types/config.js').DimensionsConfig {
   if (regionMap.size === 0) return dims;
   const builtIn = dims.builtIn.map(d => {
-    if (d.field !== 'region') return d;
-    const pick = pickRegionField(d);
-    if (pick === null) return d;
-    const merged = mergeRegionAliases(d.aliases ?? {}, regionMap, pick);
-    return { ...d, aliases: merged };
+    if (d.field !== 'region' || d.useRegionNames !== true) return d;
+    return { ...d, aliases: mergeRegionAliases(d.aliases ?? {}, regionMap) };
   });
   return { ...dims, builtIn };
 }

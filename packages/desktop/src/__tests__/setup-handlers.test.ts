@@ -6,6 +6,7 @@ import { createGcsStorage, logger } from '@costgoblin/core';
 import type { BackfillRequest } from '@costgoblin/core';
 import { confirmAndFileBackfillCase, type ConfirmFiling } from '../main/aws-support.js';
 import { runGcloudCapture, type GcloudCaptureResult } from '../main/gcloud-capture.js';
+import { DEFAULT_BUILT_INS } from '../main/handlers/dimensions-merge.js';
 import { POST_SETUP_FLAG, registerSetupHandlers } from '../main/handlers/setup.js';
 import { dialog, resetElectronFakes, shell } from './helpers/electron-fake.js';
 import {
@@ -283,6 +284,11 @@ describe('setup:write-config', () => {
     expect(at(config, 'providers', 0)).toMatchObject({ name: 'team-aws', type: 'aws', credentialsProfile: 'billing-sso' });
     const dims: unknown = parse(await readFile(h.ws.dimensionsPath, 'utf-8'));
     expect(list(at(dims, 'builtIn')).map(d => at(d, 'name'))).toEqual(['account', 'region', 'service', 'service_category', 'charge_category', 'sku_meter', 'operation']);
+    expect(at(dims, 'builtIn', 0, 'label')).toBe('Account');
+    // One wording for the wizard and the load-time defaults.
+    for (const d of list(at(dims, 'builtIn'))) {
+      expect(at(d, 'description'), str(at(d, 'name'))).toBe(DEFAULT_BUILT_INS.find(b => b.name === at(d, 'name'))?.description);
+    }
     expect(at(dims, 'tags')).toEqual([{ tagName: 'team', label: 'Team', concept: 'owner' }, { tagName: 'cost-center', label: 'Cost Center' }]);
     expect((await h.app.getConfig()).providers[0]?.name).toBe('team-aws');
   });
@@ -306,6 +312,8 @@ describe('setup:write-config', () => {
     const names = list(at(dims, 'builtIn')).map(d => at(d, 'name'));
     expect(names).not.toContain('service_category');
     expect(names).toContain('service');
+    // A GCP sub-account is a project, as in the scaffolded template.
+    expect(at(dims, 'builtIn', 0)).toMatchObject({ name: 'account', label: 'Project' });
     expect(await readFile(h.ws.configPath, 'utf-8')).toContain(READER);
   });
 

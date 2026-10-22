@@ -407,7 +407,7 @@ export interface CostApi {
    *  main process rejects `nameStripPatterns` beyond the caps in
    *  `strip-pattern-limits.ts`, and reports patterns it could not apply in
    *  `stripIssues`. */
-  discoverColumnValues(field: string, opts?: { useOrgAccounts?: boolean; accountNameFromTag?: string; nameStripPatterns?: readonly string[]; normalize?: NormalizationRule; useRegionNames?: boolean; dimName?: string }): Promise<ColumnValuesPreview>;
+  discoverColumnValues(field: string, opts?: { useOrgAccounts?: boolean; accountNameFromTag?: string; nameStripPatterns?: readonly string[]; normalize?: NormalizationRule; useRegionNames?: boolean }): Promise<ColumnValuesPreview>;
   getDimensionsConfig(): Promise<DimensionsConfig>;
   saveDimensionsConfig(config: DimensionsConfig): Promise<void>;
   /** Estimate the rollup cost/benefit of a candidate dimensions config before
@@ -478,7 +478,7 @@ export interface CostApi {
   getOrgSyncProgress(): Promise<OrgSyncProgress | null>;
   /** Region-name cache info (count of resolved long-names + last sync time +
    *  the full per-region metadata map so the UI can display it in an expanded
-   *  view and surface extra dimensions like country/continent).
+   *  view).
    *  Populated as a side-effect of syncOrgAccounts. Returns null when no
    *  sync has ever been attempted; when the SSM step failed, returns
    *  count=0 with lastError set so the UI can explain why. */
