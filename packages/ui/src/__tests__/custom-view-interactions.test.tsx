@@ -11,7 +11,7 @@ import type {
   ExplorerPreferencesUpdate,
   ViewSpec,
 } from '@costgoblin/core/browser';
-import { asBucketPath, asDateString, asDimensionId, asDollars, asProviderName } from '@costgoblin/core/browser';
+import { asBucketPath, asDateString, asDimensionId, asDollars, asProviderName, isPeriodGranularity, periodStartsInRange } from '@costgoblin/core/browser';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { PaletteProvider } from '../hooks/use-palette.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
@@ -209,6 +209,98 @@ describe('CustomView — drag-to-zoom from a widget', () => {
   });
 });
 
+/** Weekly and Monthly buckets: one row per period, keyed by the period's first day. */
+class PeriodApi extends ViewApi {
+  override queryDailyCosts(params?: DailyCostsParams): Promise<DailyCostsResult> {
+    const g = params?.granularity;
+    if (params === undefined || g === undefined || !isPeriodGranularity(g)) return super.queryDailyCosts(params);
+    this.dailyCalls.push(params);
+    const keys = periodStartsInRange({ start: params.dateRange.start, end: params.dateRange.end }, g);
+    return Promise.resolve({
+      days: keys.map((date, i) => ({
+        date,
+        total: asDollars(100 + i),
+        breakdown: { 'Amazon EC2': asDollars(60 + i), 'Amazon S3': asDollars(40) },
+      })),
+      groups: ['Amazon EC2', 'Amazon S3'],
+      totalCost: asDollars(100 * keys.length),
+    });
+  }
+}
+
+describe('CustomView — drag-to-zoom and compare in Monthly', () => {
+  // Today is 2026-10-21 and the lag is 2 days: the newest day is 2026-10-19.
+  beforeEach(() => { vi.setSystemTime(new Date('2026-10-21T12:00:00Z')); });
+
+  async function openMonthly(preset: string) {
+    const rendered = renderView(STACKED, new PeriodApi());
+    await waitFor(() => { expect(rendered.api.dailyCalls.length).toBeGreaterThan(0); });
+    await rendered.user.click(screen.getByRole('button', { name: 'Monthly' }));
+    await rendered.user.click(screen.getByRole('button', { name: /Sep 2026/ }));
+    await rendered.user.click(screen.getByRole('button', { name: preset }));
+    await waitFor(() => { expect(rendered.api.dailyCalls.at(-1)?.granularity).toBe('monthly'); });
+    return rendered;
+  }
+
+  it('drags two monthly bars to Daily over those whole months', async () => {
+    const { api } = await openMonthly('Last 6 months'); // May–Oct: 50px per bar
+
+    await dragBars(155, 245); // Aug and Sep
+    await waitFor(() => { expect(api.dailyCalls.at(-1)?.granularity).toBe('daily'); });
+    expect(api.dailyCalls.at(-1)?.dateRange).toEqual({ start: '2026-08-01', end: '2026-09-30' });
+    expect(screen.getByRole('button', { name: /2026-08-01 → 2026-09-30/ })).toBeDefined();
+    expect(screen.queryByText(/hourly tier isn/)).toBeNull();
+  });
+
+  it('caps the Daily range at the newest day when the drag reaches the current month', async () => {
+    const { api } = await openMonthly('Last 6 months');
+
+    await dragBars(205, 295); // Sep and Oct
+    await waitFor(() => { expect(api.dailyCalls.at(-1)?.granularity).toBe('daily'); });
+    expect(api.dailyCalls.at(-1)?.dateRange).toEqual({ start: '2026-09-01', end: '2026-10-19' });
+  });
+
+  it('ignores a drag over a period that starts after the newest day', async () => {
+    const { api } = await openMonthly('Last 6 months');
+    // Set the clock back after picking: the range's last month (Oct) now starts
+    // after the newest day, 2026-08-29, and has no days to show.
+    vi.setSystemTime(new Date('2026-08-31T12:00:00Z'));
+    const calls = api.dailyCalls.length;
+
+    await dragBars(255, 295); // the last bar only
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+    expect(api.dailyCalls).toHaveLength(calls);
+    expect(api.dailyCalls.at(-1)).toMatchObject({ dateRange: { start: '2026-05-01', end: '2026-10-31' }, granularity: 'monthly' });
+    expect(screen.queryByText(/hourly tier isn/)).toBeNull();
+  });
+
+  it('keeps Monthly when the drag covers more than two months', async () => {
+    const { api } = await openMonthly('Last 6 months');
+
+    await dragBars(105, 295); // Jul, Aug, Sep and Oct
+    await waitFor(() => { expect(api.dailyCalls.at(-1)?.dateRange).toEqual({ start: '2026-07-01', end: '2026-10-31' }); });
+    expect(api.dailyCalls.at(-1)?.granularity).toBe('monthly');
+  });
+
+  it('compares against the same number of whole months immediately before', async () => {
+    const { api, user } = renderView(STACKED, new PeriodApi());
+    await waitFor(() => { expect(api.dailyCalls.length).toBeGreaterThan(0); });
+    await user.click(screen.getByRole('button', { name: 'Monthly' }));
+    await user.click(screen.getByRole('button', { name: /Sep 2026/ }));
+    await user.click(screen.getByText('Custom range…'));
+    await user.click(screen.getByRole('button', { name: 'Mar' }));
+    await user.click(screen.getByRole('button', { name: 'Oct' }));
+    await user.click(await screen.findByRole('checkbox', { name: 'Compare to previous period' }));
+
+    await waitFor(() => {
+      expect(api.dailyCalls.filter(c => c.origin === 'widget:stackedBar:service/prev').at(-1)?.dateRange).toEqual({
+        start: '2025-07-01',
+        end: '2026-02-28',
+      });
+    });
+  });
+});
+
 describe('CustomView — filtering from widgets', () => {
   it('filters the whole view by a pie legend entry', async () => {
     const { api, user } = renderView(view([{ id: 'pie', type: 'pie', size: 'medium', groupBy: asDimensionId('service') }]));
@@ -228,6 +320,88 @@ describe('CustomView — filtering from widgets', () => {
     fireEvent.click(bubble);
 
     expect(await screen.findByRole('button', { name: /^Service: (platform|data|growth|infra|ml)$/ })).toBeDefined();
+  });
+});
+
+describe('CustomView — group-bys on a dimension that is not enabled', () => {
+  // The mock's enabled dimensions, in order: provider, account, service,
+  // region, resource_id, then the team/env/product tags.
+  const STACK = 'tag_aws_cloudformation_stack_name';
+  const PIES = view([
+    { id: 'stack', type: 'pie', size: 'medium', groupBy: asDimensionId(STACK) },
+    { id: 'svc', type: 'pie', size: 'medium', groupBy: asDimensionId('service') },
+    { id: 'reg', type: 'pie', size: 'medium', groupBy: asDimensionId('region') },
+  ]);
+
+  it('groups by the first enabled dimension the view does not show, and never queries the other', async () => {
+    const { api } = renderView(PIES);
+
+    await waitFor(() => {
+      expect(new Set(api.costCalls.map(c => String(c.groupBy)))).toEqual(new Set(['provider', 'service', 'region']));
+    });
+    await waitFor(() => {
+      expect(document.querySelector('[data-widget-id="stack"] button')?.textContent).toBe('Provider');
+    }, { timeout: 5000 });
+    expect(screen.queryByText(STACK)).toBeNull();
+  });
+
+  it('reads the summary total grouped by service, which is always enabled', async () => {
+    const api = new ViewApi();
+    // Account is disabled: getDimensions lists only the enabled dimensions.
+    vi.spyOn(api, 'getDimensions').mockResolvedValue([
+      { name: asDimensionId('service'), label: 'Service', field: 'service' },
+      { name: asDimensionId('region'), label: 'Region', field: 'region' },
+    ]);
+    renderView(SUMMARY, api);
+
+    await waitFor(() => { expect(api.costCalls.length).toBeGreaterThan(0); });
+    expect(new Set(api.costCalls.map(c => String(c.groupBy)))).toEqual(new Set(['service']));
+  });
+
+  it('reads the burndown daily totals grouped by service, for both periods', async () => {
+    const api = new ViewApi();
+    renderView(view([{ id: 'pacing', type: 'burndown', size: 'large' }]), api);
+
+    await waitFor(() => {
+      expect(api.dailyCalls.map(c => c.origin).sort()).toEqual(['widget:burndown', 'widget:burndown/prev']);
+    });
+    expect(api.dailyCalls.map(c => String(c.groupBy))).toEqual(['service', 'service']);
+  });
+
+  it('shows the dashboard as configured when the dimensions fail to load', async () => {
+    class NoDimensionsApi extends ViewApi {
+      override getDimensions(): Promise<Dimension[]> {
+        return Promise.reject(new Error('dimensions.yaml is broken'));
+      }
+    }
+    const { api } = renderView(PIES, new NoDimensionsApi());
+
+    await waitFor(() => {
+      expect(new Set(api.costCalls.map(c => String(c.groupBy)))).toEqual(new Set([STACK, 'service', 'region']));
+    });
+  });
+});
+
+describe('CustomView — rollup build', () => {
+  it('shows the build overlay instead of the widgets while the viewed months are being built', async () => {
+    const api = new ViewApi();
+    render(
+      <PaletteProvider>
+        <CostApiProvider value={api}>
+          <CustomView
+            spec={view([{ id: 'pie', type: 'pie', size: 'medium', groupBy: asDimensionId('service') }])}
+            rollupStatus={{ state: 'computing', done: 0, total: 2, periods: ['2026-02', '2026-03'], active: ['2026-02'] }}
+          />
+        </CostApiProvider>
+      </PaletteProvider>,
+    );
+
+    expect(await screen.findByText('Preparing your cost data')).toBeDefined();
+    // The dimensions have loaded (the filter bar shows), so the widgets would have mounted by now.
+    expect(await screen.findByRole('button', { name: 'Environment' })).toBeDefined();
+    expect(document.querySelector('[data-widget-id]')).toBeNull();
+    expect(screen.queryByText('Loading...')).toBeNull();
+    expect(api.costCalls).toEqual([]);
   });
 });
 
@@ -251,6 +425,8 @@ describe('CustomView — filter bar', () => {
       .filter(t => /^(Environment|Product|Team|Business unit|Account|Cost center)/.test(t));
     expect(chips).toEqual(['Environment: prod', 'Product', 'Team', 'Business unit', 'Account', 'Cost center']);
     await waitFor(() => { expect(api.costCalls.at(-1)?.filters).toEqual({ tag_env: ['prod'] }); });
+    // The widgets mount with the defaults already set: none queries without them first.
+    expect(api.costCalls.map(c => c.filters)).toEqual(api.costCalls.map(() => ({ tag_env: ['prod'] })));
   });
 
   it('serves dropdowns from the prefetch, and queries live once another filter narrows them', async () => {

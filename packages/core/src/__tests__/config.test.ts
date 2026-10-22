@@ -1,4 +1,6 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadConfig, loadDimensions, loadOrgTree, ConfigValidationError } from '../config/index.js';
 import { validateConfig, validateDimensions, validateOrgTree } from '../config/validator.js';
@@ -40,7 +42,7 @@ describe('loadConfig', () => {
 describe('loadDimensions', () => {
   it('loads built-in and tag dimensions', async () => {
     const dims = await loadDimensions(join(fixturesDir, 'dimensions.yaml'));
-    expect(dims.builtIn).toHaveLength(13);
+    expect(dims.builtIn).toHaveLength(11);
     expect(dims.builtIn[0]?.name).toBe('account');
     expect(dims.builtIn[0]?.displayField).toBe('account_name');
     expect(dims.tags).toHaveLength(4);
@@ -68,6 +70,26 @@ describe('loadOrgTree', () => {
     expect(sre?.name).toBe('SRE');
     expect(sre?.virtual).toBeUndefined();
     expect(sre?.children).toHaveLength(2);
+  });
+
+  it('reads a missing org-tree.yaml as an empty tree', async () => {
+    await expect(loadOrgTree(join(fixturesDir, 'no-such-org-tree.yaml'))).resolves.toEqual({ tree: [] });
+  });
+
+  // Write-only: the read fails with EACCES. It used to read as an empty tree,
+  // so owner rollups lost the tree and exports left it out without a word.
+  // Root reads it anyway, so the case can't be built there.
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('rejects an org-tree.yaml it cannot read', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'cg-org-tree-'));
+    try {
+      const path = join(dir, 'org-tree.yaml');
+      await writeFile(path, 'tree: []\n');
+      await chmod(path, 0o200);
+
+      await expect(loadOrgTree(path)).rejects.toMatchObject({ code: 'EACCES' });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 

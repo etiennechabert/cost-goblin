@@ -3,24 +3,24 @@ import {
   buildEntityDetailQuery,
   logger,
 } from '@costgoblin/core';
-import type { DateRange, DimensionId, EntityRef } from '@costgoblin/core';
+import type { DimensionId, EntityRef } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
 import type { Cell, Column, StructuredResult, Table } from '../formatters/result.js';
 import {
   buildQueryContextOpts,
   computeDataCoverage,
-  defaultDateRange,
   emptyRangeResult,
   lookupDimension,
   mondayOf,
   resolveEntityName,
   resolveFormat,
+  resolveToolDateRange,
   structuredToolResult,
   toDimensionId,
-  toDateRange,
   toFilterMap,
   toNum,
   toStr,
+  withinLagResult,
 } from './tool-helpers.js';
 
 export async function queryEntityDetail(
@@ -36,9 +36,9 @@ export async function queryEntityDetail(
   const format = resolveFormat(params.format);
   const entity: EntityRef = asEntityRef(params.entity);
   const dimension: DimensionId = toDimensionId(params.dimension);
-  const dateRange: DateRange = params.dateRange !== undefined
-    ? toDateRange(params.dateRange)
-    : defaultDateRange(ctx.now());
+  const range = await resolveToolDateRange(ctx, params.dateRange);
+  if (range.kind === 'within-lag') return withinLagResult(ctx, range, format, params.entity);
+  const { dateRange, cappedAt } = range;
   const filters = toFilterMap(params.filters);
 
   const { opts, empty } = await buildQueryContextOpts(ctx, dateRange);
@@ -136,7 +136,7 @@ export async function queryEntityDetail(
     tables.push({ title: 'Weekly Trend', columns: weeklyCols, rows: weeklyRows });
   }
 
-  const coverage = await computeDataCoverage(ctx, dateRange);
+  const coverage = await computeDataCoverage(ctx, dateRange, cappedAt);
   const result: StructuredResult = {
     title: `${params.entity} (${dimLabel})`,
     coverage,

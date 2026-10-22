@@ -779,6 +779,7 @@ describe('App shell — first run', () => {
     const name = await screen.findByLabelText('Workspace name');
     await user.clear(name);
     await user.type(name, 'acme');
+    expect(name).toHaveProperty('value', 'acme');
     await user.click(screen.getByRole('button', { name: 'Continue' }));
 
     await completeSetup(user);

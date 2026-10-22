@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parse } from 'yaml';
 import { registerDimensionsHandlers } from '../main/handlers/dimensions.js';
+import { DEFAULT_BUILT_INS } from '../main/handlers/dimensions-merge.js';
 import {
   FIXTURE_AWS_PROVIDER,
   FIXTURE_CONFIG_DIR,
@@ -146,6 +147,19 @@ describe('dimensions:discover-column-values', () => {
     expect(at(preview, 'stripIssues')).toEqual({ invalid: [], slow: [], skipped: [] });
   });
 
+  // Resource and Provider once fell outside the allow-list: their editors
+  // showed "0 distinct values" over data holding thousands.
+  it('previews every default built-in dimension\'s column', async () => {
+    const h = await dimsApp();
+    for (const field of new Set(DEFAULT_BUILT_INS.map(d => d.field))) {
+      const preview = await h.ipc.invoke('dimensions:discover-column-values', field);
+      expect({ field, period: at(preview, 'period') }).toEqual({ field, period: '2026-02' });
+    }
+    const resources = await h.ipc.invoke('dimensions:discover-column-values', 'resource_id');
+    expect(num(at(resources, 'distinctCount'))).toBeGreaterThan(0);
+    expect(values(await h.ipc.invoke('dimensions:discover-column-values', 'provider'))).toEqual([AWS]);
+  });
+
   it('refuses columns outside the allow-list and malformed strip patterns before any query', async () => {
     const h = await dimsApp();
     const empty = { values: [], distinctCount: 0, period: '', stripIssues: { invalid: [], slow: [], skipped: [] } };
@@ -184,7 +198,7 @@ describe('dimensions:discover-column-values', () => {
     expect(byTag).toEqual(expect.arrayContaining(['pay', 'Cards Production']));
   });
 
-  it('maps region codes to friendly names, countries or continents, merging values that share a label', async () => {
+  it('previews region codes under their friendly names once synced, and only when asked', async () => {
     const h = await dimsApp();
     const codes = values(await h.ipc.invoke('dimensions:discover-column-values', 'region', { useRegionNames: true }));
     expect(codes).toContain('eu-central-1');
@@ -194,19 +208,13 @@ describe('dimensions:discover-column-values', () => {
     expect(values(await h.ipc.invoke('dimensions:discover-column-values', 'region'))).toContain('eu-central-1');
     expect(values(await h.ipc.invoke('dimensions:discover-column-values', 'region', { useRegionNames: true })))
       .toEqual(expect.arrayContaining(['Europe (Frankfurt)', 'US West (Oregon)', 'ap-southeast-1']));
-    const countries = values(await h.ipc.invoke('dimensions:discover-column-values', 'region', { dimName: 'region_country' }));
-    expect(countries).toEqual(expect.arrayContaining(['DE', 'IE', 'US']));
-    expect(countries.filter(c => c === 'US')).toHaveLength(1);
-    const continents = values(await h.ipc.invoke('dimensions:discover-column-values', 'region', { dimName: 'region_continent' }));
-    // us-east-1 has no continent on file: its code is kept rather than an empty label.
-    expect(continents).toEqual(expect.arrayContaining(['EU', 'NA', 'us-east-1', 'ap-southeast-1']));
   });
 
-  it('previews through the cost scope it can load, and without one when it cannot', async () => {
+  // Without it the preview would run on the defaults, not the user's scope.
+  it('refuses to preview through a cost-scope.yaml that does not load, naming it', async () => {
     const h = await dimsApp();
     await writeFile(h.ws.costScopePath, 'rules: 42\n');
-    const preview = await h.ipc.invoke('dimensions:discover-column-values', 'service');
-    expect(values(preview).length).toBeGreaterThan(0);
+    await expect(h.ipc.invoke('dimensions:discover-column-values', 'service')).rejects.toThrow("Couldn't load cost-scope.yaml");
   });
 });
 
@@ -224,11 +232,10 @@ describe('dimensions:estimate-rollup-grain', () => {
     expect(list(at(estimate, 'dims')).length).toBeGreaterThan(0);
   });
 
-  it('still estimates when the cost scope cannot be loaded', async () => {
+  it('refuses to estimate through a cost-scope.yaml that does not load, naming it', async () => {
     const h = await dimsApp();
     await writeFile(h.ws.costScopePath, 'rules: 42\n');
-    const estimate = await h.ipc.invoke('dimensions:estimate-rollup-grain', await h.app.getDimensions());
-    expect(at(estimate, 'probePeriod')).toBe('2026-02');
+    await expect(h.ipc.invoke('dimensions:estimate-rollup-grain', await h.app.getDimensions())).rejects.toThrow("Couldn't load cost-scope.yaml");
   });
 
   it('knows when the built rollup already is the candidate grain', async () => {

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { GCLOUD_ADC_LOGIN_COMMAND, GCLOUD_CLI_LOGIN_COMMAND } from '@costgoblin/core/browser';
 import type {
   GcpAccountLookup,
@@ -26,17 +26,27 @@ import { useQuery } from '../hooks/use-query.js';
  *  shows both paths, each impersonating the provider's reader when it names
  *  one — as one line when nothing needs action, with the paths behind
  *  Details. */
-export function GcpIdentityPanel({ providerName, context, refreshKey = 0 }: Readonly<{
+export function GcpIdentityPanel({ providerName, context, refreshKey = 0, onSplitAccounts }: Readonly<{
   /** Whose `keyFile` / `impersonateServiceAccount` to apply. Omitted in the
    *  wizard, where no provider exists yet. */
   providerName?: string | undefined;
   context: 'wizard' | 'provider';
   /** Bump to re-read, e.g. after a sign-in the parent ran. */
   refreshKey?: number;
+  /** Told when listing and downloads run as two different people, so the
+   *  wizard's refusals can name the account refused. Null whenever that isn't
+   *  known for sure: while checking, after a failed check, once unmounted. */
+  onSplitAccounts?: ((split: GcpSplitAccounts | null) => void) | undefined;
 }>): React.JSX.Element {
   const api = useCostApi();
   const [recheck, setRecheck] = useState(0);
   const query = useQuery(() => api.getGcpIdentities(providerName), [providerName, refreshKey, recheck]);
+  const split = query.status === 'success' && query.data.status === 'ok' ? query.data.identities.splitAccounts : null;
+  useEffect(() => {
+    if (onSplitAccounts === undefined) return undefined;
+    onSplitAccounts(split);
+    return () => { onSplitAccounts(null); };
+  }, [split, onSplitAccounts]);
 
   return (
     <section
@@ -102,10 +112,20 @@ function AdcRemedy({ file }: Readonly<{ file: GcpCredentialFile | null }>): Reac
   return <>run <Command>{GCLOUD_ADC_LOGIN_COMMAND}</Command></>;
 }
 
+/** Whether a browser sign-in can be this account: never a service account,
+ *  which gcloud runs as after `activate-service-account` with a key. Any
+ *  Google-managed domain, not just the reader address grammar: Compute
+ *  Engine's default account is `…@developer.gserviceaccount.com`. */
+function canSignInAs(account: string): boolean {
+  return !account.toLowerCase().endsWith('.gserviceaccount.com');
+}
+
 /** The wizard's form: the one account the user is working as — gcloud's,
  *  which lists the projects on offer — and a single line only when the setup
  *  would stall: gcloud or bucket access not signed in, or bucket access signed
- *  in as someone else. */
+ *  in as someone else. That line signs bucket access in as gcloud's account,
+ *  the one shown: switching gcloud instead would move downloads and the
+ *  project list too. */
 function CompactIdentities({ identities }: Readonly<{ identities: GcpIdentities }>): React.JSX.Element {
   const { listing, splitAccounts } = identities;
   const adcFile = listing.kind === 'not-signed-in' || listing.kind === 'unreadable' ? listing.file : undefined;
@@ -119,7 +139,10 @@ function CompactIdentities({ identities }: Readonly<{ identities: GcpIdentities 
       )}
       {splitAccounts !== null && (
         <Detail>
-          Bucket access is signed in as <Principal>{splitAccounts.listingAccount}</Principal> — a different account.
+          Bucket access is signed in as <Principal>{splitAccounts.listingAccount}</Principal>
+          {canSignInAs(splitAccounts.downloadAccount)
+            ? <> — to use <Principal>{splitAccounts.downloadAccount}</Principal>, <AdcRemedy file={listing.file} /></>
+            : ' — a different account.'}
         </Detail>
       )}
     </>
@@ -233,7 +256,7 @@ function Paths({ identities }: Readonly<{ identities: GcpIdentities }>): React.J
           {reader !== null && <Impersonating target={reader} />}
         </dd>
       </dl>
-      {identities.splitAccounts !== null && <SplitAccountsWarning split={identities.splitAccounts} />}
+      {identities.splitAccounts !== null && <SplitAccountsWarning split={identities.splitAccounts} file={listing.file} />}
       {bypassed !== null && (
         <p role="note" aria-label="Credential warning" className="mt-2 rounded-md border border-warning/50 bg-warning/10 px-2.5 py-1.5 text-text-primary break-words">
           Bucket listing reads as <Principal>{bypassed.target}</Principal>, but downloads run as{' '}
@@ -350,13 +373,21 @@ function DownloadIdentity({ identity }: Readonly<{ identity: GcpDownloadIdentity
   }
 }
 
-function SplitAccountsWarning({ split }: Readonly<{ split: GcpSplitAccounts }>): React.JSX.Element {
+/** Both directions, because which account holds the grants is the user's to
+ *  know: switching gcloud alone moved downloads onto the listing account in a
+ *  live case where that was the one without the grant. */
+function SplitAccountsWarning({ split, file }: Readonly<{ split: GcpSplitAccounts; file: GcpCredentialFile | null }>): React.JSX.Element {
   return (
     <p role="note" aria-label="Credential warning" className="mt-2 rounded-md border border-warning/50 bg-warning/10 px-2.5 py-1.5 text-text-primary break-words">
       Downloads run as <Principal>{split.downloadAccount}</Principal>, but bucket listing runs as{' '}
       <Principal>{split.listingAccount}</Principal> — two different accounts, and each needs its own access. To use one
-      account for both, run <Command>{`gcloud config set account ${split.listingAccount}`}</Command> — and if gcloud has
-      never signed in as that account, <Command>{`${GCLOUD_CLI_LOGIN_COMMAND} ${split.listingAccount}`}</Command> first.
+      account for both,{' '}
+      {canSignInAs(split.downloadAccount) && (
+        <>sign bucket listing in as <Principal>{split.downloadAccount}</Principal>: <AdcRemedy file={file} /> — or </>
+      )}
+      switch downloads to <Principal>{split.listingAccount}</Principal>: run{' '}
+      <Command>{`gcloud config set account ${split.listingAccount}`}</Command> (after{' '}
+      <Command>{`${GCLOUD_CLI_LOGIN_COMMAND} ${split.listingAccount}`}</Command> if gcloud never signed in as it).
     </p>
   );
 }

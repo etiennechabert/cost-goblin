@@ -8,11 +8,13 @@ import { Dialog, DialogContent, DialogTitle } from '../components/ui/dialog.js';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { DimensionsView } from '../views/dimensions.js';
 
-/** An open dimension editor closes on a mousedown outside it (or asks to
- *  discard its edits). A mousedown inside a modal layered over the page — the
- *  palette's "Reload data?" dialog, the release notes — is that modal's, not
- *  "outside the editor": acting on it would close the editor, or mount the
- *  discard prompt behind the modal the user is working in. */
+/** An open dimension editor closes on a click outside it (or asks to discard
+ *  its edits). On the click, not the press: closing on the press moved the
+ *  rows below the editor up under the pointer, so a click meant to open one of
+ *  them was lost. A click inside a modal layered over the page — the palette's
+ *  "Reload data?" dialog, the release notes — is that modal's, not "outside
+ *  the editor": acting on it would close the editor, or mount the discard
+ *  prompt behind the modal the user is working in. */
 
 const STRIP_PATTERNS = /Name strip patterns/;
 
@@ -41,6 +43,10 @@ function makeApi(): CostApi {
       displayField: 'account_name',
       useOrgAccounts: true,
       nameStripPatterns: ['^acme-'],
+    }, {
+      name: asDimensionId('charge_category'),
+      label: 'Charge Category',
+      field: 'charge_category',
     }],
     tags: [],
   });
@@ -72,24 +78,60 @@ afterEach(() => {
 });
 
 describe('Dimension editor — click outside', () => {
-  it('closes on a mousedown on the page outside it', async () => {
-    await openEditor();
-    fireEvent.mouseDown(screen.getByRole('button', { name: 'Page behind' }));
+  it('closes on a click on the page outside it, not on the press', async () => {
+    const { user } = await openEditor();
+    const outside = screen.getByRole('button', { name: 'Page behind' });
+    fireEvent.mouseDown(outside);
+    expect(screen.getByLabelText(STRIP_PATTERNS)).toBeDefined();
+    await user.click(outside);
     expect(screen.queryByLabelText(STRIP_PATTERNS)).toBeNull();
   });
 
-  it('stays open on a mousedown inside a modal over the page', async () => {
+  it('still closes when the page re-renders between the press and the click', async () => {
     const { rerender } = await openEditor();
-    rerender(true);
-    fireEvent.mouseDown(reloadButton());
+    const outside = screen.getByRole('button', { name: 'Page behind' });
+    fireEvent.mouseDown(outside);
+    rerender(false);
+    fireEvent.click(outside);
+    expect(screen.queryByLabelText(STRIP_PATTERNS)).toBeNull();
+  });
+
+  it('opens the row clicked while another editor is open', async () => {
+    const { user } = await openEditor();
+    await user.click(screen.getByRole('button', { name: /charge_category/ }));
+    expect(screen.queryByLabelText(STRIP_PATTERNS)).toBeNull();
+    expect(screen.getByLabelText('Display Label')).toHaveProperty('value', 'Charge Category');
+  });
+
+  it('with unsaved edits, asks first and keeps the clicked row closed', async () => {
+    const { user } = await openEditor();
+    await user.type(screen.getByLabelText(STRIP_PATTERNS), '{End}\n^beta-');
+    await user.click(screen.getByRole('button', { name: /charge_category/ }));
+    expect(await screen.findByRole('dialog', { name: 'Discard unsaved changes?' })).toBeDefined();
+    expect(screen.getByLabelText('Display Label')).toHaveProperty('value', 'Account');
+  });
+
+  it('stays open when a press inside it ends outside, as a text selection does', async () => {
+    await openEditor();
+    fireEvent.mouseDown(screen.getByLabelText(STRIP_PATTERNS));
+    fireEvent.click(screen.getByRole('button', { name: 'Page behind' }));
     expect(screen.getByLabelText(STRIP_PATTERNS)).toBeDefined();
   });
 
-  it('does not ask to discard its edits on a mousedown inside a modal over the page', async () => {
+  it('stays open on a click inside a modal over the page', async () => {
+    const { rerender } = await openEditor();
+    rerender(true);
+    fireEvent.mouseDown(reloadButton());
+    fireEvent.click(reloadButton());
+    expect(screen.getByLabelText(STRIP_PATTERNS)).toBeDefined();
+  });
+
+  it('does not ask to discard its edits on a click inside a modal over the page', async () => {
     const { user, rerender } = await openEditor();
     await user.type(screen.getByLabelText(STRIP_PATTERNS), '{End}\n^beta-');
     rerender(true);
     fireEvent.mouseDown(reloadButton());
+    fireEvent.click(reloadButton());
     expect(screen.queryByRole('dialog', { name: 'Discard unsaved changes?', hidden: true })).toBeNull();
     expect(screen.getByLabelText(STRIP_PATTERNS)).toBeDefined();
   });

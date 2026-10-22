@@ -1,4 +1,5 @@
-import type { ExplorerSort, QueryBuilder } from '@costgoblin/core';
+import { usageDateBucketExpr } from '@costgoblin/core';
+import type { ExplorerSort, Granularity, QueryBuilder } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
 import { toStr } from './query-utils.js';
 
@@ -45,24 +46,41 @@ export function explorerOrderBy(sort: ExplorerSort | undefined, tagSqlColumns: R
   return `${column} ${sortDirection(sort)}`;
 }
 
+/** An allow-listed column as a query reads it: the SQL column, and for a
+ *  weekly/monthly usage_date the bucket expression (the week's Monday or the
+ *  month's first day) it is grouped, filtered and sorted by. A result still
+ *  carries a bucket under `column`, as the SELECT list aliases it back. */
+export interface ColumnRef {
+  readonly column: string;
+  readonly bucket?: string;
+}
+
+/** `column` as a query reads it at `granularity` (see ColumnRef). */
+function columnRef(column: string, granularity: Granularity | undefined): ColumnRef {
+  const bucket = usageDateBucketExpr(granularity);
+  return column === 'usage_date' && bucket !== 'usage_date' ? { column, bucket } : { column };
+}
+
 /** A row filter on an allow-listed column: line items must hold `value` there,
  *  read as a group-by row reads the column (`groupValueExpr`). */
-export interface RowFilter {
-  readonly column: string;
+export interface RowFilter extends ColumnRef {
   readonly value: string;
 }
 
 /** The row filters on allow-listed columns, each with the SQL column behind
  *  its id; filters on anything else are dropped. An empty value filters too:
- *  it is the value of the group whose line items have none. */
+ *  it is the value of the group whose line items have none. In weekly/monthly
+ *  a usage_date filter holds the bucket, so a "Oct 2026" row drills into all
+ *  of October. */
 export function explorerRowFilters(
   rowFilters: Readonly<Record<string, string>> | undefined,
   tagSqlColumns: ReadonlyMap<string, string>,
+  granularity?: Granularity,
 ): RowFilter[] {
   if (rowFilters === undefined) return [];
-  return Object.entries(rowFilters).flatMap(([id, value]) => {
+  return Object.entries(rowFilters).flatMap(([id, value]): RowFilter[] => {
     const column = explorerSqlColumn(id, tagSqlColumns);
-    return column === null ? [] : [{ column, value }];
+    return column === null ? [] : [{ ...columnRef(column, granularity), value }];
   });
 }
 
@@ -70,7 +88,7 @@ export function explorerRowFilters(
  *  as a group-by row reads it: a row's values keep exactly its group's line
  *  items, so '' keeps a missing tag as well as an empty one. */
 export function rowFilterConditions(rowFilters: readonly RowFilter[], qb: QueryBuilder): string[] {
-  return rowFilters.map(({ column, value }) => `${groupValueExpr(column)} = ${qb.addParam(value)}`);
+  return rowFilters.map(filter => `${groupValueExpr(filter)} = ${qb.addParam(filter.value)}`);
 }
 
 /** `where` with `condition` ANDed on, where `where` is a WHERE clause or ''. */
@@ -78,49 +96,55 @@ export function andWhere(where: string, condition: string): string {
   return where.length === 0 ? `WHERE ${condition}` : `${where} AND ${condition}`;
 }
 
-/** An aggregated-table group-by column: the renderer's id and the SQL column behind it. */
-export interface GroupByColumn {
+/** An aggregated-table group-by column: the renderer's id and the column behind it. */
+export interface GroupByColumn extends ColumnRef {
   readonly id: string;
-  readonly column: string;
 }
 
-/** The requested group-by ids that resolve to a column, in request order. */
-export function explorerGroupBy(ids: readonly string[], tagSqlColumns: ReadonlyMap<string, string>): GroupByColumn[] {
-  return ids.flatMap(id => {
+/** The requested group-by ids that resolve to a column, in request order.
+ *  A weekly/monthly usage_date groups by its bucket. */
+export function explorerGroupBy(
+  ids: readonly string[],
+  tagSqlColumns: ReadonlyMap<string, string>,
+  granularity?: Granularity,
+): GroupByColumn[] {
+  return ids.flatMap((id): GroupByColumn[] => {
     const column = explorerSqlColumn(id, tagSqlColumns);
-    return column === null ? [] : [{ id, column }];
+    return column === null ? [] : [{ id, ...columnRef(column, granularity) }];
   });
 }
 
 /** Explorer columns that hold a DATE or a TIMESTAMP. */
 const TEMPORAL_COLUMNS: ReadonlySet<string> = new Set(['usage_date', 'usage_hour']);
 
-/** A group-by column's value as its row shows it (`AggregatedTableRow.values`):
- *  text, never NULL. A tag the line item lacks (NULL) reads as '' like an
- *  empty one, so the two are one group. A date or an hour is text too: the
- *  DuckDB worker's postMessage turns a DATE or TIMESTAMP into a plain object.
- *  The select list, the keyed rows and the row filters all read a column
- *  through this, so each value a row shows is exactly one group, and filters
- *  to exactly its line items. */
-export function groupValueExpr(column: string): string {
-  return `COALESCE(CAST(${column} AS VARCHAR), '')`;
+/** A column's value as its row shows it (`AggregatedTableRow.values`): text,
+ *  never NULL. A tag the line item lacks (NULL) reads as '' like an empty
+ *  one, so the two are one group. A date or an hour is text too: the DuckDB
+ *  worker's postMessage turns a DATE or TIMESTAMP into a plain object. A
+ *  weekly/monthly usage_date reads as its bucket's first day. The select
+ *  list, the keyed rows and the row filters all read a column through this,
+ *  so each value a row shows is exactly one group, and filters to exactly
+ *  its line items. */
+export function groupValueExpr({ column, bucket }: ColumnRef): string {
+  return `COALESCE(CAST(${bucket ?? column} AS VARCHAR), '')`;
 }
 
-/** What a group-by column groups on: its value, except that a date or an
- *  hour groups on itself. Its text is never '' and differs per date or hour,
- *  so the groups are the same, without casting every line item. */
-function groupKeyExpr(column: string): string {
-  return TEMPORAL_COLUMNS.has(column) ? column : groupValueExpr(column);
+/** What a group-by column groups and sorts on: its value, except that a date
+ *  or an hour (or a date's bucket) groups on itself. Its text is never '' and
+ *  differs per date or hour, so the groups are the same, without casting
+ *  every line item. */
+function groupKeyExpr(ref: ColumnRef): string {
+  return TEMPORAL_COLUMNS.has(ref.column) ? (ref.bucket ?? ref.column) : groupValueExpr(ref);
 }
 
 /** The group-by SELECT list: each group's value under its column's name. */
 export function groupBySelectList(groupBy: readonly GroupByColumn[]): string {
-  return groupBy.map(({ column }) => `${groupValueExpr(column)} AS ${column}`).join(', ');
+  return groupBy.map(g => `${groupValueExpr(g)} AS ${g.column}`).join(', ');
 }
 
 /** The GROUP BY list behind `groupBySelectList`. */
 export function groupByList(groupBy: readonly GroupByColumn[]): string {
-  return groupBy.map(({ column }) => groupKeyExpr(column)).join(', ');
+  return groupBy.map(groupKeyExpr).join(', ');
 }
 
 /** A grouped result row's values, keyed by the renderer's id. */
@@ -148,6 +172,6 @@ export function aggregatedOrderBy(sort: ExplorerSort | undefined, groupBy: reado
   const fn = Object.hasOwn(AGG_SORT_COLUMNS, sort.column) ? AGG_SORT_COLUMNS[sort.column] : undefined;
   if (fn !== undefined) return fn(dir);
   const grouped = groupBy.find(g => g.id === sort.column);
-  if (grouped !== undefined) return `${groupKeyExpr(grouped.column)} ${dir}`;
+  if (grouped !== undefined) return `${groupKeyExpr(grouped)} ${dir}`;
   return 'SUM(cost) DESC';
 }

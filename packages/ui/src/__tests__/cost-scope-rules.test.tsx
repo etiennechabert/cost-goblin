@@ -349,6 +349,23 @@ describe('CostScopeView — editing rules', () => {
     expect(saved.rules[0]?.conditions[0]?.dimensionId).toBe('charge_category');
   });
 
+  // A GCP-only workspace has no Service Code dimension, but the built-in
+  // AWS Premium Support rule still names it.
+  it('shows a condition on a dimension the workspace does not have under its own id', async () => {
+    const api = new ScopeApi();
+    api.dimensions = [{ name: asDimensionId('service'), label: 'Service', field: 'service' }];
+    const { user } = renderView(api);
+    const card = await ruleCard('AWS Premium Support');
+    const [select] = dimensionSelects(card);
+    if (select === undefined) throw new Error('condition picker missing');
+    expect(select.value).toBe('service_code');
+    expect(within(select).getByRole('option', { name: 'service_code (not configured)' })).toBeDefined();
+
+    await user.selectOptions(select, 'service');
+    const saved = await save(user, api);
+    expect(saved.rules.find(r => r.id === 'builtin:aws-premium-support')?.conditions[0]?.dimensionId).toBe('service');
+  });
+
   it('suggests values seen for a condition s dimension, and copes without any', async () => {
     const chargeCategory: Dimension = { name: asDimensionId('charge_category'), label: 'Charge category', field: 'charge_category' };
     const api = new ScopeApi();
@@ -481,6 +498,19 @@ describe('CostScopeView — metric, freshness, marketplace and saving', () => {
     expect('lagDays' in saved).toBe(false);
   });
 
+  it('steps the lag up past a week', async () => {
+    const api = new ScopeApi();
+    api.scope = { costMetric: 'effective', lagDays: 7, rules: BUILTIN_EXCLUSION_RULES };
+    const { user } = renderView(api);
+    const lag = await screen.findByRole('spinbutton');
+    if (!(lag instanceof HTMLInputElement)) throw new Error('lag field missing');
+    // What the field's up arrow does: step the value, then fire input.
+    lag.stepUp();
+    fireEvent.input(lag);
+    expect(lag.value).toBe('8');
+    expect((await save(user, api)).lagDays).toBe(8);
+  });
+
   it.each([
     { name: 'absent', marketplace: undefined },
     { name: 'without rules', marketplace: { enabled: false, rules: [] } },
@@ -530,13 +560,14 @@ describe('CostScopeView — metric, freshness, marketplace and saving', () => {
     expect(api.savedCostScopes).toHaveLength(0);
   });
 
-  it('keeps the shipped defaults when the saved scope cannot be read, and reveals the YAML folder', async () => {
+  // The shipped defaults are not shown as the user's scope (see
+  // cost-scope-load.test.tsx); the way to the file stays open.
+  it('reveals the YAML folder when the saved scope cannot be read', async () => {
     const api = new ScopeApi();
     vi.spyOn(api, 'getCostScope').mockRejectedValue(new Error('parse error'));
     const reveal = vi.spyOn(api, 'revealCostScopeFolder').mockRejectedValue(new Error('no file manager'));
     const { user } = renderView(api);
-    expect(await ruleCard('Tax')).toBeDefined();
-    expect(screen.getByText('Saved')).toBeDefined();
+    expect(await screen.findByText('parse error')).not.toBeNull();
     await user.click(screen.getByRole('button', { name: 'Reveal YAML' }));
     expect(reveal).toHaveBeenCalledTimes(1);
   });

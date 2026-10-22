@@ -4,11 +4,12 @@ Covers `packages/core/src/query/`, `packages/core/src/normalize/`, `packages/cor
 
 ## Building SQL
 
-- Dimension ids from the renderer, a config or MCP reach SQL only through `resolveField` or `tryResolveField`. Rule conditions may skip an unknown id; filters and group-bys must throw. Other columns come from fixed allow-lists, so extend the list rather than interpolating.
+- Dimension ids from the renderer, a config or MCP reach SQL only through `resolveField` or `tryResolveField`. An exclusion rule with a condition on an unknown id matches nothing (never drop the AND-leg: that excludes more); the Explorer's filters skip it; filters and group-bys must throw. Other columns come from fixed allow-lists, so extend the list rather than interpolating.
 - A tag's id is not its SQL column, because DuckDB identifiers are case-insensitive even when quoted. SQL uses `tagSqlColumn`. The persisted `tagDimColumn` form, stored in views, baselines and bundles, must keep its format (`packages/core/src/types/branded.ts`).
 - DuckDB can't prepare DDL (`CREATE … AS`, `COPY … TO`). The rollup and grain-probe builders therefore inline escaped literals after `assertBillingPeriod` / `assertDateString`, and a `$n` placeholder in DDL stays unbound.
 - Bound integers are int32 (`bindInteger` in `packages/desktop/src/main/duckdb-worker.ts`), so epoch milliseconds, byte counts and large thresholds overflow.
 - `toNum` decodes only numbers and bigints: a DECIMAL result becomes 0 with no error. Cost columns are DOUBLE by contract, and hand-written aggregates need `CAST(SUM(…) AS DOUBLE)`.
+- Rows leave the DuckDB worker by structured clone, which drops DuckDB's value classes: a DATE arrives as `{ days }`, a TIMESTAMP as `{ micros }`, and the `toStr` helpers read them as '' or '[object Object]'. Select them as VARCHAR. `run_sql`, whose columns are unknown, has DuckDB write each one as JSON text (`to_json`).
 - A new raw FOCUS column in `buildSource` goes into `packages/core/src/sync/focus-contract.ts`, and `packages/core/src/sync/gcp-canonicalize.ts` must produce it, or GCP months fail to bind. Keep `union_by_name=true` and the table prefix on raw columns.
 - Intersect every glob with the months that provider actually has on disk: one glob matching nothing fails the whole UNION.
 
@@ -17,6 +18,7 @@ Covers `packages/core/src/query/`, `packages/core/src/normalize/`, `packages/cor
 - Built-in columns are COALESCEd to `''` and a missing account becomes `'(no account)'`, but a tag column is NULL when the tag is absent.
 - `NOT`, `NOT IN` and `!=` over a tag expression drop untagged rows, from queries and from stored rollups alike. Exclusions and their previews must share one NULL-safe expression.
 - SQL built from a list must handle the empty list, because `IN ()` doesn't parse.
+- `''` names the group with no value, and results read NULL as `''` (`toStr`), so a tag's untagged (NULL) and empty-valued rows must be one group. A filter on `''` goes through `missingValueSql`, since `field = ''` drops the NULL rows. Elsewhere, group, count, sort and match a tag as `COALESCE(col, '')`, or sum the rows that read alike: a raw GROUP BY returns two `''` rows, and JS that keeps the first, overwrites by key or lets a top-N page cut one of them loses cost. The aggregated table's own GROUP BY (`packages/desktop/src/main/handlers/aggregated-table.ts`) is a known open case (#738); flag new ones.
 - JS reads NULL as 0, and a NULL ratio (say, percent change from a zero baseline) drops the row when compared with a threshold. COALESCE skips NULL, not 0.
 
 ## Cost semantics
@@ -28,9 +30,9 @@ Covers `packages/core/src/query/`, `packages/core/src/normalize/`, `packages/cor
 
 ## Dates
 
-- `usage_date` is the naive-UTC `ChargePeriodStart` cast to DATE, and the DuckDB session time zone isn't pinned, so TIMESTAMPTZ input would shift days. Day math in JS is UTC-only.
+- `usage_date` and `usage_hour` come from `CHARGE_PERIOD_START_UTC_SQL` (`packages/core/src/query/builder.ts`). AWS writes `ChargePeriodStart` as TIMESTAMPTZ and DuckDB's session time zone is the machine's, so a raw `::DATE`, `::TIMESTAMP` or date-literal comparison on it shifts rows across days. Day math in JS is UTC-only.
 - Ranges are inclusive (`BETWEEN`). Compare DATE with DATE: an hourly timestamp compared with a date drops most of the last day.
-- Date pickers and windows apply `lagDays`; the SQL builders never do. Main-process "now" comes from `IpcContext` or `McpContext`, never `Date`.
+- A handler or MCP tool caps its range at the cost scope's `lagDays` (`capToFreshnessLag`, `resolveToolDateRange`) before building SQL, and returns empty when nothing is left; the SQL builders never apply it. The Explorer with "Apply cost scope" off is the one exception. Main-process "now" comes from `IpcContext` or `McpContext`, never `Date`.
 - The trends previous-period window exists three times, in JS and SQL in `packages/core/src/query/builder.ts` and in `packages/desktop/src/main/handlers/query-trends.ts`. Keep them aligned.
 
 ## Rollups

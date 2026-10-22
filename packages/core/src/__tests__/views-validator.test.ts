@@ -71,6 +71,26 @@ describe('validateViews', () => {
     expect(widgets[3]).toMatchObject({ enabledColumns: ['cost', 'sku_meter', 'charge_category'] });
   });
 
+  it('moves widgets on the retired Country and Continent dimensions to Region', () => {
+    const cfg = validateViews({
+      views: [{
+        id: 'geo',
+        name: 'Geo',
+        rows: [{
+          widgets: [
+            { id: 'w1', type: 'pie', size: 'medium', groupBy: 'region_country' },
+            { id: 'w2', type: 'treemap', size: 'medium', groupBy: 'region_continent', drillTo: 'region_country' },
+            { id: 'w3', type: 'table', size: 'full', enabledColumns: ['cost', 'region_continent'] },
+          ],
+        }],
+      }],
+    });
+    const widgets = cfg.views[0]?.rows[0]?.widgets ?? [];
+    expect(widgets[0]).toMatchObject({ groupBy: 'region' });
+    expect(widgets[1]).toMatchObject({ groupBy: 'region', drillTo: 'region' });
+    expect(widgets[2]).toMatchObject({ enabledColumns: ['cost', 'region'] });
+  });
+
   it('migrates CUR-era tag_user_* dimension ids (the validator strips user_ from tagNames)', () => {
     const cfg = validateViews({
       views: [{

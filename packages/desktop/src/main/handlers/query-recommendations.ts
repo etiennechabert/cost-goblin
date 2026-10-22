@@ -2,6 +2,9 @@ import { ipcMain } from 'electron';
 import {
   buildMissingTagsQuery,
   buildNonResourceCostQuery,
+  capToFreshnessLag,
+  countSavings,
+  loadSavingsRecommendations,
   logger,
   asDollars,
 } from '@costgoblin/core';
@@ -15,28 +18,24 @@ import type { AppContext } from './context.js';
 import {
   buildMissingTagsResult,
   providersEmptyForRange,
-  rawGlobLiteral,
   resolveEntityName,
-  toEffort,
-  toNum,
-  toStr,
 } from './query-utils.js';
 import { originStore } from '../query-log.js';
 
 export function registerRecommendationHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getConfig, getCostScope, getQueryProviders, runQuery, runPreparedQuery } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getConfig, getQueryCostScope, getQueryProviders, runQuery, runPreparedQuery } = app;
 
   ipcMain.handle('query:missing-tags', (_event, params: MissingTagsParams): Promise<MissingTagsResult> => originStore.run(params.origin ?? null, async () => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
     const accountReverseMap = await getAccountReverseMap();
     const orgPath = await getOrgAccountsPath();
-    const costScope = await getCostScope().catch(() => undefined);
+    const costScope = await getQueryCostScope();
     logger.info('query:missing-tags', { tagDimension: params.tagDimension });
 
     const providers = await getQueryProviders('daily');
-    const empty = providersEmptyForRange(providers, params.dateRange);
-    if (empty) {
+    const dateRange = capToFreshnessLag(params.dateRange, ctx.now(), costScope.lagDays);
+    if (dateRange === null || providersEmptyForRange(providers, dateRange)) {
       return {
         rows: [],
         totalRows: 0,
@@ -55,8 +54,8 @@ export function registerRecommendationHandlers(app: AppContext): void {
     // missing-tags / non-resource-cost reference resource_id, line_item_type and
     // raw tags — none in the rollup grain — so they always query raw.
     const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, providers, accountReverseMap, costScope, materializedSource: undefined };
-    const resourceQuery = buildMissingTagsQuery(params, qcOpts);
-    const nonResourceQuery = buildNonResourceCostQuery(params, qcOpts);
+    const resourceQuery = buildMissingTagsQuery({ ...params, dateRange }, qcOpts);
+    const nonResourceQuery = buildNonResourceCostQuery({ ...params, dateRange }, qcOpts);
     const [resourceRows, nonResourceRows] = await Promise.all([
       runPreparedQuery(resourceQuery.sql, resourceQuery.params, false),
       runPreparedQuery(nonResourceQuery.sql, nonResourceQuery.params, false),
@@ -73,80 +72,9 @@ export function registerRecommendationHandlers(app: AppContext): void {
 
   ipcMain.handle('query:savings', (): Promise<SavingsResult> => originStore.run('savings', async () => {
     const config = await getConfig();
-    // Every provider with a cost-optimization tier AND data on disk
-    // contributes to the recommendations — one glob per provider; a provider
-    // with a configured tier but nothing synced yet is skipped so its
-    // zero-match glob can't fail the read.
-    const fs = await import('node:fs/promises');
-    const path = await import('node:path');
-    const globs: string[] = [];
-    for (const provider of config.providers) {
-      if (provider.sync.costOptimization === undefined) continue;
-      const rawDir = path.join(ctx.dataDir, String(provider.name), 'raw');
-      let hasData = false;
-      try {
-        hasData = (await fs.readdir(rawDir)).some(d => d.startsWith('cost-opt-'));
-      } catch { /* no raw dir yet */ }
-      if (hasData) globs.push(rawGlobLiteral(ctx.dataDir, String(provider.name), 'cost-opt-*/*.parquet'));
-    }
-    if (globs.length === 0) {
-      return { recommendations: [], totalMonthlySavings: asDollars(0) };
-    }
-
-    let rows: import('../duckdb-client.js').RawRow[];
-    try {
-      rows = await runQuery(`
-        SELECT
-          account_id,
-          account_name,
-          action_type,
-          current_resource_type,
-          COALESCE(recommended_resource_summary, '') AS summary,
-          COALESCE(region, '') AS region,
-          COALESCE(estimated_monthly_savings_after_discount, 0) AS monthly_savings,
-          COALESCE(estimated_monthly_cost_after_discount, 0) AS monthly_cost,
-          COALESCE(estimated_savings_percentage_after_discount, 0) AS savings_pct,
-          COALESCE(implementation_effort, '') AS effort,
-          COALESCE(resource_arn, '') AS resource_arn,
-          COALESCE(current_resource_details, '') AS current_details,
-          COALESCE(recommended_resource_details, '') AS recommended_details,
-          COALESCE(current_resource_summary, '') AS current_summary,
-          COALESCE(restart_needed, false) AS restart_needed,
-          COALESCE(rollback_possible, false) AS rollback_possible,
-          COALESCE(recommendation_source, '') AS recommendation_source
-        FROM read_parquet([${globs.join(', ')}], union_by_name=true, filename=true)
-        QUALIFY ROW_NUMBER() OVER (PARTITION BY recommendation_id ORDER BY filename DESC) = 1
-        ORDER BY monthly_savings DESC
-      `);
-    } catch {
-      return { recommendations: [], totalMonthlySavings: asDollars(0) };
-    }
-
-    let totalSavings = 0;
-    const recommendations = rows.map(r => {
-      const savings = toNum(r['monthly_savings']);
-      totalSavings += savings;
-      return {
-        accountId: toStr(r['account_id']),
-        accountName: toStr(r['account_name']),
-        actionType: toStr(r['action_type']),
-        resourceType: toStr(r['current_resource_type']),
-        summary: toStr(r['summary']),
-        region: toStr(r['region']),
-        monthlySavings: asDollars(savings),
-        monthlyCost: asDollars(toNum(r['monthly_cost'])),
-        savingsPercentage: toNum(r['savings_pct']),
-        effort: toEffort(toStr(r['effort'])),
-        resourceArn: toStr(r['resource_arn']),
-        currentDetails: toStr(r['current_details']),
-        recommendedDetails: toStr(r['recommended_details']),
-        currentSummary: toStr(r['current_summary']),
-        restartNeeded: Boolean(r['restart_needed']),
-        rollbackPossible: Boolean(r['rollback_possible']),
-        recommendationSource: toStr(r['recommendation_source']),
-      };
-    });
-
-    return { recommendations, totalMonthlySavings: asDollars(totalSavings) };
+    // Each provider's latest Cost Optimization Hub snapshot only: an older
+    // day still lists what has since been implemented or superseded.
+    const { recommendations, snapshots } = await loadSavingsRecommendations(ctx.dataDir, config.providers, runQuery);
+    return { recommendations, snapshots, totalMonthlySavings: countSavings(recommendations).totalMonthlySavings };
   }));
 }

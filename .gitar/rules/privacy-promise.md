@@ -2,7 +2,7 @@
 title: "Privacy promise holds"
 description: "Keep the app's local-only promise and costgoblin.com's GDPR privacy policy true"
 type: check
-when: "PRs that change what leaves a user's machine, what the app listens on, or what costgoblin.com loads or collects"
+when: "PRs that change what leaves a user's machine, what the app listens on, or what costgoblin.com loads or collects, and PRs that change what README.md, SPEC.md or docs/ say about any of these"
 actions: "Mark the check unmet and quote the promise or policy statement the change makes false"
 ---
 

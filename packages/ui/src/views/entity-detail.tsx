@@ -7,22 +7,25 @@ import type {
   EntityDetailResult,
   FilterMap,
 } from '@costgoblin/core/browser';
-import { asDateString, asDimensionId, asEntityRef, asHourString, asTagValue } from '@costgoblin/core/browser';
+import { asDateString, asDimensionId, asEntityRef, asHourString, asTagValue, isPeriodGranularity } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
-import { useLagDays } from '../hooks/use-lag-days.js';
+import { useViewDateRange } from '../hooks/use-view-date-range.js';
 import { useQuery } from '../hooks/use-query.js';
 import { useHourlyConfigured } from '../hooks/use-hourly-configured.js';
 import { formatDollars, formatPercent } from '../components/format.js';
-import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
-import type { DateRange, Granularity } from '../components/date-range-picker.js';
+import { DateRangePicker } from '../components/date-range-picker.js';
+import type { Granularity } from '../components/date-range-picker.js';
 import { HourlyHintBanner } from '../components/hourly-hint-banner.js';
 import { PieChart } from '../components/pie-chart.js';
 import type { PieSlice } from '../components/pie-chart.js';
 import { StackedBarChart, bucketBars } from '../components/stacked-bar-chart.js';
 import type { BarDay, HistogramTab } from '../components/stacked-bar-chart.js';
 import { getDimensionId, getDimensionLabel, isEnvironmentDimension, isOwnerDimension, isProductDimension, isUnitDimension } from '../lib/dimensions.js';
-import { computeBucketedHourRange, computeBucketedRange, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
+import { computeBucketedHourRange, computeBucketedRange, periodBarsRange, resolveZoomDrag, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
+import { costsTitle, daysAgo, dateColumnHeader } from '../lib/dates.js';
+import { fillPeriodBuckets } from '../lib/period-fill.js';
 import { BaselineMicroBar } from '../components/baseline-micro-bar.js';
+import { enabledGroupBys } from '../widgets/enabled-group-by.js';
 
 interface EntityDetailProps {
   entity: string;
@@ -49,13 +52,13 @@ function dailyCostsToBarDays(data: DailyCostsResult | null): BarDay[] {
   }));
 }
 
-function buildEntityCsv(data: EntityDetailResult): string {
+function buildEntityCsv(data: EntityDetailResult, granularity: Granularity): string {
   const lines: string[] = [
     `Entity,${String(data.entity)}`,
     `Total Cost,${String(data.totalCost)}`,
     `Percent Change,${String(data.percentChange)}`,
     '',
-    'Date,Cost',
+    `${dateColumnHeader(granularity)},Cost`,
     ...data.dailyCosts.map((d) => `${String(d.date)},${String(d.cost)}`),
     '',
     'Account,Cost,Percentage',
@@ -67,8 +70,8 @@ function buildEntityCsv(data: EntityDetailResult): string {
   return lines.join('\n');
 }
 
-function handleCsvExport(data: EntityDetailResult, entity: string) {
-  const csv = buildEntityCsv(data);
+function handleCsvExport(data: EntityDetailResult, entity: string, granularity: Granularity) {
+  const csv = buildEntityCsv(data, granularity);
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -80,9 +83,8 @@ function handleCsvExport(data: EntityDetailResult, entity: string) {
 
 export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetailProps>) {
   const api = useCostApi();
-  const lagDays = useLagDays();
+  const { lagDays, dateRange, pickedRange, setDateRange } = useViewDateRange();
   const hourlyConfigured = useHourlyConfigured();
-  const [dateRange, setDateRange] = useState<DateRange>(() => getDefaultDateRange(lagDays));
   const [granularity, setGranularity] = useState<Granularity>('daily');
   const [histogramTab, setHistogramTab] = useState<HistogramTab>('service');
   const [histogramExpanded, setHistogramExpanded] = useState(false);
@@ -129,14 +131,15 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
   // values it just read. This view doesn't manage column visibility, so it
   // omits hiddenColumns/columnOrder entirely — the save merges onto the
   // on-disk prefs, leaving the user's curated column set (owned by the
-  // Explorer) untouched.
+  // Explorer) untouched. It runs on and writes `pickedRange`, never the
+  // default window: stored, that would stop following the cost scope's lag.
   useEffect(() => {
     if (!prefsLoadedRef.current) return;
     api.saveExplorerPreferences({
-      lastUsedDateRange: dateRange,
+      ...(pickedRange === null ? {} : { lastUsedDateRange: pickedRange }),
       lastUsedGranularity: granularity,
     }).catch(() => undefined);
-  }, [dateRange, granularity, api]);
+  }, [pickedRange, granularity, api]);
 
   // Entity detail summary (total, previous, percent change)
   const detailQuery = useQuery(
@@ -174,26 +177,43 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
   const productDim = rawDimensions.find(isProductDimension);
   const regionDimId = asDimensionId('region');
 
-  const effectivePie1 = pie1DimId ?? accountDimId;
-  const effectivePie2 = pie2DimId ?? (productDim === undefined ? regionDimId : getDimensionId(productDim));
-  const effectivePie3 = pie3DimId ?? serviceDimId;
+  // getDimensions lists only the enabled dimensions: a default pie on a
+  // disabled one (Account can be) moves to an enabled dimension instead. The
+  // defaults are resolved among themselves, not against the user's picks, so
+  // picking a dimension in one pie never moves another.
+  const defaultPies = enabledGroupBys(
+    [accountDimId, productDim === undefined ? regionDimId : getDimensionId(productDim), serviceDimId],
+    rawDimensions.map(getDimensionId),
+  );
+  const effectivePie1 = pie1DimId ?? defaultPies[0] ?? accountDimId;
+  const effectivePie2 = pie2DimId ?? defaultPies[1] ?? regionDimId;
+  const effectivePie3 = pie3DimId ?? defaultPies[2] ?? serviceDimId;
+  // The pies wait for the dimensions, so none first queries a default it is
+  // about to leave. If they fail to load, the defaults are queried as they are.
+  const dimensionsSettled = dimensionsQuery.status === 'success' || dimensionsQuery.status === 'error';
 
   // Pie queries — same as overview but scoped to this entity via filter
-  const pie1Query = useQuery(
-    () => api.queryCosts({ groupBy: effectivePie1, dateRange, filters: entityFilter, granularity, origin: `entity-detail:pie1:${String(effectivePie1)}` }),
-    [effectivePie1, dateRangeKey, filterKey, granularity, api],
+  const pie1Query = useQuery<CostResult | null>(
+    () => dimensionsSettled
+      ? api.queryCosts({ groupBy: effectivePie1, dateRange, filters: entityFilter, granularity, origin: `entity-detail:pie1:${String(effectivePie1)}` })
+      : Promise.resolve(null),
+    [dimensionsSettled, effectivePie1, dateRangeKey, filterKey, granularity, api],
   );
   const pie1Slices = costRowsToSlices(pie1Query.status === 'success' ? pie1Query.data : null);
 
-  const pie2Query = useQuery(
-    () => api.queryCosts({ groupBy: effectivePie2, dateRange, filters: entityFilter, granularity, origin: `entity-detail:pie2:${String(effectivePie2)}` }),
-    [effectivePie2, dateRangeKey, filterKey, granularity, api],
+  const pie2Query = useQuery<CostResult | null>(
+    () => dimensionsSettled
+      ? api.queryCosts({ groupBy: effectivePie2, dateRange, filters: entityFilter, granularity, origin: `entity-detail:pie2:${String(effectivePie2)}` })
+      : Promise.resolve(null),
+    [dimensionsSettled, effectivePie2, dateRangeKey, filterKey, granularity, api],
   );
   const pie2Slices = costRowsToSlices(pie2Query.status === 'success' ? pie2Query.data : null);
 
-  const pie3Query = useQuery(
-    () => api.queryCosts({ groupBy: effectivePie3, dateRange, filters: entityFilter, granularity, origin: `entity-detail:pie3:${String(effectivePie3)}` }),
-    [effectivePie3, dateRangeKey, filterKey, granularity, api],
+  const pie3Query = useQuery<CostResult | null>(
+    () => dimensionsSettled
+      ? api.queryCosts({ groupBy: effectivePie3, dateRange, filters: entityFilter, granularity, origin: `entity-detail:pie3:${String(effectivePie3)}` })
+      : Promise.resolve(null),
+    [dimensionsSettled, effectivePie3, dateRangeKey, filterKey, granularity, api],
   );
   const pie3Slices = costRowsToSlices(pie3Query.status === 'success' ? pie3Query.data : null);
 
@@ -208,7 +228,17 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
     () => api.queryDailyCosts({ groupBy: histogramDimId, dateRange, filters: entityFilter, granularity, origin: `entity-detail:histogram:${String(histogramDimId)}` }),
     [histogramDimId, dateRangeKey, filterKey, granularity, api],
   );
-  const barDays = bucketBars(dailyCostsToBarDays(dailyQuery.status === 'success' ? dailyQuery.data : null), 170);
+  // Weekly/Monthly: every period of the selection gets a bar, the current
+  // unfinished one included.
+  const barDays = bucketBars(
+    fillPeriodBuckets(
+      dailyCostsToBarDays(dailyQuery.status === 'success' ? dailyQuery.data : null),
+      dateRange,
+      granularity,
+      date => ({ date, total: 0, breakdown: {} }),
+    ),
+    170,
+  );
 
   const handleHistogramRangeSelect = useCallback((startIdx: number, endIdx: number) => {
     if (granularity === 'hourly') {
@@ -229,6 +259,18 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
       setHourlyHint(false);
       return;
     }
+    if (isPeriodGranularity(granularity)) {
+      // A bar is a whole week or month: the drag selects those periods, then
+      // zooms like a dashboard drag, ending no later than the newest day.
+      const periods = periodBarsRange(barDays, startIdx, endIdx, granularity);
+      if (periods === null) return;
+      const zoom = resolveZoomDrag(periods, granularity, daysAgo(lagDays));
+      if (zoom === null) return;
+      setDateRange(zoom.range);
+      setGranularity(zoom.granularity);
+      setHourlyHint(false);
+      return;
+    }
     const range = computeBucketedRange(barDays, startIdx, endIdx, dateRange.end);
     if (range === null) return;
     const { startDate, endDate } = range;
@@ -243,7 +285,7 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
     } else {
       setHourlyHint(false);
     }
-  }, [barDays, dateRange.end, granularity, hourlyConfigured]);
+  }, [barDays, dateRange.end, granularity, hourlyConfigured, lagDays]);
 
   useEffect(() => {
     if (!shouldAutoSwitchToHourly(dateRange.start, dateRange.end, granularity)) {
@@ -279,7 +321,7 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
           {data !== null && (
             <button
               type="button"
-              onClick={() => { handleCsvExport(data, entity); }}
+              onClick={() => { handleCsvExport(data, entity, granularity); }}
               className="flex items-center gap-1.5 rounded-lg border border-border bg-bg-tertiary/50 px-3 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary"
             >
               Export CSV
@@ -334,7 +376,8 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
                 onTabChange={setHistogramTab}
                 expanded={histogramExpanded}
                 onExpandToggle={() => { setHistogramExpanded(prev => !prev); }}
-                title={granularity === 'hourly' ? 'Hourly Costs' : 'Daily Costs'}
+                title={costsTitle(granularity)}
+                granularity={granularity}
                 loading={dailyQuery.status === 'loading'}
                 onRangeSelect={handleHistogramRangeSelect}
               />
@@ -350,8 +393,10 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
               { dimId: effectivePie1, setDim: setPie1DimId, slices: pie1Slices },
               { dimId: effectivePie2, setDim: setPie2DimId, slices: pie2Slices },
               { dimId: effectivePie3, setDim: setPie3DimId, slices: pie3Slices },
-            ] as const).map(({ dimId, setDim, slices }) => (
-              <div key={dimId} className="min-w-0 flex-1">
+            ] as const).map(({ dimId, setDim, slices }, i) => (
+              // Two pies can share a dimension once a disabled default moves,
+              // so the slot is part of the key.
+              <div key={`${String(i)}:${dimId}`} className="min-w-0 flex-1">
                 <PieChart
                   data={slices}
                   title={(() => {

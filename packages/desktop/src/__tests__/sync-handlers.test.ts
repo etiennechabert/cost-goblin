@@ -245,6 +245,23 @@ describe('data:inventory', () => {
   });
 });
 
+describe('data:local-inventory', () => {
+  it('reads the on-disk periods without listing the remote, defaulting to the daily tier', async () => {
+    const h = await syncApp();
+    const local = await h.ipc.invoke('data:local-inventory');
+    expect(at(local, 'provider')).toBe(AWS);
+    expect(at(local, 'local', 'periods')).toEqual(['2026-01', '2026-02']);
+    expect(at(local, 'local', 'oldestPeriod')).toBe('2026-01');
+    expect(at(await h.ipc.invoke('data:local-inventory', 'hourly'), 'local', 'periods')).toEqual(['2026-02']);
+    expect(getDataInventory).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unknown provider name', async () => {
+    const h = await syncApp();
+    await expect(h.ipc.invoke('data:local-inventory', 'daily', 'nope')).rejects.toThrow('Unknown provider "nope"');
+  });
+});
+
 describe('data:delete-period and data:prune', () => {
   it('deletes a whole daily month and drops its rollup partition', async () => {
     const h = await syncApp();

@@ -90,6 +90,7 @@ const TOOL_ARGS: readonly (readonly [name: string, args: Record<string, unknown>
   ['run_sql', { sql: 'SELECT service FROM costs' }],
   ['list_baselines', {}],
   ['get_baseline_drift', { id: 'b1' }],
+  ['list_savings_recommendations', {}],
 ];
 
 describe('registerTools error handling', () => {

@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Dimension, MissingTagsParams, MissingTagsResult } from '@costgoblin/core/browser';
 import { asDimensionId, asDollars, asEntityRef } from '@costgoblin/core/browser';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
@@ -247,6 +247,45 @@ describe('MissingTags — narrowing', () => {
       expect(api.missingCalls.at(-1)?.dateRange).toEqual({ start: daysAgo(92), end: daysAgo(2) });
     });
     expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  describe('in Weekly and Monthly', () => {
+    // Today is 2026-10-21. Only Date is faked, so waitFor and userEvent keep real timers.
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-10-21T12:00:00Z'));
+    });
+    afterEach(() => { vi.useRealTimers(); });
+
+    it('queries the whole months of a Monthly range and still lists the resources', async () => {
+      const { api, user } = renderView();
+      await screen.findByText('3 out of 7 untagged resources in taggable categories');
+
+      await user.click(screen.getByRole('button', { name: 'Monthly' }));
+      await user.click(screen.getByRole('button', { name: /Sep 2026/ }));
+      await user.click(screen.getByRole('button', { name: 'Last 3 months' }));
+
+      await waitFor(() => {
+        expect(api.missingCalls.at(-1)?.dateRange).toEqual({ start: '2026-08-01', end: '2026-10-31' });
+      });
+      expect(await screen.findByText('3 out of 7 untagged resources in taggable categories')).toBeDefined();
+      expect(tables()).toHaveLength(1);
+    });
+
+    it('queries the whole weeks of a Weekly range and still lists the resources', async () => {
+      const { api, user } = renderView();
+      await screen.findByText('3 out of 7 untagged resources in taggable categories');
+
+      await user.click(screen.getByRole('button', { name: 'Weekly' }));
+      await user.click(screen.getByRole('button', { name: /^Last \d+ weeks$/ }));
+      await user.click(screen.getByRole('button', { name: 'Last 4 weeks' }));
+
+      await waitFor(() => {
+        expect(api.missingCalls.at(-1)?.dateRange).toEqual({ start: '2026-09-28', end: '2026-10-25' });
+      });
+      expect(await screen.findByText('3 out of 7 untagged resources in taggable categories')).toBeDefined();
+      expect(tables()).toHaveLength(1);
+    });
   });
 
   it('drills through from a dimension cell without expanding the row', async () => {

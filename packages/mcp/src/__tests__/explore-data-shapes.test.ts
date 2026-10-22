@@ -115,13 +115,20 @@ describe('explore_data range and source', () => {
     expect(rawSql).not.toContain('list_cost');
   });
 
-  it('aggregates list_cost and usage_amount from Parquet, with the effective metric when the Cost Scope fails', async () => {
-    const h = harness({ costScope: () => Promise.reject(new Error('unreadable')) });
+  it('aggregates list_cost and usage_amount from Parquet, with the Cost Scope\'s metric', async () => {
+    const h = harness({ costScope: () => Promise.resolve({ costMetric: 'effective', rules: [] }) });
     await exploreData(h.ctx, { dateRange: JAN, groupByColumns: ['service'] });
     const sql = onlySql(h);
     expect(sql).toContain('CAST(SUM(list_cost) AS DOUBLE) AS list_cost');
     expect(sql).toContain('CAST(SUM(usage_amount) AS DOUBLE) AS usage_amount');
     expect(sql).toContain('COALESCE(EffectiveCost, 0) AS cost');
+  });
+
+  // An answer on another metric than the user's would read as the real cost.
+  it('fails, running nothing, when the Cost Scope does not load', async () => {
+    const h = harness({ costScope: () => Promise.reject(new Error("Couldn't load cost-scope.yaml: rules must be an array")) });
+    await expect(exploreData(h.ctx, { dateRange: JAN, groupByColumns: ['service'] })).rejects.toThrow("Couldn't load cost-scope.yaml");
+    expect(h.prepared).toEqual([]);
   });
 });
 

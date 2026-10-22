@@ -11,19 +11,18 @@ import { truncateFooter, truncateRows } from '../formatters/cost.js';
 import type { Cell, Column, StructuredResult } from '../formatters/result.js';
 import {
   computeDataCoverage,
-  defaultDateRange,
   emptyRangeResult,
   getQueryProviders,
   lookupDimension,
   resolveEntityName,
   resolveFormat,
+  resolveToolDateRange,
   structuredToolResult,
-  toDateRange,
   toNum,
-  toStr,
   toolError,
+  toStr,
+  withinLagResult,
 } from './tool-helpers.js';
-import type { DateRange } from '@costgoblin/core';
 
 export async function getFilterValues(
   ctx: McpContext,
@@ -37,19 +36,19 @@ export async function getFilterValues(
 ): Promise<{ content: [{ type: 'text'; text: string }] }> {
   const format = resolveFormat(params.format);
   const dimensionId = params.dimensionId;
-  const dateRange: DateRange = params.dateRange !== undefined
-    ? toDateRange(params.dateRange)
-    : defaultDateRange(ctx.now());
   const limit = params.limit ?? 50;
 
   const dimensions = await ctx.getQueryDimensions();
   const { label: dimLabel, found } = lookupDimension(dimensionId, dimensions);
   if (!found) return toolError(`Unknown dimension "${dimensionId}". Use list_dimensions to see available dimensions.`);
+  const range = await resolveToolDateRange(ctx, params.dateRange);
+  if (range.kind === 'within-lag') return withinLagResult(ctx, range, format, `${dimLabel} Values`);
+  const { dateRange, cappedAt } = range;
 
   const accountMap = await ctx.getAccountMap();
   const orgPath = await ctx.getOrgAccountsPath();
   // Mirror the dashboards: the active Cost Scope's metric backs `cost`.
-  const scopeMetric = await ctx.getCostScope().then(cs => cs.costMetric).catch(() => 'effective' as const);
+  const scopeMetric = (await ctx.getCostScope()).costMetric;
 
   // lookupDimension above already rejected unknown ids with a friendly error;
   // resolveField still throws SecurityError as defense in depth so the id can
@@ -131,7 +130,7 @@ export async function getFilterValues(
     totalCost > 0 ? (i.cost / totalCost) * 100 : 0,
   ]);
 
-  const coverage = await computeDataCoverage(ctx, dateRange);
+  const coverage = await computeDataCoverage(ctx, dateRange, cappedAt);
   const result: StructuredResult = {
     title: `${dimLabel} Values (${dateRange.start} to ${dateRange.end})`,
     coverage,

@@ -1,30 +1,25 @@
 import { ipcMain } from 'electron';
-import { applyNormalizationRule, buildGrainProbeQuery, buildSource, computeRollupEstimate, dimensionsConfigToYaml, emptyRollupEstimate, generateAliasSuggestions, isStringRecord, rollupGrainColumns, rollupGrainDimensions, sqlEscapeString } from '@costgoblin/core';
+import { applyNormalizationRule, buildGrainProbeQuery, buildSource, CHARGE_PERIOD_START_UTC_SQL, computeRollupEstimate, dimensionsConfigToYaml, emptyRollupEstimate, generateAliasSuggestions, isStringRecord, rollupGrainColumns, rollupGrainDimensions, sqlEscapeString } from '@costgoblin/core';
 import type { AliasSuggestion, ColumnValuesPreview, DimensionsConfig, NormalizationRule, RollupGrainEstimate } from '@costgoblin/core';
 import { type AppContext, loadOrgAccountsMap } from './context.js';
 import { parseDimensionsPayload, parseDimensionsRewritePayload, parseDimensionsSavePayload, withAcceptedAliasSuggestion } from './dimensions-payload.js';
+import { DEFAULT_BUILT_INS } from './dimensions-merge.js';
 import { applyNormalizeAndStrip, mergeValuesByLabel, NO_STRIP_ISSUES, parsePreviewStripPatterns, type ValueCostPair } from './dimensions-preview.js';
 import { rawGlobLiteral, toNum, toStr } from './query-utils.js';
 import { tagDiscoverySince } from './query-windows.js';
 
+/** The Region editor's preview with friendly names on: each code under its
+ *  SSM long name (codes the snapshot doesn't name stay raw), merging values
+ *  that share one. */
 async function applyRegionPreview(
   values: ValueCostPair[],
-  opts: { dimName?: string; useRegionNames?: boolean } | undefined,
-  getRegionMap: () => Promise<ReadonlyMap<string, { longName: string; country: string; continent: string }>>,
+  getRegionMap: () => Promise<ReadonlyMap<string, { longName: string }>>,
 ): Promise<ValueCostPair[]> {
   const regionMap = await getRegionMap();
-  const pick: ((info: { longName: string; country: string; continent: string }) => string) | null = (() => {
-    if (opts?.dimName === 'region_country') return (i: { country: string }) => i.country;
-    if (opts?.dimName === 'region_continent') return (i: { continent: string }) => i.continent;
-    if (opts?.useRegionNames === true) return (i: { longName: string }) => i.longName;
-    return null;
-  })();
-  if (pick === null || regionMap.size === 0) return values;
+  if (regionMap.size === 0) return values;
   return mergeValuesByLabel(values, (raw) => {
-    const info = regionMap.get(raw);
-    if (info === undefined) return raw;
-    const label = pick(info);
-    return label.length > 0 ? label : raw;
+    const longName = regionMap.get(raw)?.longName ?? '';
+    return longName.length > 0 ? longName : raw;
   });
 }
 
@@ -52,8 +47,17 @@ function filterUncoveredSuggestions(
   return filtered;
 }
 
+/** The columns the built-in editor's preview may embed in SQL: the default
+ *  built-ins' fields and display fields, all buildSource output aliases, so
+ *  the preview plans like the rest of the app. Derived rather than listed, so
+ *  no built-in's editor is left previewing nothing (Resource and Provider once
+ *  were). */
+const PREVIEW_COLUMNS: ReadonlySet<string> = new Set(
+  DEFAULT_BUILT_INS.flatMap(d => (d.displayField === undefined ? [d.field] : [d.field, d.displayField])),
+);
+
 export function registerDimensionsHandlers(app: AppContext): void {
-  const { ctx, getConfig, getDimensions, getQueryDimensions, getCostScope, getFirstProviderName, getQueryProviders, getOrgAccountsPath, getAccountReverseMap, getRegionMap, signatureForDimensions, invalidateDimensions, rollupStore, runQuery } = app;
+  const { ctx, getConfig, getDimensions, getQueryDimensions, getQueryCostScope, getFirstProviderName, getQueryProviders, getOrgAccountsPath, getAccountReverseMap, getRegionMap, signatureForDimensions, invalidateDimensions, rollupStore, runQuery } = app;
 
   ipcMain.handle('dimensions:discover-tags', async (): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }> => {
     const config = await getConfig();
@@ -74,7 +78,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
       : `read_parquet(${rawGlobLiteral(ctx.dataDir, String(provider.name), 'daily-*/*.parquet')})`;
     const thirtyDaysAgo = tagDiscoverySince(ctx.now());
 
-    const totalSql = `SELECT COUNT(*) AS total FROM ${rawParquet} WHERE ChargePeriodStart >= '${thirtyDaysAgo}'`;
+    const totalSql = `SELECT COUNT(*) AS total FROM ${rawParquet} WHERE ${CHARGE_PERIOD_START_UTC_SQL} >= '${thirtyDaysAgo}'`;
     const totalRows = await runQuery(totalSql);
     const totalRowCount = totalRows[0] === undefined ? 0 : toNum(totalRows[0]['total']);
 
@@ -84,7 +88,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
                unnest(map_values(Tags)) AS tag_val
         FROM ${rawParquet}
         WHERE Tags IS NOT NULL
-          AND ChargePeriodStart >= '${thirtyDaysAgo}'
+          AND ${CHARGE_PERIOD_START_UTC_SQL} >= '${thirtyDaysAgo}'
       ),
       grouped AS (
         SELECT tag_key, tag_val, COUNT(*) AS val_cnt
@@ -136,17 +140,13 @@ export function registerDimensionsHandlers(app: AppContext): void {
   // Distinct values + cost for a built-in column — powers the preview on the
   // built-in editor ("Service has 120 distinct values, top 20 by cost are...").
   // Scans the most recent daily period so the preview loads fast.
-  ipcMain.handle('dimensions:discover-column-values', async (_event, field: string, opts?: { useOrgAccounts?: boolean; accountNameFromTag?: string; nameStripPatterns?: readonly string[]; normalize?: NormalizationRule; useRegionNames?: boolean; dimName?: string }): Promise<ColumnValuesPreview> => {
+  ipcMain.handle('dimensions:discover-column-values', async (_event, field: string, opts?: { useOrgAccounts?: boolean; accountNameFromTag?: string; nameStripPatterns?: readonly string[]; normalize?: NormalizationRule; useRegionNames?: boolean }): Promise<ColumnValuesPreview> => {
     // Renderer input, run on the main thread: shape-check the strip patterns
     // (string[] within the save caps) before any other work, then use only
     // the parsed list. `opts?.` is safe on any IPC value (null, a number, ...).
     const nameStripPatterns = parsePreviewStripPatterns(opts?.nameStripPatterns);
     const empty: ColumnValuesPreview = { values: [], distinctCount: 0, period: '', stripIssues: NO_STRIP_ISSUES };
-    // Whitelist columns we know are safe to embed in SQL. These match the
-    // aliases emitted by buildSource so the query plans identically to what
-    // the rest of the app does.
-    const ALLOWED = new Set(['account_id', 'account_name', 'region', 'service', 'service_code', 'service_category', 'charge_category', 'pricing_category', 'commitment_status', 'operation', 'sku_meter']);
-    if (!ALLOWED.has(field)) return empty;
+    if (!PREVIEW_COLUMNS.has(field)) return empty;
 
     const providers = await getQueryProviders('daily');
     const firstProvider = providers[0];
@@ -167,7 +167,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
     // re-attribution (Bedrock etc.), instead of raw x_ServiceCode. `field`
     // is already a buildSource output alias (validated against ALLOWED above).
     const period = latest.replace(/^daily-/, '');
-    const costScope = await getCostScope().catch(() => undefined);
+    const costScope = await getQueryCostScope();
     const orgAccountsPath = await getOrgAccountsPath();
     // Probe ONLY the provider whose latest month was just listed — handing
     // the same period to every provider's branch would emit zero-match globs
@@ -178,7 +178,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
       orgAccountsPath,
       providers: [{ name: firstProvider.name, periods: [period] }],
       costMetric: 'billed',
-      marketplaceAttribution: costScope?.marketplaceAttribution,
+      marketplaceAttribution: costScope.marketplaceAttribution,
     });
 
     const distinctSql = `SELECT COUNT(DISTINCT ${field}) AS n FROM ${source} WHERE ${field} IS NOT NULL AND ${field} != ''`;
@@ -201,8 +201,8 @@ export function registerDimensionsHandlers(app: AppContext): void {
       }
     }
 
-    if (field === 'region') {
-      values = await applyRegionPreview(values, opts, getRegionMap);
+    if (field === 'region' && opts?.useRegionNames === true) {
+      values = await applyRegionPreview(values, getRegionMap);
     }
 
     const transformed = applyNormalizeAndStrip(values, field, { normalize: opts?.normalize, nameStripPatterns });
@@ -257,7 +257,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
     const grainColumns = rollupGrainColumns(dims);
     const grainDims = rollupGrainDimensions(dims);
 
-    const costScope = await getCostScope().catch(() => undefined);
+    const costScope = await getQueryCostScope();
     const orgAccountsPath = await getOrgAccountsPath();
     const accountReverseMap = await getAccountReverseMap();
     // Probe the first provider only — its latest month was listed above, and

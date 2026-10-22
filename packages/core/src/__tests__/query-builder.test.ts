@@ -35,7 +35,7 @@ describe('buildCostQuery', () => {
       },
       { dataDir: '/data', dimensions, providers },
     );
-    expect(result.sql).toContain('service AS entity');
+    expect(result.sql).toContain("COALESCE(service, '') AS entity");
     expect(result.sql).toContain('usage_date BETWEEN');
     // Parquet source is narrowed to the months the range touches, not the
     // year-wide wildcard.

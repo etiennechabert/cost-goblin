@@ -6,10 +6,12 @@ import {
   buildExclusionClauses,
   buildSource,
   computePeriodsInRange,
+  freshnessCutoff,
   logger,
   resolveField,
   tagDimColumn,
   tagSqlColumnsById,
+  usageDateBucketExpr,
 } from '@costgoblin/core';
 import type {
   ExplorerBaseParams,
@@ -39,7 +41,7 @@ import { explorerGroupBy, explorerOrderBy, explorerRowFilters } from './explorer
 import { buildExplorerFilterPredicate } from './explorer-filters.js';
 import { readExplorerPreferences, writeExplorerPreferences } from './explorer-prefs.js';
 import { resolveScopeMetric } from './explorer-scope.js';
-import { resolveExplorerDateRange } from './query-windows.js';
+import { capResolvedRange, resolveExplorerDateRange } from './query-windows.js';
 
 const MAX_ROW_LIMIT = 1000;
 
@@ -84,14 +86,14 @@ interface BuildFreshSourceOptions {
 
 async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source: string; whereStr: string }> {
   const { app, params, startStr, endStr, startHour, endHour, tier, periods, providers, dimensions, filterPredicate, accountReverseMap } = opts;
-  const { ctx, getCostScope, getOrgAccountsPath } = app;
+  const { ctx, getQueryCostScope, getOrgAccountsPath } = app;
   const orgPath = await getOrgAccountsPath();
   const applyCostScope = params.applyCostScope === true;
   // Marketplace re-attribution fixes which service a cost belongs to (a data
   // quality fix, not an exclusion), so it follows its own toggle and applies
   // regardless of the "Apply Cost Scope" checkbox — otherwise the Explorer and
   // its filter dropdowns would disagree with the dashboard on Bedrock spend.
-  const fullScope = await getCostScope().catch(() => undefined);
+  const fullScope = await getQueryCostScope();
   const scopeForExclusions = applyCostScope ? fullScope : undefined;
   // When the caller applies the cost scope but doesn't override the metric
   // (every dashboard widget — only the Explorer view sets it explicitly),
@@ -111,7 +113,7 @@ async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source
   const source = buildSource({
     dataDir: ctx.dataDir, tier, dimensions, orgAccountsPath: orgPath,
     providers: branches,
-    costMetric: metric, marketplaceAttribution: fullScope?.marketplaceAttribution,
+    costMetric: metric, marketplaceAttribution: fullScope.marketplaceAttribution,
   });
   const exclusions = scopeForExclusions === undefined ? [] : buildExclusionClauses(scopeForExclusions.rules, dimensions, accountReverseMap);
 
@@ -132,8 +134,16 @@ async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source
 }
 
 async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams): Promise<QueryContext> {
-  const { getQueryDimensions, getAccountMap, getQueryProviders } = app;
-  const { startStr, endStr, windowDays, startHour, endHour } = resolveExplorerDateRange(params.dateRange, app.ctx.now());
+  const { getQueryDimensions, getAccountMap, getQueryCostScope, getQueryProviders } = app;
+  const nowMs = app.ctx.now();
+  const { lagDays } = await getQueryCostScope();
+  const requested = resolveExplorerDateRange(params.dateRange, nowMs, lagDays);
+  // The freshness lag is part of the cost scope: with "Apply cost scope" off,
+  // the Explorer reads the newest days too.
+  const resolved = params.applyCostScope === true
+    ? capResolvedRange(requested, freshnessCutoff(nowMs, lagDays))
+    : requested;
+  const { startStr, endStr, windowDays, startHour, endHour } = resolved ?? requested;
   // Hour bounds (sub-day drag-zoom) require the hourly tier — that's where
   // usage_hour lives. Promote tier when present, regardless of what
   // params.granularity says.
@@ -159,7 +169,7 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
   const tagSqlColumns = tagSqlColumnsById(dimensions.tags);
   const shared = { providers, startStr, endStr, windowDays, tier, tagColumns, tagSqlColumns, dimensions, accountMap } as const;
 
-  if (periods.length === 0) {
+  if (resolved === null || periods.length === 0) {
     return { empty: true, source: '', whereStr: '', ...shared };
   }
 
@@ -280,7 +290,7 @@ export function registerExplorerHandlers(app: AppContext): void {
       // minutes before truncating so a fee at 11:56:32 lands in the 12:00
       // bucket instead of either getting its own bar (no truncation) or being
       // stuck in 11:00 (plain truncation).
-      bucketExpr = qc.tier === 'hourly' ? `date_trunc('hour', usage_hour + INTERVAL '30 minutes')` : 'usage_date';
+      bucketExpr = qc.tier === 'hourly' ? `date_trunc('hour', usage_hour + INTERVAL '30 minutes')` : usageDateBucketExpr(params.granularity);
     } else {
       // Exclusions are baked into the rollup, so only the date window + the
       // user's dashboard filters apply. line_items is the per-grain COUNT(*),
@@ -291,7 +301,8 @@ export function registerExplorerHandlers(app: AppContext): void {
       source = rollupSource;
       whereStr = `WHERE usage_date BETWEEN '${qc.startStr}' AND '${qc.endStr}'${filterClause}`;
       rowsExpr = 'COALESCE(SUM(line_items), 0)';
-      bucketExpr = 'usage_date';
+      // The rollup is daily-grained, so weekly/monthly buckets its days too.
+      bucketExpr = usageDateBucketExpr(params.granularity);
     }
 
     const totalsSql = `
@@ -403,8 +414,8 @@ export function registerExplorerHandlers(app: AppContext): void {
     const { rows, totalRows } = await queryAggregatedRows(runAggregatedSql, {
       source: qc.source,
       where: qc.whereStr,
-      groupBy: explorerGroupBy(params.groupByColumns, qc.tagSqlColumns),
-      rowFilters: explorerRowFilters(rowFilters, qc.tagSqlColumns),
+      groupBy: explorerGroupBy(params.groupByColumns, qc.tagSqlColumns, params.granularity),
+      rowFilters: explorerRowFilters(rowFilters, qc.tagSqlColumns, params.granularity),
       sort: params.sort,
       rowLimit: clampRowLimit(params.rowLimit),
       rowKeys,

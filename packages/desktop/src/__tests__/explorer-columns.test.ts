@@ -26,6 +26,8 @@ const UPPER = tagSqlColumn({ tagName: 'STAGE' });
 const LOWER = tagSqlColumn({ tagName: 'stage' });
 /** A column as a group-by row reads it. */
 const text = (column: string): string => `COALESCE(CAST(${column} AS VARCHAR), '')`;
+const MONTH = "CAST(date_trunc('month', usage_date) AS DATE)";
+const WEEK = "CAST(date_trunc('week', usage_date) AS DATE)";
 
 describe('explorerSqlColumn', () => {
   it('passes scalar columns through and maps tag ids to their SQL column', () => {
@@ -67,6 +69,15 @@ describe('explorerRowFilters', () => {
       .toEqual([{ column: 'usage_date', value: '2026-01-05' }, { column: 'service', value: '' }]);
     expect(explorerRowFilters(undefined, columns)).toEqual([]);
   });
+
+  it('holds a weekly or monthly usage_date to its bucket, and leaves daily, hourly and tags alone', () => {
+    expect(explorerRowFilters({ usage_date: '2026-10-01' }, columns, 'monthly')).toEqual([{ column: 'usage_date', bucket: MONTH, value: '2026-10-01' }]);
+    expect(explorerRowFilters({ usage_date: '2026-10-12' }, columns, 'weekly')).toEqual([{ column: 'usage_date', bucket: WEEK, value: '2026-10-12' }]);
+    for (const granularity of [undefined, 'daily', 'hourly'] as const) {
+      expect(explorerRowFilters({ usage_date: '2026-01-05' }, columns, granularity)).toEqual([{ column: 'usage_date', value: '2026-01-05' }]);
+    }
+    expect(explorerRowFilters({ tag_STAGE: 'PROD' }, columns, 'monthly')).toEqual([{ column: UPPER, value: 'PROD' }]);
+  });
 });
 
 describe('rowFilterConditions', () => {
@@ -90,6 +101,16 @@ describe('rowFilterConditions', () => {
     expect(rowFilterConditions([], qb)).toEqual([]);
     expect(qb.build().params).toEqual([]);
   });
+
+  it('compares a monthly or weekly usage_date against its bucket, so a drill-down returns the whole period', () => {
+    const qb = new QueryBuilder();
+    const filters = [
+      ...explorerRowFilters({ usage_date: '2026-10-01' }, columns, 'monthly'),
+      ...explorerRowFilters({ usage_date: '2026-10-12' }, columns, 'weekly'),
+    ];
+    expect(rowFilterConditions(filters, qb)).toEqual([`${text(MONTH)} = $1`, `${text(WEEK)} = $2`]);
+    expect(qb.build().params).toEqual(['2026-10-01', '2026-10-12']);
+  });
 });
 
 describe('aggregated table helpers', () => {
@@ -103,8 +124,9 @@ describe('aggregated table helpers', () => {
     ]);
   });
 
-  it('reads a group as text that is never NULL', () => {
-    expect(groupValueExpr('usage_hour')).toBe(text('usage_hour'));
+  it('reads a group as text that is never NULL, a bucketed date as its bucket', () => {
+    expect(groupValueExpr({ column: 'usage_hour' })).toBe(text('usage_hour'));
+    expect(groupValueExpr({ column: 'usage_date', bucket: MONTH })).toBe(text(MONTH));
   });
 
   it('selects each group as its text under its column, and groups on that text', () => {
@@ -112,6 +134,26 @@ describe('aggregated table helpers', () => {
     // A date's text is never '' and differs per date, so grouping on the
     // date itself splits the line items the same way, without a cast each.
     expect(groupByList(groupBy)).toBe(`usage_date, ${text(UPPER)}, ${text(LOWER)}`);
+  });
+
+  it('groups usage_date by its week or month bucket, still read back under usage_date', () => {
+    const monthly = explorerGroupBy(['usage_date', 'tag_STAGE'], columns, 'monthly');
+    expect(groupBySelectList(monthly)).toBe(`${text(MONTH)} AS usage_date, ${text(UPPER)} AS ${UPPER}`);
+    // The bucket is a date too: it groups and sorts on itself.
+    expect(groupByList(monthly)).toBe(`${MONTH}, ${text(UPPER)}`);
+    expect(groupByValues({ usage_date: '2026-10-01', [UPPER]: 'PROD' }, monthly))
+      .toEqual({ usage_date: '2026-10-01', tag_STAGE: 'PROD' });
+    expect(aggregatedOrderBy({ column: 'usage_date', direction: 'asc' }, monthly)).toBe(`${MONTH} ASC`);
+    expect(groupBySelectList(explorerGroupBy(['usage_date'], columns, 'weekly'))).toBe(`${text(WEEK)} AS usage_date`);
+  });
+
+  it('keeps the daily output byte for byte, with or without a granularity', () => {
+    for (const granularity of [undefined, 'daily', 'hourly'] as const) {
+      const daily = explorerGroupBy(['usage_date', 'tag_STAGE'], columns, granularity);
+      expect(daily).toEqual([{ id: 'usage_date', column: 'usage_date' }, { id: 'tag_STAGE', column: UPPER }]);
+      expect(groupBySelectList(daily)).toBe(`${text('usage_date')} AS usage_date, ${text(UPPER)} AS ${UPPER}`);
+      expect(groupByList(daily)).toBe(`usage_date, ${text(UPPER)}`);
+    }
   });
 
   it('reads each value from its column back under the id', () => {

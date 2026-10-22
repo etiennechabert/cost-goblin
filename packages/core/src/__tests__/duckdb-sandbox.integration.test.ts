@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildSource } from '../query/builder.js';
+import { buildSource, CHARGE_PERIOD_START_UTC_SQL } from '../query/builder.js';
 import { buildDuckDbSandboxStatements } from '../query/duckdb-sandbox.js';
 import type { DimensionsConfig } from '../types/config.js';
 import { asProviderName, tagSqlColumn } from '../types/branded.js';
@@ -182,7 +182,15 @@ describe('DuckDB sandbox (real DuckDB)', () => {
     it('runs the coverage MAX(ChargePeriodStart) probe', async () => {
       const rows = await queryAll(
         sandbox,
-        `SELECT MAX(ChargePeriodStart::DATE)::VARCHAR AS d FROM read_parquet(['${dataDir}/aws/raw/daily-2026-01/*.parquet'])`,
+        `SELECT MAX(${CHARGE_PERIOD_START_UTC_SQL})::DATE::VARCHAR AS d FROM read_parquet(['${dataDir}/aws/raw/daily-2026-01/*.parquet'])`,
+      );
+      expect(rows[0]?.['d']).toBe('2026-01-06');
+    });
+
+    it('takes the UTC day of a tz-aware timestamp, as AWS writes them', async () => {
+      const rows = await queryAll(
+        sandbox,
+        `SELECT MAX(${CHARGE_PERIOD_START_UTC_SQL})::DATE::VARCHAR AS d FROM (SELECT TIMESTAMPTZ '2026-01-06 23:00:00+00' AS ChargePeriodStart)`,
       );
       expect(rows[0]?.['d']).toBe('2026-01-06');
     });

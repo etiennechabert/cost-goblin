@@ -706,4 +706,63 @@ test.describe('Clickability (workspace mode)', () => {
     await expectClickable(p, p.getByRole('button', { name: 'Next baseline (→)' }));
     await p.keyboard.press('Escape');
   });
+
+  test('every button shows the pointer, and a state layer on hover and press', async () => {
+    const { page: p } = launched();
+    await ensureViewMode(p);
+    await p.getByRole('navigation', { name: 'Dashboards and analysis' }).getByRole('button', { name: 'Home' }).click();
+    await expect(p.getByRole('heading', { name: 'Cost Overview' })).toBeVisible();
+    // Tailwind v4 leaves controls on the arrow cursor (app.css restores the
+    // pointer); only a component's own cursor, such as a drag grip's, replaces it.
+    const onArrow = (): Promise<string[]> => p.evaluate(() => [...document.querySelectorAll('button')]
+      .filter(b => !b.disabled && b.getClientRects().length > 0)
+      .filter(b => {
+        const cursor = getComputedStyle(b).cursor;
+        return cursor === 'auto' || (cursor === 'default' && !b.classList.contains('cursor-default'));
+      })
+      .map(b => b.getAttribute('aria-label') ?? b.textContent.trim()));
+    expect(await onArrow()).toEqual([]);
+    // Disabled items lose it: Radix marks them with an empty data-disabled,
+    // cmdk with "true", and cmdk writes "false" on every enabled item.
+    const optionCursor = await p.evaluate(() => {
+      const probe = (disabled: string): string => {
+        const el = document.createElement('div');
+        el.setAttribute('role', 'option');
+        el.setAttribute('data-disabled', disabled);
+        document.body.append(el);
+        const cursor = getComputedStyle(el).cursor;
+        el.remove();
+        return cursor;
+      };
+      return { enabled: probe('false'), cmdkDisabled: probe('true'), radixDisabled: probe('') };
+    });
+    expect(optionCursor).toEqual({ enabled: 'pointer', cmdkDisabled: 'auto', radixDisabled: 'auto' });
+
+    // A hover tints the button, a press tints it more: the click shows it landed.
+    const button = p.getByRole('navigation', { name: 'Dashboards and analysis' }).getByRole('button', { name: 'Baselines' });
+    const layer = (): Promise<string> => button.evaluate(el => getComputedStyle(el).backgroundImage);
+    await p.mouse.move(640, 700);
+    await expect.poll(layer).toBe('none');
+    await button.hover();
+    await expect.poll(layer).toMatch(/^linear-gradient/);
+    const hovered = await layer();
+    await p.mouse.down();
+    await expect.poll(layer).not.toBe(hovered);
+    expect(await layer()).toMatch(/^linear-gradient/);
+    // Released elsewhere, so nothing is clicked.
+    await p.mouse.move(640, 700);
+    await p.mouse.up();
+
+    // A chart plot that takes a drag selection is a role=button too, and
+    // draws its own selection: no state layer over the whole plot.
+    const plot = p.locator('[role="button"].cursor-crosshair').first();
+    await plot.hover();
+    expect(await plot.evaluate(el => getComputedStyle(el).backgroundImage)).toBe('none');
+
+    // The settings rail and a settings page with many kinds of control.
+    await openSettings(p);
+    await p.getByRole('navigation', { name: SETTINGS_NAV_LABEL }).getByRole('button', { name: 'Dimensions' }).click();
+    await expect(p.getByRole('heading', { name: 'Dimensions', exact: true })).toBeVisible();
+    expect(await onArrow()).toEqual([]);
+  });
 });

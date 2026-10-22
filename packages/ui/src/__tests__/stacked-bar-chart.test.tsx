@@ -121,6 +121,31 @@ describe('StackedBarChart — layout', () => {
     expect(barsArea(container).style.gap).toBe('2px');
   });
 
+  it('labels the axis, the tooltip and the drag edges by period for weekly and monthly bars', () => {
+    const months: readonly BarDay[] = [
+      { date: '2026-08-01', total: 10, breakdown: { EC2: 10 } },
+      { date: '2026-09-01', total: 20, breakdown: { EC2: 20 } },
+      { date: '2026-10-01', total: 0, breakdown: {} },
+    ];
+    const { container, rerender } = renderChart(<StackedBarChart days={months} granularity="monthly" onRangeSelect={vi.fn()} />);
+
+    for (const label of ['Aug 2026', 'Sep 2026', 'Oct 2026']) expect(screen.getByText(label)).toBeDefined();
+    fireEvent.mouseEnter(column(container, 1));
+    expect(within(openTooltip()).getByText('Sep 2026')).toBeDefined();
+    fireEvent.mouseLeave(column(container, 1));
+
+    rerender(
+      <PaletteProvider>
+        <StackedBarChart
+          days={[{ date: '2026-10-19', total: 5, breakdown: { EC2: 5 } }, { date: '2026-10-26', total: 5, breakdown: { EC2: 5 } }]}
+          granularity="weekly"
+        />
+      </PaletteProvider>,
+    );
+    expect(screen.getByText('W43 2026')).toBeDefined();
+    expect(screen.getByText('W44 2026')).toBeDefined();
+  });
+
   it('thins the gap and the date ticks for long series', () => {
     const many: BarDay[] = Array.from({ length: 120 }, (_, i) => {
       const d = new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10);

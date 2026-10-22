@@ -9,6 +9,7 @@ import {
   ROLLUP_SCHEMA_VERSION,
 } from '../rollup/shape-signature.js';
 import { validateManifest, computePartitionEtagHash, type RollupManifest } from '../rollup/manifest.js';
+import { buildRuleMatchExpr } from '../query/builder.js';
 import { validateDimensions } from '../config/validator.js';
 
 function baseDims(): DimensionsConfig {
@@ -109,6 +110,53 @@ describe('computeShapeSignature', () => {
     });
   });
 
+  // A rule with a condition on a dimension the config lacks matches nothing
+  // when a partition is built (buildRuleMatchExpr); it used to drop just that
+  // AND-leg. Partitions built that way must re-roll, and the dimension coming
+  // back (a provider that fills it) must re-roll them again.
+  describe('rules on a dimension the config lacks', () => {
+    const onMissing = (...extra: ExclusionCondition[]): ExclusionRule[] => [
+      ...rulesOnService(),
+      { id: 'gone', name: 'Gone', enabled: true, builtIn: false, conditions: [{ dimensionId: asDimensionId('service_code'), values: ['x'] }, ...extra] },
+    ];
+    const withServiceCode = (): DimensionsConfig => ({
+      ...baseDims(),
+      builtIn: [...baseDims().builtIn, { name: asDimensionId('service_code'), label: 'Service Code', field: 'service_code', enabled: false }],
+    });
+
+    it('leaves such a rule out, like a disabled one', () => {
+      expect(sig({ rules: onMissing() })).toBe(sig());
+      expect(sig({ rules: onMissing({ dimensionId: asDimensionId('account'), values: ['111'] }) })).toBe(sig());
+    });
+
+    it('CHANGES once the dimension exists, even disabled', () => {
+      expect(sig({ dimensions: withServiceCode(), rules: onMissing() })).not.toBe(sig({ dimensions: withServiceCode() }));
+    });
+
+    it('leaves out exactly the rules buildRuleMatchExpr turns into no exclusion', () => {
+      const cases: ExclusionCondition[][] = [
+        [{ dimensionId: asDimensionId('service_code'), values: ['x'] }],
+        [{ dimensionId: asDimensionId('service_code'), values: [], matchMissing: true }],
+        [{ dimensionId: asDimensionId('account'), values: ['111'] }, { dimensionId: asDimensionId('service_code'), values: ['x'] }],
+        [{ dimensionId: asDimensionId('account'), values: ['111'] }, { dimensionId: asDimensionId('service_code'), values: [] }],
+        [{ dimensionId: asDimensionId('tag_sb_team'), values: ['architects'] }],
+      ];
+      for (const conditions of cases) {
+        const rule: ExclusionRule = { id: 'c', name: 'c', enabled: true, builtIn: false, conditions };
+        const inert = buildRuleMatchExpr(rule, baseDims()) === null;
+        expect(sig({ rules: [...rulesOnService(), rule] }) === sig(), JSON.stringify(conditions)).toBe(inert);
+      }
+    });
+
+    it('keeps a rule whose only condition on the missing dimension is an empty draft', () => {
+      const draft: ExclusionRule[] = [...rulesOnService(), {
+        id: 'draft', name: 'Draft', enabled: true, builtIn: false,
+        conditions: [{ dimensionId: asDimensionId('account'), values: ['111'] }, { dimensionId: asDimensionId('service_code'), values: [] }],
+      }];
+      expect(sig({ rules: draft })).not.toBe(sig());
+    });
+  });
+
   describe('missing values in rule conditions', () => {
     const serviceRule = (extra: Partial<ExclusionCondition> = {}): ExclusionRule[] =>
       [{ id: 'r1', name: 'Tax', enabled: true, builtIn: true, conditions: [{ dimensionId: asDimensionId('service'), values: ['AWSSupport'], ...extra }] }];
@@ -125,16 +173,17 @@ describe('computeShapeSignature', () => {
       expect(sig({ rules: teamRule({ matchMissing: false }) })).toBe(sig({ rules: teamRule() }));
     });
 
-    // Digests of these exact inputs before rule conditions became NULL-safe.
-    // A built-in column is never NULL, so those partitions are byte-identical
-    // and must keep their digest; a rule on a tag also dropped the untagged
-    // rows, so those partitions must re-roll.
+    // Digests of these exact inputs as computed before rule conditions became
+    // NULL-safe, at the current ROLLUP_SCHEMA_VERSION (4: the version is part
+    // of every digest). A built-in column is never NULL, so those partitions
+    // are byte-identical and must keep their digest; a rule on a tag also
+    // dropped the untagged rows, so those partitions must re-roll.
     it('keeps the earlier digest for rules on built-in columns (no re-roll)', () => {
-      expect(sig({ rules: serviceRule() })).toBe('9450a55f2ae5ec0a7795f6e1501ab575cc85d6ea618a6919c2e90b5352bef506');
+      expect(sig({ rules: serviceRule() })).toBe('233df2068a2cac4780a68e64eb1a32897332e47a472f7a150da9434c1ed4cdd4');
     });
 
     it('moves the digest of rules on tags, whose partitions dropped untagged rows', () => {
-      expect(sig({ rules: teamRule() })).not.toBe('64a52fd554838073186a29f66ce6f6f2eb48bf5c187e8cef0498c3b8177502b0');
+      expect(sig({ rules: teamRule() })).not.toBe('83acf0a17fa8d6f73b68b342e39e4aaed74ac2e52005c3729863781fc37b6677');
     });
   });
 });

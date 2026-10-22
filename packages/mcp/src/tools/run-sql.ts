@@ -2,9 +2,7 @@ import {
   assertDateString,
   buildSource,
   computePeriodsInRange,
-  DEFAULT_LAG_DAYS,
   logger,
-  trailingWindow,
 } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
 import type { Cell, Column, StructuredResult } from '../formatters/result.js';
@@ -13,10 +11,11 @@ import {
   emptyRangeResult,
   getQueryProviders,
   resolveFormat,
+  resolveToolDateRange,
   structuredToolResult,
-  toStr,
   toolError,
   toolResult,
+  withinLagResult,
 } from './tool-helpers.js';
 
 const MAX_LIMIT = 500;
@@ -37,7 +36,16 @@ export function resolveRunSqlCap(limit: number | undefined): number {
 
 /** The statement run_sql executes: the user's query wrapped as a subquery over
  *  the `costs` CTE, capped at `cap + 1` rows so the caller can tell a result of
- *  exactly `cap` rows from a truncated one.
+ *  exactly `cap` rows from a truncated one, with every column turned into its
+ *  JSON text by DuckDB.
+ *
+ *  The JSON text is how a value keeps its meaning on the way out. The desktop
+ *  app runs MCP queries on a DuckDB worker thread, and the structured clone
+ *  that carries the rows back drops DuckDB's value classes: a DATE arrives as
+ *  `{ days }`, a TIME and a TIMESTAMP alike as `{ micros }`. `to_json` renders
+ *  every type in DuckDB instead, and runSqlCell reads it back. The `::VARCHAR`
+ *  keeps DuckDB's JSON check off the cells, so a query that closes the
+ *  subquery and UNIONs in a branch of its own still runs, still capped.
  *
  *  The cap is unconditional: a LIMIT (or a `-- LIMIT` comment) in the user's
  *  query stays inside the subquery and cannot lift it. The newlines around the
@@ -53,7 +61,45 @@ export function buildRunSqlStatement(costsCte: string, userSql: string, cap: num
   // (String ops, not a regex: no backtracking over long whitespace runs.)
   let bareSql = userSql.trimEnd();
   if (bareSql.endsWith(';')) bareSql = bareSql.slice(0, -1).trimEnd();
-  return `WITH ${costsCte}\nSELECT * FROM (\n${bareSql}\n) AS _costgoblin_q\nLIMIT ${String(cap + 1)}`;
+  return `WITH ${costsCte}\nSELECT to_json(COLUMNS(*))::VARCHAR FROM (\n${bareSql}\n) AS _costgoblin_q\nLIMIT ${String(cap + 1)}`;
+}
+
+/** A JSON number as `to_json` writes one: no sign, padding, hex or leading zero. */
+const JSON_NUMBER = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
+
+/** The doubles JSON has no number for, which `to_json` writes as bare words. */
+const NON_FINITE = new Set(['NaN', 'Infinity', '-Infinity']);
+
+/** One run_sql cell, from what DuckDB returned for it: the value's JSON text
+ *  (see buildRunSqlStatement), or null for SQL NULL. A JSON string (VARCHAR,
+ *  DATE, TIMESTAMP, INTERVAL, UUID…) becomes its text, a number (DOUBLE,
+ *  DECIMAL, HUGEINT…) the nearest double, and a LIST, STRUCT or MAP stays
+ *  compact JSON. NULL is empty. Text `to_json` did not write (a UNION branch
+ *  added after the wrapper's subquery) is kept as it is.
+ *
+ *  Throws on a cell that is neither text nor NULL: the wrapper casts every
+ *  column to VARCHAR, so anything else means it no longer does, and an empty
+ *  cell would hide that. */
+export function runSqlCell(value: unknown): Cell {
+  if (value === null || value === undefined) return '';
+  if (typeof value !== 'string') {
+    throw new TypeError(`run_sql expects JSON text or NULL in every cell, got ${typeof value}`);
+  }
+  if (value.startsWith('"')) return parseJsonString(value) ?? value;
+  if (JSON_NUMBER.test(value) || NON_FINITE.has(value)) return Number(value);
+  // Only a JSON-typed column holds a JSON null: empty, like SQL NULL.
+  if (value === 'null') return '';
+  // true/false, and the arrays and objects a LIST, STRUCT or MAP becomes.
+  return value;
+}
+
+function parseJsonString(text: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return typeof parsed === 'string' ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Truncate a string over MAX_CELL_CHARS to its first MAX_CELL_CHARS UTF-16
@@ -174,23 +220,12 @@ export function validateRunSqlQuery(sql: string): string | null {
   return null;
 }
 
-/** The explicit range when given (validated), else the trailing 60 days ending
- *  at the default lag before `nowMs`. */
-function resolveDateRange(param: { start: string; end: string } | undefined, nowMs: number): { start: string; end: string } {
-  if (param !== undefined) {
-    assertDateString(param.start);
-    assertDateString(param.end);
-    return param;
-  }
-  return trailingWindow(nowMs, DEFAULT_LAG_DAYS, 60);
-}
-
 /** The `costs` CTE the user's query runs against: the materialized rollup when
  *  it covers the range, else the per-provider Parquet union. Returns null when
  *  no provider has data in range. */
 async function buildCostsCte(ctx: McpContext, dateRange: { start: string; end: string }): Promise<string | null> {
   // Both bounds are interpolated into SQL literals below — assert at the
-  // interpolation site (not just in resolveDateRange), matching how core's
+  // interpolation site (not just in resolveToolDateRange), matching how core's
   // query builder re-asserts before every BETWEEN interpolation.
   assertDateString(dateRange.start);
   assertDateString(dateRange.end);
@@ -210,7 +245,7 @@ async function buildCostsCte(ctx: McpContext, dateRange: { start: string; end: s
     .filter(b => b.periods.length > 0);
   if (branches.length === 0) return null;
   // Mirror the dashboards: the active Cost Scope's metric backs `cost`.
-  const scopeMetric = await ctx.getCostScope().then(cs => cs.costMetric).catch(() => 'effective' as const);
+  const scopeMetric = (await ctx.getCostScope()).costMetric;
   const source = buildSource({
     dataDir: ctx.dataDir,
     tier: 'daily',
@@ -222,28 +257,35 @@ async function buildCostsCte(ctx: McpContext, dateRange: { start: string; end: s
   return `costs AS (SELECT * FROM ${source} WHERE usage_date BETWEEN '${dateRange.start}' AND '${dateRange.end}')`;
 }
 
-function columnsOf(firstRow: Readonly<Record<string, unknown>>): Column[] {
-  return Object.keys(firstRow).map(name => {
-    const sample = firstRow[name];
-    // bigint counts as numeric: toCellRows converts bigint cells to Number, so
-    // the column type must agree or COUNT(*)/integer SUM columns render as text.
-    return {
-      // `key` stays raw: it indexes the row object. Only the displayed
-      // header is budgeted.
-      key: name,
-      header: truncateCell(name),
-      type: typeof sample === 'number' || typeof sample === 'bigint' ? 'number' : 'string',
-    };
-  });
+/** A column is numeric when its first non-empty cell is a number. SQL NULL is
+ *  empty in every column, so typing from the first row alone would make a
+ *  nullable number column text. */
+function columnTypeOf(rows: readonly (readonly Cell[])[], index: number): 'number' | 'string' {
+  for (const row of rows) {
+    const cell = row[index];
+    if (typeof cell === 'number') return 'number';
+    if (typeof cell === 'string' && cell !== '') return 'string';
+  }
+  return 'string';
+}
+
+function columnsOf(names: readonly string[], rows: readonly (readonly Cell[])[]): Column[] {
+  return names.map((name, i) => ({
+    // `key` stays raw: it indexes the row object. Only the displayed
+    // header is budgeted.
+    key: name,
+    header: truncateCell(name),
+    type: columnTypeOf(rows, i),
+    // A query result, not a count: markdown prints 0.0732, not 0.
+    numberStyle: 'exact',
+  }));
 }
 
 function toCellRows(rows: readonly Readonly<Record<string, unknown>>[], columnNames: readonly string[]): Cell[][] {
   return rows.map(r =>
     columnNames.map((name): Cell => {
-      const val = r[name];
-      if (typeof val === 'number') return val;
-      if (typeof val === 'bigint') return Number(val);
-      return truncateCell(toStr(val));
+      const cell = runSqlCell(r[name]);
+      return typeof cell === 'string' ? truncateCell(cell) : cell;
     }),
   );
 }
@@ -266,7 +308,9 @@ export async function runSql(
     return toolError(validationError);
   }
 
-  const dateRange = resolveDateRange(params.dateRange, ctx.now());
+  const range = await resolveToolDateRange(ctx, params.dateRange, 60);
+  if (range.kind === 'within-lag') return withinLagResult(ctx, range, format, 'Query Result');
+  const { dateRange, cappedAt } = range;
   const costsCte = await buildCostsCte(ctx, dateRange);
   if (costsCte === null) {
     return emptyRangeResult(ctx, dateRange, format, `Query Result`);
@@ -297,10 +341,11 @@ export async function runSql(
     return toolResult('*Query returned no rows.*');
   }
 
-  const columns = columnsOf(firstRow);
-  // Cells iterate the columns' own key order — headers and cells share one
-  // source of truth, so they cannot drift apart.
-  const tableRows = toCellRows(rows, columns.map(c => c.key));
+  // Cells and columns iterate the same key order — one source of truth, so
+  // headers and cells cannot drift apart.
+  const names = Object.keys(firstRow);
+  const tableRows = toCellRows(rows, names);
+  const columns = columnsOf(names, tableRows);
 
   const meta: { label: string; value: string | number; type?: 'number' }[] = [
     { label: 'Rows', value: rows.length, type: 'number' },
@@ -310,7 +355,7 @@ export async function runSql(
     notes.push(`*Results truncated to ${String(cap)} rows — narrow the query or page with LIMIT/OFFSET inside it.*`);
   }
 
-  const coverage = await computeDataCoverage(ctx, dateRange);
+  const coverage = await computeDataCoverage(ctx, dateRange, cappedAt);
   const result: StructuredResult = {
     title: `Query Result`,
     coverage,

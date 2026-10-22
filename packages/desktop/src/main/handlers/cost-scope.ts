@@ -2,8 +2,8 @@ import { ipcMain, shell } from 'electron';
 import { writeFile } from 'node:fs/promises';
 import { stringify } from 'yaml';
 import {
-  DEFAULT_COST_SCOPE,
   DEFAULT_LAG_DAYS,
+  freshnessCutoff,
   ConfigValidationError,
   costScopeToYaml,
   dimensionIdSet,
@@ -24,10 +24,13 @@ import type {
   CostScopeSampleRow,
   DimensionsConfig,
 } from '@costgoblin/core';
+import type { TemplateProviderType } from '../config-templates.js';
 import type { RawRow } from '../duckdb-client.js';
 import type { AppContext } from './context.js';
+import { loadOrSeedCostScope } from './cost-scope-load.js';
+import { isAbsentForAllProviders } from './dimensions-merge.js';
 import { tagSelectItems, tagValuesById, toNum } from './query-utils.js';
-import { costScopePreviewWindow } from './query-windows.js';
+import { capPreviewWindow, costScopePreviewWindow } from './query-windows.js';
 
 const SAMPLE_ROW_LIMIT = 500;
 
@@ -71,12 +74,21 @@ function logSettledError(label: string, result: PromiseSettledResult<unknown>): 
 // Dangling references silently become a bogus column reference in SQL, which
 // errors *every* query (exclusion clauses are threaded into all of them), so
 // catch it at save time rather than letting the whole app fail at query time.
-function assertRuleDimensionsExist(config: CostScopeConfig, dimensions: DimensionsConfig): void {
+/** Refuses a rule on a dimension the workspace doesn't know (a typo, a
+ *  deleted tag). A dimension no configured provider can fill is known: the
+ *  merge drops it from the config (a GCP-only workspace has no Service Code),
+ *  yet the built-in AWS Premium Support rule names it and rides along in
+ *  every save. Such a rule matches nothing until a provider can fill it. */
+function assertRuleDimensionsExist(
+  config: CostScopeConfig,
+  dimensions: DimensionsConfig,
+  providerTypes: readonly TemplateProviderType[],
+): void {
   const knownIds = dimensionIdSet(dimensions);
   for (const rule of config.rules) {
     for (const cond of rule.conditions) {
       const id = String(cond.dimensionId);
-      if (!knownIds.has(id)) {
+      if (!knownIds.has(id) && !isAbsentForAllProviders(id, providerTypes)) {
         throw new ConfigValidationError(
           `Rule '${rule.name}' references unknown dimension '${id}'. Available: ${[...knownIds].join(', ')}`,
         );
@@ -85,33 +97,21 @@ function assertRuleDimensionsExist(config: CostScopeConfig, dimensions: Dimensio
   }
 }
 
-function isEnoent(err: unknown): boolean {
-  if (typeof err !== 'object' || err === null) return false;
-  if (!('code' in err)) return false;
-  return err.code === 'ENOENT';
-}
-
 export function registerCostScopeHandlers(app: AppContext): void {
-  const { ctx, getCostScope, invalidateCostScope, getQueryDimensions, getAccountReverseMap, getOrgAccountsPath, getQueryProviders, runPreparedQuery } = app;
+  const { ctx, getConfig, getCostScope, invalidateCostScope, getQueryDimensions, getAccountReverseMap, getOrgAccountsPath, getQueryProviders, runPreparedQuery } = app;
 
-  ipcMain.handle('cost-scope:get-config', async (): Promise<CostScopeConfig> => {
-    try {
-      return await getCostScope();
-    } catch (err) {
-      // Seed the file only when it's missing. Validation / YAML errors bubble
-      // up to the UI so the user can fix their hand-edit — silently
-      // overwriting would destroy their custom rules.
-      if (!isEnoent(err)) throw err;
-      await writeFile(ctx.costScopePath, stringify(costScopeToYaml(DEFAULT_COST_SCOPE)));
-      invalidateCostScope();
-      return DEFAULT_COST_SCOPE;
-    }
-  });
+  ipcMain.handle('cost-scope:get-config', (): Promise<CostScopeConfig> =>
+    loadOrSeedCostScope({ costScopePath: ctx.costScopePath, getCostScope }));
 
   ipcMain.handle('cost-scope:save-config', async (_event, raw: unknown): Promise<void> => {
     const dimensions = await getQueryDimensions();
     const validated = validateCostScope(raw, dimensionIdSet(dimensions));
-    assertRuleDimensionsExist(validated, dimensions);
+    // As in the dimensions merge: a costgoblin.yaml that doesn't load
+    // exempts nothing.
+    const providerTypes = await getConfig()
+      .then(c => c.providers.map(p => p.type))
+      .catch((): TemplateProviderType[] => []);
+    assertRuleDimensionsExist(validated, dimensions, providerTypes);
     await writeFile(ctx.costScopePath, stringify(costScopeToYaml(validated)));
     invalidateCostScope();
   });
@@ -121,7 +121,12 @@ export function registerCostScopeHandlers(app: AppContext): void {
     const config = validateCostScope(payload, dimensionIdSet(dimensions));
     const enabledRules = config.rules.filter(r => r.enabled);
 
-    const { windowDays, startDate: startStr, endDate: endStr } = costScopePreviewWindow(range, ctx.now(), config.lagDays ?? DEFAULT_LAG_DAYS);
+    const lagDays = config.lagDays ?? DEFAULT_LAG_DAYS;
+    const requested = costScopePreviewWindow(range, ctx.now(), lagDays);
+    // A period picked on the preview stops at the draft's freshness lag, as
+    // the dashboards will once it is saved.
+    const window = capPreviewWindow(requested, freshnessCutoff(ctx.now(), lagDays));
+    const { windowDays, startDate: startStr, endDate: endStr } = window ?? requested;
 
     const zero: CostScopePreviewResult = {
       windowDays,
@@ -141,6 +146,7 @@ export function registerCostScopeHandlers(app: AppContext): void {
     // early return as "no months on disk". Months are intersected PER
     // provider: a shared list would hand a provider globs for months it
     // doesn't have, and one zero-match glob fails the whole union.
+    if (window === null) return zero;
     const providers = await getQueryProviders('daily');
     const required = computePeriodsInRange({ start: startStr, end: endStr });
     const branches = providers

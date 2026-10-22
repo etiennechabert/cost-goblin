@@ -242,7 +242,7 @@ rejects a candidate export missing any of them):
 
 | Column | Type | Purpose |
 |--------|------|---------|
-| `ChargePeriodStart` | Timestamp | Date/hour partitioning key (`usage_date`/`usage_hour`) |
+| `ChargePeriodStart` | Timestamp (tz-aware on AWS) | Date/hour partitioning key (`usage_date`/`usage_hour`, in UTC) |
 | `SubAccountId` | String | Account dimension |
 | `SubAccountName` | String | Account display name |
 | `BilledCost` | Number | `billed` metric (invoice basis) |
@@ -388,12 +388,15 @@ No credentials are stored by the app — it delegates to the AWS SDK.
 
 DuckDB queries run against a canonical projection over the raw FOCUS 1.2
 Parquet, built at query time by `buildSource` (no sync-time rewrite). Each
-canonical column is a trivial rename/cast of a FOCUS column:
+canonical column is a trivial rename/cast of a FOCUS column. Days and hours are
+UTC: AWS writes `ChargePeriodStart` tz-aware, and a cast of that resolves in
+the DuckDB session's time zone (the machine's), so both come from
+`CHARGE_PERIOD_START_UTC_SQL` = `make_timestamp(epoch_us(ChargePeriodStart))`:
 
 | Column | Type | FOCUS source | Description |
 |--------|------|-------------|-------------|
-| `usage_date` | `DATE` | `ChargePeriodStart::DATE` | Day of usage |
-| `usage_hour` | `TIMESTAMP` | `ChargePeriodStart` | Hour of usage (hourly tier only) |
+| `usage_date` | `DATE` | `CHARGE_PERIOD_START_UTC_SQL::DATE` | UTC day of usage |
+| `usage_hour` | `TIMESTAMP` | `CHARGE_PERIOD_START_UTC_SQL` | UTC hour of usage (hourly tier only) |
 | `account_id` | `VARCHAR` | `SubAccountId` | Cloud account/project/subscription ID |
 | `account_name` | `VARCHAR` | `SubAccountName` | Friendly account name |
 | `region` | `VARCHAR` | `RegionId` | Cloud region |
@@ -726,7 +729,7 @@ See [Interaction Model](#interaction-model) below.
 
 #### Feature: Dark Mode + Color Palette (MVP)
 
-Dark mode default, light available. Two chart palettes: standard and Okabe-Ito (colorblind-safe). Toggled in the title bar; persisted in `preferences.json` (v1 — currently `localStorage`).
+Dark mode default, light available. Three chart palettes: standard, vivid and colorblind-safe. Toggled in the title bar; persisted in `preferences.json` (v1 — currently `localStorage`).
 
 #### Feature: Dimensions Editor (MVP)
 
@@ -783,13 +786,16 @@ Replaces the spec's earlier "sync status indicator." A full view showing:
 Surfaces AWS Cost Optimization Hub recommendations (Reserved Instances, Savings Plans, rightsizing) downloaded from the cost-optimization tier.
 
 **Layout:**
-- Sortable table: account, action type, resource, monthly cost, monthly savings, savings %, effort.
+- Sortable table, one row per resource or commitment pool: account, action type, resource or pool, monthly cost, monthly savings, savings %, effort.
 - Effort-coloured chips (Very Low / Low / Medium / High).
-- Per-row expand panel: parsed recommendation `configuration` and `costCalculation.usages` (e.g., suggested instance config, current usage).
-- "Hide action type" toggles per category (e.g., hide all Rightsize) — persisted in `preferences.json` via `SavingsPreferences`.
+- Per-row expand panel: parsed recommendation `configuration` and `costCalculation.usages` (e.g., suggested instance config, current usage), and the alternatives the totals don't count.
+- Settings: "Hide action type" toggles per category (e.g., hide all Rightsize), and the commitment option counted (term: highest savings / 1-year / 3-year; payment: highest savings / no / partial / all upfront) — persisted in `savings-preferences.json` via `SavingsPreferences`.
 
 **Behavior:**
-- Pulls from the latest cost-optimization Parquet snapshot.
+- Pulls from each provider's latest cost-optimization snapshot (`cost-opt-YYYY-MM-DD/`). Older days are ignored: a recommendation missing from the latest one was implemented or superseded.
+- Counts what COH's own dashboard counts (`countSavings` in `packages/core/src/savings/count.ts`): one action per resource (the highest savings), and one option per commitment pool — the preferred term and payment option, else the highest savings. A Compute Savings Plan covers the EC2 Instance Savings Plans and EC2 RIs over the same usage, so those are its alternatives. A commitment shrinks by the eligible spend the counted resource actions remove: their savings, or the resource's whole cost when it is deleted or moved off the instance family a reservation is bound to.
+- Hidden action types neither count nor shrink a commitment.
+- The MCP tool `list_savings_recommendations` returns the same counted list, with the view's saved settings.
 - Recommendations are read-only — the app does not apply them.
 
 #### Feature: Update Notifications (MVP)
@@ -946,7 +952,7 @@ As concepts are configured, these widgets activate.
 - **Progressive disclosure**: overview → drill-down → entity detail. Never dump everything at once.
 - **Instant feedback**: queries should feel fast (sub-second cached, 1–3 seconds uncached on a 7GB dataset).
 - **Dark mode default**, light mode available.
-- **Colorblind-friendly**: two palettes (standard + Okabe-Ito), togglable, persisted in preferences.
+- **Colorblind-friendly**: three palettes (standard, vivid, colorblind-safe), picked in Settings, persisted in preferences.
 
 ### Frontend Stack
 
@@ -971,18 +977,18 @@ As concepts are configured, these widgets activate.
 - `--positive` / `--negative`
 - `--warning`
 
-**Chart palettes:**
-```typescript
-const PALETTE_STANDARD = [
-  '#6366f1', '#06b6d4', '#f59e0b', '#10b981',
-  '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6',
-];
+**Chart palettes** (`packages/ui/src/lib/palette.ts`): standard (20 colors), vivid (the same 20 hue families at full saturation) and colorblind-safe (12), each with a step per theme. Slot k keeps its hue family on both cards (within about 25°), so a series stays recognizable when the theme or the standard/vivid choice flips.
 
-const PALETTE_COLORBLIND = [  // Okabe-Ito
-  '#0072B2', '#E69F00', '#009E73', '#CC79A7',
-  '#56B4E9', '#D55E00', '#F0E442', '#000000',
-];
-```
+| Palette | Every pair at (OKLab ΔE ×100) | Under protanopia / deuteranopia | Contrast on its card |
+|---|---|---|---|
+| `PALETTE_STANDARD` (dark) | ≥ 14.5 | — | ≥ 3:1 |
+| `PALETTE_STANDARD_LIGHT` | ≥ 13 | — | ≥ 3:1 |
+| `PALETTE_VIVID` (dark) | ≥ 11.5 | — | ≥ 3:1 |
+| `PALETTE_VIVID_LIGHT` | ≥ 13 | — | ≥ 3:1 |
+| `PALETTE_COLORBLIND` (dark) | ≥ 14.7 | ≥ 7.9 | ≥ 3:1 |
+| `PALETTE_COLORBLIND_LIGHT` | ≥ 14.7 | ≥ 7.9 | ≥ 3:1 |
+
+**Series colors follow the entity, not its rank.** A series takes the palette slot its name hashes to; when a costlier series in the same chart holds that slot, it takes the next free one. A chart's top series therefore get distinct colors, and since a series' color depends only on the series that outrank it, every widget over the same range and filters paints a shared series alike. Series ranked past the palette are drawn in a neutral gray, and the pie's folded "Other" in a darker one. Hashing can put any two colors side by side, so every pair has to stay distinguishable (`palette.test.ts` holds the floors above). ΔE still rates two shades of one hue (a purple and a bright purple) as distinct when people read them as one color, so the assignment also keeps a chart's top series in different hue families: a slot too close to a color the chart already uses, under a distance that counts hue differences twice, passes to the next one. That keeps the top 7 series of any chart in different families (6 on the light card, 3 to 4 colorblind). Twenty colors is about as many as a dark card fits; the light card's 3:1 contrast leaves only the darker half of the gamut, so pairs sit closer there. The colorblind pair was chosen for both themes at once.
 
 ---
 

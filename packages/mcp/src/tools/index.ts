@@ -12,13 +12,17 @@ import { queryMissingTags } from './query-missing-tags.js';
 import { exploreData } from './explore-data.js';
 import { runSql } from './run-sql.js';
 import { listBaselines, getBaselineDrift } from './baselines.js';
+import { listSavingsRecommendations } from './savings.js';
 import { UNTRUSTED_DATA_NOTE } from '../server-instructions.js';
 import { toolError } from './tool-helpers.js';
 
 const dateRangeSchema = z.object({
   start: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/, 'Must be YYYY-MM-DD').describe('Start date (YYYY-MM-DD)'),
   end: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/, 'Must be YYYY-MM-DD').describe('End date (YYYY-MM-DD)'),
-}).optional();
+}).optional().describe(
+  'Inclusive date range; omitted, the most recent days of consolidated billing data. Either way it stops at the Cost Scope\'s freshness lag: '
+  + 'the newest days, whose billing data is still being consolidated, are left out, and the coverage banner says when your range was cut.',
+);
 
 const filtersSchema = z.record(z.string(), z.array(z.string())).optional()
   .describe('Filter map: dimension ID -> array of values to include. An empty string "" includes the rows with no value (an untagged resource, an empty field).');
@@ -234,7 +238,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
   server.registerTool(
     'run_sql',
     {
-      description: describeTool('Run an ad-hoc SELECT query. A "costs" CTE is pre-defined with the dataset for the given date range (default: last 60 days). Write: SELECT ... FROM costs WHERE ... At most `limit` rows (default 100, max 500) are returned, even when the query has its own LIMIT; a note says when more rows exist.'),
+      description: describeTool('Run an ad-hoc SELECT query. A "costs" CTE is pre-defined with the dataset for the given date range (default: the last 60 days of consolidated billing data). Write: SELECT ... FROM costs WHERE ... At most `limit` rows (default 100, max 500) are returned, even when the query has its own LIMIT; a note says when more rows exist. Values come back as DuckDB writes them (dates YYYY-MM-DD, lists and structs as JSON); numbers, DECIMAL included, as doubles: cast to VARCHAR to keep more than 15 significant digits.'),
       inputSchema: {
         sql: z.string().describe('SQL query (SELECT/WITH only). A "costs" CTE with columns: usage_date, account_id, account_name, region, service, service_code, service_category, charge_category, pricing_category, commitment_status, operation, sku_meter, description, resource_id, usage_amount, cost, list_cost, plus one column per tag dimension, named as list_dimensions\' SQL Column (tag_<key>_<hash>, not the tag_<key> id).'),
         dateRange: dateRangeSchema,
@@ -245,6 +249,27 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
     async (params) => {
       try {
         return await runSql(ctx, params);
+      } catch (err: unknown) {
+        return toolError(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  server.registerTool(
+    'list_savings_recommendations',
+    {
+      description: describeTool('List AWS Cost Optimization Hub savings recommendations as the app\'s Savings view counts them: one action per resource and one option per commitment pool '
+        + '(other terms, and the EC2 Instance Savings Plans and RIs a Compute Savings Plan covers, are alternatives, not extra savings), commitments scaled down by the spend the counted resource actions remove. '
+        + 'Reads each provider\'s latest COH snapshot, with the commitment term and hidden action types set in the Savings view.'),
+      inputSchema: {
+        actionType: z.string().optional().describe('Only actions of this COH action type, e.g. "Rightsize", "MigrateToGraviton", "PurchaseSavingsPlans"'),
+        limit: z.number().int().min(1).optional().describe('Max actions to return (integer, default 25, values above 200 are clamped to 200), highest savings first'),
+        format: formatSchema,
+      },
+    },
+    async (params) => {
+      try {
+        return await listSavingsRecommendations(ctx, params);
       } catch (err: unknown) {
         return toolError(err instanceof Error ? err.message : String(err));
       }

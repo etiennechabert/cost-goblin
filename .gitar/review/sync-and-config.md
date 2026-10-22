@@ -22,6 +22,8 @@ Covers `packages/core/src/sync/`, `packages/core/src/config/`, `packages/core/sr
 
 - Users' YAML and shared bundles must keep loading. New fields are optional; a bare `key:` (null) is absent. A rename reads both keys and writes the new one (`packages/core/src/config/legacy-renames.ts`). A rule that could reject files already on disk is lenient on load and strict on save.
 - A new field needs its validator, its type and its serializer, or the next save strips it. Serializers omit absent optional fields, which keeps bundle fingerprints stable. The `costgoblin.yaml` writers keep unknown keys and validate before writing.
+- Making a load strict (rethrowing a failure that used to fall back) changes every caller: check each one.
+- The dimensions merge drops dims on load (retired ones, ones no provider fills). A save validated against the merged dims, like cost-scope rule dimensions, must still accept them: every save carries the built-in rules. The LAN data share keeps serving and skips a broken views.yaml (`buildCurrentBundle`'s `brokenViews`).
 - Read-modify-writes of shared JSON go through `updatePrefsFile` (`packages/desktop/src/main/handlers/prefs-file.ts`), and each writer sends only its own fields.
 - Only etag sidecars, the rollup manifest, boot-time app state and the views migration use temp-file-plus-rename. Ask for it where truncation is costly, e.g. an unprompted config rewrite.
 - Migrations run synchronously at boot, before any worker opens a file. They are idempotent and resumable, and they touch nothing when both the old and new layout exist.
@@ -32,6 +34,7 @@ Calendar windows (retention, default ranges, previews, baselines) use `IpcContex
 
 ## Providers and exporters
 
+- Two providers syncing one export are matched by their configured bucket path, never by overlapping ids or rows: churn makes the same export look different.
 - A new provider type touches: the provider union and `validateProvider`, `ProviderAuth` and `isProviderAuth`, the object-store handle, `resolveBucketPath`, the sync-worker dispatch, the error classifiers, config upsert, the sharing bundle and the e2e cloud sandbox. Many of these are `gcp ? … : aws` branches that tsc won't flag.
 - GCP output, once canonicalized, keeps every required column, `Tags` as a VARCHAR map, DOUBLE costs and naive-UTC `ChargePeriodStart`.
 - A change to the exports stack regenerates `scripts/aws-exports/costgoblin-exports.yaml` with `scripts/aws-exports/write-template.ts`. The GCP exporter's `billing_period=YYYY-MM` layout is a contract with core. Its DATE and TIMESTAMP parameters must be wrapped (`temporalParam`), since an unwrapped one binds as NULL and publishes an empty shard.

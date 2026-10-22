@@ -1,7 +1,7 @@
 import type { DateString, DimensionId, Dollars, EntityRef, HourString, TagValue } from './branded.js';
 import { asDimensionId, asTagValue } from './branded.js';
 
-export type Granularity = 'daily' | 'hourly';
+export type Granularity = 'monthly' | 'weekly' | 'daily' | 'hourly';
 
 /**
  * A date range. `start`/`end` are always present and authoritative for whole-day
@@ -229,7 +229,62 @@ export interface BaselineDiscoveryRow {
 
 export type ImplementationEffort = 'VeryLow' | 'Low' | 'Medium' | 'High';
 
+/** A Savings Plan or reservation term, spelled as Cost Optimization Hub does. */
+export type CommitmentTerm = 'OneYear' | 'ThreeYears';
+export type CommitmentPaymentOption = 'NoUpfront' | 'PartialUpfront' | 'AllUpfront';
+
+/** The usage a commitment pool covers, matched against resource actions to
+ *  find the ones that shrink it. A null field matches any value. */
+export interface CommitmentUsageScope {
+  /** The provider (one Cost Optimization Hub export) the pool belongs to. */
+  readonly providerName: string;
+  /** COH resource types whose spend the commitment would cover. */
+  readonly resourceTypes: readonly string[];
+  /** Null for a payer-level commitment, which covers every account. */
+  readonly accountId: string | null;
+  readonly region: string | null;
+  /** Instance family a reservation or EC2 Instance Savings Plan is bound to
+   *  (`t2`, `db.t3`); null for a Compute Savings Plan. */
+  readonly family: string | null;
+  /** RDS deployment option (`Single-AZ`, `Multi-AZ`). */
+  readonly deployment: string | null;
+}
+
+/** The purchase a Savings Plan or reservation recommendation proposes. COH lists
+ *  one recommendation per term, payment option and offering class of the same
+ *  purchase, and one per kind of commitment that would cover the same usage. */
+export interface CommitmentDetails {
+  readonly term: CommitmentTerm | null;
+  readonly paymentOption: CommitmentPaymentOption | null;
+  /** EC2 Reserved Instances: `Standard` or `Convertible`; '' otherwise. */
+  readonly offeringClass: string;
+  readonly upfrontCost: Dollars | null;
+  /** The monthly spend COH sized the commitment on. */
+  readonly eligibleMonthlyCost: Dollars;
+  /** Recommendations sharing a pool buy the same coverage on different terms. */
+  readonly pool: string;
+  /** Pools that also cover this pool's usage, broadest first: a Compute
+   *  Savings Plan covers every EC2 Instance Savings Plan and EC2 RI pool. */
+  readonly coveredBy: readonly string[];
+  /** The pool, for people: `EC2 Reserved Instances · t2 · eu-west-1`. */
+  readonly poolLabel: string;
+  readonly scope: CommitmentUsageScope;
+}
+
+/** What a resource action changes, for the commitments it overlaps. */
+export interface ResourceUsage {
+  /** Instance family the resource runs on now (`t2`, `db.t3`), when known. */
+  readonly family: string | null;
+  /** Instance family the action moves it to, when known. */
+  readonly targetFamily: string | null;
+  /** RDS deployment option (`Single-AZ`, `Multi-AZ`), when known. */
+  readonly deployment: string | null;
+}
+
 export interface SavingsRecommendation {
+  readonly recommendationId: string;
+  /** The provider whose Cost Optimization Hub export listed it. */
+  readonly providerName: string;
   readonly accountId: string;
   readonly accountName: string;
   readonly actionType: string;
@@ -247,11 +302,26 @@ export interface SavingsRecommendation {
   readonly restartNeeded: boolean;
   readonly rollbackPossible: boolean;
   readonly recommendationSource: string;
+  /** Set on Savings Plan and reservation purchases, null on resource actions. */
+  readonly commitment: CommitmentDetails | null;
+  /** Set on resource actions, null on commitment purchases. */
+  readonly usage: ResourceUsage | null;
+}
+
+/** The Cost Optimization Hub export day a provider's recommendations come from. */
+export interface SavingsSnapshot {
+  readonly providerName: string;
+  /** The export's `date=` partition: `YYYY-MM-DD` (`YYYY-MM` for old syncs). */
+  readonly date: string;
 }
 
 export interface SavingsResult {
+  /** Every recommendation of each provider's latest snapshot, alternatives included. */
   readonly recommendations: readonly SavingsRecommendation[];
+  /** `countSavings` over every recommendation, at the highest-savings option of
+   *  each commitment pool. The Savings view recounts with the user's settings. */
   readonly totalMonthlySavings: Dollars;
+  readonly snapshots: readonly SavingsSnapshot[];
 }
 
 export type SyncPhase = 'downloading' | 'repartitioning';

@@ -32,6 +32,8 @@ export function Calendar({
         weekdays: 'flex',
         weekday:
           'text-text-secondary rounded-md w-9 font-normal text-[0.8rem]',
+        week_number_header: 'w-9 text-[0.8rem] font-normal text-text-muted',
+        week_number: 'flex h-9 w-9 items-center justify-center text-[0.7rem] text-text-muted',
         week: 'flex w-full mt-2',
         day: 'h-9 w-9 text-center text-sm p-0 relative focus-within:relative focus-within:z-20',
         day_button: cn(

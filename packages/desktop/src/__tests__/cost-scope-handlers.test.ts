@@ -4,7 +4,7 @@ import { parse } from 'yaml';
 import { DEFAULT_COST_SCOPE } from '@costgoblin/core';
 import { registerCostScopeHandlers } from '../main/handlers/cost-scope.js';
 import { resetElectronFakes, shell } from './helpers/electron-fake.js';
-import { at, createHarness, list, num, type Harness, type HarnessOptions } from './helpers/ipc-harness.js';
+import { at, configYaml, createHarness, FEBRUARY_READABLE_NOW_MS, gcpProviderYaml, list, num, type Harness, type HarnessOptions } from './helpers/ipc-harness.js';
 
 /** The Cost Scope editor's IPC surface: seeding a missing config, validated
  *  saves (including the dangling-dimension guard), and the live preview —
@@ -83,11 +83,28 @@ describe('cost-scope:save-config', () => {
     await expect(h.ipc.invoke('cost-scope:save-config', { costMetric: 'billed' })).rejects.toThrow('costScope.rules');
     expect(await readFile(h.ws.costScopePath, 'utf-8')).toBe(before);
   });
+
+  // A GCP-only workspace has no Service Code dimension (no provider fills
+  // it), but the built-in AWS Premium Support rule names it, and every save
+  // carries the built-in rules.
+  it('saves a rule on a dimension no configured provider fills, and still refuses an unknown one', async () => {
+    const h = await scopeApp({ data: 'none' });
+    await writeFile(h.ws.configPath, configYaml(gcpProviderYaml('gcp-only')));
+    h.app.invalidateConfig();
+    h.app.invalidateDimensions();
+    await h.ipc.invoke('cost-scope:save-config', DEFAULT_COST_SCOPE);
+    const saved = parse(await readFile(h.ws.costScopePath, 'utf-8'));
+    expect(list(at(saved, 'rules')).map(r => at(r, 'conditions', 0, 'dimensionId'))).toContain('service_code');
+
+    const dangling = { ...EXCLUDE_EC2, conditions: [{ dimensionId: 'nope', values: ['x'] }] };
+    await expect(h.ipc.invoke('cost-scope:save-config', scope([dangling])))
+      .rejects.toThrow("Rule 'No EC2' references unknown dimension 'nope'.");
+  });
 });
 
 describe('cost-scope:preview', () => {
   it('splits the picked period into kept and excluded cost, per rule and combined', async () => {
-    const h = await scopeApp();
+    const h = await scopeApp({ data: 'synthetic', now: () => FEBRUARY_READABLE_NOW_MS });
     const disabled = { ...EXCLUDE_EC2, id: 'off', name: 'Off', enabled: false };
     const result = await h.ipc.invoke('cost-scope:preview', scope([EXCLUDE_EC2, disabled]), FEBRUARY);
     expect(result).toMatchObject({ windowDays: 28, startDate: '2026-02-01', endDate: '2026-02-28' });
@@ -113,6 +130,18 @@ describe('cost-scope:preview', () => {
     expect(at(samples[0], 'tags')).toEqual(expect.any(Object));
     expect(num(at(result, 'sampleTotalRowCount'))).toBe(1403);
     expect(list(at(result, 'tagColumns')).map(t => at(t, 'label'))).toEqual(expect.arrayContaining(['Team', 'Environment']));
+  });
+
+  // FIXTURE_NOW_MS is 2026-03-01: the draft's 7-day lag leaves Feb 22 as the newest day.
+  it('stops the picked period at the draft scope\'s freshness lag', async () => {
+    const h = await scopeApp();
+    const result = await h.ipc.invoke('cost-scope:preview', { ...scope([EXCLUDE_EC2]), lagDays: 7 }, FEBRUARY);
+    expect(result).toMatchObject({ windowDays: 22, startDate: '2026-02-01', endDate: '2026-02-22' });
+    expect(at(list(at(result, 'dailyTotals')).at(-1), 'date')).toBe('2026-02-22');
+
+    const lagged = { start: '2026-02-25', end: '2026-02-28' };
+    expect(await h.ipc.invoke('cost-scope:preview', { ...scope([EXCLUDE_EC2]), lagDays: 7 }, lagged))
+      .toMatchObject({ windowDays: 4, startDate: '2026-02-25', endDate: '2026-02-28', unscopedTotalCost: 0, dailyTotals: [] });
   });
 
   it('treats a rule on an unknown dimension as excluding nothing, and no rules as no exclusion', async () => {

@@ -74,3 +74,35 @@ export type {
 } from './rollup/estimator.js';
 export { computeRollupEstimate, emptyRollupEstimate, classifySizeBand } from './rollup/estimator.js';
 export { runRateSeries } from './baseline/window.js';
+// The Savings view recounts COH recommendations when the user hides an action
+// type or picks a commitment term. Leaf modules with no Node imports.
+export { countSavings } from './savings/count.js';
+export type { SavingsCount, SavingsGroup } from './savings/count.js';
+export {
+  COMMITMENT_PAYMENT_LABELS,
+  COMMITMENT_PAYMENT_OPTIONS,
+  COMMITMENT_TERM_LABELS,
+  COMMITMENT_TERMS,
+  HIGHEST_SAVINGS,
+  commitmentOptionLabel,
+  parseCommitmentPaymentOption,
+  parseCommitmentTerm,
+  preferredCommitmentLabel,
+} from './savings/labels.js';
+export { SAVINGS_PREFERENCES_DEFAULTS } from './savings/preferences.js';
+// Weekly and Monthly modes: pure UTC whole-period math (ISO weeks, calendar
+// months). Leaf module with no imports beyond types.
+export {
+  capToNewestDay,
+  countPeriods,
+  formatPeriodLabel,
+  isPeriodGranularity,
+  lastNPeriodsRange,
+  periodEnd,
+  periodStart,
+  periodStartsInRange,
+  previousPeriodRange,
+  shiftPeriodStart,
+  widenToPeriods,
+} from './query/periods.js';
+export type { PeriodGranularity } from './query/periods.js';

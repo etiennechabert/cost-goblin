@@ -3,6 +3,7 @@ import { userEvent } from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import type {
   CostGoblinConfig,
+  CostScopeConfig,
   ExplorerFilterValue,
   ExplorerFilterValuesParams,
   ExplorerOverviewParams,
@@ -11,7 +12,7 @@ import type {
   ExplorerRowsParams,
   ExplorerRowsResult,
 } from '@costgoblin/core/browser';
-import { asBucketPath, asProviderName, DEFAULT_EXPLORER_HIDDEN_COLUMNS } from '@costgoblin/core/browser';
+import { asBucketPath, asDateString, asProviderName, DEFAULT_COST_SCOPE, DEFAULT_EXPLORER_HIDDEN_COLUMNS } from '@costgoblin/core/browser';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { ExplorerView } from '../views/explorer.js';
@@ -456,6 +457,30 @@ describe('ExplorerView', () => {
       });
       expect(api.savedExplorerPreferences.at(-1)?.lastUsedGranularity).toBe('daily');
     });
+
+    it('moves the default window to the cost scope lag without persisting it', async () => {
+      const api = new ExplorerMockApi();
+      let release: (scope: CostScopeConfig) => void = () => undefined;
+      vi.spyOn(api, 'getCostScope').mockReturnValue(new Promise(resolve => { release = resolve; }));
+      renderExplorer(api);
+      // Prefs are loaded (no saved range) and the first slice ran on the
+      // default lag before the cost scope answers.
+      await waitFor(() => {
+        expect(api.overviewCalls).toHaveLength(1);
+      });
+
+      release({ ...DEFAULT_COST_SCOPE, lagDays: 7 });
+
+      const expected = { start: daysAgo(37), end: daysAgo(7) };
+      await waitFor(() => {
+        expect(api.overviewCalls.at(-1)?.dateRange).toEqual(expected);
+        expect(api.rowsCalls.at(-1)?.dateRange).toEqual(expected);
+      });
+      expect(screen.getByRole('button', { name: /Last 30 days/ })).toBeDefined();
+      // A saved range is restored as-is on the next open: writing this one
+      // would freeze a window the user never picked.
+      expect(api.savedExplorerPreferences.filter(p => 'lastUsedDateRange' in p)).toEqual([]);
+    });
   });
 
   describe('hourly auto-switch wiring', () => {
@@ -617,5 +642,131 @@ describe('ExplorerView', () => {
         expect('columnOrder' in prefs).toBe(false);
       }
     });
+  });
+});
+
+describe('ExplorerView — Weekly and Monthly', () => {
+  // Today is 2026-10-21 and the lag is 2 days: the newest scoped day is 2026-10-19.
+  beforeEach(() => { vi.setSystemTime(new Date('2026-10-21T12:00:00Z')); });
+
+  const MONTH_KEYS = ['2026-05-01', '2026-06-01', '2026-07-01', '2026-08-01', '2026-09-01', '2026-10-01'];
+  const MONTHLY_OVERVIEW: ExplorerOverviewResult = {
+    ...FIXED_OVERVIEW,
+    startDate: '2026-05-01',
+    endDate: '2026-10-19',
+    dailyTotals: MONTH_KEYS.map((date, i) => ({ date, cost: 10_000 + i * 100, rows: 1_000 + i })),
+  };
+
+  /** Saved Monthly prefs over May–Oct, and one monthly bar per month for any monthly overview. */
+  class MonthlyExplorerApi extends ExplorerMockApi {
+    override getExplorerPreferences(): Promise<ExplorerPreferences> {
+      return Promise.resolve({
+        hiddenColumns: SAVED_HIDDEN,
+        columnOrder: [],
+        lastUsedGranularity: 'monthly',
+        lastUsedDateRange: { start: asDateString('2026-05-01'), end: asDateString('2026-10-31') },
+      });
+    }
+
+    override queryExplorerOverview(params?: ExplorerOverviewParams): Promise<ExplorerOverviewResult> {
+      if (params?.granularity !== 'monthly') return super.queryExplorerOverview(params);
+      this.overviewCalls.push(params);
+      return Promise.resolve(MONTHLY_OVERVIEW);
+    }
+  }
+
+  async function openMonthly() {
+    const rendered = renderExplorer(new MonthlyExplorerApi());
+    await waitFor(() => { expect(rendered.api.overviewCalls.at(-1)?.granularity).toBe('monthly'); });
+    await screen.findByText('Oct 2026');
+    return rendered;
+  }
+
+  it('opens in the Monthly mode saved in the preferences, with its title and period labels', async () => {
+    const { api } = await openMonthly();
+
+    expect(screen.getByText('Monthly total')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Monthly' })).toBeDefined();
+    expect(api.overviewCalls.at(-1)?.dateRange).toEqual({ start: '2026-05-01', end: '2026-10-31' });
+    expect(screen.getAllByText('May 2026').length).toBeGreaterThan(0);
+    expect(screen.queryByText('10-01')).toBeNull();
+  });
+
+  it('titles the overview "Weekly total" in Weekly', async () => {
+    const api = new MonthlyExplorerApi();
+    api.getExplorerPreferences = () => Promise.resolve({ hiddenColumns: SAVED_HIDDEN, columnOrder: [], lastUsedGranularity: 'weekly' });
+    renderExplorer(api);
+
+    expect(await screen.findByText('Weekly total')).toBeDefined();
+  });
+
+  it('gives the current month a bar when the overview returned none for it', async () => {
+    class NoCurrentMonthApi extends MonthlyExplorerApi {
+      override queryExplorerOverview(params?: ExplorerOverviewParams): Promise<ExplorerOverviewResult> {
+        return super.queryExplorerOverview(params).then(result => (
+          params?.granularity === 'monthly'
+            ? { ...result, dailyTotals: result.dailyTotals.filter(d => d.date !== '2026-10-01') }
+            : result
+        ));
+      }
+    }
+    renderExplorer(new NoCurrentMonthApi());
+
+    // The range runs to Oct 31: October is the sixth bar, empty.
+    expect(await screen.findByRole('img', { name: /^Oct 2026: / })).toBeDefined();
+    expect(screen.getAllByRole('img', { name: /^[A-Z][a-z]{2} 2026: / })).toHaveLength(6);
+  });
+
+  it('drags two monthly bars to Daily over those whole months', async () => {
+    const { api } = await openMonthly();
+
+    dragHistogram(5, 95); // bars 0–1 of six (50px each): May and Jun
+
+    await waitFor(() => { expect(api.overviewCalls.at(-1)?.granularity).toBe('daily'); });
+    expect(api.overviewCalls.at(-1)?.dateRange).toEqual({ start: '2026-05-01', end: '2026-06-30' });
+    expect(screen.getByText('Daily total')).toBeDefined();
+    expect(screen.queryByText(/hourly tier isn/)).toBeNull();
+    await waitFor(() => { expect(api.rowsCalls.at(-1)?.granularity).toBe('daily'); });
+  });
+
+  it('keeps Monthly when the drag covers more than two months', async () => {
+    const { api } = await openMonthly();
+
+    dragHistogram(5, 245); // bars 0–4: May to Sep
+
+    await waitFor(() => { expect(api.overviewCalls.at(-1)?.dateRange).toEqual({ start: '2026-05-01', end: '2026-09-30' }); });
+    expect(api.overviewCalls.at(-1)?.granularity).toBe('monthly');
+    expect(screen.getByText('Monthly total')).toBeDefined();
+  });
+
+  it('caps a Daily drop at the newest day when the drag reaches the current month, scope on', async () => {
+    const { api, user } = await openMonthly();
+    await user.click(screen.getByRole('checkbox', { name: /Apply Cost Scope/ }));
+    await waitFor(() => { expect(api.overviewCalls.at(-1)?.applyCostScope).toBe(true); });
+    await screen.findByText('Oct 2026');
+
+    dragHistogram(205, 295); // Sep and Oct
+
+    await waitFor(() => { expect(api.overviewCalls.at(-1)?.granularity).toBe('daily'); });
+    expect(api.overviewCalls.at(-1)?.dateRange).toEqual({ start: '2026-09-01', end: '2026-10-19' });
+  });
+
+  it('caps at the same newest day while the cost scope is off, as the picker does', async () => {
+    const { api } = await openMonthly();
+
+    dragHistogram(205, 295); // Sep and Oct
+
+    await waitFor(() => { expect(api.overviewCalls.at(-1)?.granularity).toBe('daily'); });
+    expect(api.overviewCalls.at(-1)?.applyCostScope).toBe(false);
+    expect(api.overviewCalls.at(-1)?.dateRange).toEqual({ start: '2026-09-01', end: '2026-10-19' });
+  });
+
+  it('keeps line items at day level in Monthly: the row dates are not bucketed', async () => {
+    const { api } = await openMonthly();
+    await waitFor(() => { expect(api.rowsCalls.at(-1)?.granularity).toBe('monthly'); });
+
+    const table = await screen.findByRole('table');
+    expect(within(table).getAllByText('2026-03-10').length).toBeGreaterThan(0);
+    expect(within(table).queryByText('Mar 2026')).toBeNull();
   });
 });

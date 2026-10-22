@@ -61,6 +61,8 @@ export type { WidgetCommonProps, WidgetComponent } from './widgets/widget.js';
 export { CustomView } from './views/custom-view.js';
 export { OVERVIEW_SEED_VIEW } from './views/seed-views.js';
 export { ViewsEditor } from './views/views-editor.js';
+export { ViewsLoadError } from './components/views-load-error.js';
+export { CostScopeLoadError } from './components/cost-scope-load-error.js';
 export { CostOverview } from './views/cost-overview.js';
 export { CostTrends } from './views/cost-trends.js';
 export { MissingTags } from './views/missing-tags.js';
@@ -77,8 +79,8 @@ export { WorkspacesView } from './views/workspaces.js';
 
 export { getDimensionId, isTagDimension, isEnvironmentDimension, isOwnerDimension, isProductDimension } from './lib/dimensions.js';
 
-export { PALETTE_STANDARD, PALETTE_COLORBLIND, getActivePalette } from './lib/palette.js';
-export type { PaletteType } from './lib/palette.js';
+export { PALETTE_STANDARD, PALETTE_STANDARD_LIGHT, PALETTE_VIVID, PALETTE_VIVID_LIGHT, PALETTE_COLORBLIND, PALETTE_COLORBLIND_LIGHT, getActivePalette } from './lib/palette.js';
+export type { PaletteTheme, PaletteType } from './lib/palette.js';
 export { PaletteProvider, usePalette } from './hooks/use-palette.js';
 
 export { CommandPalette } from './components/command-palette.js';

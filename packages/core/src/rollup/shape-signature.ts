@@ -9,8 +9,11 @@ import { canonicalJson, sha256Hex } from './digest.js';
  *  v2: FOCUS 1.2 migration (#515) — canonical columns and cost metrics changed,
  *  so every CUR-era partition is invalid.
  *  v3: tag columns are stored under `tagSqlColumn` instead of the `tag_<key>`
- *  dimension id, which DuckDB could not tell apart from a case variant. */
-export const ROLLUP_SCHEMA_VERSION = 3;
+ *  dimension id, which DuckDB could not tell apart from a case variant.
+ *  v4: `usage_date` is the UTC day of ChargePeriodStart. Earlier builds took
+ *  the machine's local day of AWS's tz-aware timestamps, and a partition
+ *  dropped the rows that day put in another month. */
+export const ROLLUP_SCHEMA_VERSION = 4;
 
 function isEnabled(d: { readonly enabled?: boolean | undefined }): boolean {
   return d.enabled !== false;
@@ -29,6 +32,17 @@ function findDim(dimensionId: string, dims: DimensionsConfig): BuiltInDimension 
   const builtIn = dims.builtIn.find(d => d.name === dimensionId);
   if (builtIn !== undefined) return builtIn;
   return dims.tags.find(t => tagDimColumn(t) === dimensionId);
+}
+
+/** True when a partition build applies none of the rule, mirroring builder.ts
+ *  `buildRuleMatchExpr`: a condition with something to match (values, or
+ *  matchMissing) names a dimension the config doesn't have. Such a rule stores
+ *  the same bytes as no rule. Builds before that change dropped just the
+ *  condition, so leaving the rule out of the digest re-rolls their partitions;
+ *  the dimension coming back puts it in again. */
+function matchesNothingAtBuild(rule: ExclusionRule, dims: DimensionsConfig): boolean {
+  return rule.conditions.some(c =>
+    (c.values.length > 0 || c.matchMissing === true) && findDim(c.dimensionId, dims) === undefined);
 }
 
 /** A condition's missing-value treatment, where it decides the stored bytes.
@@ -112,7 +126,7 @@ export function computeShapeSignature(input: ShapeSignatureInput): string {
     .sort((a, b) => a.column.localeCompare(b.column));
 
   const exclusionRules = rules
-    .filter(r => r.enabled)
+    .filter(r => r.enabled && !matchesNothingAtBuild(r, dimensions))
     .map(r => ({
       conditions: r.conditions.map(c => ({
         dimensionId: c.dimensionId,

@@ -167,7 +167,7 @@ export interface ExplorerPreferences {
   /** Last date range the user selected. Persisted so the view opens with
    *  the same range on the next session. */
   readonly lastUsedDateRange?: DateRange;
-  /** Last granularity the user selected (`daily` or `hourly`). Persisted
+  /** Last granularity the user selected (monthly, weekly, daily or hourly). Persisted
    *  so the view opens with the same granularity on the next session. */
   readonly lastUsedGranularity?: Granularity;
   /** Whether the "compare to previous period" toggle is on. */

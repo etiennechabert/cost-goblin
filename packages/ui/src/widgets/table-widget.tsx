@@ -6,12 +6,15 @@ import type { ColumnSpec } from '../components/data-table.js';
 import { formatDollars } from '../components/format.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { asDimensionId, asTagValue, OVERVIEW_SEED_VIEW } from '@costgoblin/core/browser';
-import type { AggregatedTableRow, ExplorerSort } from '@costgoblin/core/browser';
+import { isPeriodGranularity } from '@costgoblin/core/browser';
+import type { AggregatedTableRow, ExplorerSort, Granularity } from '@costgoblin/core/browser';
 import type { SortingState } from '@tanstack/react-table';
 import type { WidgetCommonProps } from './widget.js';
 import { filtersKey } from './widget.js';
 import { EMPTY_VALUE_LABEL, getDimensionId } from '../lib/dimensions.js';
 import { filtersEmptyGroup, toExplorerFilters } from '../lib/agg-column.js';
+import { formatBucketKey } from '../lib/drag-select.js';
+import { dateColumnHeader } from '../lib/dates.js';
 import type { TableColumn } from '../lib/table-types.js';
 
 const ROW_LIMIT = 500;
@@ -24,7 +27,14 @@ function formatSignedDollars(n: number): string {
   return formatDollars(n);
 }
 
-function specToTableColumn(spec: ColumnSpec, activeDimIds: ReadonlySet<string>): TableColumn<AggregatedTableRow> {
+/** A grouped value as shown. Grouped by date in Weekly or Monthly, the date is
+ *  the period's first day: shown as the period (`W42 2026`, `Oct 2026`). The
+ *  value itself stays the key, for filters and drill-downs. */
+function displayValue(key: string, value: string, granularity: Granularity): string {
+  return key === 'usage_date' && isPeriodGranularity(granularity) ? formatBucketKey(value, granularity) : value;
+}
+
+function specToTableColumn(spec: ColumnSpec, activeDimIds: ReadonlySet<string>, granularity: Granularity): TableColumn<AggregatedTableRow> {
   return {
     id: spec.key,
     header: spec.label,
@@ -55,7 +65,7 @@ function specToTableColumn(spec: ColumnSpec, activeDimIds: ReadonlySet<string>):
           const n = value as number;
           return n === 0 ? '' : n.toLocaleString(undefined, { maximumFractionDigits: 4 });
         }
-        default: return String(value);
+        default: return displayValue(spec.key, String(value), granularity);
       }
     },
   };
@@ -256,8 +266,8 @@ export function TableWidget({
   // The picker lists the columns in the table's order, so a drag lands where
   // it is dropped.
   const allTableColumns = useMemo(
-    () => orderedColumnSpecs.map(s => specToTableColumn(s, activeDimIds)),
-    [orderedColumnSpecs, activeDimIds],
+    () => orderedColumnSpecs.map(s => specToTableColumn(s, activeDimIds, granularity)),
+    [orderedColumnSpecs, activeDimIds, granularity],
   );
 
   const deltaColumn = useMemo<TableColumn<AggregatedTableRow> | null>(() => {
@@ -288,13 +298,13 @@ export function TableWidget({
   );
 
   const visibleTableColumns = useMemo(() => {
-    const cols = orderedColumnSpecs.filter(c => enabledSet.has(c.key)).map(s => specToTableColumn(s, activeDimIds));
+    const cols = orderedColumnSpecs.filter(c => enabledSet.has(c.key)).map(s => specToTableColumn(s, activeDimIds, granularity));
     if (deltaColumn !== null) {
       const costIdx = cols.findIndex(c => c.id === 'cost');
       cols.splice(costIdx + 1, 0, deltaColumn);
     }
     return cols;
-  }, [orderedColumnSpecs, enabledSet, activeDimIds, deltaColumn]);
+  }, [orderedColumnSpecs, enabledSet, activeDimIds, deltaColumn, granularity]);
 
   const hiddenColumns = useMemo(
     () => allColumnSpecs.filter(c => !enabledSet.has(c.key)).map(c => c.key),
@@ -361,9 +371,10 @@ export function TableWidget({
     <RowDetail
       row={row}
       allColumns={allColumnSpecs}
+      granularity={granularity}
       fetchDetailRows={fetchDetailRows}
     />
-  ), [allColumnSpecs, fetchDetailRows]);
+  ), [allColumnSpecs, granularity, fetchDetailRows]);
 
   if (spec.type !== 'table') return null;
 
@@ -392,6 +403,7 @@ export function TableWidget({
         error={error}
         height={400}
         csvFilename={`costgoblin-${spec.title ?? 'table'}-${dateRange.start}-${dateRange.end}`}
+        csvHeaderLabels={isPeriodGranularity(granularity) ? { usage_date: dateColumnHeader(granularity) } : undefined}
         renderExpandedRow={renderExpandedRow}
       />
     </div>
@@ -400,9 +412,10 @@ export function TableWidget({
 
 // --- RowDetail (preserved from original, renders expanded row content) ---
 
-function RowDetail({ row, allColumns, fetchDetailRows }: Readonly<{
+function RowDetail({ row, allColumns, granularity, fetchDetailRows }: Readonly<{
   row: AggregatedTableRow;
   allColumns: readonly ColumnSpec[];
+  granularity: Granularity;
   fetchDetailRows: (r: AggregatedTableRow) => Promise<readonly AggregatedTableRow[]>;
 }>) {
   const [detailRows, setDetailRows] = useState<readonly AggregatedTableRow[] | null>(null);
@@ -438,7 +451,7 @@ function RowDetail({ row, allColumns, fetchDetailRows }: Readonly<{
         {entries.map(([key, val]) => (
           <div key={key} className="flex gap-1.5 py-0.5 min-w-0">
             <span className="text-text-muted shrink-0">{labelMap.get(key) ?? key}</span>
-            <span className="text-text-primary truncate" title={val}>{val}</span>
+            <span className="text-text-primary truncate" title={displayValue(key, val, granularity)}>{displayValue(key, val, granularity)}</span>
           </div>
         ))}
         <div className="flex gap-1.5 py-0.5 min-w-0">
@@ -469,7 +482,7 @@ function RowDetail({ row, allColumns, fetchDetailRows }: Readonly<{
                   return (
                     <tr key={drKey} className="border-t border-border/30 hover:bg-bg-tertiary/20">
                       {detailColSpecs.map(c => {
-                        const val = c.key === 'cost' ? formatSignedDollars(dr.cost) : (dr.values[c.key] ?? '');
+                        const val = c.key === 'cost' ? formatSignedDollars(dr.cost) : displayValue(c.key, dr.values[c.key] ?? '', granularity);
                         return (
                           <td
                             key={c.key}

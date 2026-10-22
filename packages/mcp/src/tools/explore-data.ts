@@ -7,20 +7,20 @@ import {
   tagSqlColumn,
   tagSqlColumnsById,
 } from '@costgoblin/core';
-import type { DateRange, DimensionsConfig } from '@costgoblin/core';
+import type { DimensionsConfig } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
 import type { Cell, Column, StructuredResult } from '../formatters/result.js';
 import {
   computeDataCoverage,
-  defaultDateRange,
   emptyRangeResult,
   getQueryProviders,
   resolveFormat,
+  resolveToolDateRange,
   structuredToolResult,
-  toDateRange,
   toFilterMap,
   toNum,
   toStr,
+  withinLagResult,
 } from './tool-helpers.js';
 
 const DEFAULT_LIMIT = 50;
@@ -74,9 +74,9 @@ export async function exploreData(
   },
 ): Promise<{ content: [{ type: 'text'; text: string }] }> {
   const format = resolveFormat(params.format);
-  const dateRange: DateRange = params.dateRange !== undefined
-    ? toDateRange(params.dateRange)
-    : defaultDateRange(ctx.now());
+  const range = await resolveToolDateRange(ctx, params.dateRange);
+  if (range.kind === 'within-lag') return withinLagResult(ctx, range, format, 'Explore Data');
+  const { dateRange, cappedAt } = range;
   // The schema already rejects non-integers and values < 1; this is the second
   // layer for direct callers.
   const limit = Math.min(Math.max(Math.trunc(params.limit ?? DEFAULT_LIMIT), 1), MAX_LIMIT);
@@ -97,7 +97,7 @@ export async function exploreData(
 
   const orgPath = await ctx.getOrgAccountsPath();
   // Mirror the dashboards: the active Cost Scope's metric backs `cost`.
-  const scopeMetric = await ctx.getCostScope().then(cs => cs.costMetric).catch(() => 'effective' as const);
+  const scopeMetric = (await ctx.getCostScope()).costMetric;
   const allProviders = await getQueryProviders(ctx, 'daily');
   const required = computePeriodsInRange(dateRange);
   // Per-provider month intersection; providers with nothing in range are
@@ -176,7 +176,7 @@ export async function exploreData(
       toNum(r['row_count']),
     ]);
 
-    const coverage = await computeDataCoverage(ctx, dateRange);
+    const coverage = await computeDataCoverage(ctx, dateRange, cappedAt);
     const result: StructuredResult = {
       title: `Aggregated Data (${dateRange.start} to ${dateRange.end})`,
       coverage,
@@ -228,7 +228,7 @@ export async function exploreData(
     ];
   });
 
-  const coverage = await computeDataCoverage(ctx, dateRange);
+  const coverage = await computeDataCoverage(ctx, dateRange, cappedAt);
   const result: StructuredResult = {
     title: `Raw Data (${dateRange.start} to ${dateRange.end})`,
     coverage,

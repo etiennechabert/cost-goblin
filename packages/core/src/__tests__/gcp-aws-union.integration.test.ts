@@ -81,12 +81,12 @@ async function rowsOf(sql: string): Promise<Record<string, unknown>[]> {
 }
 
 /** One AWS period, in the native FOCUS 1.2 Data Export shape: MAP tags,
- *  DOUBLE costs, naive timestamps, extension columns present. */
+ *  DOUBLE costs, tz-aware timestamps, extension columns present. */
 async function seedAws(rows: readonly { account: string; service: string; billed: number; effective: number; team: string }[]): Promise<void> {
   const partDir = join(dataDir, String(AWS), 'raw', `daily-${PERIOD}`);
   await mkdir(partDir, { recursive: true });
   const values = rows.map(r => `(
-    TIMESTAMP '2026-01-15', '${r.account}', 'Account ${r.account}', 'eu-central-1',
+    TIMESTAMPTZ '2026-01-15 00:00:00+00', '${r.account}', 'Account ${r.account}', 'eu-central-1',
     '${r.service}', '${r.service}', 'Compute', 'row', CAST(1 AS DOUBLE),
     CAST(${String(r.billed * 2)} AS DOUBLE), 'res',
     CAST(${String(r.billed)} AS DOUBLE), CAST(${String(r.effective)} AS DOUBLE), CAST(${String(r.billed)} AS DOUBLE),

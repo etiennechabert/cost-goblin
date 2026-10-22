@@ -8,25 +8,25 @@ import {
   meetsTrendThresholds,
   previousTrendPeriod,
 } from '@costgoblin/core';
-import type { DateRange, DimensionId, TrendRow } from '@costgoblin/core';
+import type { DimensionId, TrendRow } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
 import { formatDollars, truncateRows, truncateFooter } from '../formatters/cost.js';
 import type { Cell, Column, StructuredResult, Table } from '../formatters/result.js';
 import {
   buildQueryContextOpts,
   computeDataCoverage,
-  defaultDateRange,
   emptyRangeResult,
   lookupDimension,
   resolveEntityName,
   resolveFormat,
+  resolveToolDateRange,
   structuredToolResult,
   toDimensionId,
   toDollars,
-  toDateRange,
   toFilterMap,
   toNum,
   toStr,
+  withinLagResult,
 } from './tool-helpers.js';
 
 /** Legend for the ±100% of an entity with no previous-period cost, which an
@@ -52,9 +52,9 @@ export async function queryTrends(
 ): Promise<{ content: [{ type: 'text'; text: string }] }> {
   const format = resolveFormat(params.format);
   const groupBy: DimensionId = toDimensionId(params.groupBy);
-  const dateRange: DateRange = params.dateRange !== undefined
-    ? toDateRange(params.dateRange)
-    : defaultDateRange(ctx.now());
+  const range = await resolveToolDateRange(ctx, params.dateRange);
+  if (range.kind === 'within-lag') return withinLagResult(ctx, range, format, 'Cost Trends');
+  const { dateRange, cappedAt } = range;
   const filters = toFilterMap(params.filters);
   const deltaThreshold = toDollars(params.deltaThreshold ?? 1);
   const percentThreshold = params.percentThreshold ?? 5;
@@ -162,7 +162,7 @@ export async function queryTrends(
     }
   }
 
-  const coverage = await computeDataCoverage(ctx, dateRange);
+  const coverage = await computeDataCoverage(ctx, dateRange, cappedAt);
   const result: StructuredResult = {
     title: `Cost Trends by ${dimLabel} (${dateRange.start} to ${dateRange.end})`,
     coverage,

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, Profiler } from 'react';
-import { CostTrends, MissingTags, Savings, Baselines, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, SharingActiveBanner, SettingsShell, SETTINGS_TABS, isSettingsTabId, WorkspacesView, WorkspaceChip, ConfirmModal, ReleaseNotes, useModalLayerCount } from '@costgoblin/ui';
+import { CostTrends, MissingTags, Savings, Baselines, DataManagement, DimensionsView, CostScopeView, CostScopeLoadError, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, ViewsLoadError, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, SharingActiveBanner, SettingsShell, SETTINGS_TABS, isSettingsTabId, WorkspacesView, WorkspaceChip, ConfirmModal, ReleaseNotes, useModalLayerCount } from '@costgoblin/ui';
 import type { NavItem, SettingsTabId } from '@costgoblin/ui';
-import type { CostApi, DataSharingStatus, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus, RollupStatus, BaselineRecomputeStatus, WorkspacesInfo } from '@costgoblin/core/browser';
+import type { ChartPalette, CostApi, DataSharingStatus, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus, RollupStatus, BaselineRecomputeStatus, WorkspacesInfo } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagDimColumn } from '@costgoblin/core/browser';
 import { Download, RefreshCw, TrendingUp, Lightbulb, Tag, Search, Gauge, Terminal, RotateCw, Settings, ArrowLeft, GitBranch, GitPullRequest } from 'lucide-react';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
@@ -98,6 +98,22 @@ type SetupCheck =
   | { status: 'ready' };
 
 const FALLBACK_VIEWS: ViewsConfig = { views: [OVERVIEW_SEED_VIEW] };
+
+/** views.yaml's dashboards. FALLBACK_VIEWS stands in until they load, and
+ *  while they can't: main leaves a file that fails to load as it is, and the
+ *  dashboard page shows why until a retry loads it. */
+type ViewsState =
+  | { readonly status: 'loading' }
+  | { readonly status: 'loaded'; readonly config: ViewsConfig }
+  | { readonly status: 'failed'; readonly message: string };
+
+/** Whether cost-scope.yaml loads. While it doesn't, main fails every cost
+ *  query rather than run one without the user's rules, so the cost pages say
+ *  why above their empty widgets until a retry loads it. */
+type CostScopeState =
+  | { readonly status: 'unchecked' }
+  | { readonly status: 'loaded' }
+  | { readonly status: 'failed'; readonly message: string };
 
 function SyncAnnouncer({
   syncError,
@@ -493,11 +509,12 @@ function AppShell(): React.JSX.Element {
   const [missingPeriods, setMissingPeriods] = useState(0);
   const [currentMonthUpdating, setCurrentMonthUpdating] = useState(false);
   const [isDark, setIsDark] = useState(true);
-  const [palette, setPalette] = useState<'standard' | 'colorblind'>('standard');
+  const [palette, setPalette] = useState<ChartPalette>('standard');
   const [defaultViewId, setDefaultViewId] = useState<string>(OVERVIEW_SEED_VIEW.id);
   const [setupCheck, setSetupCheck] = useState<SetupCheck>({ status: 'checking' });
   const [splashStep, setSplashStep] = useState('Connecting...');
-  const [viewsConfig, setViewsConfig] = useState<ViewsConfig | null>(null);
+  const [viewsState, setViewsState] = useState<ViewsState>({ status: 'loading' });
+  const [costScopeState, setCostScopeState] = useState<CostScopeState>({ status: 'unchecked' });
   const { syncError, setSyncError, syncActivity, syncFilesRemaining, syncTiers } = useSyncPolling(api, setupCheck);
   const { sharingStatus, setSharingStatus } = useDataSharingPolling(api, setupCheck);
   const [stoppingSharing, setStoppingSharing] = useState(false);
@@ -543,6 +560,14 @@ function AppShell(): React.JSX.Element {
     observer.observe(el);
     return () => { observer.disconnect(); };
   }, []);
+
+  // The page scrolls under the sticky header: keep anything scrolled into view
+  // (an editor opened from elsewhere on the page) clear of it.
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    root.style.scrollPaddingTop = `${String(headerHeight)}px`;
+    return () => { root.style.scrollPaddingTop = ''; };
+  }, [headerHeight]);
 
   useEffect(() => {
     globalThis.costgoblinUpdate.getAppVersion().then(setAppVersion).catch(() => undefined);
@@ -675,7 +700,7 @@ function AppShell(): React.JSX.Element {
 
   const applyViews = useCallback((cfg: ViewsConfig): void => {
     const resolved = cfg.views.length > 0 ? cfg : FALLBACK_VIEWS;
-    setViewsConfig(resolved);
+    setViewsState({ status: 'loaded', config: resolved });
     setView(prev => {
       if (prev.page !== 'custom') return prev;
       const exists = resolved.views.some(v => v.id === prev.viewId);
@@ -684,12 +709,48 @@ function AppShell(): React.JSX.Element {
     });
   }, []);
 
+  const loadViews = useCallback(async (): Promise<void> => {
+    try {
+      applyViews(await api.getViewsConfig());
+    } catch (err: unknown) {
+      setViewsState({ status: 'failed', message: err instanceof Error ? err.message : String(err) });
+    }
+  }, [api, applyViews]);
+
   useEffect(() => {
     if (setupCheck.status !== 'ready') return;
-    api.getViewsConfig()
-      .then(applyViews)
-      .catch(() => { setViewsConfig(FALLBACK_VIEWS); });
-  }, [api, setupCheck, applyViews]);
+    void loadViews();
+  }, [setupCheck, loadViews]);
+
+  const views = viewsState.status === 'loaded' ? viewsState.config : FALLBACK_VIEWS;
+
+  // Only the latest check may land: an older one answering late would bring
+  // back the error after a retry, or hide it.
+  const costScopeCheckRef = useRef(0);
+  const checkCostScope = useCallback(async (): Promise<boolean> => {
+    const check = ++costScopeCheckRef.current;
+    try {
+      await api.getCostScope();
+      if (check === costScopeCheckRef.current) setCostScopeState({ status: 'loaded' });
+      return true;
+    } catch (err: unknown) {
+      if (check === costScopeCheckRef.current) setCostScopeState({ status: 'failed', message: err instanceof Error ? err.message : String(err) });
+      return false;
+    }
+  }, [api]);
+
+  // Checked again on each page change (main answers from its cache once the
+  // file loads), so a file broken behind a Clear cache, or fixed by hand,
+  // shows on the next page.
+  useEffect(() => {
+    if (setupCheck.status !== 'ready') return;
+    void checkCostScope();
+  }, [setupCheck, checkCostScope, view, settingsTab, refreshNonce]);
+
+  async function retryCostScope(): Promise<void> {
+    // The page's queries failed on the file: remount it so they run again.
+    if (await checkCostScope()) setRefreshNonce(n => n + 1);
+  }
 
   useEffect(() => {
     if (isDark) {
@@ -705,8 +766,7 @@ function AppShell(): React.JSX.Element {
     api.saveUIPreferences({ theme: next ? 'dark' : 'light', palette, defaultViewId }).catch(() => undefined);
   }
 
-  function handleTogglePalette() {
-    const next: 'standard' | 'colorblind' = palette === 'standard' ? 'colorblind' : 'standard';
+  function handleSetPalette(next: ChartPalette) {
     setPalette(next);
     api.saveUIPreferences({ theme: isDark ? 'dark' : 'light', palette: next, defaultViewId }).catch(() => undefined);
   }
@@ -846,7 +906,7 @@ function AppShell(): React.JSX.Element {
     confirmLeave(() => {
       api.cancelPendingQueries().catch(() => undefined);
       setSettingsTab(null);
-      const firstId = viewsConfig?.views[0]?.id ?? OVERVIEW_SEED_VIEW.id;
+      const firstId = views.views[0]?.id ?? OVERVIEW_SEED_VIEW.id;
       const initialFilter: FilterMap = { [asDimensionId(dimension)]: [asTagValue(entity)] };
       setView({ page: 'custom', viewId: firstId, initialFilter });
     });
@@ -879,8 +939,7 @@ function AppShell(): React.JSX.Element {
     setSetupCheck({ status: 'needs-setup' });
   }
 
-  const views = viewsConfig ?? FALLBACK_VIEWS;
-  const viewsReady = viewsConfig !== null;
+  const viewsReady = viewsState.status !== 'loading';
   const customNav: { id: string; name: string }[] = views.views.map(v => ({ id: v.id, name: v.name }));
   // A dashboard id can name a view that no longer exists (deleted by hand, or a
   // retired built-in the views migration dropped). That view renders the
@@ -980,7 +1039,7 @@ function AppShell(): React.JSX.Element {
             isDark={isDark}
             onToggleTheme={handleToggleTheme}
             palette={palette}
-            onTogglePalette={handleTogglePalette}
+            onSetPalette={handleSetPalette}
             dashboards={customNav.map(c => ({ id: c.id, name: c.name }))}
             defaultViewId={homeViewId}
             onSetDefaultView={handleSetDefaultView}
@@ -999,11 +1058,16 @@ function AppShell(): React.JSX.Element {
       case 'workspaces':
         return <WorkspacesView onChanged={setWorkspacesInfo} />;
       case 'cost-scope':
-        return <CostScopeView />;
+        return <CostScopeView onConfigLoaded={() => { setCostScopeState({ status: 'loaded' }); }} />;
       case 'dimensions':
         return <DimensionsView />;
       case 'dashboards':
-        return <ViewsEditor onConfigPersisted={setViewsConfig} />;
+        return (
+          <ViewsEditor
+            onConfigLoaded={applyViews}
+            onConfigPersisted={(config) => { setViewsState({ status: 'loaded', config }); }}
+          />
+        );
       case 'share':
         return <ShareTab />;
       case 'import':
@@ -1057,7 +1121,7 @@ function AppShell(): React.JSX.Element {
   }
 
   return (
-    <PaletteProvider palette={palette}>
+    <PaletteProvider palette={palette} theme={isDark ? 'dark' : 'light'}>
       <CommandPalette items={paletteItems} onNavigate={handleCommand} />
       <div className="min-h-screen bg-bg-primary text-text-primary">
         <SyncAnnouncer
@@ -1247,14 +1311,27 @@ function AppShell(): React.JSX.Element {
       <div key={`refresh-${String(refreshNonce)}`}>
         {settingsTab === null ? (
           <>
+            {/* Savings reads recommendations, which no cost scope applies to. */}
+            {costScopeState.status === 'failed' && view.page !== 'savings' && (
+              <div className="px-6 pt-6">
+                <CostScopeLoadError message={costScopeState.message} onRetry={retryCostScope} showOpenFolder />
+              </div>
+            )}
             {view.page === 'custom' && viewsReady && (() => {
               // shownViewId: a dashboard that no longer exists shows the user's
               // own overview, the one the menu marks active.
               const spec = findViewSpec(shownViewId(view.viewId)) ?? OVERVIEW_SEED_VIEW;
               return (
-                <Profiler id={`custom:${view.viewId}`} onRender={onPerfRender}>
-                  <CustomView spec={spec} headerSubtitle={spec.description ?? 'Cloud spending visibility'} initialFilter={view.initialFilter} rollupStatus={rollupStatus} />
-                </Profiler>
+                <>
+                  {viewsState.status === 'failed' && (
+                    <div className="px-6 pt-6">
+                      <ViewsLoadError message={viewsState.message} onRetry={loadViews} showOpenFolder />
+                    </div>
+                  )}
+                  <Profiler id={`custom:${view.viewId}`} onRender={onPerfRender}>
+                    <CustomView spec={spec} headerSubtitle={spec.description ?? 'Cloud spending visibility'} initialFilter={view.initialFilter} rollupStatus={rollupStatus} />
+                  </Profiler>
+                </>
               );
             })()}
             {view.page === 'trends' && (

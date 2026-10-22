@@ -3,10 +3,10 @@ import { useQuery } from '../hooks/use-query.js';
 
 import { SummaryCard } from '../components/summary-card.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
-import { asDimensionId } from '@costgoblin/core/browser';
+import { isPeriodGranularity } from '@costgoblin/core/browser';
 import type { CostResult } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
-import { filtersKey, hasSufficientCoverage } from './widget.js';
+import { filtersKey, hasSufficientCoverage, TOTALS_GROUP_BY } from './widget.js';
 
 export function SummaryWidget({
   dateRange,
@@ -19,7 +19,7 @@ export function SummaryWidget({
   const api = useCostApi();
   const isSummary = spec.type === 'summary';
 
-  const groupBy = asDimensionId('account');
+  const groupBy = TOTALS_GROUP_BY;
   const fk = filtersKey(globalFilters);
 
   const cur = useQuery<CostResult | null>(
@@ -45,7 +45,21 @@ export function SummaryWidget({
   const previousComplete = prevData !== null && hasSufficientCoverage(prevData, previousDateRange);
   const previousCost = previousComplete ? prevData.totalCost : null;
 
+  // A Weekly/Monthly selection spans whole periods, so it reaches past the
+  // newest day the handler reads (freshness lag): the daily average divides by
+  // the range actually read. Daily and Hourly keep the selection's length.
+  const periodMode = isPeriodGranularity(granularity);
+  const coveredRange = periodMode && cur.status === 'success' && cur.data !== null ? cur.data.dateRange : undefined;
+  const previousCoveredRange = periodMode && previousComplete ? prevData.dateRange : undefined;
+
   return (
-    <SummaryCard totalCost={totalCost} previousCost={previousCost} dateRange={dateRange} previousDateRange={previousComplete ? previousDateRange : undefined} />
+    <SummaryCard
+      totalCost={totalCost}
+      previousCost={previousCost}
+      dateRange={dateRange}
+      previousDateRange={previousComplete ? previousDateRange : undefined}
+      coveredRange={coveredRange}
+      previousCoveredRange={previousCoveredRange}
+    />
   );
 }

@@ -163,7 +163,9 @@ function parameters(defaults: ExportsStackDefaults): TemplateObject {
       Type: 'String',
       AllowedValues: ['no', 'yes'],
       Default: yesNo(defaults.costOptimization ?? false),
-      Description: 'Also export Cost Optimization Hub recommendations. Activate Cost Optimization Hub first, or the stack fails.',
+      Description: 'Also export Cost Optimization Hub recommendations. Enable the Hub first, or the stack fails: in Billing and Cost Management, '
+        + 'Cost Management preferences, Cost Optimization Hub tab, tick Enable Cost Optimization Hub (in a management account, also include '
+        + 'all member accounts under Organization and member account settings), then Save preferences.',
     },
     [P.serviceRole]: {
       Type: 'String',

@@ -277,7 +277,7 @@ For each inline `gitar-bot[bot]` finding:
 3. **If you disagree**: reply explaining precisely why, citing the code paths that disprove it.
 4. **Answer its "Was this helpful? React with 👍 / 👎" footer**: 👍 (`+1`) on a valid finding, 👎 (`-1`) on a wrong one. React on the summary comment too.
 
-Gitar reads replies on its threads ("Reply for a change"), so keep them to what was done and why. Don't post `gitar …` commands (e.g. `gitar auto-apply:on`, which lets it commit to the branch) unless the user asks.
+Gitar reads replies on its threads ("Reply for a change"), so keep them to what was done and why. Don't post `gitar …` commands (e.g. `gitar auto-apply:on`, which lets it commit to the branch) or add the `gitar-managed` label unless the user asks.
 
 ```bash
 gh api repos/etiennechabert/cost-goblin/pulls/<pr>/comments --jq '.[] | select(.user.login=="gitar-bot[bot]") | {id, path, line, body}'
@@ -290,12 +290,13 @@ gh api -X POST repos/etiennechabert/cost-goblin/issues/comments/<id>/reactions -
 **Make each lesson stick.** On the free open-source plan, Gitar carries nothing learned in one PR's threads over to the next PR. When a finding shows a mistake that could recur, record it in the same PR:
 - A valid finding of a general kind → add the check, in one line, to the matching `.gitar/review/` guide. If it's also a rule for writing code here, add it to this file too.
 - A false positive Gitar will raise again → add a line to that guide's "Intentional, don't flag" list.
+- No room under the byte budget → cut a guide line that restates this file (Gitar loads it too) or that no finding has needed, rather than dropping the lesson.
 
 **Check against the guides before pushing.** `.gitar/review/` holds what Gitar reviews against (SQL and cost math, security and privacy, sync and config, UI and tests). Read the guide for each area you touched, so the finding never has to be raised.
 
-**Gitar can commit to the branch:** when someone ticks a suggestion's "Apply fix" box, replies `gitar fix`, or turns on auto-apply. It also pushes a repair when one of its own commits breaks CI. If the remote branch moved, `git pull --ff-only` before pushing.
+**Gitar can commit to the branch:** when someone ticks a suggestion's "Apply fix" box, replies `gitar fix`, turns on auto-apply, or adds the `gitar-managed` label. It also pushes a repair when one of its own commits breaks CI. If the remote branch moved, `git pull --ff-only` before pushing.
 
-**Editing `.gitar/`.** Gitar filters these files before each review, so put every instruction under a heading that matches it. On #716 a "flag this" note inside the "Don't comment on" list was dropped and never reached the reviewer. `npm run check` (`scripts/ci/gitar-config.test.mjs`) fails when a `.gitar/` file names a path or identifier that no longer exists, or when `review/` plus `instructions/` grow past 28 KB. See `.gitar/README.md` for what each file does.
+**Editing `.gitar/`.** Gitar filters these files before each review, so put every instruction under a heading that matches it. On #716 a "flag this" note inside the "Don't comment on" list was dropped and never reached the reviewer. `npm run check` (`scripts/ci/gitar-config.test.mjs`) fails when a `.gitar/` file names a path or identifier that no longer exists, or when `review/` plus `instructions/` grow past 32 KB. See `.gitar/README.md` for what each file does.
 
 ### 4. SonarCloud findings
 
@@ -314,8 +315,11 @@ curl -s "https://sonarcloud.io/api/hotspots/search?projectKey=etiennechabert_cos
 ## Key Architecture Decisions
 
 - **Tag normalization at query time** — aliases applied via SQL, not during sync. Changing aliases takes effect immediately.
+- **The cost scope's freshness lag is applied where a query receives its range** — every desktop query handler and MCP tool caps the requested range at today − `lagDays` (`capToFreshnessLag` in `packages/core/src/query/freshness.ts`; `resolveToolDateRange` in the MCP tools) and answers empty when nothing is left, so a new handler or tool must do the same. The Explorer with "Apply cost scope" off is the one place that reads the newest days.
+- **Billing days and hours are UTC** — `buildSource` cuts `usage_date`/`usage_hour` from `CHARGE_PERIOD_START_UTC_SQL` (`packages/core/src/query/builder.ts`). Never cast `ChargePeriodStart` yourself: AWS writes it TIMESTAMPTZ, and `::DATE` on that takes the DuckDB session's zone, which is the machine's.
 - **FOCUS 1.2 is the core schema** — the AWS source is the FOCUS 1.2 Data Export (Parquet); providers are receivers that deliver FOCUS Parquet into per-month `raw/{tier}-{YYYY-MM}/` dirs. Queries read the downloaded Parquet as-is (no repartitioning); per-month dirs give file-level date filter pushdown.
 - **No SQLite** — all state is YAML (user config) or JSON (app state). DuckDB is the only database.
+- **Only a missing config file is "absent"** — a YAML config that exists but doesn't load (a YAML or validation error, EACCES) is reported, never written over with defaults, and nothing runs as if it were absent: queries fail rather than run without cost-scope.yaml, and config bundles fail naming the file, except the LAN data share, which leaves out (and logs) a views.yaml that doesn't load (`buildCurrentBundle`'s `brokenViews: 'skip'`). Never `.catch(() => undefined)` a config load.
 - **CostApi interface is the boundary** — UI codes against the interface, never calls DuckDB directly. Enables mock testing and future web mode.
 - **Dark mode default, light mode available** — two chart color palettes (standard + Okabe-Ito colorblind-safe), togglable.
 
@@ -336,7 +340,9 @@ curl -s "https://sonarcloud.io/api/hotspots/search?projectKey=etiennechabert_cos
 - TanStack Table (headless table with virtual scrolling)
 - No animation library — Tailwind utilities for CSS motion, hand-rolled rAF where JS is needed. JS-driven motion must gate on `useReducedMotion` (`packages/ui/src/hooks/use-reduced-motion.ts`); CSS motion should use Tailwind's `motion-reduce:` variant.
 - Lucide React (icons)
+- Every button gets its pointer cursor and a hover/press state layer from the base layer of `packages/desktop/src/renderer/app.css` (a `background-image` tint of its text colour). Don't add press effects with `transform` or `filter`: they move the target between press and release, and make the button the containing block of what it positions. A button stretched over a card (`after:absolute after:inset-0`) sets `data-feedback="none"`, and the card draws the hover and press states; so does a `role="button"` surface with its own feedback (a chart's drag-to-select plot). cmdk writes `data-disabled="false"` on enabled items: a disabled selector is `[data-disabled]:not([data-disabled='false'])`, never bare `[data-disabled]`.
 - Rows that are tidied or sorted from their own text, with React keys taken from it (the tag editor's alias rules), stay pinned while the user types and re-sort only once focus leaves the list. Re-keying a row unmounts the focused input, or the button that focus or a click is heading to.
+- A field that opens prefilled derives its value until the user edits it (`typed ?? initial`, as the setup wizard's workspace name does). An effect that writes the default into state can run after the user's first keystroke, and put the default back.
 
 ## What NOT To Do
 

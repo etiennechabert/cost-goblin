@@ -175,8 +175,9 @@ async function readSingleNumber(conn: CanonicalizeConnection, sql: string): Prom
  *  `isAdjustedToUTC=1`, which DuckDB reads back as `TIMESTAMP WITH TIME
  *  ZONE`; `::DATE` on that resolves in the *session* timezone, so a
  *  `2026-01-31 23:30 UTC` row becomes `2026-02-01` for anyone east of
- *  Greenwich — silently moving spend across a month boundary in both
- *  `usage_date` and the period-directory layout.
+ *  Greenwich — silently moving spend across a month boundary in the
+ *  period-directory layout and in any reader that takes the raw column's day
+ *  (`buildSource` takes the UTC day explicitly, `CHARGE_PERIOD_START_UTC_SQL`).
  *
  *  The conversion must be chosen from the observed type: applying
  *  `AT TIME ZONE 'UTC'` to an *already naive* TIMESTAMP shifts it the other

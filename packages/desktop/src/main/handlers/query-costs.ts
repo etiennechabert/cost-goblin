@@ -3,6 +3,7 @@ import {
   buildCostQuery,
   buildDailyCostsQuery,
   buildEntityDetailQuery,
+  capToFreshnessLag,
   logger,
   asEntityRef,
   asDollars,
@@ -43,19 +44,23 @@ function toDailyCostDay([date, breakdown]: readonly [string, Record<string, numb
 }
 
 export function registerCostHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getOrgTreeConfig, getCostScope, getQueryProviders, runPreparedQuery, rollupStore } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getOrgTreeConfig, getQueryCostScope, getQueryProviders, runPreparedQuery, rollupStore } = app;
 
   ipcMain.handle('query:costs', (_event, params: CostQueryParams): Promise<CostResult> => originStore.run(params.origin ?? null, async () => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
     const accountReverseMap = await getAccountReverseMap();
     const orgPath = await getOrgAccountsPath();
-    const costScope = await getCostScope().catch(() => undefined);
+    const costScope = await getQueryCostScope();
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
     const providers = await getQueryProviders(tier);
-    const empty = providersEmptyForRange(providers, params.dateRange);
-    if (empty) return { rows: [], totalCost: asDollars(0), topServices: [], dateRange: params.dateRange };
-    const matSource = resolveRollupSource(rollupStore, providers, params.dateRange, tier, [
+    // The newest days are left out (cost scope freshness lag), so the result
+    // carries the range actually read.
+    const dateRange = capToFreshnessLag(params.dateRange, ctx.now(), costScope.lagDays);
+    if (dateRange === null || providersEmptyForRange(providers, dateRange)) {
+      return { rows: [], totalCost: asDollars(0), topServices: [], dateRange: dateRange ?? params.dateRange };
+    }
+    const matSource = resolveRollupSource(rollupStore, providers, dateRange, tier, [
       // Filters are applied in the WHERE too — a filtered dimension missing
       // from the rollup grain (e.g. the injected `provider`) must gate to raw.
       ...Object.keys(params.filters).map(k => columnForDimension(dimensions, k)),
@@ -63,11 +68,11 @@ export function registerCostHandlers(app: AppContext): void {
     ]);
     const isMat = matSource !== undefined;
     const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, providers, accountReverseMap, costScope, materializedSource: matSource };
-    const { sql, params: queryParams } = buildCostQuery(params, qcOpts);
+    const { sql, params: queryParams } = buildCostQuery({ ...params, dateRange }, qcOpts);
     logger.info('query:costs', { groupBy: params.groupBy, materialized: isMat });
 
     const rows = await runPreparedQuery(sql, queryParams, isMat);
-    let result = buildCostResult(rows, params.dateRange);
+    let result = buildCostResult(rows, dateRange);
 
     if (params.groupBy === 'account' || params.groupBy === 'account_id') {
       result = {
@@ -90,18 +95,18 @@ export function registerCostHandlers(app: AppContext): void {
     const dimensions = await getDimensions();
     const accountReverseMap = await getAccountReverseMap();
     const orgPath = await getOrgAccountsPath();
-    const costScope = await getCostScope().catch(() => undefined);
+    const costScope = await getQueryCostScope();
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
     const providers = await getQueryProviders(tier);
-    const empty = providersEmptyForRange(providers, params.dateRange);
-    if (empty) return { days: [], groups: [], totalCost: asDollars(0) };
-    const matSource = resolveRollupSource(rollupStore, providers, params.dateRange, tier, [
+    const dateRange = capToFreshnessLag(params.dateRange, ctx.now(), costScope.lagDays);
+    if (dateRange === null || providersEmptyForRange(providers, dateRange)) return { days: [], groups: [], totalCost: asDollars(0) };
+    const matSource = resolveRollupSource(rollupStore, providers, dateRange, tier, [
       ...Object.keys(params.filters).map(k => columnForDimension(dimensions, k)),
       columnForDimension(dimensions, params.groupBy), 'cost',
     ]);
     const isMat = matSource !== undefined;
     const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, providers, accountReverseMap, costScope, materializedSource: matSource };
-    const { sql, params: queryParams } = buildDailyCostsQuery(params, qcOpts);
+    const { sql, params: queryParams } = buildDailyCostsQuery({ ...params, dateRange }, qcOpts);
     logger.info('query:daily-costs', { groupBy: params.groupBy, materialized: isMat });
 
     const rows = await runPreparedQuery(sql, queryParams, isMat);
@@ -147,11 +152,11 @@ export function registerCostHandlers(app: AppContext): void {
     const accountMap = await getAccountMap();
     const accountReverseMap = await getAccountReverseMap();
     const orgPath = await getOrgAccountsPath();
-    const costScope = await getCostScope().catch(() => undefined);
+    const costScope = await getQueryCostScope();
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
     const providers = await getQueryProviders(tier);
-    const empty = providersEmptyForRange(providers, params.dateRange);
-    if (empty) {
+    const dateRange = capToFreshnessLag(params.dateRange, ctx.now(), costScope.lagDays);
+    if (dateRange === null || providersEmptyForRange(providers, dateRange)) {
       return {
         entity: params.entity,
         totalCost: asDollars(0),
@@ -163,13 +168,13 @@ export function registerCostHandlers(app: AppContext): void {
         bySubEntity: [],
       };
     }
-    const matSource = resolveRollupSource(rollupStore, providers, params.dateRange, tier, [
+    const matSource = resolveRollupSource(rollupStore, providers, dateRange, tier, [
       ...Object.keys(params.filters).map(k => columnForDimension(dimensions, k)),
       columnForDimension(dimensions, params.dimension), 'service', 'account_id', 'account_name', 'cost',
     ]);
     const isMat = matSource !== undefined;
     const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, providers, accountReverseMap, costScope, materializedSource: matSource };
-    const { sql, params: queryParams } = buildEntityDetailQuery(params, qcOpts);
+    const { sql, params: queryParams } = buildEntityDetailQuery({ ...params, dateRange }, qcOpts);
     logger.info('query:entity-detail', { entity: params.entity, materialized: isMat });
 
     const rows = await runPreparedQuery(sql, queryParams, isMat);

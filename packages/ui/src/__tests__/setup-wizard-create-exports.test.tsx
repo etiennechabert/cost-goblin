@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
@@ -79,6 +79,25 @@ describe('SetupWizard — create the AWS exports with CloudFormation', () => {
 
     await waitFor(() => { expect(api.savedExportsTemplates).toHaveLength(1); });
     expect(api.savedExportsTemplates[0]).toMatchObject({ costOptimization: true, serviceRole: false });
+  });
+
+  it('says where to enable Cost Optimization Hub, with a link that leaves the export unticked', async () => {
+    const { user } = renderWizard();
+    await openCreateStep(user);
+
+    const preferences = screen.getByRole('link', { name: 'Cost Management preferences' });
+    expect(preferences.getAttribute('href')).toBe('https://console.aws.amazon.com/costmanagement/home#/settings');
+    expect(preferences.getAttribute('target')).toBe('_blank');
+    expect(preferences.closest('label')?.textContent).toMatch(/Cost Management preferences → Cost Optimization Hub tab/);
+
+    // The link sits inside the checkbox's label. A click on interactive content
+    // doesn't activate the label (HTML spec; Chromium and jsdom both follow it),
+    // but user-event forwards every click inside a label to its control, so the
+    // click is dispatched directly.
+    fireEvent.click(preferences);
+    const coh = screen.getByLabelText(/Also export Cost Optimization Hub recommendations/);
+    if (!(coh instanceof HTMLInputElement)) throw new Error('the export option is not a checkbox');
+    expect(coh.checked).toBe(false);
   });
 
   it('only continues once the template for the current answers is saved', async () => {

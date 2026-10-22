@@ -22,12 +22,17 @@ export function escapeCsv(value: unknown): string {
   return str;
 }
 
-export function CsvExportButton<TFeatures extends TableFeatures, TData extends RowData>({ table, filename }: Readonly<{ table: Table<TFeatures, TData>; filename: string }>) {
+export function CsvExportButton<TFeatures extends TableFeatures, TData extends RowData>({ table, filename, headerLabels }: Readonly<{
+  table: Table<TFeatures, TData>;
+  filename: string;
+  /** Column id to the header the file uses instead of the on-screen one. */
+  headerLabels?: Readonly<Record<string, string>> | undefined;
+}>) {
   function handleExport() {
     // Every leaf column: callers hand DataTable only the columns on screen.
     const columns = table.getAllLeafColumns();
     const headers = columns.map(col => {
-      const header = col.columnDef.header;
+      const header = headerLabels?.[col.id] ?? col.columnDef.header;
       return typeof header === 'string' ? header : col.id;
     });
 

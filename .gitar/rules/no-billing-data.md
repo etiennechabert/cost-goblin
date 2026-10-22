@@ -2,7 +2,7 @@
 title: "No billing data or credentials"
 description: "Keep real billing exports, data-directory contents and cloud credentials out of this public repository"
 type: check
-when: "Every PR that adds or modifies files"
+when: "Every pull request, whatever it changes: tests-only, docs-only and config-only PRs included"
 actions: "Mark the check unmet and name each offending file and line"
 ---
 

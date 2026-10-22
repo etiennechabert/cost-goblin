@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { asDateString, asHourString, asTagValue } from '@costgoblin/core/browser';
-import { shouldAutoSwitchToHourly } from '../lib/drag-select.js';
+import {
+  asDateString,
+  asHourString,
+  asTagValue,
+  isPeriodGranularity,
+  previousPeriodRange,
+} from '@costgoblin/core/browser';
+import { resolveZoomDrag, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
 import { useHourlyConfigured } from '../hooks/use-hourly-configured.js';
 import { HourlyHintBanner } from '../components/hourly-hint-banner.js';
 import { UpdatingBadge } from '../components/updating-badge.js';
 import { RollupBuildingOverlay } from '../components/rollup-building-overlay.js';
-import { daysBetween } from '../lib/dates.js';
+import { daysAgo, daysBetween } from '../lib/dates.js';
 import { rollupGate } from '../lib/rollup-gate.js';
 import type {
   Dimension,
@@ -17,7 +23,7 @@ import type {
   ViewSpec,
 } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
-import { useLagDays } from '../hooks/use-lag-days.js';
+import { useViewDateRange } from '../hooks/use-view-date-range.js';
 import { useQuery } from '../hooks/use-query.js';
 import {
   CostFocusDispatchProvider,
@@ -35,13 +41,11 @@ import {
 import { FilterBar } from '../components/filter-bar.js';
 import { FilterActiveBanner } from '../components/filter-active-banner.js';
 import { ListMetricBanner } from '../components/list-metric-banner.js';
-import {
-  DateRangePicker,
-  getDefaultDateRange,
-} from '../components/date-range-picker.js';
+import { DateRangePicker } from '../components/date-range-picker.js';
 import type { DateRange, Granularity } from '../components/date-range-picker.js';
 import { WIDGET_REGISTRY } from '../widgets/registry.js';
 import { widgetFlexBasis } from '../widgets/widget.js';
+import { withEnabledGroupBys } from '../widgets/enabled-group-by.js';
 import { LazyWidgetSlot, WidgetSchedulerProvider } from '../hooks/widget-load-scheduler.js';
 
 /** Reserve roughly a widget's eventual height while its slot is deferred, so
@@ -76,7 +80,9 @@ function formatHour(d: Date): string {
   return `${d.toISOString().slice(0, 10)} ${String(d.getUTCHours()).padStart(2, '0')}:00:00`;
 }
 
-function previousRangeFor(dr: DateRange): DateRange {
+function previousRangeFor(dr: DateRange, granularity: Granularity): DateRange {
+  // Weekly and Monthly compare the same number of whole periods just before.
+  if (isPeriodGranularity(granularity)) return previousPeriodRange(dr, granularity);
   // Sub-day window (drag-zoom into hours): shift back by the same hour duration
   // so the comparison is apples-to-apples (4 hours vs the prior 4 hours), not
   // 4 hours vs the 1–2 calendar days that contain them.
@@ -107,9 +113,8 @@ function previousRangeFor(dr: DateRange): DateRange {
 
 function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: CustomViewProps) {
   const api = useCostApi();
-  const lagDays = useLagDays();
+  const { lagDays, dateRange, pickedRange, setDateRange } = useViewDateRange();
   const hourlyConfigured = useHourlyConfigured();
-  const [dateRange, setDateRange] = useState<DateRange>(() => getDefaultDateRange(lagDays));
 
   // Rollup can't serve the viewed months and is building them (cold build or a
   // cleared rollup) → block with the build overlay; widgets don't mount, so
@@ -130,7 +135,7 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
   // view received an explicit `initialFilter` (drill-through, saved state).
   // Re-mounting the view (navigation, reload) re-applies defaults — that's
   // the "always re-apply on open" contract.
-  const defaultsAppliedRef = useRef(initialFilter !== undefined);
+  const [defaultsApplied, setDefaultsApplied] = useState(initialFilter !== undefined);
   const [hourlyHint, setHourlyHint] = useState(false);
 
   // Urgent: the filter bar and the default filters below wait on this, and as
@@ -141,18 +146,27 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
     () => [...rawDimensions].sort((a, b) => priorityFor(a) - priorityFor(b)),
     [rawDimensions],
   );
+  // getDimensions lists only the enabled dimensions, built-ins first, in
+  // config order. A widget grouped by any other moves to one of these.
+  const enabledIds = useMemo(() => rawDimensions.map(getDimensionId), [rawDimensions]);
+  const shownSpec = useMemo(() => withEnabledGroupBys(spec, enabledIds), [spec, enabledIds]);
+  // The widgets wait for the dimensions, so none first queries a group-by it
+  // is about to leave (a disabled dimension is read from the raw Parquet), or
+  // without the default filters.
+  const dimensionsSettled = dimensionsQuery.status === 'success' || dimensionsQuery.status === 'error';
 
-  useEffect(() => {
-    if (defaultsAppliedRef.current) return;
-    if (dimensionsQuery.status !== 'success') return;
+  // Seeded while rendering, not in an effect: the widgets mount in the commit
+  // the dimensions arrive in, and an effect would run after their first
+  // queries had gone out without the defaults.
+  if (!defaultsApplied && dimensionsQuery.status === 'success') {
+    setDefaultsApplied(true);
     const defaults = defaultsFromDimensions(dimensionsQuery.data);
-    defaultsAppliedRef.current = true;
     if (Object.keys(defaults).length > 0) setFilters(defaults);
-  }, [dimensionsQuery]);
+  }
 
   const previousDateRange = useMemo(
-    () => previousRangeFor(dateRange),
-    [dateRange],
+    () => previousRangeFor(dateRange, granularity),
+    [dateRange, granularity],
   );
 
   // Cancel in-flight DuckDB queries when query-affecting state changes so
@@ -180,6 +194,9 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
   // render would otherwise fire, writing those defaults over the shared file.
   // Gating on an async prefs read instead would drop any change the user made
   // while that read was still in flight — a ref flip doesn't re-run the effect.
+  // It runs on and writes `pickedRange`, never the default window: stored, that
+  // would stop following the cost scope's lag (and moving to it once it loads
+  // isn't a change to write either).
   const saveReadyRef = useRef(false);
   const savePendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -191,7 +208,7 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
     savePendingRef.current = setTimeout(() => {
       savePendingRef.current = null;
       api.saveExplorerPreferences({
-        lastUsedDateRange: dateRange,
+        ...(pickedRange === null ? {} : { lastUsedDateRange: pickedRange }),
         lastUsedGranularity: granularity,
         compareEnabled,
       }).catch(() => undefined);
@@ -199,7 +216,7 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
     return () => {
       if (savePendingRef.current !== null) clearTimeout(savePendingRef.current);
     };
-  }, [dateRange, granularity, compareEnabled, api]);
+  }, [pickedRange, granularity, compareEnabled, api]);
 
   // Pre-fetch filter values for all dimensions so dropdowns open instantly.
   // Cache is keyed by date range — invalidated when the range changes.
@@ -228,23 +245,23 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
   }
 
   const handleDateRangeChange = useCallback((range: DateRange, g?: Granularity) => {
-    setDateRange(range);
     if (g !== undefined) {
+      setDateRange(range);
       setGranularity(g);
       setHourlyHint(false);
       return;
     }
-    if (shouldAutoSwitchToHourly(range.start, range.end, granularity)) {
-      if (hourlyConfigured) {
-        setGranularity('hourly');
-        setHourlyHint(false);
-      } else {
-        setHourlyHint(true);
-      }
-    } else {
-      setHourlyHint(false);
-    }
-  }, [granularity, hourlyConfigured]);
+    // A drag-zoom names no mode. Monthly and Weekly drop to Daily for a short
+    // selection, ending no later than the newest day with data; a selection
+    // that starts after it has no days to show, so the drag is ignored. A short
+    // Daily window goes to Hourly when that tier exists, else shows the hint.
+    const zoom = resolveZoomDrag(range, granularity, daysAgo(lagDays));
+    if (zoom === null) return;
+    const needsHourlyHint = zoom.granularity === 'hourly' && granularity !== 'hourly' && !hourlyConfigured;
+    setDateRange(zoom.range);
+    setGranularity(needsHourlyHint ? granularity : zoom.granularity);
+    setHourlyHint(needsHourlyHint);
+  }, [granularity, hourlyConfigured, lagDays, setDateRange]);
 
   useEffect(() => {
     if (!shouldAutoSwitchToHourly(dateRange.start, dateRange.end, granularity)) {
@@ -307,17 +324,18 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
         <HourlyHintBanner onDismiss={() => { setHourlyHint(false); }} />
       )}
 
-      {dimensionsQuery.status === 'loading' && !gate.blocked && (
+      {!dimensionsSettled && !gate.blocked && (
         <div className="text-sm text-text-secondary">Loading...</div>
       )}
 
-      {gate.blocked && rollupStatus !== undefined ? (
+      {gate.blocked && rollupStatus !== undefined && (
         <RollupBuildingOverlay status={rollupStatus} pendingMonths={gate.pendingMonths} />
-      ) : (
+      )}
+      {!gate.blocked && dimensionsSettled && (
       <WidgetSchedulerProvider>
-        {spec.rows.map((row, rowIdx) => {
+        {shownSpec.rows.map((row, rowIdx) => {
           // Flat display order across rows = load priority (top-left first).
-          const offset = spec.rows.slice(0, rowIdx).reduce((n, r) => n + r.widgets.length, 0);
+          const offset = shownSpec.rows.slice(0, rowIdx).reduce((n, r) => n + r.widgets.length, 0);
           return (
             <div key={row.widgets.map(w => w.id).join('-')} className="flex gap-4 items-stretch min-w-0">
               {row.widgets.map((w, colIdx) => {

@@ -2,10 +2,9 @@ import { useMemo } from 'react';
 import { Group } from '@visx/group';
 import { Treemap, treemapSquarify, stratify } from '@visx/hierarchy';
 import { ParentSize } from '@visx/responsive';
-import { getColor } from '../lib/palette.js';
 import { formatDollars, formatPercent, formatShare } from './format.js';
 import { useChartTooltip, type ChartTooltipContent } from './chart-tooltip.js';
-import { usePalette } from '../hooks/use-palette.js';
+import { useSeriesColors } from '../hooks/use-palette.js';
 
 export interface TreemapCell {
   readonly name: string;
@@ -63,7 +62,7 @@ function TreemapInner({
   externalHoveredName,
   previousCosts,
 }: Omit<TreemapChartProps, 'title' | 'subtitle'> & { readonly width: number; readonly height: number }) {
-  const { palette } = usePalette();
+  const seriesColor = useSeriesColors(data);
   const tooltip = useChartTooltip();
   const total = useMemo(() => data.reduce((sum, d) => sum + d.cost, 0), [data]);
   const root = useMemo(() => {
@@ -97,8 +96,8 @@ function TreemapInner({
                 if (node.depth === 0) return null;
                 const w = node.x1 - node.x0;
                 const h = node.y1 - node.y0;
-                const color = getColor(i, palette);
                 const name = node.data.id;
+                const color = seriesColor(name);
                 const cost = node.value ?? 0;
                 const showLabel = w > 60 && h > 24;
                 const isHovered = externalHoveredName === name;

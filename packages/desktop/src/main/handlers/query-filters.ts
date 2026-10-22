@@ -1,10 +1,13 @@
 import { ipcMain } from 'electron';
 import {
+  asDateString,
   asDimensionId,
   buildExclusionClauses,
   buildFilterClauses,
   buildSource,
+  capDateRange,
   computePeriodsInRange,
+  freshnessCutoff,
   resolveField,
   QueryBuilder,
   toFilterMap,
@@ -34,25 +37,32 @@ function mergeAccountRows(
 }
 
 export function registerFilterHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getCostScope, getQueryProviders, runPreparedQuery, rollupStore } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getQueryCostScope, getQueryProviders, runPreparedQuery, rollupStore } = app;
 
-  ipcMain.handle('query:filter-values', (_event, dimensionId: string, filterEntries: Record<string, readonly string[]>, dateRange?: { start: string; end: string }, opts?: { bypassCostScope?: boolean }, origin?: string): Promise<{ value: string; label: string; count: number }[]> => originStore.run(origin ?? null, async () => {
+  ipcMain.handle('query:filter-values', (_event, dimensionId: string, filterEntries: Record<string, readonly string[]>, requestedRange?: { start: string; end: string }, opts?: { bypassCostScope?: boolean }, origin?: string): Promise<{ value: string; label: string; count: number }[]> => originStore.run(origin ?? null, async () => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
     const accountReverseMap = await getAccountReverseMap();
     const costScope = opts?.bypassCostScope === true
       ? undefined
-      : await getCostScope().catch(() => undefined);
+      : await getQueryCostScope();
+    // The freshness lag is part of the cost scope: bypassing the scope (the
+    // Cost Scope editor's value pickers) reads the newest days too.
+    const cutoff = costScope === undefined ? undefined : freshnessCutoff(ctx.now(), costScope.lagDays);
+    const range = requestedRange === undefined || cutoff === undefined
+      ? requestedRange
+      : capDateRange({ start: asDateString(requestedRange.start), end: asDateString(requestedRange.end) }, cutoff);
 
     const qb = new QueryBuilder();
     // Throws SecurityError for ids that match neither a built-in nor a tag
     // dimension — a renderer-supplied id must never reach the SQL verbatim.
     const { fieldExpr } = resolveField(asDimensionId(dimensionId), dimensions);
+    if (range === null) return [];
 
     const providers = await getQueryProviders('daily');
-    const matSource = dateRange === undefined
+    const matSource = range === undefined
       ? undefined
-      : resolveRollupSource(rollupStore, providers, dateRange, 'daily', [
+      : resolveRollupSource(rollupStore, providers, range, 'daily', [
           // The other active filters are WHEREd against the same source.
           ...Object.keys(filterEntries).map(k => columnForDimension(dimensions, k)),
           columnForDimension(dimensions, dimensionId), 'cost',
@@ -67,10 +77,12 @@ export function registerFilterHandlers(app: AppContext): void {
 
     // The rollup glob spans all months (NOT pre-windowed like the old in-memory
     // base), so the date filter must be applied on BOTH paths.
-    if (dateRange !== undefined) {
-      const startParam = qb.addParam(dateRange.start);
-      const endParam = qb.addParam(dateRange.end);
+    if (range !== undefined) {
+      const startParam = qb.addParam(range.start);
+      const endParam = qb.addParam(range.end);
       whereClauses.push(`usage_date BETWEEN ${startParam} AND ${endParam}`);
+    } else if (cutoff !== undefined) {
+      whereClauses.push(`usage_date <= ${qb.addParam(cutoff)}`);
     }
 
     const whereStr = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
@@ -82,7 +94,7 @@ export function registerFilterHandlers(app: AppContext): void {
       const active = providers.filter(p => (p.availablePeriods ?? []).length > 0);
       if (active.length === 0) return [];
       const orgPath = await getOrgAccountsPath();
-      const required = dateRange === undefined ? undefined : computePeriodsInRange(dateRange);
+      const required = range === undefined ? undefined : computePeriodsInRange(range);
       source = buildSource({
         dataDir: ctx.dataDir, tier: 'daily', dimensions, orgAccountsPath: orgPath,
         providers: active.map(p => ({

@@ -1,7 +1,39 @@
-import type { DateString } from '@costgoblin/core/browser';
+import type { DateString, Granularity } from '@costgoblin/core/browser';
 import { asDateString } from '@costgoblin/core/browser';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+const COSTS_TITLES: Readonly<Record<Granularity, string>> = {
+  monthly: 'Monthly Costs',
+  weekly: 'Weekly Costs',
+  daily: 'Daily Costs',
+  hourly: 'Hourly Costs',
+};
+
+const TOTAL_TITLES: Readonly<Record<Granularity, string>> = {
+  monthly: 'Monthly total',
+  weekly: 'Weekly total',
+  daily: 'Daily total',
+  hourly: 'Hourly total',
+};
+
+/** The header of a CSV column of bucket dates. In Weekly/Monthly each value is
+ *  its period's first day (an ISO date), and the header says so. */
+export function dateColumnHeader(granularity: Granularity): string {
+  if (granularity === 'weekly') return 'Week (start)';
+  if (granularity === 'monthly') return 'Month (start)';
+  return 'Date';
+}
+
+/** The title of a total-over-time chart at `granularity`. */
+export function totalTitle(granularity: Granularity): string {
+  return TOTAL_TITLES[granularity];
+}
+
+/** The default title of a cost-over-time chart at `granularity`. */
+export function costsTitle(granularity: Granularity): string {
+  return COSTS_TITLES[granularity];
+}
 
 /** Inclusive count of days between two ISO date strings. */
 export function daysBetween(start: string, end: string): number {

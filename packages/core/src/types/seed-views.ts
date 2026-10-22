@@ -1,10 +1,10 @@
 import { asDimensionId } from './branded.js';
 import type { ViewSpec, ViewsConfig } from './views.js';
 
-/** Default Cost Overview seed view, written to views.yaml on first run and
- *  used as a fallback whenever the file is missing or unreadable. Shared
- *  between desktop main (which seeds the file) and the renderer (which uses
- *  it as a render fallback). */
+/** Default Cost Overview seed view, written to views.yaml when the file
+ *  doesn't exist yet. Shared between desktop main (which seeds the file) and
+ *  the renderer, which shows it while views.yaml is loading or fails to load
+ *  (main leaves a file that fails to load as it is). */
 export const OVERVIEW_SEED_VIEW: ViewSpec = {
   id: 'overview',
   name: 'Cost Overview',

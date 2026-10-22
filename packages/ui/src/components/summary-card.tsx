@@ -8,11 +8,17 @@ interface SummaryCardProps {
   previousCost?: number | null | undefined;
   dateRange: { start: string; end: string };
   previousDateRange?: { start: string; end: string } | undefined;
+  /** The days the total was actually read over, when that is shorter than
+   *  `dateRange` (a Weekly/Monthly selection reaches past the newest data).
+   *  The daily average divides by these; `dateRange` stays the label. */
+  coveredRange?: { start: string; end: string } | undefined;
+  /** The same for the previous total. */
+  previousCoveredRange?: { start: string; end: string } | undefined;
 }
 
 const PLACEHOLDER = '—';
 
-export function SummaryCard({ totalCost, previousCost, dateRange, previousDateRange }: Readonly<SummaryCardProps>) {
+export function SummaryCard({ totalCost, previousCost, dateRange, previousDateRange, coveredRange, previousCoveredRange }: Readonly<SummaryCardProps>) {
   const hasTotal = totalCost !== null;
   const hasPrevious = previousCost !== null && previousCost !== undefined;
   const delta =
@@ -23,9 +29,11 @@ export function SummaryCard({ totalCost, previousCost, dateRange, previousDateRa
   const isDecrease = delta !== null && delta < 0;
   const isIncrease = delta !== null && delta > 0;
 
-  const rangeDays = Math.max(1, daysBetween(dateRange.start, dateRange.end));
+  const averagedRange = coveredRange ?? dateRange;
+  const prevAveragedRange = previousCoveredRange ?? previousDateRange;
+  const rangeDays = Math.max(1, daysBetween(averagedRange.start, averagedRange.end));
   const dailyAvg = hasTotal ? totalCost / rangeDays : null;
-  const prevRangeDays = previousDateRange === undefined ? rangeDays : Math.max(1, daysBetween(previousDateRange.start, previousDateRange.end));
+  const prevRangeDays = prevAveragedRange === undefined ? rangeDays : Math.max(1, daysBetween(prevAveragedRange.start, prevAveragedRange.end));
   const prevDailyAvg = hasPrevious ? previousCost / prevRangeDays : null;
 
   return (

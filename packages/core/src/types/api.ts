@@ -58,6 +58,8 @@ import type {
   EntityDetailResult,
   MissingTagsParams,
   MissingTagsResult,
+  CommitmentPaymentOption,
+  CommitmentTerm,
   SavingsResult,
   SyncStatus,
   SyncLogLine,
@@ -68,11 +70,31 @@ import type {
 
 export interface SavingsPreferences {
   readonly hiddenActionTypes: readonly string[];
+  readonly preferredCommitment: PreferredCommitment;
+}
+
+/** The commitment option the Savings totals count in each pool, like Cost
+ *  Optimization Hub's "Commitment preferences". A null field means the option
+ *  with the highest savings; a pool that has no option matching the preference
+ *  falls back to its highest-savings option, as COH does. */
+export interface PreferredCommitment {
+  readonly term: CommitmentTerm | null;
+  readonly paymentOption: CommitmentPaymentOption | null;
+}
+
+/** A save sends only the fields it changes; the rest of the file is kept. */
+export type SavingsPreferencesUpdate = Partial<SavingsPreferences>;
+
+/** The chart palettes a user can pick (ui-preferences.json `palette`). */
+export type ChartPalette = 'standard' | 'vivid' | 'colorblind';
+
+export function isChartPalette(value: unknown): value is ChartPalette {
+  return value === 'standard' || value === 'vivid' || value === 'colorblind';
 }
 
 export interface UIPreferences {
   readonly theme: 'dark' | 'light';
-  readonly palette: 'standard' | 'colorblind';
+  readonly palette: ChartPalette;
   readonly defaultViewId?: string | undefined;
   readonly performance?: PerformanceSettings | undefined;
 }
@@ -299,6 +321,10 @@ export interface CostApi {
   /** Inventory for one provider's tier. `providerName` defaults to the
    *  first configured provider. */
   getDataInventory(tier?: DataTier, providerName?: string): Promise<DataInventoryResult>;
+  /** The same shape built from what is on disk alone: no remote listing and
+   *  no credentials, so `periods` are the local ones and the remote totals
+   *  are zero. */
+  getLocalDataInventory(tier?: DataTier, providerName?: string): Promise<DataInventoryResult>;
   syncPeriods(files: readonly { key: string; contentHash: string; size: number }[], syncId?: string): Promise<{ filesDownloaded: number; rowsProcessed: number }>;
   cancelSync(syncId?: string): Promise<void>;
   getFilterValues(dimensionId: string, filters: Record<string, readonly string[]>, dateRange?: { start: string; end: string }, opts?: { bypassCostScope?: boolean }, origin?: string): Promise<{ value: string; label: string; count: number }[]>;
@@ -373,7 +399,7 @@ export interface CostApi {
    *  which is exactly the friction this exists to remove. Defaults to `aws`. */
   scaffoldConfig(providerType?: 'aws' | 'gcp'): Promise<void>;
   getSavingsPreferences(): Promise<SavingsPreferences>;
-  saveSavingsPreferences(prefs: SavingsPreferences): Promise<void>;
+  saveSavingsPreferences(prefs: SavingsPreferencesUpdate): Promise<void>;
   getUIPreferences(): Promise<UIPreferences>;
   saveUIPreferences(prefs: UIPreferences): Promise<void>;
   discoverTagKeys(): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }>;
@@ -381,7 +407,7 @@ export interface CostApi {
    *  main process rejects `nameStripPatterns` beyond the caps in
    *  `strip-pattern-limits.ts`, and reports patterns it could not apply in
    *  `stripIssues`. */
-  discoverColumnValues(field: string, opts?: { useOrgAccounts?: boolean; accountNameFromTag?: string; nameStripPatterns?: readonly string[]; normalize?: NormalizationRule; useRegionNames?: boolean; dimName?: string }): Promise<ColumnValuesPreview>;
+  discoverColumnValues(field: string, opts?: { useOrgAccounts?: boolean; accountNameFromTag?: string; nameStripPatterns?: readonly string[]; normalize?: NormalizationRule; useRegionNames?: boolean }): Promise<ColumnValuesPreview>;
   getDimensionsConfig(): Promise<DimensionsConfig>;
   saveDimensionsConfig(config: DimensionsConfig): Promise<void>;
   /** Estimate the rollup cost/benefit of a candidate dimensions config before
@@ -390,12 +416,19 @@ export interface CostApi {
    *  month, so it needs data on disk — returns an empty estimate otherwise. */
   estimateRollupGrain(candidate: DimensionsConfig): Promise<RollupGrainEstimate>;
   /** User-defined dashboard views. Read-modify-write through `saveViewsConfig`.
-   *  `resetViewsConfig` overwrites the file with the seed (Cost Overview) view. */
+   *  `resetViewsConfig` overwrites the file with the seed (Cost Overview) view.
+   *  `getViewsConfig` writes the seed views only when views.yaml doesn't
+   *  exist; one that fails to parse or validate is left as it is and the call
+   *  rejects with why. */
   getViewsConfig(): Promise<ViewsConfig>;
   saveViewsConfig(config: ViewsConfig): Promise<void>;
   resetViewsConfig(): Promise<ViewsConfig>;
   /** Reveal `views.yaml` in the OS file manager (Finder / Explorer). */
   revealViewsFolder(): Promise<void>;
+  /** Writes the defaults only when cost-scope.yaml doesn't exist; one that
+   *  fails to parse or validate is left as it is and the call rejects with
+   *  why. Every cost query rejects the same way until it loads, rather than
+   *  run without the user's metric and exclusion rules. */
   getCostScope(): Promise<CostScopeConfig>;
   saveCostScope(config: CostScopeConfig): Promise<void>;
   /** Exclusion tallies, daily histogram and sample line items of `config`
@@ -445,7 +478,7 @@ export interface CostApi {
   getOrgSyncProgress(): Promise<OrgSyncProgress | null>;
   /** Region-name cache info (count of resolved long-names + last sync time +
    *  the full per-region metadata map so the UI can display it in an expanded
-   *  view and surface extra dimensions like country/continent).
+   *  view).
    *  Populated as a side-effect of syncOrgAccounts. Returns null when no
    *  sync has ever been attempted; when the SSM step failed, returns
    *  count=0 with lastError set so the UI can explain why. */

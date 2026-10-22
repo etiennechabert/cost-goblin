@@ -14,6 +14,9 @@ export interface DataCoverage {
   readonly missingPeriods: readonly string[];
   /** Months from the requested range with no data. */
   readonly missingInRange: readonly string[];
+  /** The day the requested range was cut back to by the cost scope's
+   *  freshness lag; absent when it was not cut. */
+  readonly cappedAt?: string;
 }
 
 function lagWord(lagDays: number): string {
@@ -33,6 +36,9 @@ export function dataCoverageBanner(coverage: DataCoverage): string {
   if (coverage.latestDay !== null && coverage.lagDays !== null) {
     parts.push(`Latest day: ${coverage.latestDay} (${lagWord(coverage.lagDays)})`);
   }
+  if (coverage.cappedAt !== undefined) {
+    parts.push(`Your requested range stops at ${coverage.cappedAt}: the cost scope's freshness lag leaves out the newer days, whose billing data is still being consolidated`);
+  }
   if (coverage.missingInRange.length > 0) {
     parts.push(`Missing periods in your requested range: ${coverage.missingInRange.join(', ')}`);
   } else if (coverage.missingPeriods.length > 0) {
@@ -45,11 +51,17 @@ export type CellType = 'string' | 'currency' | 'percent' | 'change' | 'number' |
 
 export type Cell = string | number | null;
 
+/** How markdown prints a `number` cell: 'abbreviated' (the default) rounds it
+ *  like a count (1.5k, 2.3M), 'exact' prints the value as it is. Markdown
+ *  only, like `align`: json and csv always carry the value as it is. */
+export type NumberStyle = 'abbreviated' | 'exact';
+
 export interface Column {
   readonly key: string;
   readonly header: string;
   readonly type?: CellType;
   readonly align?: Alignment;
+  readonly numberStyle?: NumberStyle;
 }
 
 export interface Table {
@@ -73,7 +85,7 @@ export interface StructuredResult {
   readonly coverage?: DataCoverage;
 }
 
-function formatCell(value: Cell, type: CellType | undefined): string {
+function formatCell(value: Cell, type: CellType | undefined, numberStyle?: NumberStyle): string {
   if (value === null) return '';
   if (type === undefined || type === 'string') {
     return typeof value === 'string' ? value : String(value);
@@ -84,7 +96,7 @@ function formatCell(value: Cell, type: CellType | undefined): string {
     case 'percent': return Number.isFinite(value) ? `${value.toFixed(1)}%` : 'N/A';
     case 'change': return formatPercent(value);
     case 'delta': return formatDelta(value);
-    case 'number': return formatNumber(value);
+    case 'number': return numberStyle === 'exact' ? String(value) : formatNumber(value);
   }
 }
 
@@ -99,7 +111,10 @@ function formatTableMarkdown(table: Table): string {
     header: c.header,
     align: defaultAlign(c.type, c.align),
   }));
-  const rows = table.rows.map(row => row.map((cell, i) => formatCell(cell, table.columns[i]?.type)));
+  const rows = table.rows.map(row => row.map((cell, i) => {
+    const column = table.columns[i];
+    return formatCell(cell, column?.type, column?.numberStyle);
+  }));
   const sections: string[] = [];
   if (table.title !== undefined && table.title.length > 0) {
     sections.push(`### ${toSingleLine(table.title)}`, '');

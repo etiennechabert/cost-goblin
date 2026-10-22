@@ -152,6 +152,11 @@ describe('AWS FOCUS 1.2 Data Export', () => {
     expect(row?.['t']).toBe('MAP(VARCHAR, VARCHAR)');
   });
 
+  it('delivers its timestamps tz-aware', async () => {
+    const [row] = await rowsOf(`SELECT typeof(ChargePeriodStart) AS t FROM read_parquet('${sample('aws', 'native').parquetPath}') LIMIT 1`);
+    expect(row?.['t']).toBe('TIMESTAMP WITH TIME ZONE');
+  });
+
   it('queries straight off the native export, with no projection in between', async () => {
     // Deliberately the NATIVE file, not the canonicalized one: this is the
     // suite's proof that AWS needs no adaptation. Reading the contract shape
@@ -414,6 +419,27 @@ describe('cross-provider', () => {
     const totals = rows.map(r => num(r['total']));
     expect(totals[1]).toBeCloseTo(Number(totals[0]), 2);
     expect(totals[2]).toBeCloseTo(Number(totals[0]), 2);
+  });
+
+  it('bills each event on the same UTC day on every provider, in a session west of UTC', async () => {
+    // AWS's timestamps are tz-aware and every sample event starts at 00:00
+    // UTC: a day taken in the session zone put each AWS row on the day before
+    // here, while the naive GCP and Azure timestamps stayed put.
+    const west = await DuckDBInstance.create(':memory:', { TimeZone: 'America/Los_Angeles' });
+    const westConn = await west.connect();
+    try {
+      const daysOf = async (provider: SampleProvider): Promise<unknown[][]> => {
+        const result = await westConn.run(`SELECT usage_date::VARCHAR AS day, COUNT(*) AS n FROM ${sourceFor(provider, NO_TAGS)} GROUP BY 1 ORDER BY 1`);
+        return (await result.getRowObjects()).map(r => [r['day'], Number(r['n'])]);
+      };
+      const aws = await daysOf('aws');
+      expect(aws[0]?.[0]).toBe(`${SAMPLE_MONTH}-01`);
+      expect(await daysOf('azure')).toEqual(aws);
+      expect(await daysOf('gcp')).toEqual(aws);
+    } finally {
+      westConn.disconnectSync();
+      west.closeSync();
+    }
   });
 
   it('agrees on the commitment split across all three exports', async () => {

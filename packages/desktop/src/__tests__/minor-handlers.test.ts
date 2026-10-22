@@ -1,4 +1,4 @@
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parse } from 'yaml';
@@ -90,19 +90,68 @@ describe('rollup channels', () => {
 });
 
 describe('savings preferences', () => {
-  it('defaults to nothing hidden and round-trips a saved list', async () => {
+  const HIGHEST = { term: null, paymentOption: null };
+
+  it('defaults to nothing hidden and the highest-savings commitment, and round-trips a save', async () => {
     const h = await harness();
     registerSavingsHandlers(h.app);
-    expect(await h.ipc.invoke('savings:get-preferences')).toEqual({ hiddenActionTypes: [] });
+    expect(await h.ipc.invoke('savings:get-preferences')).toEqual({ hiddenActionTypes: [], preferredCommitment: HIGHEST });
     await h.ipc.invoke('savings:save-preferences', { hiddenActionTypes: ['Delete', 'Upgrade'] });
-    expect(await h.ipc.invoke('savings:get-preferences')).toEqual({ hiddenActionTypes: ['Delete', 'Upgrade'] });
+    expect(await h.ipc.invoke('savings:get-preferences')).toEqual({ hiddenActionTypes: ['Delete', 'Upgrade'], preferredCommitment: HIGHEST });
   });
 
-  it('ignores a malformed saved list', async () => {
+  it('merges each save into the file, so saving one field keeps the other', async () => {
     const h = await harness();
     registerSavingsHandlers(h.app);
-    await writeFile(join(h.ws.stateDir, 'savings-preferences.json'), JSON.stringify({ hiddenActionTypes: ['Delete', 3] }));
-    expect(await h.ipc.invoke('savings:get-preferences')).toEqual({ hiddenActionTypes: [] });
+    await h.ipc.invoke('savings:save-preferences', { hiddenActionTypes: ['Delete'] });
+    await h.ipc.invoke('savings:save-preferences', { preferredCommitment: { term: 'OneYear', paymentOption: 'NoUpfront' } });
+    expect(await h.ipc.invoke('savings:get-preferences')).toEqual({
+      hiddenActionTypes: ['Delete'],
+      preferredCommitment: { term: 'OneYear', paymentOption: 'NoUpfront' },
+    });
+    await h.ipc.invoke('savings:save-preferences', { hiddenActionTypes: [] });
+    expect(await h.ipc.invoke('savings:get-preferences')).toEqual({
+      hiddenActionTypes: [],
+      preferredCommitment: { term: 'OneYear', paymentOption: 'NoUpfront' },
+    });
+  });
+
+  it('writes only the valid fields of a save payload', async () => {
+    const h = await harness();
+    registerSavingsHandlers(h.app);
+    await h.ipc.invoke('savings:save-preferences', { hiddenActionTypes: ['Delete'] });
+    await h.ipc.invoke('savings:save-preferences', {
+      hiddenActionTypes: 'Delete',
+      preferredCommitment: { term: 'FiveYears', paymentOption: 'AllUpfront' },
+      injected: true,
+    });
+    const saved: unknown = JSON.parse(await readFile(join(h.ws.stateDir, 'savings-preferences.json'), 'utf-8'));
+    expect(saved).toEqual({ hiddenActionTypes: ['Delete'], preferredCommitment: { term: null, paymentOption: 'AllUpfront' } });
+    await h.ipc.invoke('savings:save-preferences', 'not an object');
+    expect(JSON.parse(await readFile(join(h.ws.stateDir, 'savings-preferences.json'), 'utf-8'))).toEqual(saved);
+  });
+
+  it('rejects a preferences file that is there but cannot be read, rather than reporting defaults', async () => {
+    const h = await harness();
+    registerSavingsHandlers(h.app);
+    // A directory where the file should be: EISDIR, like EACCES, is not "absent".
+    await mkdir(join(h.ws.stateDir, 'savings-preferences.json'));
+    await expect(h.ipc.invoke('savings:get-preferences')).rejects.toThrow(/EISDIR/);
+  });
+
+  it('ignores a malformed saved list and an unknown commitment term', async () => {
+    const h = await harness();
+    registerSavingsHandlers(h.app);
+    await writeFile(join(h.ws.stateDir, 'savings-preferences.json'), JSON.stringify({
+      hiddenActionTypes: ['Delete', 3],
+      preferredCommitment: { term: 'ThreeYears', paymentOption: 'Monthly' },
+    }));
+    expect(await h.ipc.invoke('savings:get-preferences')).toEqual({
+      hiddenActionTypes: [],
+      preferredCommitment: { term: 'ThreeYears', paymentOption: null },
+    });
+    await writeFile(join(h.ws.stateDir, 'savings-preferences.json'), '{not json');
+    expect(await h.ipc.invoke('savings:get-preferences')).toEqual({ hiddenActionTypes: [], preferredCommitment: HIGHEST });
   });
 });
 
@@ -114,6 +163,19 @@ describe('views channels', () => {
     expect(await h.ipc.invoke('views:get-config')).toEqual(SEED_VIEWS_CONFIG);
     expect(await readFile(h.ws.viewsPath, 'utf-8')).toMatch(/\S/);
     expect(await h.ipc.invoke('views:get-config')).not.toBe(SEED_VIEWS_CONFIG);
+  });
+
+  it('leaves a views.yaml that fails to load as it is and reports why', async () => {
+    const h = await harness();
+    registerViewsHandlers(h.app);
+    const original = await readFile(h.ws.viewsPath, 'utf-8');
+    const broken = original.replace(/size: \w+/, 'size: jumbo');
+    expect(broken).not.toBe(original);
+    await writeFile(h.ws.viewsPath, broken);
+
+    await expect(h.ipc.invoke('views:get-config')).rejects.toThrow(/size must be one of: small, medium, large, full \(got jumbo\)/);
+
+    expect(await readFile(h.ws.viewsPath, 'utf-8')).toBe(broken);
   });
 
   it('validates and saves a views config, and resets to the defaults', async () => {

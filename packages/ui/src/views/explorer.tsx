@@ -11,20 +11,22 @@ import type {
   ExplorerSort,
   Granularity,
 } from '@costgoblin/core/browser';
-import { DEFAULT_EXPLORER_HIDDEN_COLUMNS, asDateString, asHourString } from '@costgoblin/core/browser';
+import { DEFAULT_EXPLORER_HIDDEN_COLUMNS, asDateString, asHourString, isPeriodGranularity } from '@costgoblin/core/browser';
 import type { SortingState } from '@tanstack/react-table';
 import { useCostApi } from '../hooks/use-cost-api.js';
-import { useLagDays } from '../hooks/use-lag-days.js';
+import { useViewDateRange } from '../hooks/use-view-date-range.js';
 import { useBarDragSelect } from '../hooks/use-bar-drag-select.js';
 import { useHourlyConfigured } from '../hooks/use-hourly-configured.js';
 import { formatDollars } from '../components/format.js';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card.js';
 import { DataTable } from '../components/data-table.js';
-import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
+import { DateRangePicker } from '../components/date-range-picker.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { HourlyHintBanner } from '../components/hourly-hint-banner.js';
 import { getDimensionId } from '../lib/dimensions.js';
-import { bucketKeyToDate, formatBucketKey, normalizeHourKey, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
+import { bucketKeyToDate, formatBucketKey, normalizeHourKey, periodBarsRange, resolveZoomDrag, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
+import { daysAgo, totalTitle } from '../lib/dates.js';
+import { fillPeriodBuckets } from '../lib/period-fill.js';
 import { focusOnMount } from '../lib/focus-on-mount.js';
 import type { TableColumn } from '../lib/table-types.js';
 
@@ -40,6 +42,9 @@ interface OverviewState {
   data: ExplorerOverviewResult | null;
   loading: boolean;
   error: string | null;
+  /** What `data` answered: the histogram fills its empty periods over this
+   *  range, not over the picker's (which may already have moved on). */
+  request: { readonly range: DateRange; readonly granularity: Granularity } | null;
 }
 
 interface RowsState {
@@ -92,16 +97,15 @@ const BASE_COLUMNS: readonly TableColumn<ExplorerSampleRow>[] = [
 
 export function ExplorerView(): React.JSX.Element {
   const api = useCostApi();
-  const lagDays = useLagDays();
+  const { lagDays, dateRange, pickedRange, setDateRange } = useViewDateRange();
   const hourlyConfigured = useHourlyConfigured();
   const [filters, setFilters] = useState<ExplorerFilterMap>({});
   const [sort, setSort] = useState<ExplorerSort | undefined>(undefined);
   const [dimensions, setDimensions] = useState<Dimension[]>([]);
-  const [dateRange, setDateRange] = useState<DateRange>(() => getDefaultDateRange(lagDays));
   const [granularity, setGranularity] = useState<Granularity>('daily');
   const [applyCostScope, setApplyCostScope] = useState(false);
   const [costMetric, setCostMetric] = useState<CostMetric>('effective');
-  const [overview, setOverview] = useState<OverviewState>({ data: null, loading: true, error: null });
+  const [overview, setOverview] = useState<OverviewState>({ data: null, loading: true, error: null, request: null });
   const [rows, setRows] = useState<RowsState>({ data: null, loading: true, error: null });
   const [hiddenColumns, setHiddenColumns] = useState<readonly string[]>([...DEFAULT_EXPLORER_HIDDEN_COLUMNS]);
   const [columnOrder, setColumnOrder] = useState<readonly string[]>([]);
@@ -151,10 +155,11 @@ export function ExplorerView(): React.JSX.Element {
   // reflects the new state locally, so a write failure just means the
   // preference won't survive a reload (rare edge case, not worth surfacing).
   // Saves are merged onto the on-disk prefs, so each of these sends ONLY the
-  // fields it is actually changing.
-  function saveSessionPrefs(range: DateRange, gran: Granularity) {
+  // fields it is actually changing. A null range is the default window,
+  // which must not be stored: it would stop following the lag.
+  function saveSessionPrefs(range: DateRange | null, gran: Granularity) {
     api.saveExplorerPreferences({
-      lastUsedDateRange: range,
+      ...(range === null ? {} : { lastUsedDateRange: range }),
       lastUsedGranularity: gran,
     }).catch(() => undefined);
   }
@@ -177,11 +182,13 @@ export function ExplorerView(): React.JSX.Element {
   // Save date range / granularity whenever they change. Skip saves until
   // after preferences have loaded — the prefsLoadedRef flag is set in the
   // mount effect once the initial load completes (or fails). This prevents
-  // redundant writes when restoring persisted values on mount.
+  // redundant writes when restoring persisted values on mount. It runs on
+  // `pickedRange`, not `dateRange`: the default window (moving to the cost
+  // scope's lag once it loads) is never written.
   useEffect(() => {
     if (!prefsLoadedRef.current) return;
-    saveSessionPrefs(dateRange, granularity);
-  }, [dateRange, granularity]);
+    saveSessionPrefs(pickedRange, granularity);
+  }, [pickedRange, granularity]);
 
   const cancelReadyRef = useRef(false);
   useEffect(() => {
@@ -214,12 +221,12 @@ export function ExplorerView(): React.JSX.Element {
         if (reqId !== overviewReqIdRef.current) return;
         // Transition: keep the histogram render interruptible so input isn't
         // starved while it commits (see use-query.ts for the rationale).
-        startTransition(() => { setOverview({ data, loading: false, error: null }); });
+        startTransition(() => { setOverview({ data, loading: false, error: null, request: { range, granularity: gran } }); });
       })
       .catch((err: unknown) => {
         if (reqId !== overviewReqIdRef.current) return;
         const message = err instanceof Error ? err.message : String(err);
-        setOverview(prev => ({ data: prev.data, loading: false, error: message }));
+        setOverview(prev => ({ data: prev.data, loading: false, error: message, request: prev.request }));
       });
   }, [api]);
 
@@ -380,7 +387,14 @@ export function ExplorerView(): React.JSX.Element {
 
   const activeFilterCount = Object.values(filters).reduce((n, vs) => n + vs.length, 0);
   const overviewData = overview.data;
-  const dailyTotals = useMemo(() => overviewData?.dailyTotals ?? [], [overviewData]);
+  const overviewRequest = overview.request;
+  // Weekly/Monthly: every period of the request gets a bar, the current
+  // unfinished one included.
+  const dailyTotals = useMemo(() => {
+    const totals = overviewData?.dailyTotals ?? [];
+    if (overviewRequest === null) return totals;
+    return fillPeriodBuckets(totals, overviewRequest.range, overviewRequest.granularity, date => ({ date, cost: 0, rows: 0 }));
+  }, [overviewData, overviewRequest]);
 
   const handleHistogramRangeSelect = useCallback((startIdx: number, endIdx: number) => {
     const startBar = dailyTotals[startIdx];
@@ -401,6 +415,19 @@ export function ExplorerView(): React.JSX.Element {
       setHourlyHint(false);
       return;
     }
+    if (isPeriodGranularity(granularity)) {
+      // A bar is a whole week or month: the drag selects those periods, then
+      // zooms like a dashboard drag. The newest day is the picker's (today minus
+      // the lag) in both scope modes, so a drag and a Daily toggle agree.
+      const periods = periodBarsRange(dailyTotals, startIdx, endIdx, granularity);
+      if (periods === null) return;
+      const zoom = resolveZoomDrag(periods, granularity, daysAgo(lagDays));
+      if (zoom === null) return;
+      setDateRange(zoom.range);
+      setGranularity(zoom.granularity);
+      setHourlyHint(false);
+      return;
+    }
     const startDate = bucketKeyToDate(startBar.date);
     const endDate = bucketKeyToDate(endBar.date);
     setDateRange({ start: asDateString(startDate), end: asDateString(endDate) });
@@ -414,7 +441,7 @@ export function ExplorerView(): React.JSX.Element {
     } else {
       setHourlyHint(false);
     }
-  }, [dailyTotals, granularity, hourlyConfigured]);
+  }, [dailyTotals, granularity, hourlyConfigured, lagDays]);
 
   useEffect(() => {
     if (!shouldAutoSwitchToHourly(dateRange.start, dateRange.end, granularity)) {
@@ -478,11 +505,12 @@ export function ExplorerView(): React.JSX.Element {
 
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-sm">{granularity === 'hourly' ? 'Hourly total' : 'Daily total'}</CardTitle>
+          <CardTitle className="text-sm">{totalTitle(granularity)}</CardTitle>
         </CardHeader>
         <CardContent>
           <Histogram
             days={dailyTotals}
+            granularity={granularity}
             loading={overview.loading}
             onRangeSelect={handleHistogramRangeSelect}
           />
@@ -579,6 +607,7 @@ function ExplorerOptions({
 
 interface HistogramProps {
   readonly days: readonly { readonly date: string; readonly cost: number; readonly rows: number }[];
+  readonly granularity: Granularity;
   readonly loading: boolean;
   readonly onRangeSelect?: (startIdx: number, endIdx: number) => void;
 }
@@ -592,7 +621,7 @@ const Y_TICKS = [1, 0.75, 0.5, 0.25, 0] as const;
  *  but single-series — Explorer doesn't split the total, it's raw counts
  *  over time. Bucket width follows whatever the handler emits (day or
  *  hour), so the same component handles daily and hourly granularities. */
-function Histogram({ days, loading, onRangeSelect }: HistogramProps): React.JSX.Element {
+function Histogram({ days, granularity, loading, onRangeSelect }: HistogramProps): React.JSX.Element {
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const barsRef = useRef<HTMLDivElement>(null);
   const { isDragging, overlay, selection, handleMouseDown } = useBarDragSelect({
@@ -607,8 +636,11 @@ function Histogram({ days, loading, onRangeSelect }: HistogramProps): React.JSX.
     const startBar = days[selection.startIdx];
     const endBar = days[selection.endIdx];
     if (startBar === undefined || endBar === undefined) return null;
-    return { start: formatBucketKey(startBar.date), end: formatBucketKey(endBar.date) };
+    return { start: formatBucketKey(startBar.date, granularity), end: formatBucketKey(endBar.date, granularity) };
   })();
+
+  // A weekly or monthly bar reads as its period; daily and hourly keep the raw key.
+  const barLabel = (key: string): string => (isPeriodGranularity(granularity) ? formatBucketKey(key, granularity) : key);
 
   if (loading) {
     return <CoinRainLoader height={CHART_HEIGHT} count={6} />;
@@ -658,6 +690,8 @@ function Histogram({ days, loading, onRangeSelect }: HistogramProps): React.JSX.
           ref={barsRef}
           role={onRangeSelect === undefined ? undefined : 'button'}
           tabIndex={onRangeSelect === undefined ? undefined : 0}
+          // The plot draws its own drag selection: no app-wide state layer over it.
+          data-feedback="none"
           className={[
             'absolute top-0 right-0 h-full flex items-end outline-none',
             onRangeSelect === undefined ? '' : 'cursor-crosshair select-none',
@@ -672,7 +706,7 @@ function Histogram({ days, loading, onRangeSelect }: HistogramProps): React.JSX.
               <div
                 key={d.date}
                 role="img"
-                aria-label={`${d.date}: ${formatDollars(d.cost)}`}
+                aria-label={`${barLabel(d.date)}: ${formatDollars(d.cost)}`}
                 className="group relative flex-1 min-w-0 flex flex-col justify-end"
                 style={{ height: '100%' }}
                 onMouseEnter={() => { setHoveredKey(d.date); }}
@@ -688,7 +722,7 @@ function Histogram({ days, loading, onRangeSelect }: HistogramProps): React.JSX.
                 {isHovered && !isDragging && (
                   <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-20">
                     <div className="rounded-lg border border-border bg-bg-secondary/95 px-3 py-2 text-[11px] text-text-primary whitespace-nowrap shadow-lg min-w-[160px]">
-                      <div className="font-semibold mb-1.5 text-xs">{d.date}</div>
+                      <div className="font-semibold mb-1.5 text-xs">{barLabel(d.date)}</div>
                       <div className="flex items-center justify-between gap-3 mb-0.5">
                         <span className="text-text-secondary">Cost</span>
                         <span className="tabular-nums font-medium">{formatDollars(d.cost)}</span>
@@ -745,7 +779,7 @@ function Histogram({ days, loading, onRangeSelect }: HistogramProps): React.JSX.
               className={`absolute text-[10px] text-text-muted whitespace-nowrap ${align}`}
               style={{ left: `${String(pct)}%` }}
             >
-              {formatBucketLabel(d.date)}
+              {formatBucketLabel(d.date, granularity)}
             </span>
           );
         })}
@@ -755,8 +789,10 @@ function Histogram({ days, loading, onRangeSelect }: HistogramProps): React.JSX.
 }
 
 /** Compact axis label: "MM-DD" for daily buckets, "MM-DD HH:00" for
- *  hourly. Inputs are the raw VARCHAR-casted timestamps from DuckDB. */
-function formatBucketLabel(bucket: string): string {
+ *  hourly, the period (`W42 2026`, `Oct 2026`) for weekly and monthly. Inputs
+ *  are the raw VARCHAR-casted timestamps from DuckDB. */
+function formatBucketLabel(bucket: string, granularity: Granularity): string {
+  if (isPeriodGranularity(granularity)) return formatBucketKey(bucket, granularity);
   // Daily rows arrive as "YYYY-MM-DD"; hourly as "YYYY-MM-DD HH:MM:SS".
   if (bucket.length === 10) return bucket.slice(5); // MM-DD
   const parts = bucket.split(' ');

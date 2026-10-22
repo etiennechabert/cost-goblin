@@ -1,5 +1,5 @@
 import type { BuiltInDimension, DimensionsConfig, TagDimension } from '../types/config.js';
-import type { CostQueryParams, DailyCostsParams, DateRange, FilterMap, TrendQueryParams, MissingTagsParams, EntityDetailParams } from '../types/query.js';
+import type { CostQueryParams, DailyCostsParams, DateRange, FilterMap, Granularity, TrendQueryParams, MissingTagsParams, EntityDetailParams } from '../types/query.js';
 import { DEFAULT_PLACEHOLDER_PATTERNS } from '../types/query.js';
 import type { DimensionId, ProviderName } from '../types/branded.js';
 import { tagDimColumn, tagSqlColumn } from '../types/branded.js';
@@ -21,6 +21,17 @@ import { previousTrendPeriod, trendPercentChangeSql } from './trend-change.js';
  *  its detail view came back empty. A sentinel keeps the row labelled, grouped,
  *  filterable, and drillable. It cannot collide with a real account id. */
 export const NO_ACCOUNT_SENTINEL = '(no account)';
+
+/** `ChargePeriodStart` as a naive TIMESTAMP holding its UTC wall-clock time:
+ *  what `usage_date` and `usage_hour` are cut from. AWS writes the column
+ *  tz-aware (Parquet isAdjustedToUTC=1), and `::DATE` or `::TIMESTAMP` on a
+ *  TIMESTAMP WITH TIME ZONE resolves in the session time zone, which DuckDB
+ *  takes from the machine: a 23:00 UTC row billed on the next day east of UTC,
+ *  a 05:00 UTC one on the day before west of it. Epoch microseconds are the
+ *  same for a tz-aware column and for the naive UTC TIMESTAMP that GCP sync
+ *  writes, so this reads both in UTC whatever the session zone; `AT TIME ZONE
+ *  'UTC'` would shift the naive one. */
+export const CHARGE_PERIOD_START_UTC_SQL = 'make_timestamp(epoch_us(ChargePeriodStart))';
 
 function assertFiniteNumber(value: number, name: string): void {
   if (!Number.isFinite(value) || value < 0) {
@@ -210,16 +221,31 @@ function tryExpandAccountIds(
   return `${rawField} IN (${list})`;
 }
 
+/** The value a cost or trend group-by files a row under. Results read NULL as
+ *  '', so a tag the resource lacks and a tag set to '' are one group, the one
+ *  a filter on '' keeps (missingValueSql). Grouped bare, they came back as two
+ *  rows read alike: where rows are kept per entity one was dropped, and the
+ *  NULL one never joined its per-service breakdown. */
+function groupValueSql(resolved: ResolvedDimension): string {
+  return `COALESCE(${resolved.fieldExpr}, '')`;
+}
+
 /** Rows with no value for the dimension: NULL (a tag the resource lacks) or ''
  *  (buildSource coalesces a missing built-in field to ''), read off the
- *  normalized/aliased expression the app displays and filters on. For the
- *  account, also NO_ACCOUNT_SENTINEL, which stands in for a NULL
- *  SubAccountId; checked on the raw column, where no normalize rule can have
- *  reshaped it. Never NULL. */
+ *  normalized/aliased expression the app displays and filters on: the rows a
+ *  group-by files under ''. For the account, also NO_ACCOUNT_SENTINEL, which
+ *  stands in for a NULL SubAccountId; checked on the raw column, where no
+ *  normalize rule can have reshaped it. Never NULL. */
 function missingValueSql(resolved: ResolvedDimension): string {
-  const empty = `COALESCE(${resolved.fieldExpr}, '') = ''`;
+  const empty = `${groupValueSql(resolved)} = ''`;
   if (resolved.rawField !== 'account_id') return empty;
   return `(${empty} OR ${resolved.rawField} = '${NO_ACCOUNT_SENTINEL}')`;
+}
+
+/** A condition with no values and no `matchMissing` is a draft: it constrains
+ *  nothing, so a rule skips it. */
+function matchesNothingYet(cond: ExclusionRule['conditions'][number]): boolean {
+  return cond.values.length === 0 && cond.matchMissing !== true;
 }
 
 /** SQL for one rule condition: true when the row's value is one of the
@@ -235,7 +261,7 @@ function buildConditionSql(
   qb: QueryBuilder | undefined,
 ): string | null {
   const matchMissing = cond.matchMissing === true;
-  if (cond.values.length === 0 && !matchMissing) return null;
+  if (matchesNothingYet(cond)) return null;
   const resolved = tryResolveField(cond.dimensionId, dimensions);
   if (resolved === null) return null;
   const parts: string[] = [];
@@ -250,16 +276,34 @@ function buildConditionSql(
   return parts.length > 1 ? `(${sql})` : sql;
 }
 
+/** What a condition on a dimension the config doesn't have does to its rule.
+ *  `match-nothing` (exclusion rules): the rule matches no row. The dimension
+ *  was dropped (no configured provider fills it) or deleted, and skipping
+ *  just that AND-leg would exclude MORE than the rule says. `skip` (the
+ *  Explorer's filters, whose columns include ones with no configured
+ *  dimension, such as SKU Meter in a GCP-only workspace): the condition is
+ *  left out. */
+type UnknownDimensionCondition = 'match-nothing' | 'skip';
+
 /** Build the positive match expression for a single rule (AND of conditions,
  *  OR within each condition's values). Used both for NOT-exclusion in queries
  *  and for the positive preview queries. Never NULL (see buildConditionSql).
- *  Returns null when the rule has no valid conditions. */
+ *  Returns null when the rule matches no row: none of its conditions has
+ *  anything to match, or (`match-nothing`) one names a dimension the config
+ *  doesn't have. */
 export function buildRuleMatchExpr(
   rule: ExclusionRule,
   dimensions: DimensionsConfig,
   accountReverseMap?: ReadonlyMap<string, readonly string[]>,
   qb?: QueryBuilder,
+  unknownDimension: UnknownDimensionCondition = 'match-nothing',
 ): string | null {
+  // Checked before any condition binds a value on `qb`: an early return must
+  // leave no parameter behind that the SQL never references.
+  if (unknownDimension === 'match-nothing'
+    && rule.conditions.some(c => !matchesNothingYet(c) && tryResolveField(c.dimensionId, dimensions) === null)) {
+    return null;
+  }
   const conditionSqls: string[] = [];
   for (const cond of rule.conditions) {
     const sql = buildConditionSql(cond, dimensions, accountReverseMap, qb);
@@ -523,8 +567,8 @@ export function buildSource(opts: BuildSourceOptions): string {
   const tagClause = tagSelects.length > 0 ? `,\n      ${tagSelects.join(',\n      ')}` : '';
 
   const dateExpr = tier === 'hourly'
-    ? 'ChargePeriodStart::DATE AS usage_date,\n      ChargePeriodStart::TIMESTAMP AS usage_hour'
-    : 'ChargePeriodStart::DATE AS usage_date';
+    ? `${CHARGE_PERIOD_START_UTC_SQL}::DATE AS usage_date,\n      ${CHARGE_PERIOD_START_UTC_SQL} AS usage_hour`
+    : `${CHARGE_PERIOD_START_UTC_SQL}::DATE AS usage_date`;
 
   const tablePrefix = needsOrgJoin ? 'src.' : '';
 
@@ -739,7 +783,7 @@ export function buildCostQuery(
   const sql = `
     WITH base AS (
       SELECT
-        ${groupByResolved.fieldExpr} AS entity,
+        ${groupValueSql(groupByResolved)} AS entity,
         service,
         SUM(cost) AS cost
       FROM ${source}
@@ -818,7 +862,7 @@ export function buildTrendQuery(
   const sql = `
     WITH bucketed AS (
       SELECT
-        ${groupByResolved.fieldExpr} AS entity,
+        ${groupValueSql(groupByResolved)} AS entity,
         CASE
           WHEN usage_date BETWEEN ${startDatePlaceholder} AND ${endDatePlaceholder} THEN 'current'
           ELSE 'previous'
@@ -994,6 +1038,24 @@ export function buildNonResourceCostQuery(
   return { sql, params: qb.build().params };
 }
 
+const USAGE_DATE_BUCKETS: Record<'daily' | 'weekly' | 'monthly', string> = {
+  daily: 'usage_date',
+  weekly: "CAST(date_trunc('week', usage_date) AS DATE)",
+  monthly: "CAST(date_trunc('month', usage_date) AS DATE)",
+};
+
+/** SQL for the bucket a daily-tier row is grouped into: its own day, its ISO
+ *  week's Monday or its month's first day. `usage_date` is already a UTC
+ *  billing day (see `CHARGE_PERIOD_START_UTC_SQL`), so the bucket does not
+ *  move with the DuckDB session's zone. The expression comes from a closed
+ *  lookup, never from a caller string. Hourly has no bucket here: the hourly
+ *  tier keeps its own hour expression. */
+export function usageDateBucketExpr(granularity: Granularity | undefined): string {
+  if (granularity === 'weekly') return USAGE_DATE_BUCKETS.weekly;
+  if (granularity === 'monthly') return USAGE_DATE_BUCKETS.monthly;
+  return USAGE_DATE_BUCKETS.daily;
+}
+
 export function buildDailyCostsQuery(
   params: DailyCostsParams,
   opts: QueryContextOptions,
@@ -1014,7 +1076,7 @@ export function buildDailyCostsQuery(
   // hour-aligned Usage rows instead of polluting the histogram.
   const dateExpr = resolvedTier === 'hourly'
     ? "strftime(date_trunc('hour', usage_hour + INTERVAL '30 minutes'), '%Y-%m-%d %H:00')"
-    : 'usage_date::VARCHAR';
+    : `${usageDateBucketExpr(params.granularity)}::VARCHAR`;
 
   const sql = `
     SELECT
@@ -1194,7 +1256,7 @@ export function buildEntityDetailQuery(
   // rounded to the nearest hour boundary (see buildDailyCostsQuery comment).
   const groupKey = resolvedTier === 'hourly'
     ? "strftime(date_trunc('hour', usage_hour + INTERVAL '30 minutes'), '%Y-%m-%d %H:00')"
-    : 'usage_date::VARCHAR';
+    : `${usageDateBucketExpr(params.granularity)}::VARCHAR`;
 
   const sql = `
     SELECT

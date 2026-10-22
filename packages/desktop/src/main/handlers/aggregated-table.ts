@@ -55,7 +55,7 @@ export function rowKeysFilter(rowKeys: readonly RowKey[] | undefined, groupBy: r
   // read as a value.
   const usable = rowKeys.filter(key => groupBy.every(({ id }) => Object.hasOwn(key, id)));
   if (usable.length === 0) return { kind: 'none' };
-  const columns = groupBy.map(({ column }) => groupValueExpr(column)).join(', ');
+  const columns = groupBy.map(groupValueExpr).join(', ');
   const rows = usable.map(key => `row(${groupBy.map(({ id }) => qb.addParam(key[id])).join(', ')})`).join(', ');
   return { kind: 'some', condition: `row(${columns}) IN (${rows})` };
 }
