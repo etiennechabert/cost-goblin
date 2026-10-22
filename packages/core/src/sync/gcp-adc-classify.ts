@@ -6,7 +6,7 @@ import { isStringRecord } from '../utils/json.js';
  *  unwraps it to the login underneath when a provider names its own reader)
  *  and the code that DESCRIBES it (the "Signed in as" panel), so the panel can
  *  never call a file working that the listing client would reject, or the
- *  reverse. Mirrors google-auth-library 9's `fromImpersonatedJSON`. */
+ *  reverse. Mirrors google-auth-library 11's `fromImpersonatedJSON`. */
 
 /** google-auth-library refuses longer impersonation URLs (a ReDoS guard); a
  *  URL it would reject must not be described as working here. */
@@ -66,6 +66,8 @@ const NON_JWT_SOURCE_TYPES: ReadonlySet<string> = new Set([
   'impersonated_service_account',
   'external_account',
   'external_account_authorized_user',
+  // Google Distributed Cloud Hosted keys: google-auth-library 11's GdchClient.
+  'gdch_service_account',
 ]);
 
 /** What `GoogleAuth.fromJSON` makes of a source: a user login needs all three

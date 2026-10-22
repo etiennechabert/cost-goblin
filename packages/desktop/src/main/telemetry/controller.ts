@@ -17,6 +17,7 @@ import type { TelemetryPreferences, TelemetryStatus } from '@costgoblin/core';
 import { redactEventInPlace } from './scrub-event.js';
 import { readDevTagsSync } from './dev-tags.js';
 import { TelemetryOutbox } from './outbox.js';
+import { SENTRY_DATA_COLLECTION, SENTRY_TRACE_LIFECYCLE } from './sentry-privacy.js';
 
 /** DSN for the Sentry project. Without it, no channel can actually send — the
  *  app stays dark even if the user opts in. Kept in env (not hard-coded) so the
@@ -164,9 +165,13 @@ class TelemetryController {
         // Tracing only when the performance channel is on. Dev (unpackaged, with
         // a DSN set) samples everything; packaged releases sample at the prod rate.
         tracesSampleRate: this.prefs.performance ? this.tracesSampleRate() : 0,
-        // Never let the SDK attach IP/user/cookies — our scrub is the backstop,
-        // but default-off is the first line of defence.
-        sendDefaultPii: false,
+        // Never let the SDK attach user info, headers, cookies, bodies or local
+        // variables — our scrub is the backstop, but default-off is the first
+        // line of defence.
+        dataCollection: SENTRY_DATA_COLLECTION,
+        // Every trace stays a transaction event, so beforeSendTransaction below
+        // gates, scrubs and records it.
+        traceLifecycle: SENTRY_TRACE_LIFECYCLE,
         beforeSend: (event) => this.scrubAndRecord(event),
         beforeSendTransaction: (event) => this.scrubAndRecord(event),
       });
