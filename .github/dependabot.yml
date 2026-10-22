@@ -62,27 +62,20 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: "ast-v8-to-istanbul"
         update-types: ["version-update:semver-major"]
+    groups:
       # google-auth-library must stay the single copy @google-cloud/storage uses:
       # createGcsStorage hands Storage our GoogleAuth, which it only trusts when it
       # is `instanceof` its own copy (scripts/ci/packaged-deps.test.mjs pins this).
-      # storage 8 still depends on ^9, so a major of ours installs a second copy,
-      # fails tsc in gcs-storage.ts, and took the whole weekly group down with it
-      # (#673). Remove this entry, bumping both by hand in one PR, once
-      # @google-cloud/storage's own google-auth-library range reaches the latest
-      # google-auth-library major (Dependabot proposes the latest, not the next).
-      - dependency-name: "google-auth-library"
-        update-types: ["version-update:semver-major"]
-    groups:
-      # The other half of that coupling: a storage major that moves its
-      # google-auth-library range past the ^9 held above also installs a second
-      # copy. Its own PR (first matching group wins) fails packaged-deps.test.mjs
-      # alone, as the signal to take both majors together, instead of taking
-      # all-dependencies down again.
-      google-cloud-storage-major:
+      # The two drift apart both ways: a google-auth-library major that storage
+      # doesn't accept yet (#673), and a storage MINOR that moves to a new one
+      # (8.3.0 went from ^9 to ^11). Either installs a second copy and fails
+      # packaged-deps.test.mjs, so they move together in this group's own PR
+      # (first matching group wins), every update type included. A red PR here
+      # means "wait for storage to catch up"; it never holds back all-dependencies.
+      google-cloud-auth:
         patterns:
           - "@google-cloud/storage"
-        update-types:
-          - "major"
+          - "google-auth-library"
       # An Electron major can raise the macOS floor that release.yml publishes as
       # latest-mac.yml's minimumSystemVersion, so merge-update-manifests.test.mjs
       # fails on each one until that floor is re-checked. Its own PR keeps that
@@ -192,7 +185,7 @@ updates:
         exclude-patterns:
           - "@google-cloud/bigquery"
 
-  # The exporter's Docker base image (node:22-slim). Nothing else tracked it, so
+  # The exporter's Docker base image (node:26-slim). Nothing else tracked it, so
   # the base image only ever moved when someone edited the Dockerfile by hand.
   - package-ecosystem: "docker"
     directory: "/scripts/gcp-focus-exporter"
@@ -204,6 +197,14 @@ updates:
     open-pull-requests-limit: 5
     cooldown:
       default-days: 7
+    ignore:
+      # Odd-numbered Node lines never become LTS and reach end of life within
+      # months (25 did on 2026-06-01), so the image stays on an even line (see
+      # the Dockerfile). Add the next odd line here when it appears. A major
+      # bump also moves ci.yml's test-exporter-node26 (workflow-policy.test.mjs
+      # fails until it does).
+      - dependency-name: "node"
+        versions: [">=27, <28"]
     labels:
       - "dependencies"
       - "docker"

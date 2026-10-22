@@ -7,11 +7,7 @@
     "deploy": "wrangler deploy"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260927.1",
-    "wrangler": "^4.147.0"
-  },
-  "_overridesNote": "sharp is forced past miniflare's exact 0.35.4 pin for GHSA-wq5f-xc86-pv6w (high). It only serves local `wrangler dev`. Drop the override once wrangler is at 4.149.0 or later, whose miniflare pins sharp 0.35.5.",
-  "overrides": {
-    "sharp": "0.35.5"
+    "@cloudflare/workers-types": "^5.20261015.1",
+    "wrangler": "^4.151.0"
   }
 }

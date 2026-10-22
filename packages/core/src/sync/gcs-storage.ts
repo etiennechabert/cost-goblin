@@ -60,7 +60,7 @@ function jwtInput(record: Readonly<Record<string, unknown>>): JWTInput {
  *
  *  The file is read with `classifyImpersonatedAdc`, the same classification
  *  the "Signed in as" panel describes it with. */
-async function userSourceClient(adc: GoogleAuth): Promise<AuthClient> {
+async function userSourceClient(adc: GoogleAuth, lib: AuthLibrary): Promise<AuthClient> {
   const client = await adc.getClient();
   const legacy = classifyImpersonatedAdc(adc.jsonContent);
   switch (legacy.kind) {
@@ -76,15 +76,22 @@ async function userSourceClient(adc: GoogleAuth): Promise<AuthClient> {
   if (legacy.source.kind === 'other') {
     throw new Error(`Application Default Credentials impersonate ${legacy.target} from a ${legacy.source.type} credential, which a provider's read-only service account cannot be minted from — sign in with \`gcloud auth application-default login\``);
   }
-  const source = adc.fromJSON(jwtInput(legacy.source.record));
-  // `fromJSON` skips the override `getClient` applies to ADC it loads itself;
-  // the mint is billed to this project, so honour it the same way.
+  // The client GoogleAuth.fromJSON (deprecated in google-auth-library 11) built
+  // for these two types, constructed directly: the classification above already
+  // decided which one the record is.
+  const record = jwtInput(legacy.source.record);
+  const source = legacy.source.kind === 'user'
+    ? new lib.UserRefreshClient()
+    : new lib.JWT({ scopes: [IAM_CREDENTIALS_SCOPE] });
+  source.fromJSON(record);
+  // Loading the record skips the override `getClient` applies to ADC it loads
+  // itself; the mint is billed to this project, so honour it the same way.
   const quotaOverride = process.env['GOOGLE_CLOUD_QUOTA_PROJECT'];
   if (quotaOverride !== undefined && quotaOverride !== '') source.quotaProjectId = quotaOverride;
   return source;
 }
 
-type AuthLibrary = Pick<typeof import('google-auth-library'), 'Impersonated' | 'JWT' | 'BaseExternalAccountClient'>;
+type AuthLibrary = Pick<typeof import('google-auth-library'), 'Impersonated' | 'JWT' | 'BaseExternalAccountClient' | 'UserRefreshClient'>;
 
 function sameAccount(a: string | null | undefined, b: string): boolean {
   return typeof a === 'string' && a.toLowerCase() === b.toLowerCase();
@@ -159,7 +166,7 @@ export async function createGcsStorage(options: GcsStorageOptions): Promise<Stor
     scopes: [IAM_CREDENTIALS_SCOPE],
     ...(sourceProject === undefined ? {} : { projectId: sourceProject }),
   });
-  const sourceClient = await userSourceClient(adc);
+  const sourceClient = await userSourceClient(adc, authLibrary);
   const authClient = alreadyActingAs(sourceClient, impersonateServiceAccount, authLibrary) ?? new Impersonated({
     sourceClient,
     targetPrincipal: impersonateServiceAccount,

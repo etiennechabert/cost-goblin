@@ -48,6 +48,7 @@ function sampleEvent(): Event {
         description: 'query /Users/jane/cur.parquet',
         span_id: 's1',
         start_timestamp: 0,
+        status: 'ok',
         trace_id: 't1',
       },
     ],

@@ -18,6 +18,10 @@ const repoRoot = new URL('../../', import.meta.url);
 const workflowsDir = new URL('.github/workflows/', repoRoot);
 
 const NODE_VERSION = '^24.18.0';
+/** The one job allowed another Node line: it tests the GCP exporter on the
+ *  major its Docker image runs (pinned to the Dockerfile below). Still a range
+ *  whose floor bundles npm >= 11.16. */
+const NODE_VERSION_EXCEPTIONS = { 'ci.yml': { 'test-exporter-node26': '^26.3.0' } };
 /** The only jobs that may hold a write scope: `publish` and `notes` create and
  *  publish the release; `publish-template` holds only `id-token: write`, to
  *  exchange GitHub's OIDC token for AWS credentials (pinned below). */
@@ -123,7 +127,7 @@ function checkSetupNode(name, wf) {
       if (!usesAction(step, 'actions/setup-node')) continue;
       count += 1;
       const v = step.with?.['node-version'];
-      if (v !== NODE_VERSION) {
+      if (v !== (NODE_VERSION_EXCEPTIONS[name]?.[jobName] ?? NODE_VERSION)) {
         violations.push(`${name} ${jobName}: setup-node node-version ${JSON.stringify(v)}`);
       }
     }
@@ -255,6 +259,28 @@ jobs:
     expect(checkSetupNode('ci.yml', good)).toEqual({ count: 1, violations: [] });
   });
 
+  it('allows the exporter job its own Node line, and only that job, only in ci.yml', () => {
+    const exporterJob = (version) => parse(`
+jobs:
+  test-exporter-node26:
+    steps:
+      - uses: actions/setup-node@abc
+        with:
+          node-version: '${version}'
+`);
+    expect(checkSetupNode('ci.yml', exporterJob('^26.3.0')).violations).toEqual([]);
+    expect(checkSetupNode('ci.yml', exporterJob('^24.18.0')).violations).toHaveLength(1);
+    expect(checkSetupNode('release.yml', exporterJob('^26.3.0')).violations).toHaveLength(1);
+    expect(checkSetupNode('ci.yml', parse(`
+jobs:
+  lint:
+    steps:
+      - uses: actions/setup-node@abc
+        with:
+          node-version: '^26.3.0'
+`)).violations).toHaveLength(1);
+  });
+
   it('flags run-time-resolved packages but not comments or npx --no-install', () => {
     const hits = checkRunBodies('release.yml', bad);
     expect(hits.some((h) => h.includes('npx @sentry/cli@^2'))).toBe(true);
@@ -383,6 +409,18 @@ describe('workflow policy (.github/workflows)', () => {
     const results = workflows.map(({ name, wf }) => checkSetupNode(name, wf));
     expect(results.reduce((n, r) => n + r.count, 0)).toBeGreaterThanOrEqual(6);
     expect(results.flatMap((r) => r.violations)).toEqual([]);
+  });
+
+  it('tests the GCP exporter on the Node major its Docker image runs', () => {
+    const dockerfile = readFileSync(new URL('scripts/gcp-focus-exporter/Dockerfile', repoRoot), 'utf8');
+    // Any tag variant or digest pin: node:26-slim, node:26-bookworm-slim@sha256:…
+    const imageMajor = /^FROM node:(\d+)\b/m.exec(dockerfile)?.[1];
+    const job = ci.jobs?.['test-exporter-node26'];
+    const setupNode = stepsOf(job).find((step) => usesAction(step, 'actions/setup-node'));
+    const ciMajor = /^\^(\d+)\./.exec(String(setupNode?.with?.['node-version']))?.[1];
+    expect(imageMajor, 'Dockerfile has no FROM node:<major> line').toBeDefined();
+    expect(ciMajor).toBe(imageMajor);
+    expect(stepsOf(job).map(runBody).join('\n')).toMatch(/vitest run --project scripts scripts\/gcp-focus-exporter\//);
   });
 
   it('release.yml runs only lockfile-pinned code', () => {
