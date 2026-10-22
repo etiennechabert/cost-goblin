@@ -1,12 +1,15 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { DuckDBInstance } from '@duckdb/node-api';
 import type { DuckDBConnection } from '@duckdb/node-api';
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { asProviderName, buildSource, QueryBuilder, SecurityError, tagSqlColumn, tagSqlColumnsById } from '@costgoblin/core';
-import { parseRowKeys, queryAggregatedRows, rowKeysFilter } from '../main/handlers/aggregated-table.js';
+import { asProviderName, buildSource, QueryBuilder, SecurityError, sqlStringLiteral, tagDimColumn, tagSqlColumn, tagSqlColumnsById } from '@costgoblin/core';
+import type { DimensionsConfig, TagDimension } from '@costgoblin/core';
+import { parseRowFilters, parseRowKeys, queryAggregatedRows, rowKeysFilter } from '../main/handlers/aggregated-table.js';
 import type { AggregatedRowsQuery, RunSql } from '../main/handlers/aggregated-table.js';
-import { explorerGroupBy } from '../main/handlers/explorer-columns.js';
+import { explorerGroupBy, explorerRowFilters } from '../main/handlers/explorer-columns.js';
 import { fetchRowsPrepared } from './helpers/duckdb-rows.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -33,6 +36,19 @@ describe('parseRowKeys', () => {
 
   it('refuses more keys than a result has rows', () => {
     expect(() => parseRowKeys([{}, {}, {}], 2)).toThrow(SecurityError);
+  });
+});
+
+describe('parseRowFilters', () => {
+  it('passes no filters, and filters of string values, through', () => {
+    expect(parseRowFilters(undefined)).toBeUndefined();
+    expect(parseRowFilters({ service: "O'Brien", tag_stage: '' })).toEqual({ service: "O'Brien", tag_stage: '' });
+  });
+
+  it('refuses anything but an object of string values', () => {
+    for (const payload of [null, 'service=EC2', ['EC2'], { service: 3 }, { service: null }, { service: ['EC2'] }]) {
+      expect(() => parseRowFilters(payload)).toThrow(SecurityError);
+    }
   });
 });
 
@@ -72,7 +88,9 @@ describe('rowKeysFilter', () => {
 describe('queryAggregatedRows against DuckDB', () => {
   let db: DuckDBInstance;
   let conn: DuckDBConnection;
-  const run: RunSql = (sql, params) => fetchRowsPrepared(conn, sql, params);
+  // Cloned, as the rows reach the main process: the DuckDB worker posts
+  // them, and a DATE or TIMESTAMP value arrives as a plain object.
+  const run: RunSql = async (sql, params) => structuredClone(await fetchRowsPrepared(conn, sql, params));
 
   beforeAll(async () => {
     db = await DuckDBInstance.create();
@@ -97,6 +115,7 @@ describe('queryAggregatedRows against DuckDB', () => {
     source: '(SELECT *, cost AS list_cost, 1.0 AS usage_amount FROM line_items)',
     where: '',
     groupBy: explorerGroupBy(['service', 'region'], new Map()),
+    rowFilters: [],
     sort: undefined,
     rowLimit: 500,
     rowKeys: undefined,
@@ -162,6 +181,42 @@ describe('queryAggregatedRows against DuckDB', () => {
     expect(result.rows.map(r => [r.values, r.cost])).toEqual([[{}, 150]]);
   });
 
+  it('keeps the line items a row filter matches, comparing its value as a value', async () => {
+    const expanded = await queryAggregatedRows(run, { ...byServiceAndRegion, rowFilters: explorerRowFilters({ service: "O'Brien" }, new Map()) });
+    expect(expanded.totalRows).toBe(1);
+    expect(expanded.rows.map(r => [r.values, r.cost])).toEqual([[{ service: "O'Brien", region: 'eu-west-1' }, 40]]);
+
+    const injected = await queryAggregatedRows(run, { ...byServiceAndRegion, rowFilters: explorerRowFilters({ service: "x' OR '1'='1" }, new Map()) });
+    expect(injected).toEqual({ rows: [], totalRows: 0 });
+  });
+
+  it('applies the row filters and the keys together, numbering their values in WHERE order', async () => {
+    const calls: { sql: string; params: readonly unknown[] }[] = [];
+    const recording: RunSql = (sql, params) => { calls.push({ sql, params }); return run(sql, params); };
+    // RDS is a listed key the row filter rules out.
+    const result = await queryAggregatedRows(recording, {
+      ...byServiceAndRegion,
+      rowFilters: explorerRowFilters({ service: "O'Brien" }, new Map()),
+      rowKeys: [{ service: 'RDS', region: 'eu-west-1' }, { service: "O'Brien", region: 'eu-west-1' }],
+    });
+    expect(result.totalRows).toBe(1);
+    expect(result.rows.map(r => [r.values, r.cost])).toEqual([[{ service: "O'Brien", region: 'eu-west-1' }, 40]]);
+
+    const [data] = calls;
+    expect(calls).toHaveLength(1);
+    expect(data?.sql).toContain(`WHERE COALESCE(CAST(service AS VARCHAR), '') = $1 AND row(COALESCE(CAST(service AS VARCHAR), ''), COALESCE(CAST(region AS VARCHAR), '')) IN (row($2, $3), row($4, $5))`);
+    expect(data?.params).toEqual(["O'Brien", 'RDS', 'eu-west-1', "O'Brien", 'eu-west-1']);
+  });
+
+  it('extends the WHERE every line item passes', async () => {
+    const result = await queryAggregatedRows(run, {
+      ...byServiceAndRegion,
+      where: "WHERE region = 'eu-west-1'",
+      rowFilters: explorerRowFilters({ service: 'EC2' }, new Map()),
+    });
+    expect(result.rows.map(r => [r.values, r.cost])).toEqual([[{ service: 'EC2', region: 'eu-west-1' }, 10]]);
+  });
+
   describe('on the synthetic January bill', () => {
     // Usage, Tax ($250), Purchase ($120) and Credit (-$75), by charge category.
     const january: AggregatedRowsQuery = {
@@ -173,6 +228,7 @@ describe('queryAggregatedRows against DuckDB', () => {
       }),
       where: "WHERE usage_date BETWEEN '2026-01-01' AND '2026-01-31'",
       groupBy: explorerGroupBy(['charge_category'], new Map()),
+      rowFilters: [],
       sort: undefined,
       rowLimit: 2,
       rowKeys: undefined,
@@ -189,6 +245,117 @@ describe('queryAggregatedRows against DuckDB', () => {
         ['Usage', top.rows[0]?.cost],
         ['Credit', -75],
       ]);
+    });
+
+    it('expands a day group through a row filter on the date its row reads', async () => {
+      const days = await queryAggregatedRows(run, { ...january, groupBy: explorerGroupBy(['usage_date'], new Map()), rowLimit: 1 });
+      const [day] = days.rows;
+      if (day === undefined) throw new Error('expected a day of January');
+      expect(day.values['usage_date']).toMatch(/^2026-01-\d\d$/);
+
+      const detail = await queryAggregatedRows(run, { ...january, rowFilters: explorerRowFilters(day.values, new Map()), rowLimit: 500 });
+      expect(detail.rows.length).toBeGreaterThan(0);
+      expect(detail.rows.reduce((sum, r) => sum + r.cost, 0)).toBeCloseTo(day.cost, 6);
+    });
+  });
+
+  describe('on line items whose team tag is missing, empty or set', () => {
+    const TEAM: TagDimension = { tagName: 'team', label: 'Team' };
+    const TEAM_ID = tagDimColumn(TEAM);
+    const dimensions: DimensionsConfig = { builtIn: [], tags: [TEAM] };
+    let dataDir = '';
+
+    beforeAll(async () => {
+      dataDir = (await mkdtemp(join(tmpdir(), 'cg-agg-tags-'))).replaceAll('\\', '/');
+      // One power of two per line item, so every total names its items.
+      const item = (hour: string, service: string, tags: string, cost: number): string =>
+        `(TIMESTAMP '2026-01-05 ${hour}:00:00', '111', 'Acct', 'eu-west-1', '${service}', '${service}', 'Compute', 'usage',
+          1.0, ${String(cost)}, 'arn:${String(cost)}', ${String(cost)}, 'Usage', 'Standard', '', 'RunInstances', 'BoxUsage', ${tags})`;
+      const items = [
+        item('05', 'EC2', "MAP {'team': 'web'}", 1),
+        item('05', 'EC2', "MAP {'env': 'prod'}", 2),
+        item('06', 'EC2', "MAP {'team': ''}", 4),
+        item('06', 'RDS', "MAP {'team': ''}", 8),
+        item('06', 'RDS', "MAP {'env': 'dev'}", 16),
+      ];
+      for (const tier of ['daily', 'hourly']) {
+        const dir = join(dataDir, FIXTURE_PROVIDER, 'raw', `${tier}-2026-01`);
+        await mkdir(dir, { recursive: true });
+        await conn.run(`
+          COPY (
+            SELECT * FROM (VALUES ${items.join(',\n')}) AS t(ChargePeriodStart, SubAccountId, SubAccountName, RegionId,
+              ServiceName, x_ServiceCode, ServiceCategory, ChargeDescription, ConsumedQuantity, ListCost, ResourceId,
+              EffectiveCost, ChargeCategory, PricingCategory, CommitmentDiscountStatus, x_Operation, SkuMeter, Tags)
+          ) TO ${sqlStringLiteral(join(dir, 'data.parquet').replaceAll('\\', '/'))} (FORMAT PARQUET)
+        `);
+      }
+    });
+
+    afterAll(async () => {
+      await rm(dataDir, { recursive: true, force: true });
+    });
+
+    const query = (tier: 'daily' | 'hourly', ids: readonly string[]): AggregatedRowsQuery => ({
+      source: buildSource({ dataDir, tier, dimensions, providers: [{ name: FIXTURE_PROVIDER, periods: ['2026-01'] }], costMetric: 'effective' }),
+      where: '',
+      groupBy: explorerGroupBy(ids, tagSqlColumnsById(dimensions.tags)),
+      rowFilters: [],
+      sort: undefined,
+      rowLimit: 500,
+      rowKeys: undefined,
+    });
+
+    it('shows a missing and an empty tag as one group, counted once', async () => {
+      const result = await queryAggregatedRows(run, query('daily', ['service', TEAM_ID]));
+      expect(result.totalRows).toBe(3);
+      expect(result.rows.map(r => [r.values, r.cost, r.rowCount])).toEqual([
+        [{ service: 'RDS', [TEAM_ID]: '' }, 24, 2],
+        [{ service: 'EC2', [TEAM_ID]: '' }, 6, 2],
+        [{ service: 'EC2', [TEAM_ID]: 'web' }, 1, 1],
+      ]);
+    });
+
+    it('returns that group whole for a key with an empty value', async () => {
+      const result = await queryAggregatedRows(run, { ...query('daily', ['service', TEAM_ID]), rowKeys: [{ service: 'EC2', [TEAM_ID]: '' }] });
+      expect(result.totalRows).toBe(1);
+      expect(result.rows.map(r => [r.values, r.cost])).toEqual([[{ service: 'EC2', [TEAM_ID]: '' }, 6]]);
+    });
+
+    it('expands that group to its line items, the untagged and the empty-tagged', async () => {
+      const detail = await queryAggregatedRows(run, {
+        ...query('daily', ['resource_id']),
+        rowFilters: explorerRowFilters({ service: 'EC2', [TEAM_ID]: '' }, tagSqlColumnsById(dimensions.tags)),
+      });
+      expect(detail.rows.map(r => [r.values['resource_id'], r.cost])).toEqual([['arn:4', 4], ['arn:2', 2]]);
+    });
+
+    it('sorts by the tag as it reads', async () => {
+      const teams = async (direction: 'asc' | 'desc'): Promise<string[]> => {
+        const result = await queryAggregatedRows(run, { ...query('daily', [TEAM_ID]), sort: { column: TEAM_ID, direction } });
+        return result.rows.map(r => r.values[TEAM_ID] ?? '?');
+      };
+      expect(await teams('asc')).toEqual(['', 'web']);
+      expect(await teams('desc')).toEqual(['web', '']);
+    });
+
+    it('reads a date or an hour as text, and keys, sorts and expands it by that text', async () => {
+      const byDate = await queryAggregatedRows(run, query('daily', ['usage_date']));
+      expect(byDate.rows.map(r => [r.values, r.cost])).toEqual([[{ usage_date: '2026-01-05' }, 31]]);
+
+      const byHour = query('hourly', ['usage_hour']);
+      expect((await queryAggregatedRows(run, byHour)).rows.map(r => [r.values, r.cost])).toEqual([
+        [{ usage_hour: '2026-01-05 06:00:00' }, 28],
+        [{ usage_hour: '2026-01-05 05:00:00' }, 3],
+      ]);
+      const keyed = await queryAggregatedRows(run, { ...byHour, rowKeys: [{ usage_hour: '2026-01-05 05:00:00' }] });
+      expect(keyed.rows.map(r => r.cost)).toEqual([3]);
+      const ascending = await queryAggregatedRows(run, { ...byHour, sort: { column: 'usage_hour', direction: 'asc' } });
+      expect(ascending.rows.map(r => r.values['usage_hour'])).toEqual(['2026-01-05 05:00:00', '2026-01-05 06:00:00']);
+      const expanded = await queryAggregatedRows(run, {
+        ...query('hourly', ['resource_id']),
+        rowFilters: explorerRowFilters({ usage_hour: '2026-01-05 05:00:00' }, new Map()),
+      });
+      expect(expanded.rows.map(r => r.values['resource_id'])).toEqual(['arn:2', 'arn:1']);
     });
   });
 });

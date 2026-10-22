@@ -35,9 +35,9 @@ import type {
 import type { RawRow } from '../duckdb-client.js';
 import { type AppContext, prefsPath } from './context.js';
 import { buildAccountReverseMap, columnForDimension, resolveRollupSource, tagSelectItems, tagValuesById, toNum, toStr } from './query-utils.js';
-import { parseRowKeys, queryAggregatedRows } from './aggregated-table.js';
+import { parseRowFilters, parseRowKeys, queryAggregatedRows } from './aggregated-table.js';
 import type { RunSql } from './aggregated-table.js';
-import { appendRowFilters, explorerGroupBy, explorerOrderBy } from './explorer-columns.js';
+import { explorerGroupBy, explorerOrderBy, explorerRowFilters } from './explorer-columns.js';
 import { buildExplorerFilterPredicate } from './explorer-filters.js';
 import { readExplorerPreferences, writeExplorerPreferences } from './explorer-prefs.js';
 import { resolveScopeMetric } from './explorer-scope.js';
@@ -400,11 +400,12 @@ export function registerExplorerHandlers(app: AppContext): void {
     return { sampleRows, tagColumns: qc.tagColumns };
   }));
 
-  // Without keys the queries take no parameters, so they keep the plain path.
+  // Without row filters or keys the queries take no parameters, so they keep the plain path.
   const runAggregatedSql: RunSql = (sql, bound) => bound.length === 0 ? runQuery(sql) : runPreparedQuery(sql, bound);
 
   ipcMain.handle('explorer:query-aggregated-table', (_event, payload: unknown): Promise<AggregatedTableResult> => originStore.run((payload as AggregatedTableParams).origin ?? null, async () => {
     const params = payload as AggregatedTableParams;
+    const rowFilters = parseRowFilters(params.rowFilters);
     const rowKeys = parseRowKeys(params.rowKeys, MAX_ROW_LIMIT);
     const qc = await prepareQueryContext(app, params);
 
@@ -412,8 +413,9 @@ export function registerExplorerHandlers(app: AppContext): void {
 
     const { rows, totalRows } = await queryAggregatedRows(runAggregatedSql, {
       source: qc.source,
-      where: appendRowFilters(qc.whereStr, params.rowFilters, qc.tagSqlColumns, params.granularity),
+      where: qc.whereStr,
       groupBy: explorerGroupBy(params.groupByColumns, qc.tagSqlColumns, params.granularity),
+      rowFilters: explorerRowFilters(rowFilters, qc.tagSqlColumns, params.granularity),
       sort: params.sort,
       rowLimit: clampRowLimit(params.rowLimit),
       rowKeys,
