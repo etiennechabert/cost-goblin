@@ -413,11 +413,12 @@ describe('workflow policy (.github/workflows)', () => {
 
   it('tests the GCP exporter on the Node major its Docker image runs', () => {
     const dockerfile = readFileSync(new URL('scripts/gcp-focus-exporter/Dockerfile', repoRoot), 'utf8');
-    const imageMajor = /^FROM node:(\d+)-slim$/m.exec(dockerfile)?.[1];
+    // Any tag variant or digest pin: node:26-slim, node:26-bookworm-slim@sha256:…
+    const imageMajor = /^FROM node:(\d+)\b/m.exec(dockerfile)?.[1];
     const job = ci.jobs?.['test-exporter-node26'];
     const setupNode = stepsOf(job).find((step) => usesAction(step, 'actions/setup-node'));
     const ciMajor = /^\^(\d+)\./.exec(String(setupNode?.with?.['node-version']))?.[1];
-    expect(imageMajor).toBeDefined();
+    expect(imageMajor, 'Dockerfile has no FROM node:<major> line').toBeDefined();
     expect(ciMajor).toBe(imageMajor);
     expect(stepsOf(job).map(runBody).join('\n')).toMatch(/vitest run --project scripts scripts\/gcp-focus-exporter\//);
   });

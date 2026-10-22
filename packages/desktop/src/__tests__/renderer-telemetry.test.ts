@@ -7,7 +7,7 @@ import type { TelemetryStatus } from '@costgoblin/core/browser';
 
 const fake = vi.hoisted(() => ({
   init: vi.fn<(options: BrowserOptions) => void>(),
-  browserTracingIntegration: vi.fn(() => ({ name: 'BrowserTracing' })),
+  browserTracingIntegration: vi.fn<(options?: unknown) => { name: string }>(() => ({ name: 'BrowserTracing' })),
 }));
 
 vi.mock('@sentry/electron/renderer', () => ({ init: fake.init, browserTracingIntegration: fake.browserTracingIntegration }));
@@ -29,6 +29,7 @@ async function sync(s: TelemetryStatus): Promise<BrowserOptions> {
 
 afterEach(() => {
   fake.init.mockReset();
+  fake.browserTracingIntegration.mockReset();
 });
 
 describe('renderer telemetry', () => {
@@ -57,5 +58,12 @@ describe('renderer telemetry', () => {
 
     expect(options).toMatchObject({ traceLifecycle: 'static', tracesSampleRate: 0.25 });
     expect(options.integrations).toEqual([{ name: 'BrowserTracing' }]);
+  });
+
+  it('leaves out INP, the one web vital sent outside the scrubbed pageload transaction', async () => {
+    await sync(status(true));
+
+    expect(fake.browserTracingIntegration).toHaveBeenCalledTimes(1);
+    expect(fake.browserTracingIntegration).toHaveBeenCalledWith({ webVitals: { ignore: ['inp'] } });
   });
 });
