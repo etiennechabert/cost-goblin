@@ -76,9 +76,9 @@ describe('ButtonTooltip', () => {
 describe('PopoverContent arrow', () => {
   it('draws an arrow only when asked', () => {
     const { unmount } = render(<Popover open><PopoverContent arrow>with</PopoverContent></Popover>);
-    expect(screen.getByText('with').querySelector('svg')).not.toBeNull();
+    expect(screen.getByText('with').querySelector('[data-card-arrow]')).not.toBeNull();
     unmount();
     render(<Popover open><PopoverContent>without</PopoverContent></Popover>);
-    expect(screen.getByText('without').querySelector('svg')).toBeNull();
+    expect(screen.getByText('without').querySelector('[data-card-arrow]')).toBeNull();
   });
 });

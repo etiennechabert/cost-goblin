@@ -44,7 +44,7 @@ describe('DashboardsDropdown', () => {
   it('shows a labelled icon while a non-dashboard page is open', () => {
     renderDropdown({ activeId: 'trends' });
     expect(trigger().textContent).toBe('');
-    expect(trigger().getAttribute('title')).toBe('Dashboards');
+    expect(trigger().getAttribute('title')).toBeNull();
     expect(trigger().getAttribute('aria-expanded')).toBe('false');
   });
 
@@ -53,6 +53,27 @@ describe('DashboardsDropdown', () => {
     expect(trigger().textContent).toBe('Dashboards');
     expect(trigger().getAttribute('title')).toBeNull();
     expect(trigger().getAttribute('aria-label')).toBeNull();
+  });
+
+  it.each([
+    { page: 'another page', activeId: 'trends' },
+    { page: 'a dashboard', activeId: 'k8s' },
+  ])('explains itself on hover while $page is open', async ({ activeId }) => {
+    const { user } = renderDropdown({ activeId });
+    await user.hover(trigger());
+    const tip = screen.getByRole('tooltip');
+    expect(within(tip).getByText('Dashboards')).toBeDefined();
+    expect(within(tip).getByText('Switch or pin a dashboard')).toBeDefined();
+  });
+
+  it('hides the tooltip while its menu is open', async () => {
+    const { user } = renderDropdown({ activeId: 'trends' });
+    await user.hover(trigger());
+    await openMenu(user);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    await user.unhover(trigger());
+    await user.hover(trigger());
+    expect(screen.queryByRole('tooltip')).toBeNull();
   });
 
   it('lists the default dashboard first, then the rest in order', async () => {

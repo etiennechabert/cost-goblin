@@ -473,7 +473,7 @@ describe('App shell — command palette', () => {
       ? { status: 'syncing', phase: 'downloading', progress: 0.3, filesTotal: 10, filesDone: 3, bytesTotal: 0, bytesDone: 0, message: '' }
       : IDLE);
     const user = await bootApp(api);
-    await waitFor(() => { expect(headerButton('Data sync').getAttribute('title')).toBe('Syncing…'); });
+    await waitFor(() => { expect(headerButton('Data sync').textContent).toBe('7'); });
 
     await user.click(screen.getByTestId('workspace-chip'));
     await user.click(screen.getByRole('button', { name: 'client-acme' }));
@@ -605,8 +605,8 @@ describe('App shell — sync status', () => {
     holdInventoryCheck(api);
     await bootApp(api);
 
-    await waitFor(() => { expect(headerButton('Data sync').getAttribute('title')).toBe('Sync error — Rate exceeded'); });
-    expect(syncErrorAnnouncement()).toBe('Sync error: Rate exceeded');
+    await waitFor(() => { expect(syncErrorAnnouncement()).toBe('Sync error: Rate exceeded'); });
+    expect(headerButton('Data sync').textContent).toBe('!');
   });
 
   it('surfaces a failed tier download', async () => {
@@ -616,7 +616,8 @@ describe('App shell — sync status', () => {
       : IDLE);
     holdInventoryCheck(api);
     await bootApp(api);
-    await waitFor(() => { expect(headerButton('Data sync').getAttribute('title')).toBe('Sync error — AccessDenied: hourly bucket'); });
+    await waitFor(() => { expect(syncErrorAnnouncement()).toBe('Sync error: AccessDenied: hourly bucket'); });
+    expect(headerButton('Data sync').textContent).toBe('!');
   });
 
   it('counts closed months with no or outdated local data as not synced', async () => {
@@ -631,7 +632,7 @@ describe('App shell — sync status', () => {
     const user = await bootApp(api);
 
     await waitFor(() => { expect(syncAnnouncement()).toBe('2 billing periods not synced'); });
-    expect(headerButton('Data sync').getAttribute('title')).toBe('2 billing periods not synced');
+    expect(headerButton('Data sync').textContent).toBe('2');
     await user.click(headerButton('Data sync'));
     expect(await screen.findByText('2 periods not synced')).toBeDefined();
   });
@@ -648,7 +649,7 @@ describe('App shell — sync status', () => {
     await bootApp(api);
 
     await waitFor(() => { expect(syncAnnouncement()).toBe('1 billing period not synced'); });
-    expect(headerButton('Data sync').getAttribute('title')).toBe('1 billing period not synced');
+    expect(headerButton('Data sync').textContent).toBe('1');
   });
 
   it('falls back to a year of retention when no provider is configured', async () => {
@@ -668,7 +669,8 @@ describe('App shell — sync status', () => {
     const api = new AppApi();
     vi.spyOn(api, 'getDataInventory').mockRejectedValue(thrown);
     await bootApp(api);
-    await waitFor(() => { expect(headerButton('Data sync').getAttribute('title')).toBe(`Sync error — ${shown}`); });
+    await waitFor(() => { expect(syncErrorAnnouncement()).toBe(`Sync error: ${shown}`); });
+    expect(headerButton('Data sync').textContent).toBe('!');
   });
 
   it('opens Data & Sync from the sync popover', async () => {

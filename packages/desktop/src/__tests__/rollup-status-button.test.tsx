@@ -29,16 +29,32 @@ function deferredStats(): { promise: Promise<RollupStats | null>; resolve: (stat
 }
 
 describe('RollupStatusButton', () => {
-  it.each<{ status: RollupStatus; title: string }>([
-    { status: { state: 'computing', done: 2, total: 5, periods: [], active: [] }, title: 'Rebuilding rollup… 2/5' },
-    { status: { state: 'computing', done: 0, total: 0, periods: [], active: [] }, title: 'Rebuilding rollup…' },
-    { status: { state: 'failed', message: '1 of 4 partitions failed', reason: 'IO Error: disk full', periods: 3 }, title: 'Rollup build failed — 1 of 4 partitions failed\nIO Error: disk full' },
-    { status: { state: 'ready', periods: 1 }, title: 'Rollup ready — 1 month pre-aggregated' },
-    { status: READY, title: 'Rollup ready — 3 months pre-aggregated' },
-    { status: { state: 'idle' }, title: 'Rollup not built — dashboards query raw data' },
-  ])('describes a $status.state rollup as "$title"', ({ status, title }) => {
+  it.each<RollupStatus>([
+    { state: 'computing', done: 2, total: 5, periods: [], active: [] },
+    { state: 'failed', message: '1 of 4 partitions failed', reason: 'IO Error: disk full', periods: 3 },
+    READY,
+    { state: 'idle' },
+  ])('explains itself on hover while $state, with no native title', async (status) => {
+    const user = userEvent.setup();
     render(<RollupStatusButton status={status} />);
-    expect(trigger().getAttribute('title')).toBe(title);
+    expect(trigger().getAttribute('title')).toBeNull();
+    await user.hover(trigger());
+    const tip = screen.getByRole('tooltip');
+    expect(within(tip).getByText('Rollup')).toBeDefined();
+    expect(within(tip).getByText('Pre-aggregated data for fast dashboards')).toBeDefined();
+  });
+
+  it('hides the tooltip while its popover is open, which still carries the status', async () => {
+    const user = userEvent.setup();
+    render(<RollupStatusButton status={{ state: 'failed', message: '1 of 4 partitions failed', reason: 'IO Error: disk full', periods: 3 }} />);
+    await user.hover(trigger());
+    const popover = await open(user);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    await user.unhover(trigger());
+    await user.hover(trigger());
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    expect(within(popover).getByText(/1 of 4 partitions failed/)).toBeDefined();
+    expect(popover.querySelector('[data-card-arrow]')).not.toBeNull();
   });
 
   it('flags a failed build with a badge', () => {

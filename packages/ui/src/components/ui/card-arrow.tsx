@@ -7,7 +7,7 @@ export const CARD_ARROW_SIZE: { readonly width: number; readonly height: number 
  *  fill covers the card's own border across the arrow's base. */
 export function CardArrowShape(): React.JSX.Element {
   return (
-    <svg viewBox="0 0 12 6" className="block -translate-y-px overflow-visible" aria-hidden="true">
+    <svg viewBox="0 0 12 6" className="block -translate-y-px overflow-visible" aria-hidden="true" data-card-arrow="">
       <path d="M0 0 L6 6 L12 0" className="fill-bg-secondary stroke-border" />
     </svg>
   );
