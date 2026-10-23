@@ -33,26 +33,28 @@ export function DashboardsDropdown({
   const activeIsCustom = items.some(i => i.id === activeId);
 
   return (
-    // Always opens the list: the button is a "▾" icon, highlighted while a
-    // dashboard is open, and the goblin next to it is the way Home.
+    // Always opens the list: the button reads "Dashboards ▾" while a dashboard
+    // is open (icon and label, like the analysis pages), and the goblin next
+    // to it is the way Home.
     <Popover open={open} onOpenChange={setOpen}>
       <ButtonTooltip name="Dashboards" description="Switch or pin a dashboard" suppressed={open}>
         <PopoverTrigger asChild>
           <button
             type="button"
             className={[
-              'flex items-center gap-1 rounded-md p-1.5 transition-colors [-webkit-app-region:no-drag]',
+              'flex items-center rounded-md transition-colors [-webkit-app-region:no-drag]',
               activeIsCustom
-                ? 'bg-bg-tertiary text-text-primary'
-                : 'text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
+                ? 'gap-1.5 px-3 py-1.5 text-sm font-medium bg-bg-tertiary text-text-primary'
+                : 'gap-1 p-1.5 text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
             ].join(' ')}
             aria-haspopup="menu"
             aria-expanded={open}
-            aria-label="Dashboards"
+            aria-label={activeIsCustom ? undefined : 'Dashboards'}
           >
-            <Gauge size={18} />
+            <Gauge size={activeIsCustom ? 14 : 18} />
+            {activeIsCustom && 'Dashboards'}
             <ChevronDown
-              size={12}
+              size={activeIsCustom ? 14 : 12}
               className={open ? 'rotate-180 transition-transform' : 'transition-transform'}
             />
           </button>

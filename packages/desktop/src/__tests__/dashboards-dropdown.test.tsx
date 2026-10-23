@@ -48,10 +48,11 @@ describe('DashboardsDropdown', () => {
     expect(trigger().getAttribute('aria-expanded')).toBe('false');
   });
 
-  it('stays an icon while one of them is open, highlighted as the current section', () => {
+  it('adds its label to the icon while one of them is open, like the analysis pages', () => {
     renderDropdown({ activeId: 'k8s' });
-    expect(trigger().textContent).toBe('');
-    expect(trigger().getAttribute('aria-label')).toBe('Dashboards');
+    expect(trigger().textContent).toBe('Dashboards');
+    expect(trigger().querySelector('svg.lucide-gauge')).not.toBeNull();
+    expect(trigger().getAttribute('aria-label')).toBeNull();
     expect(trigger().className).toContain('bg-bg-tertiary text-text-primary');
   });
 
