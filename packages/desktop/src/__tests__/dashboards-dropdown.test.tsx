@@ -48,11 +48,11 @@ describe('DashboardsDropdown', () => {
     expect(trigger().getAttribute('aria-expanded')).toBe('false');
   });
 
-  it('spells out "Dashboards" while one of them is open', () => {
+  it('stays an icon while one of them is open, highlighted as the current section', () => {
     renderDropdown({ activeId: 'k8s' });
-    expect(trigger().textContent).toBe('Dashboards');
-    expect(trigger().getAttribute('title')).toBeNull();
-    expect(trigger().getAttribute('aria-label')).toBeNull();
+    expect(trigger().textContent).toBe('');
+    expect(trigger().getAttribute('aria-label')).toBe('Dashboards');
+    expect(trigger().className).toContain('bg-bg-tertiary text-text-primary');
   });
 
   it.each([

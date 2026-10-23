@@ -455,7 +455,7 @@ test.describe('Clickability (workspace mode)', () => {
         enter: async () => {
           await ensureViewMode(p);
           await leftNav.getByRole('button', { name: 'Home' }).click({ timeout: 5_000 });
-          await expect(leftNav.getByRole('button', { name: 'Dashboards' })).toHaveText(/Dashboards/);
+          await expect(leftNav.getByRole('button', { name: 'Home' })).toHaveAttribute('aria-current', 'page');
         },
       },
       ...['Baselines', 'Explorer'].map(label => ({
