@@ -1,6 +1,7 @@
 import * as React from 'react';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
 import { NO_DRAG, cn } from '../../lib/utils.js';
+import { CARD_ARROW_SIZE, CardArrowShape } from './card-arrow.js';
 
 export const Popover = PopoverPrimitive.Root;
 
@@ -10,8 +11,11 @@ export const PopoverAnchor = PopoverPrimitive.Anchor;
 
 export const PopoverContent = React.forwardRef<
   React.ComponentRef<typeof PopoverPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof PopoverPrimitive.Content>
->(({ className, align = 'center', sideOffset = 4, ...props }, ref) => (
+  React.ComponentPropsWithoutRef<typeof PopoverPrimitive.Content> & {
+    /** Points the popover at its trigger with the card arrow. */
+    readonly arrow?: boolean | undefined;
+  }
+>(({ className, align = 'center', sideOffset = 4, arrow = false, children, ...props }, ref) => (
   <PopoverPrimitive.Portal>
     <PopoverPrimitive.Content
       ref={ref}
@@ -26,7 +30,14 @@ export const PopoverContent = React.forwardRef<
         className,
       )}
       {...props}
-    />
+    >
+      {children}
+      {arrow && (
+        <PopoverPrimitive.Arrow asChild {...CARD_ARROW_SIZE}>
+          <CardArrowShape />
+        </PopoverPrimitive.Arrow>
+      )}
+    </PopoverPrimitive.Content>
   </PopoverPrimitive.Portal>
 ));
 

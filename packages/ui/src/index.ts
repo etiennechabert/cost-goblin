@@ -23,6 +23,7 @@ export type { ButtonProps } from './components/ui/button.js';
 export { Calendar } from './components/ui/calendar.js';
 export type { CalendarProps } from './components/ui/calendar.js';
 export { Popover, PopoverTrigger, PopoverContent, PopoverAnchor } from './components/ui/popover.js';
+export { ButtonTooltip } from './components/ui/tooltip.js';
 export { Dialog, DialogTrigger, DialogPortal, DialogClose, DialogOverlay, DialogContent, DialogTitle, DialogDescription } from './components/ui/dialog.js';
 
 export { ErrorBoundary } from './components/error-boundary.js';
