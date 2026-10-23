@@ -96,7 +96,7 @@ describe('SyncStatusButton — the header indicator', () => {
   ])('explains itself on hover with $name, leaving the status to the popover', async ({ props }) => {
     const user = renderButton(props);
     await user.hover(trigger());
-    const tip = screen.getByRole('tooltip');
+    const tip = await screen.findByRole('tooltip');
     expect(within(tip).getByText('Data sync')).toBeDefined();
     expect(within(tip).getByText('Billing data downloads')).toBeDefined();
     expect(within(tip).queryByText(/Network down/)).toBeNull();

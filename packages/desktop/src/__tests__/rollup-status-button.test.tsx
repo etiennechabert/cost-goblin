@@ -39,7 +39,7 @@ describe('RollupStatusButton', () => {
     render(<RollupStatusButton status={status} />);
     expect(trigger().getAttribute('title')).toBeNull();
     await user.hover(trigger());
-    const tip = screen.getByRole('tooltip');
+    const tip = await screen.findByRole('tooltip');
     expect(within(tip).getByText('Rollup')).toBeDefined();
     expect(within(tip).getByText('Pre-aggregated data for fast dashboards')).toBeDefined();
   });

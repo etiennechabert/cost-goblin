@@ -61,7 +61,7 @@ describe('DashboardsDropdown', () => {
   ])('explains itself on hover while $page is open', async ({ activeId }) => {
     const { user } = renderDropdown({ activeId });
     await user.hover(trigger());
-    const tip = screen.getByRole('tooltip');
+    const tip = await screen.findByRole('tooltip');
     expect(within(tip).getByText('Dashboards')).toBeDefined();
     expect(within(tip).getByText('Switch or pin a dashboard')).toBeDefined();
   });

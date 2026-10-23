@@ -74,6 +74,15 @@ interface ButtonTooltipProps {
  *  own provider: at zero delay a shared one would add nothing. */
 export function ButtonTooltip({ name, description, suppressed = false, children }: ButtonTooltipProps): React.JSX.Element {
   const [open, setOpen] = React.useState(false);
+  // Suppression closes it outright rather than only hiding it: Radix's
+  // zero-delay open can land between the hover and the click that opens the
+  // button's popover, and a merely hidden tooltip would reappear when the
+  // popover closes.
+  const [wasSuppressed, setWasSuppressed] = React.useState(suppressed);
+  if (suppressed !== wasSuppressed) {
+    setWasSuppressed(suppressed);
+    if (suppressed) setOpen(false);
+  }
   React.useEffect(trackInputModality, []);
   return (
     <TooltipPrimitive.Provider delayDuration={0} disableHoverableContent>

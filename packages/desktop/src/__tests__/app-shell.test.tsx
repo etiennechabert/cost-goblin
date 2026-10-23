@@ -195,7 +195,7 @@ describe('App shell — header actions', () => {
     await waitFor(() => { expect(explorer.getAttribute('aria-current')).toBe('page'); });
     await user.unhover(explorer);
     await user.hover(explorer);
-    expect(within(screen.getByRole('tooltip')).getByText('Inspect the raw billing data')).toBeDefined();
+    expect(within(await screen.findByRole('tooltip')).getByText('Inspect the raw billing data')).toBeDefined();
     expect(headerButton('Trends').getAttribute('aria-current')).toBeNull();
   });
 
@@ -248,7 +248,7 @@ describe('App shell — header tooltips', () => {
     const user = await bootApp();
     expect(headerButton(button).getAttribute('title')).toBeNull();
     await user.hover(headerButton(button));
-    const tip = screen.getByRole('tooltip');
+    const tip = await screen.findByRole('tooltip');
     expect(within(tip).getByText(name)).toBeDefined();
     expect(within(tip).getByText(line)).toBeDefined();
   });
@@ -259,7 +259,7 @@ describe('App shell — header tooltips', () => {
     const done = headerButton('Done, return to dashboards');
     expect(done.getAttribute('title')).toBeNull();
     await user.hover(done);
-    const tip = screen.getByRole('tooltip');
+    const tip = await screen.findByRole('tooltip');
     expect(within(tip).getByText('Done')).toBeDefined();
     expect(within(tip).getByText('Back to dashboards')).toBeDefined();
   });
@@ -463,7 +463,7 @@ describe('App shell — settings', () => {
     // The gear carries the update dot, says so on hover, and lands on General.
     expect(headerButton('Settings').getAttribute('data-update-available')).toBe('true');
     await user.hover(headerButton('Settings'));
-    expect(within(screen.getByRole('tooltip')).getByText('Update available')).toBeDefined();
+    expect(within(await screen.findByRole('tooltip')).getByText('Update available')).toBeDefined();
     await user.click(headerButton('Settings'));
     await user.click(await screen.findByRole('button', { name: 'v1.4.0 available' }));
 

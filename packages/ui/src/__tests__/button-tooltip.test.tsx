@@ -23,7 +23,7 @@ describe('ButtonTooltip', () => {
   it('shows the name and line on hover, with no delay', async () => {
     const { user, button } = renderTooltip();
     await user.hover(button);
-    const tip = screen.getByRole('tooltip');
+    const tip = await screen.findByRole('tooltip');
     expect(within(tip).getByText('Data sync')).toBeDefined();
     expect(within(tip).getByText('Billing data downloads')).toBeDefined();
   });
@@ -31,7 +31,7 @@ describe('ButtonTooltip', () => {
   it('shows on keyboard focus and Escape dismisses it', async () => {
     const { user } = renderTooltip();
     await user.tab();
-    expect(screen.getByRole('tooltip')).toBeDefined();
+    expect(await screen.findByRole('tooltip')).toBeDefined();
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('tooltip')).toBeNull();
   });
@@ -71,7 +71,7 @@ describe('ButtonTooltip', () => {
   it('closes on click and stays closed while the pointer stays on the button', async () => {
     const { user, button } = renderTooltip();
     await user.hover(button);
-    expect(screen.getByRole('tooltip')).toBeDefined();
+    expect(await screen.findByRole('tooltip')).toBeDefined();
     await user.click(button);
     expect(screen.queryByRole('tooltip')).toBeNull();
     await user.pointer({ target: button, coords: { x: 3, y: 3 } });
@@ -88,7 +88,18 @@ describe('ButtonTooltip', () => {
     await user.unhover(button);
     await user.tab();
     await user.hover(button);
-    expect(screen.getByRole('tooltip')).toBeDefined();
+    expect(await screen.findByRole('tooltip')).toBeDefined();
+  });
+
+  it('does not come back when suppression lifts, if it was open as it began', async () => {
+    const { user, button, rerender } = renderTooltip(false);
+    await user.hover(button);
+    expect(await screen.findByRole('tooltip')).toBeDefined();
+    // The button's popover opens (suppressing it) and later closes again.
+    rerender(true);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    rerender(false);
+    expect(screen.queryByRole('tooltip')).toBeNull();
   });
 
   it('does not add a native title', async () => {
@@ -101,7 +112,7 @@ describe('ButtonTooltip', () => {
   it('sizes its arrow, so it draws', async () => {
     const { user, button } = renderTooltip();
     await user.hover(button);
-    const arrow = screen.getByRole('tooltip').querySelector('[data-card-arrow]');
+    const arrow = (await screen.findByRole('tooltip')).querySelector('[data-card-arrow]');
     expect(arrow?.getAttribute('width')).toBe('12');
     expect(arrow?.getAttribute('height')).toBe('6');
   });
@@ -109,7 +120,7 @@ describe('ButtonTooltip', () => {
   it('cannot take the pointer', async () => {
     const { user, button } = renderTooltip();
     await user.hover(button);
-    expect(screen.getByRole('tooltip').classList.contains('pointer-events-none')).toBe(true);
+    expect((await screen.findByRole('tooltip')).classList.contains('pointer-events-none')).toBe(true);
   });
 });
 
