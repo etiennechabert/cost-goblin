@@ -195,10 +195,11 @@ function headerGrid(page: Page): Locator {
   return page.locator('nav:has(> nav[aria-label="Sync and settings"])');
 }
 
-/** The gear while it carries the update dot — CSS, so it still resolves while
- *  a modal has hidden the page from the accessibility tree. */
+/** The gear while it carries the update dot (`data-update-available`) — CSS,
+ *  so it still resolves while a modal has hidden the page from the
+ *  accessibility tree. */
 function gearWithUpdate(page: Page): Locator {
-  return page.locator('nav[aria-label="Sync and settings"] button[aria-label="Settings"][title="Update available"]');
+  return page.locator('nav[aria-label="Sync and settings"] button[aria-label="Settings"][data-update-available="true"]');
 }
 
 /** A release that is long enough, and full enough of links, that an update

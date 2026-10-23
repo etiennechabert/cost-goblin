@@ -175,9 +175,8 @@ describe('App shell — header actions', () => {
     await waitFor(() => { expect(headerButton('Debug panel').textContent).toBe('4'); });
   });
 
-  it('goes home to the default dashboard, naming it in the tooltip', async () => {
+  it('goes home to the default dashboard', async () => {
     const user = await bootApp();
-    expect(headerButton('Home').getAttribute('title')).toBe('Go to Cost Overview');
     expect(headerButton('Home').getAttribute('aria-current')).toBe('page');
 
     await runCommand(user, 'Team costs');
@@ -191,10 +190,12 @@ describe('App shell — header actions', () => {
   it('marks the analysis page that is open', async () => {
     const user = await bootApp();
     await user.click(headerButton('Explorer'));
-    // The active entry shows its label instead of a tooltip.
+    // The active entry spells out its label, and still explains itself.
     const explorer = await screen.findByRole('button', { name: 'Explorer' });
     await waitFor(() => { expect(explorer.getAttribute('aria-current')).toBe('page'); });
-    expect(explorer.getAttribute('title')).toBeNull();
+    await user.unhover(explorer);
+    await user.hover(explorer);
+    expect(within(screen.getByRole('tooltip')).getByText('Inspect the raw billing data')).toBeDefined();
     expect(headerButton('Trends').getAttribute('aria-current')).toBeNull();
   });
 
@@ -206,7 +207,7 @@ describe('App shell — header actions', () => {
 
     expect(await screen.findByRole('heading', { name: 'Cost Overview' })).toBeDefined();
     // A dashboard that no longer exists counts as the overview for Home too.
-    expect(headerButton('Home').getAttribute('title')).toBe('Go to Cost Overview');
+    expect(headerButton('Home').getAttribute('aria-current')).toBe('page');
   });
 
   it('falls back to the seed dashboard when none are configured', async () => {
@@ -226,6 +227,41 @@ describe('App shell — header actions', () => {
 
     await user.click(headerButton('Dashboards'));
     expect(within(await screen.findByRole('menu')).getAllByRole('menuitem').map(i => i.textContent)).toEqual(['Cost Overview']);
+  });
+});
+
+describe('App shell — header tooltips', () => {
+  it.each([
+    { button: 'Home', name: 'Home', line: 'Your default dashboard' },
+    { button: 'Dashboards', name: 'Dashboards', line: 'Switch or pin a dashboard' },
+    { button: 'Trends', name: 'Trends', line: 'Period-over-period changes' },
+    { button: 'Findings', name: 'Findings', line: 'Savings recommendations' },
+    { button: 'Baselines', name: 'Baselines', line: 'Track drift against a baseline' },
+    { button: 'Tags', name: 'Tags', line: 'Find untagged spend' },
+    { button: 'Explorer', name: 'Explorer', line: 'Inspect the raw billing data' },
+    { button: 'Debug panel', name: 'Debug panel', line: 'Queries and logs' },
+    { button: 'Reload data', name: 'Reload data', line: 'Clear cache and refetch' },
+    { button: 'Data sync', name: 'Data sync', line: 'Billing data downloads' },
+    { button: 'Rollup status', name: 'Rollup', line: 'Pre-aggregated data for fast dashboards' },
+    { button: 'Settings', name: 'Settings', line: 'App and workspace settings' },
+  ])('names $button and what it does on hover, with no native title', async ({ button, name, line }) => {
+    const user = await bootApp();
+    expect(headerButton(button).getAttribute('title')).toBeNull();
+    await user.hover(headerButton(button));
+    const tip = screen.getByRole('tooltip');
+    expect(within(tip).getByText(name)).toBeDefined();
+    expect(within(tip).getByText(line)).toBeDefined();
+  });
+
+  it('explains Done while Settings is open', async () => {
+    const user = await bootApp();
+    await openSettingsTab(user, 'Performance');
+    const done = headerButton('Done, return to dashboards');
+    expect(done.getAttribute('title')).toBeNull();
+    await user.hover(done);
+    const tip = screen.getByRole('tooltip');
+    expect(within(tip).getByText('Done')).toBeDefined();
+    expect(within(tip).getByText('Back to dashboards')).toBeDefined();
   });
 });
 
@@ -387,7 +423,9 @@ describe('App shell — settings', () => {
     await user.selectOptions(await screen.findByRole('combobox', { name: 'Default dashboard' }), 'Team costs');
     await user.click(headerButton('Done, return to dashboards'));
 
-    await waitFor(() => { expect(headerButton('Home').getAttribute('title')).toBe('Go to Team costs'); });
+    await screen.findByRole('heading', { name: 'Cost Overview' });
+    await user.click(headerButton('Home'));
+    expect(await screen.findByRole('heading', { name: 'Team costs' })).toBeDefined();
   });
 
   it('checks for updates from General', async () => {
@@ -422,8 +460,10 @@ describe('App shell — settings', () => {
     await user.click(within(prompt).getByRole('button', { name: 'Dismiss' }));
     await waitFor(() => { expect(screen.queryByRole('dialog')).toBeNull(); });
 
-    // The gear carries the update dot and lands on General.
-    expect(headerButton('Settings').getAttribute('title')).toBe('Update available');
+    // The gear carries the update dot, says so on hover, and lands on General.
+    expect(headerButton('Settings').getAttribute('data-update-available')).toBe('true');
+    await user.hover(headerButton('Settings'));
+    expect(within(screen.getByRole('tooltip')).getByText('Update available')).toBeDefined();
     await user.click(headerButton('Settings'));
     await user.click(await screen.findByRole('button', { name: 'v1.4.0 available' }));
 
