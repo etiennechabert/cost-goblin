@@ -66,6 +66,14 @@ describe('ButtonTooltip', () => {
     expect(button.getAttribute('title')).toBeNull();
   });
 
+  it('sizes its arrow, so it draws', async () => {
+    const { user, button } = renderTooltip();
+    await user.hover(button);
+    const arrow = screen.getByRole('tooltip').querySelector('[data-card-arrow]');
+    expect(arrow?.getAttribute('width')).toBe('12');
+    expect(arrow?.getAttribute('height')).toBe('6');
+  });
+
   it('cannot take the pointer', async () => {
     const { user, button } = renderTooltip();
     await user.hover(button);
