@@ -107,6 +107,13 @@ body {
   :where(button, [role='button']):not(:disabled, [aria-disabled='true'], [data-disabled]:not([data-disabled='false']), [data-feedback='none']):active {
     background-image: linear-gradient(color-mix(in oklab, currentColor 16%, transparent), color-mix(in oklab, currentColor 16%, transparent));
   }
+
+  /* A tooltip only describes: it never takes a click meant for what it
+     covers. Its card is pointer-events:none, but Radix portals it inside a
+     positioned wrapper of the same size, which the card can't reach. */
+  [data-radix-popper-content-wrapper]:has(> [role='tooltip']) {
+    pointer-events: none;
+  }
 }
 
 @keyframes sync-blink {

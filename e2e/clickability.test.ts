@@ -766,4 +766,22 @@ test.describe('Clickability (workspace mode)', () => {
     await expect(p.getByRole('heading', { name: 'Dimensions', exact: true })).toBeVisible();
     expect(await onArrow()).toEqual([]);
   });
+
+  test('a header tooltip never takes a click meant for what it covers', async () => {
+    const { page: p } = launched();
+    await ensureViewMode(p);
+    await p.getByRole('navigation', { name: 'Dashboards and analysis' }).getByRole('button', { name: 'Trends' }).hover();
+    const tip = p.getByRole('tooltip');
+    await expect(tip).toBeVisible();
+    const box = await tip.boundingBox();
+    if (box === null) throw new Error('tooltip has no box');
+    // Radix portals the card inside a positioned wrapper of its own size: the
+    // card's pointer-events:none alone leaves that wrapper hit-testable.
+    const hit = await p.evaluate(({ x, y }) => {
+      const el = document.elementFromPoint(x, y);
+      return el?.closest('[data-radix-popper-content-wrapper]') === null ? 'through' : 'tooltip';
+    }, { x: box.x + box.width / 2, y: box.y + box.height / 2 });
+    expect(hit).toBe('through');
+    await p.mouse.move(640, 700);
+  });
 });

@@ -39,6 +39,25 @@ export const TooltipContent = React.forwardRef<
 
 TooltipContent.displayName = TooltipPrimitive.Content.displayName;
 
+const MODIFIER_KEYS = new Set(['Meta', 'Control', 'Alt', 'Shift', 'CapsLock', 'Fn']);
+
+/** Whether the last input was a keystroke, as Chromium's `:focus-visible`
+ *  judges it: a bare modifier (the Cmd of Cmd+Tab) doesn't count. Radix opens
+ *  a tooltip on every focus, so without this, focus a closing menu or modal
+ *  hands back to its opener after a mouse click pops a stray tooltip there. */
+let lastInputWasKey = false;
+let inputTracking = false;
+
+function trackInputModality(): void {
+  if (inputTracking) return;
+  inputTracking = true;
+  document.addEventListener('keydown', (event) => {
+    if (event.metaKey || event.ctrlKey || event.altKey || MODIFIER_KEYS.has(event.key)) return;
+    lastInputWasKey = true;
+  }, true);
+  document.addEventListener('pointerdown', () => { lastInputWasKey = false; }, true);
+}
+
 interface ButtonTooltipProps {
   /** The feature's name, in bold. */
   readonly name: string;
@@ -55,13 +74,16 @@ interface ButtonTooltipProps {
  *  own provider: at zero delay a shared one would add nothing. */
 export function ButtonTooltip({ name, description, suppressed = false, children }: ButtonTooltipProps): React.JSX.Element {
   const [open, setOpen] = React.useState(false);
+  React.useEffect(trackInputModality, []);
   return (
     <TooltipPrimitive.Provider delayDuration={0} disableHoverableContent>
       <Tooltip
         open={open && !suppressed}
         onOpenChange={(next) => { setOpen(next && !suppressed); }}
       >
-        <TooltipTrigger asChild>{children}</TooltipTrigger>
+        {/* Focus opens it for keyboard users only; preventing the event's
+            default makes Radix skip its own open-on-focus. */}
+        <TooltipTrigger asChild onFocus={(event) => { if (!lastInputWasKey) event.preventDefault(); }}>{children}</TooltipTrigger>
         <TooltipContent>
           <span className="flex max-w-[220px] flex-col gap-0.5">
             <span className="font-semibold text-text-primary">{name}</span>

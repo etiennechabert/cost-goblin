@@ -66,6 +66,17 @@ describe('DashboardsDropdown', () => {
     expect(within(tip).getByText('Switch or pin a dashboard')).toBeDefined();
   });
 
+  it('shows no tooltip when picking a dashboard hands focus back to the button', async () => {
+    const { user, onSelect } = renderDropdown({ activeId: 'trends' });
+    const menu = await openMenu(user);
+    await user.unhover(trigger());
+    await user.click(within(menu).getByRole('menuitem', { name: 'Kubernetes' }));
+    expect(onSelect).toHaveBeenCalledWith('k8s');
+    await waitFor(() => { expect(screen.queryByRole('menu')).toBeNull(); });
+    await waitFor(() => { expect(document.activeElement).toBe(trigger()); });
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
   it('hides the tooltip while its menu is open', async () => {
     const { user } = renderDropdown({ activeId: 'trends' });
     await user.hover(trigger());

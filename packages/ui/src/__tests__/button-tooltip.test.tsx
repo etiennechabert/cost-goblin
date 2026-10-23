@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { ButtonTooltip } from '../components/ui/tooltip.js';
@@ -33,6 +33,38 @@ describe('ButtonTooltip', () => {
     await user.tab();
     expect(screen.getByRole('tooltip')).toBeDefined();
     await user.keyboard('{Escape}');
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
+  it('stays shut when focus comes back by code after a mouse action', async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <ButtonTooltip name="Data sync" description="Billing data downloads">
+          <button type="button" aria-label="Data sync">x</button>
+        </ButtonTooltip>
+        <button type="button">elsewhere</button>
+      </>,
+    );
+    // A menu or modal closed with the mouse hands focus back to its opener.
+    await user.click(screen.getByRole('button', { name: 'elsewhere' }));
+    act(() => { screen.getByRole('button', { name: 'Data sync' }).focus(); });
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
+  it('stays shut when focus comes back after a bare modifier key, as on Cmd+Tab', async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <ButtonTooltip name="Data sync" description="Billing data downloads">
+          <button type="button" aria-label="Data sync">x</button>
+        </ButtonTooltip>
+        <button type="button">elsewhere</button>
+      </>,
+    );
+    await user.click(screen.getByRole('button', { name: 'elsewhere' }));
+    await user.keyboard('{Meta}');
+    act(() => { screen.getByRole('button', { name: 'Data sync' }).focus(); });
     expect(screen.queryByRole('tooltip')).toBeNull();
   });
 
