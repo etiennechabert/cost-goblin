@@ -124,6 +124,27 @@ describe('ButtonTooltip', () => {
   });
 });
 
+describe('ButtonTooltip status line', () => {
+  it.each(['ok', 'busy', 'warning', 'error'] as const)('shows a %s status under the line, toned by its dot', async (tone) => {
+    const user = userEvent.setup();
+    render(
+      <ButtonTooltip name="Data sync" description="Billing data downloads" status={{ text: 'Sync error — Network down', tone }}>
+        <button type="button" aria-label="Data sync">x</button>
+      </ButtonTooltip>,
+    );
+    await user.hover(screen.getByRole('button', { name: 'Data sync' }));
+    const tip = await screen.findByRole('tooltip');
+    const status = within(tip).getByText('Sync error — Network down');
+    expect(status.closest('[data-tone]')?.getAttribute('data-tone')).toBe(tone);
+  });
+
+  it('has no status line when none is given', async () => {
+    const { user, button } = renderTooltip();
+    await user.hover(button);
+    expect((await screen.findByRole('tooltip')).querySelector('[data-tone]')).toBeNull();
+  });
+});
+
 describe('PopoverContent arrow', () => {
   it('draws an arrow only when asked', () => {
     const { unmount } = render(<Popover open><PopoverContent arrow>with</PopoverContent></Popover>);

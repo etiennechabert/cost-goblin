@@ -29,12 +29,14 @@ function deferredStats(): { promise: Promise<RollupStats | null>; resolve: (stat
 }
 
 describe('RollupStatusButton', () => {
-  it.each<RollupStatus>([
-    { state: 'computing', done: 2, total: 5, periods: [], active: [] },
-    { state: 'failed', message: '1 of 4 partitions failed', reason: 'IO Error: disk full', periods: 3 },
-    READY,
-    { state: 'idle' },
-  ])('explains itself on hover while $state, with no native title', async (status) => {
+  it.each<{ status: RollupStatus; text: string; tone: string }>([
+    { status: { state: 'computing', done: 2, total: 5, periods: [], active: [] }, text: 'Rebuilding… 2/5', tone: 'busy' },
+    { status: { state: 'computing', done: 0, total: 0, periods: [], active: [] }, text: 'Rebuilding…', tone: 'busy' },
+    { status: { state: 'failed', message: '1 of 4 partitions failed', reason: 'IO Error: disk full', periods: 3 }, text: 'Build failed — 1 of 4 partitions failed', tone: 'error' },
+    { status: { state: 'ready', periods: 1 }, text: 'Ready — 1 month pre-aggregated', tone: 'ok' },
+    { status: READY, text: 'Ready — 3 months pre-aggregated', tone: 'ok' },
+    { status: { state: 'idle' }, text: 'Not built — dashboards query raw data', tone: 'warning' },
+  ])('explains itself on hover while $status.state, with its status "$text"', async ({ status, text, tone }) => {
     const user = userEvent.setup();
     render(<RollupStatusButton status={status} />);
     expect(trigger().getAttribute('title')).toBeNull();
@@ -42,6 +44,7 @@ describe('RollupStatusButton', () => {
     const tip = await screen.findByRole('tooltip');
     expect(within(tip).getByText('Rollup')).toBeDefined();
     expect(within(tip).getByText('Pre-aggregated data for fast dashboards')).toBeDefined();
+    expect(within(tip).getByText(text).closest('[data-tone]')?.getAttribute('data-tone')).toBe(tone);
   });
 
   it('hides the tooltip while its popover is open, which still carries the status', async () => {

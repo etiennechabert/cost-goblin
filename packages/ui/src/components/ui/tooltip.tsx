@@ -58,11 +58,26 @@ function trackInputModality(): void {
   document.addEventListener('pointerdown', () => { lastInputWasKey = false; }, true);
 }
 
+/** A live status shown under a tooltip's line, toned by its dot. */
+export interface TooltipStatus {
+  readonly text: string;
+  readonly tone: 'ok' | 'busy' | 'warning' | 'error';
+}
+
+const STATUS_DOT: Record<TooltipStatus['tone'], string> = {
+  ok: 'bg-text-muted',
+  busy: 'bg-accent animate-pulse motion-reduce:animate-none',
+  warning: 'bg-warning',
+  error: 'bg-negative',
+};
+
 interface ButtonTooltipProps {
   /** The feature's name, in bold. */
   readonly name: string;
   /** One short line on what it does. */
   readonly description: string;
+  /** A live status line under the description, for an indicator button. */
+  readonly status?: TooltipStatus | undefined;
   /** Holds the tooltip shut, e.g. while the button's own popover is open. */
   readonly suppressed?: boolean | undefined;
   /** The button — or a `PopoverTrigger asChild` around it. */
@@ -72,7 +87,7 @@ interface ButtonTooltipProps {
 /** Instant, arrowed hover/focus tooltip naming an icon button and what it
  *  does, in place of a native `title` (late, unstyled, no arrow). Carries its
  *  own provider: at zero delay a shared one would add nothing. */
-export function ButtonTooltip({ name, description, suppressed = false, children }: ButtonTooltipProps): React.JSX.Element {
+export function ButtonTooltip({ name, description, status, suppressed = false, children }: ButtonTooltipProps): React.JSX.Element {
   const [open, setOpen] = React.useState(false);
   // Suppression closes it outright rather than only hiding it: Radix's
   // zero-delay open can land between the hover and the click that opens the
@@ -97,6 +112,14 @@ export function ButtonTooltip({ name, description, suppressed = false, children 
           <span className="flex max-w-[220px] flex-col gap-0.5">
             <span className="font-semibold text-text-primary">{name}</span>
             <span className="text-text-secondary">{description}</span>
+            {status !== undefined && (
+              // break-words: sync errors carry raw provider text, such as
+              // URLs with no break opportunity.
+              <span className="mt-1 flex items-start gap-1.5 border-t border-border pt-1.5 break-words" data-tone={status.tone}>
+                <span className={`mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full ${STATUS_DOT[status.tone]}`} aria-hidden="true" />
+                <span className="min-w-0 text-text-primary">{status.text}</span>
+              </span>
+            )}
           </span>
         </TooltipContent>
       </Tooltip>

@@ -7,13 +7,13 @@ Most top-bar buttons are bare icons, and their only explanation is a native `tit
 ## Goals
 
 - Instant, styled, arrowed tooltip on every top-bar button (list below).
-- Content: **name** (bold) + one very short muted line. Nothing else.
+- Content: **name** (bold) + one very short muted line. Data sync and Rollup add a third line: their live status, under a divider, toned by a dot (red error, pulsing green busy, amber warning, muted ok).
 - Sync and Rollup keep opening their popover on **click**. The popover gains an arrow pointing at the button.
 
 ## Non-goals
 
 - The centre of the bar (CostGoblin title, workspace chip, branch / PR link) gets no tooltip.
-- Live status (sync progress, missing periods, rollup state) is not shown in tooltips; it stays in the badges and popovers.
+- Live status appears only on Data sync and Rollup (revised after review: it was first left to the badges and popovers).
 - No other `title=` attributes elsewhere in the app are converted.
 
 ## Anti-goals

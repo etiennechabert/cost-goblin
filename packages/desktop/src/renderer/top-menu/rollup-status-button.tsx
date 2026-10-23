@@ -1,10 +1,29 @@
 import { useEffect, useState } from 'react';
 import { Layers } from 'lucide-react';
 import { ButtonTooltip, Popover, PopoverTrigger, PopoverContent, RollupStatusDetail } from '@costgoblin/ui';
+import type { TooltipStatus } from '@costgoblin/ui';
 import type { RollupStatus, RollupStats } from '@costgoblin/core/browser';
 
 interface Props {
   status: RollupStatus;
+}
+
+function months(n: number): string {
+  return `${String(n)} month${n === 1 ? '' : 's'}`;
+}
+
+/** The live status the tooltip gives under its line ("Rollup" is its name). */
+function tooltipStatus(status: RollupStatus): TooltipStatus {
+  switch (status.state) {
+    case 'computing':
+      return { text: status.total > 0 ? `Rebuilding… ${String(status.done)}/${String(status.total)}` : 'Rebuilding…', tone: 'busy' };
+    case 'failed':
+      return { text: `Build failed — ${status.message}`, tone: 'error' };
+    case 'ready':
+      return { text: `Ready — ${months(status.periods)} pre-aggregated`, tone: 'ok' };
+    case 'idle':
+      return { text: 'Not built — dashboards query raw data', tone: 'warning' };
+  }
 }
 
 /** Header indicator for the on-disk daily rollup. Dashboards silently fall back
@@ -30,7 +49,7 @@ export function RollupStatusButton({ status }: Readonly<Props>): React.JSX.Eleme
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <ButtonTooltip name="Rollup" description="Pre-aggregated data for fast dashboards" suppressed={open}>
+      <ButtonTooltip name="Rollup" description="Pre-aggregated data for fast dashboards" status={tooltipStatus(status)} suppressed={open}>
         <PopoverTrigger asChild>
           <button
             type="button"

@@ -3,6 +3,7 @@ import { CloudDownload, RefreshCw } from 'lucide-react';
 import { ButtonTooltip, Popover, PopoverTrigger, PopoverContent, formatRelativeTime, SsoLoginButton, GcloudLoginButton, RetryButton } from '@costgoblin/ui';
 import { GCLOUD_ADC_LOGIN_COMMAND, GCLOUD_CLI_LOGIN_COMMAND } from '@costgoblin/core/browser';
 import type { SyncStatus } from '@costgoblin/core/browser';
+import type { TooltipStatus } from '@costgoblin/ui';
 
 export type SyncActivity = 'idle' | 'syncing' | 'downloading';
 
@@ -86,6 +87,20 @@ function SyncTierRow({ label, status, synced }: Readonly<{ label: string; status
   );
 }
 
+/** The live status the tooltip gives under its line. Unlike the badge, it
+ *  still reports missing periods while Data & Sync is open. */
+function tooltipStatus(opts: Readonly<{ error: string | null; activity: SyncActivity; filesRemaining: number; missingPeriods: number; currentMonthUpdating: boolean }>): TooltipStatus {
+  const { error, activity, filesRemaining, missingPeriods, currentMonthUpdating } = opts;
+  if (error !== null) return { text: `Sync error — ${error}`, tone: 'error' };
+  if (activity !== 'idle') {
+    if (filesRemaining === 0) return { text: 'Syncing…', tone: 'busy' };
+    return { text: `Syncing… ${String(filesRemaining)} file${filesRemaining === 1 ? '' : 's'} left`, tone: 'busy' };
+  }
+  if (missingPeriods > 0) return { text: `${String(missingPeriods)} billing period${missingPeriods === 1 ? '' : 's'} not synced`, tone: 'warning' };
+  if (currentMonthUpdating) return { text: 'Current month has newer data to sync', tone: 'warning' };
+  return { text: 'All periods synced', tone: 'ok' };
+}
+
 /** Pull the AWS profile out of an expired-credentials sync error so the popover
  *  can offer the same "Open SSO Login" action as the Data & Sync screen. The
  *  message is built as `… Run: aws sso login --profile <profile>`, so the
@@ -162,9 +177,12 @@ export function SyncStatusButton({
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      {/* The hover names the feature; its live status is the badge's and the
-          popover's to show. */}
-      <ButtonTooltip name="Data sync" description="Billing data downloads" suppressed={open}>
+      <ButtonTooltip
+        name="Data sync"
+        description="Billing data downloads"
+        status={tooltipStatus({ error, activity, filesRemaining, missingPeriods, currentMonthUpdating })}
+        suppressed={open}
+      >
         <PopoverTrigger asChild>
           <button
             type="button"
