@@ -58,6 +58,34 @@ describe('CustomView', () => {
     });
   });
 
+  it('wraps a row onto a new line before a widget gets too narrow to read', async () => {
+    const { container } = renderView();
+    await waitFor(() => { expect(container.querySelector('[data-widget-id="s1"]')).not.toBeNull(); });
+    const slot = (id: string): HTMLElement => {
+      const el = container.querySelector(`[data-widget-id="${id}"]`);
+      if (!(el instanceof HTMLElement)) throw new Error(`no slot ${id}`);
+      return el;
+    };
+    expect(slot('s1').parentElement?.className).toContain('flex-wrap');
+    expect(slot('s1').style.minWidth).toBe('14rem');
+    expect(slot('p1').style.minWidth).toBe('20rem');
+    expect(slot('t1').style.minWidth).toBe('20rem');
+    // Widgets share the row by size from a zero basis, so the row only wraps
+    // once one would drop below its minimum, not when sizes add up past 4.
+    expect(slot('s1').style.flexBasis).toBe('0%');
+    expect(slot('s1').style.flexGrow).toBe('1');
+    expect(slot('p1').style.flexGrow).toBe('2');
+    expect(slot('t1').style.flexGrow).toBe('3');
+  });
+
+  it('moves the date picker under the title rather than squeezing it', () => {
+    renderView();
+    const titleColumn = screen.getByRole('heading', { name: 'Test View' }).parentElement;
+    expect(titleColumn?.className).toContain('flex-[1_1_20rem]');
+    expect(titleColumn?.className).toContain('min-w-0');
+    expect(titleColumn?.parentElement?.className).toContain('flex-wrap');
+  });
+
   it('does not crash with an empty spec', () => {
     const empty: ViewSpec = { id: 'e', name: 'Empty', rows: [] };
     expect(() => renderView(empty)).not.toThrow();

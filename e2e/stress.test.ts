@@ -33,7 +33,7 @@ interface MatrixWidget {
 const matrixWidget = (type: WidgetType, size: WidgetSize): MatrixWidget => ({ id: `w-${type}-${size}`, type, size });
 const SIZES: readonly WidgetSize[] = ['small', 'medium', 'large', 'full'];
 const MATRIX_IDS: readonly string[] = WIDGET_TYPES.flatMap(t => SIZES.map(s => matrixWidget(t, s).id));
-/** A lane's share of its row (custom-view.tsx: flexBasis per size, flexGrow 1). */
+/** A lane's share of its row (widgetFlex: flexGrow by size from a zero basis). */
 const LANE_FRACTION: Readonly<Record<WidgetSize, number>> = { small: 0.25, medium: 0.5, large: 0.75, full: 1 };
 /** Row gap between lanes (custom-view.tsx `gap-4`): the slack a lane's width may
  *  show against its nominal fraction of a full-width lane. */

@@ -65,3 +65,12 @@ one click.
   optional).
 - Whether the views-load error banner sits above the sidebar row or inside the
   content column.
+
+## Follow-up: narrow windows
+
+The sidebar leaves a dashboard 676px at the 900px minimum window, where rows
+squeezed every widget by its fixed share. Rows now wrap: widgets share a row in
+proportion to their size from a zero flex basis (so a row of three mediums still
+fits on one line), and a widget wraps onto a new line instead of getting
+narrower than its minimum (small 14rem, medium and large 20rem). The title
+column gives way down to 20rem, then the date picker moves under it.
