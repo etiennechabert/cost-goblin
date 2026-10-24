@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { ChevronDown, Star, Gauge } from 'lucide-react';
-import { Popover, PopoverTrigger, PopoverContent } from '@costgoblin/ui';
+import { ButtonTooltip, Popover, PopoverTrigger, PopoverContent } from '@costgoblin/ui';
 
 export interface DashboardItem {
   readonly id: string;
@@ -33,29 +33,32 @@ export function DashboardsDropdown({
   const activeIsCustom = items.some(i => i.id === activeId);
 
   return (
-    // Always opens the list: the button reads "Dashboards ▾", and the goblin
-    // next to it is the way Home.
+    // Always opens the list: the button reads "Dashboards ▾" while a dashboard
+    // is open (icon and label, like the analysis pages), and the goblin next
+    // to it is the way Home.
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <button
-          type="button"
-          className={[
-            'flex items-center rounded-md transition-colors [-webkit-app-region:no-drag]',
-            activeIsCustom
-              ? 'gap-1.5 px-3 py-1.5 text-sm font-medium bg-bg-tertiary text-text-primary'
-              : 'gap-1 p-1.5 text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
-          ].join(' ')}
-          aria-haspopup="menu"
-          aria-expanded={open}
-          aria-label={activeIsCustom ? undefined : 'Dashboards'}
-          title={activeIsCustom ? undefined : 'Dashboards'}
-        >
-          {activeIsCustom ? 'Dashboards' : <Gauge size={18} />}
-          <ChevronDown
-            size={activeIsCustom ? 14 : 12}
-            className={open ? 'rotate-180 transition-transform' : 'transition-transform'}
-          />
-        </button>
+        <ButtonTooltip name="Dashboards" description="Switch or pin a dashboard" suppressed={open}>
+          <button
+            type="button"
+            className={[
+              'flex items-center rounded-md transition-colors [-webkit-app-region:no-drag]',
+              activeIsCustom
+                ? 'gap-1.5 px-3 py-1.5 text-sm font-medium bg-bg-tertiary text-text-primary'
+                : 'gap-1 p-1.5 text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
+            ].join(' ')}
+            aria-haspopup="menu"
+            aria-expanded={open}
+            aria-label={activeIsCustom ? undefined : 'Dashboards'}
+          >
+            <Gauge size={activeIsCustom ? 14 : 18} />
+            {activeIsCustom && 'Dashboards'}
+            <ChevronDown
+              size={activeIsCustom ? 14 : 12}
+              className={open ? 'rotate-180 transition-transform' : 'transition-transform'}
+            />
+          </button>
+        </ButtonTooltip>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-64 p-1">
         <ul className="flex flex-col" role="menu">

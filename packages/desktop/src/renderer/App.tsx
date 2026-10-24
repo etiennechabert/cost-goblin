@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, Profiler } from 'react';
-import { CostTrends, MissingTags, Savings, Baselines, DataManagement, DimensionsView, CostScopeView, CostScopeLoadError, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, ViewsLoadError, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, SharingActiveBanner, SettingsShell, SETTINGS_TABS, isSettingsTabId, WorkspacesView, WorkspaceChip, ConfirmModal, ReleaseNotes, useModalLayerCount } from '@costgoblin/ui';
+import { CostTrends, MissingTags, Savings, Baselines, DataManagement, DimensionsView, CostScopeView, CostScopeLoadError, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, ViewsLoadError, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, SharingActiveBanner, SettingsShell, SETTINGS_TABS, isSettingsTabId, WorkspacesView, WorkspaceChip, ConfirmModal, ReleaseNotes, useModalLayerCount, ButtonTooltip } from '@costgoblin/ui';
 import type { NavItem, SettingsTabId } from '@costgoblin/ui';
 import type { ChartPalette, CostApi, DataSharingStatus, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus, RollupStatus, BaselineRecomputeStatus, WorkspacesInfo } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagDimColumn } from '@costgoblin/core/browser';
@@ -80,15 +80,17 @@ type View =
 interface AnalyticalNavItem {
   readonly id: string;
   readonly label: string;
+  /** The header tooltip's one-line explanation. */
+  readonly description: string;
   readonly Icon: React.ComponentType<{ size?: number | string }>;
 }
 
 const ANALYTICAL_NAV: readonly AnalyticalNavItem[] = [
-  { id: 'trends', label: 'Trends', Icon: TrendingUp },
-  { id: 'savings', label: 'Findings', Icon: Lightbulb },
-  { id: 'baselines', label: 'Baselines', Icon: Gauge },
-  { id: 'missing-tags', label: 'Tags', Icon: Tag },
-  { id: 'explorer', label: 'Explorer', Icon: Search },
+  { id: 'trends', label: 'Trends', description: 'Period-over-period changes', Icon: TrendingUp },
+  { id: 'savings', label: 'Findings', description: 'Savings recommendations', Icon: Lightbulb },
+  { id: 'baselines', label: 'Baselines', description: 'Track drift against a baseline', Icon: Gauge },
+  { id: 'missing-tags', label: 'Tags', description: 'Find untagged spend', Icon: Tag },
+  { id: 'explorer', label: 'Explorer', description: 'Inspect the raw billing data', Icon: Search },
 ];
 
 type SetupCheck =
@@ -1147,19 +1149,20 @@ function AppShell(): React.JSX.Element {
           <nav className="flex items-center gap-1" aria-label="Dashboards and analysis">
             {(() => {
               const isActiveDefault = view.page === 'custom' && shownViewId(view.viewId) === homeViewId;
-              const dv = customNav.find(c => c.id === homeViewId);
-              const tooltip = dv === undefined ? 'Go to default dashboard' : `Go to ${dv.name}`;
+              // Names the dashboard Home opens, which the default setting picks.
+              const home = customNav.find(c => c.id === homeViewId);
               return (
-                <button
-                  type="button"
-                  onClick={() => { handleNavClick(homeViewId); }}
-                  className="rounded-md p-1 [-webkit-app-region:no-drag] cursor-pointer"
-                  aria-label="Home"
-                  aria-current={isActiveDefault ? 'page' : undefined}
-                  title={tooltip}
-                >
-                  <img src="goblin.png" alt="" className="h-7 w-auto object-contain" />
-                </button>
+                <ButtonTooltip name="Home" description={home === undefined ? 'Your default dashboard' : `Your default dashboard: ${home.name}`}>
+                  <button
+                    type="button"
+                    onClick={() => { handleNavClick(homeViewId); }}
+                    className="rounded-md p-1 [-webkit-app-region:no-drag] cursor-pointer"
+                    aria-label="Home"
+                    aria-current={isActiveDefault ? 'page' : undefined}
+                  >
+                    <img src="goblin.png" alt="" className="h-7 w-auto object-contain" />
+                  </button>
+                </ButtonTooltip>
               );
             })()}
             <DashboardsDropdown
@@ -1173,38 +1176,40 @@ function AppShell(): React.JSX.Element {
               const Icon = item.Icon;
               const isActive = active === item.id;
               return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => { handleNavClick(item.id); }}
-                  className={[
-                    'flex items-center rounded-md transition-colors [-webkit-app-region:no-drag]',
-                    'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-primary',
-                    isActive
-                      ? 'gap-1.5 px-3 py-1.5 text-sm font-medium bg-bg-tertiary text-text-primary'
-                      : 'p-1.5 text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
-                  ].join(' ')}
-                  aria-current={isActive ? 'page' : undefined}
-                  aria-label={isActive ? undefined : item.label}
-                  title={isActive ? undefined : item.label}
-                >
-                  <Icon size={isActive ? 14 : 18} />
-                  {isActive && item.label}
-                </button>
+                <ButtonTooltip key={item.id} name={item.label} description={item.description}>
+                  <button
+                    type="button"
+                    onClick={() => { handleNavClick(item.id); }}
+                    className={[
+                      'flex items-center rounded-md transition-colors [-webkit-app-region:no-drag]',
+                      'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-primary',
+                      isActive
+                        ? 'gap-1.5 px-3 py-1.5 text-sm font-medium bg-bg-tertiary text-text-primary'
+                        : 'p-1.5 text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
+                    ].join(' ')}
+                    aria-current={isActive ? 'page' : undefined}
+                    aria-label={isActive ? undefined : item.label}
+                  >
+                    <Icon size={isActive ? 14 : 18} />
+                    {isActive && item.label}
+                  </button>
+                </ButtonTooltip>
               );
             })}
           </nav>
           </div>
           ) : (
             <div className="flex items-center gap-2 [-webkit-app-region:no-drag]">
-              <button
-                type="button"
-                onClick={exitSettings}
-                className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-primary"
-                aria-label="Done, return to dashboards"
-              >
-                <ArrowLeft size={16} />Done
-              </button>
+              <ButtonTooltip name="Done" description="Back to dashboards">
+                <button
+                  type="button"
+                  onClick={exitSettings}
+                  className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-primary"
+                  aria-label="Done, return to dashboards"
+                >
+                  <ArrowLeft size={16} />Done
+                </button>
+              </ButtonTooltip>
               <span className="text-sm font-medium text-text-primary">Settings</span>
             </div>
           )}
@@ -1228,41 +1233,43 @@ function AppShell(): React.JSX.Element {
             </div>
           </div>
           <nav className="flex items-center justify-end gap-1 [-webkit-app-region:no-drag]" aria-label="Sync and settings">
-            <button
-              type="button"
-              onClick={() => { setDebugOpen(prev => !prev); }}
-              className={[
-                'relative rounded-md p-1.5 transition-colors',
-                debugOpen
-                  ? 'bg-bg-tertiary text-text-primary'
-                  : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary',
-              ].join(' ')}
-              aria-label="Debug panel"
-              aria-pressed={debugOpen}
-              title="Debug panel"
-            >
-              <Terminal size={16} />
-              {inFlightCount > 0 && (
-                <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-bold text-white">
-                  {String(inFlightCount)}
-                </span>
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={() => { setReloadConfirmOpen(true); }}
-              disabled={clearingCache}
-              className={[
-                'rounded-md p-1.5 transition-colors',
-                clearingCache
-                  ? 'text-text-muted cursor-wait'
-                  : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary',
-              ].join(' ')}
-              aria-label="Reload data"
-              title="Reload data"
-            >
-              <RotateCw size={16} className={clearingCache ? 'animate-spin' : undefined} />
-            </button>
+            <ButtonTooltip name="Debug panel" description="Queries and logs">
+              <button
+                type="button"
+                onClick={() => { setDebugOpen(prev => !prev); }}
+                className={[
+                  'relative rounded-md p-1.5 transition-colors',
+                  debugOpen
+                    ? 'bg-bg-tertiary text-text-primary'
+                    : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary',
+                ].join(' ')}
+                aria-label="Debug panel"
+                aria-pressed={debugOpen}
+              >
+                <Terminal size={16} />
+                {inFlightCount > 0 && (
+                  <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-bold text-white">
+                    {String(inFlightCount)}
+                  </span>
+                )}
+              </button>
+            </ButtonTooltip>
+            <ButtonTooltip name="Reload data" description="Clear cache and refetch">
+              <button
+                type="button"
+                onClick={() => { setReloadConfirmOpen(true); }}
+                disabled={clearingCache}
+                className={[
+                  'rounded-md p-1.5 transition-colors',
+                  clearingCache
+                    ? 'text-text-muted cursor-wait'
+                    : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary',
+                ].join(' ')}
+                aria-label="Reload data"
+              >
+                <RotateCw size={16} className={clearingCache ? 'animate-spin' : undefined} />
+              </button>
+            </ButtonTooltip>
             <SyncStatusButton
               activity={syncActivity}
               error={syncError}
@@ -1280,26 +1287,27 @@ function AppShell(): React.JSX.Element {
               // the Settings entry point and carries only the update dot.
               const showUpdate = hasUpdateIndicator(updateStatus);
               const inSettings = settingsTab !== null;
-              const title = showUpdate ? 'Update available' : 'Settings';
               return (
-                <button
-                  type="button"
-                  onClick={toggleSettings}
-                  className={[
-                    'relative rounded-md p-1.5 transition-colors',
-                    inSettings
-                      ? 'bg-bg-tertiary text-text-primary'
-                      : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary',
-                  ].join(' ')}
-                  aria-label="Settings"
-                  aria-expanded={inSettings}
-                  title={title}
-                >
-                  <Settings size={16} className={inSettings ? 'text-accent' : undefined} />
-                  {showUpdate && (
-                    <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-accent" aria-hidden="true" />
-                  )}
-                </button>
+                <ButtonTooltip name="Settings" description={showUpdate ? 'Update available' : 'App and workspace settings'}>
+                  <button
+                    type="button"
+                    onClick={toggleSettings}
+                    className={[
+                      'relative rounded-md p-1.5 transition-colors',
+                      inSettings
+                        ? 'bg-bg-tertiary text-text-primary'
+                        : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary',
+                    ].join(' ')}
+                    aria-label="Settings"
+                    aria-expanded={inSettings}
+                    data-update-available={showUpdate ? 'true' : undefined}
+                  >
+                    <Settings size={16} className={inSettings ? 'text-accent' : undefined} />
+                    {showUpdate && (
+                      <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-accent" aria-hidden="true" />
+                    )}
+                  </button>
+                </ButtonTooltip>
               );
             })()}
           </nav>

@@ -69,26 +69,58 @@ function tierRow(popover: HTMLElement, label: string): HTMLElement {
 
 describe('SyncStatusButton — the header indicator', () => {
   it.each([
-    { name: 'nothing to report', props: {}, title: 'Data sync', badge: null },
-    { name: 'a sync error', props: { error: 'Network down' }, title: 'Sync error — Network down', badge: '!' },
-    { name: 'an error even while downloading', props: { error: 'Network down', activity: 'downloading' as const, filesRemaining: 4 }, title: 'Sync error — Network down', badge: '!' },
-    { name: 'a download with files left', props: { activity: 'downloading' as const, filesRemaining: 4 }, title: 'Syncing…', badge: '4' },
-    { name: 'periods not synced', props: { missingPeriods: 3 }, title: '3 billing periods not synced', badge: '3' },
-    { name: 'one period not synced', props: { missingPeriods: 1 }, title: '1 billing period not synced', badge: '1' },
-    { name: 'missing periods while Data & Sync is open', props: { missingPeriods: 3, inSettingsData: true }, title: 'Data sync', badge: null },
-    { name: 'only the current month updating', props: { currentMonthUpdating: true }, title: 'Current month has newer data to sync', badge: null },
-  ])('shows $name', ({ props, title, badge: expected }) => {
+    { name: 'nothing to report', props: {}, badge: null },
+    { name: 'a sync error', props: { error: 'Network down' }, badge: '!' },
+    { name: 'an error even while downloading', props: { error: 'Network down', activity: 'downloading' as const, filesRemaining: 4 }, badge: '!' },
+    { name: 'a download with files left', props: { activity: 'downloading' as const, filesRemaining: 4 }, badge: '4' },
+    { name: 'periods not synced', props: { missingPeriods: 3 }, badge: '3' },
+    { name: 'one period not synced', props: { missingPeriods: 1 }, badge: '1' },
+    { name: 'missing periods while Data & Sync is open', props: { missingPeriods: 3, inSettingsData: true }, badge: null },
+    { name: 'only the current month updating', props: { currentMonthUpdating: true }, badge: null },
+  ])('shows $name, with no native title', ({ props, badge: expected }) => {
     renderButton(props);
-    expect(trigger().getAttribute('title')).toBe(title);
+    expect(trigger().getAttribute('title')).toBeNull();
     expect(badge()).toBe(expected);
   });
 
   it('pulses a dot instead of a count while checking with no files queued', () => {
     renderButton({ activity: 'syncing', filesRemaining: 0, missingPeriods: 2 });
-    expect(trigger().getAttribute('title')).toBe('Syncing…');
     const dot = trigger().querySelector('span');
     expect(dot?.getAttribute('aria-hidden')).toBe('true');
     expect(dot?.textContent).toBe('');
+  });
+
+  it.each([
+    { name: 'nothing to report', props: {}, status: 'All periods synced', tone: 'ok' },
+    { name: 'a sync error', props: { error: 'Network down' }, status: 'Sync error — Network down', tone: 'error' },
+    { name: 'an error even while downloading', props: { error: 'Network down', activity: 'downloading' as const, filesRemaining: 4 }, status: 'Sync error — Network down', tone: 'error' },
+    { name: 'a download with files left', props: { activity: 'downloading' as const, filesRemaining: 4 }, status: 'Syncing… 4 files left', tone: 'busy' },
+    { name: 'a download with one file left', props: { activity: 'downloading' as const, filesRemaining: 1 }, status: 'Syncing… 1 file left', tone: 'busy' },
+    { name: 'a check with no files queued', props: { activity: 'syncing' as const, missingPeriods: 2 }, status: 'Syncing…', tone: 'busy' },
+    { name: 'periods not synced', props: { missingPeriods: 3 }, status: '3 billing periods not synced', tone: 'warning' },
+    { name: 'one period not synced', props: { missingPeriods: 1 }, status: '1 billing period not synced', tone: 'warning' },
+    { name: 'missing periods while Data & Sync is open', props: { missingPeriods: 3, inSettingsData: true }, status: '3 billing periods not synced', tone: 'warning' },
+    { name: 'only the current month updating', props: { currentMonthUpdating: true }, status: 'Current month has newer data to sync', tone: 'warning' },
+  ])('explains itself on hover with $name, and gives the live status', async ({ props, status, tone }) => {
+    const user = renderButton(props);
+    await user.hover(trigger());
+    const tip = await screen.findByRole('tooltip');
+    expect(within(tip).getByText('Data sync')).toBeDefined();
+    expect(within(tip).getByText('Billing data downloads')).toBeDefined();
+    expect(within(tip).getByText(status).closest('[data-tone]')?.getAttribute('data-tone')).toBe(tone);
+  });
+
+  it('hides the tooltip while its popover is open, and points the popover at the button', async () => {
+    const user = renderButton();
+    await user.hover(trigger());
+    const popover = await openPopover(user);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    // The popover's state, not the held-shut tooltip's, is the one on the button.
+    expect(trigger().getAttribute('data-state')).toBe('open');
+    await user.unhover(trigger());
+    await user.hover(trigger());
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    expect(popover.querySelector('[data-card-arrow]')).not.toBeNull();
   });
 });
 

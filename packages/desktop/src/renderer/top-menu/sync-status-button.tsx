@@ -1,8 +1,9 @@
 import { useRef, useState } from 'react';
 import { CloudDownload, RefreshCw } from 'lucide-react';
-import { Popover, PopoverTrigger, PopoverContent, formatRelativeTime, SsoLoginButton, GcloudLoginButton, RetryButton } from '@costgoblin/ui';
+import { ButtonTooltip, Popover, PopoverTrigger, PopoverContent, formatRelativeTime, SsoLoginButton, GcloudLoginButton, RetryButton } from '@costgoblin/ui';
 import { GCLOUD_ADC_LOGIN_COMMAND, GCLOUD_CLI_LOGIN_COMMAND } from '@costgoblin/core/browser';
 import type { SyncStatus } from '@costgoblin/core/browser';
+import type { TooltipStatus } from '@costgoblin/ui';
 
 export type SyncActivity = 'idle' | 'syncing' | 'downloading';
 
@@ -86,13 +87,18 @@ function SyncTierRow({ label, status, synced }: Readonly<{ label: string; status
   );
 }
 
-function buttonTitle(opts: Readonly<{ showError: boolean; error: string | null; showActive: boolean; showMissing: boolean; missingPeriods: number; currentMonthUpdating: boolean }>): string {
-  const { showError, error, showActive, showMissing, missingPeriods, currentMonthUpdating } = opts;
-  if (showError) return `Sync error — ${error ?? ''}`;
-  if (showActive) return 'Syncing…';
-  if (showMissing) return `${String(missingPeriods)} billing period${missingPeriods === 1 ? '' : 's'} not synced`;
-  if (currentMonthUpdating) return 'Current month has newer data to sync';
-  return 'Data sync';
+/** The live status the tooltip gives under its line. Unlike the badge, it
+ *  still reports missing periods while Data & Sync is open. */
+function tooltipStatus(opts: Readonly<{ error: string | null; activity: SyncActivity; filesRemaining: number; missingPeriods: number; currentMonthUpdating: boolean }>): TooltipStatus {
+  const { error, activity, filesRemaining, missingPeriods, currentMonthUpdating } = opts;
+  if (error !== null) return { text: `Sync error — ${error}`, tone: 'error' };
+  if (activity !== 'idle') {
+    if (filesRemaining === 0) return { text: 'Syncing…', tone: 'busy' };
+    return { text: `Syncing… ${String(filesRemaining)} file${filesRemaining === 1 ? '' : 's'} left`, tone: 'busy' };
+  }
+  if (missingPeriods > 0) return { text: `${String(missingPeriods)} billing period${missingPeriods === 1 ? '' : 's'} not synced`, tone: 'warning' };
+  if (currentMonthUpdating) return { text: 'Current month has newer data to sync', tone: 'warning' };
+  return { text: 'All periods synced', tone: 'ok' };
 }
 
 /** Pull the AWS profile out of an expired-credentials sync error so the popover
@@ -163,7 +169,6 @@ export function SyncStatusButton({
   const showActive = !showError && activity !== 'idle';
   const showMissing = !showError && activity === 'idle' && missingPeriods > 0 && !inSettingsData;
 
-  const title = buttonTitle({ showError, error, showActive, showMissing, missingPeriods, currentMonthUpdating });
   const periodPlural = missingPeriods === 1 ? '' : 's';
   const syncedFooter = currentMonthUpdating ? 'Current month updating' : 'All periods synced';
   const footerLabel = missingPeriods > 0
@@ -173,35 +178,41 @@ export function SyncStatusButton({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <button
-          type="button"
-          aria-label="Data sync"
-          title={title}
-          className={[
-            'relative rounded-md p-1.5 transition-colors',
-            open
-              ? 'bg-bg-tertiary text-text-primary'
-              : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary',
-            showError ? 'ring-1 ring-negative/60' : '',
-            showActive ? 'animate-sync-blink' : '',
-          ].join(' ')}
+        <ButtonTooltip
+          name="Data sync"
+          description="Billing data downloads"
+          status={tooltipStatus({ error, activity, filesRemaining, missingPeriods, currentMonthUpdating })}
+          suppressed={open}
         >
-          <CloudDownload size={16} />
-          {showError && (
-            <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-negative px-1 text-[10px] font-bold text-white">!</span>
-          )}
-          {showActive && filesRemaining > 0 && (
-            <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-bold text-white">{String(filesRemaining)}</span>
-          )}
-          {showActive && filesRemaining === 0 && (
-            <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-accent animate-pulse" aria-hidden="true" />
-          )}
-          {showMissing && (
-            <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-warning px-1 text-[10px] font-bold text-bg-primary">{String(missingPeriods)}</span>
-          )}
-        </button>
+          <button
+            type="button"
+            aria-label="Data sync"
+            className={[
+              'relative rounded-md p-1.5 transition-colors',
+              open
+                ? 'bg-bg-tertiary text-text-primary'
+                : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary',
+              showError ? 'ring-1 ring-negative/60' : '',
+              showActive ? 'animate-sync-blink' : '',
+            ].join(' ')}
+          >
+            <CloudDownload size={16} />
+            {showError && (
+              <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-negative px-1 text-[10px] font-bold text-white">!</span>
+            )}
+            {showActive && filesRemaining > 0 && (
+              <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-bold text-white">{String(filesRemaining)}</span>
+            )}
+            {showActive && filesRemaining === 0 && (
+              <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-accent animate-pulse" aria-hidden="true" />
+            )}
+            {showMissing && (
+              <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-warning px-1 text-[10px] font-bold text-bg-primary">{String(missingPeriods)}</span>
+            )}
+          </button>
+        </ButtonTooltip>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-72">
+      <PopoverContent align="end" className="w-72" arrow>
         <div className="mb-2 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <CloudDownload size={14} className="text-accent" />
