@@ -177,8 +177,10 @@ describe('App shell — header actions', () => {
 
   it('goes home to the default dashboard, naming it in the tooltip', async () => {
     const user = await bootApp();
-    expect(headerButton('Home').getAttribute('title')).toBe('Go to Cost Overview');
     expect(headerButton('Home').getAttribute('aria-current')).toBe('page');
+    await user.hover(headerButton('Home'));
+    expect(within(await screen.findByRole('tooltip')).getByText('Your default dashboard: Cost Overview')).toBeDefined();
+    await user.unhover(headerButton('Home'));
 
     await runCommand(user, 'Team costs');
     expect(await screen.findByRole('heading', { name: 'Team costs' })).toBeDefined();
@@ -191,10 +193,12 @@ describe('App shell — header actions', () => {
   it('marks the analysis page that is open', async () => {
     const user = await bootApp();
     await user.click(headerButton('Explorer'));
-    // The active entry shows its label instead of a tooltip.
+    // The active entry spells out its label, and still explains itself.
     const explorer = await screen.findByRole('button', { name: 'Explorer' });
     await waitFor(() => { expect(explorer.getAttribute('aria-current')).toBe('page'); });
-    expect(explorer.getAttribute('title')).toBeNull();
+    await user.unhover(explorer);
+    await user.hover(explorer);
+    expect(within(await screen.findByRole('tooltip')).getByText('Inspect the raw billing data')).toBeDefined();
     expect(headerButton('Trends').getAttribute('aria-current')).toBeNull();
   });
 
@@ -202,11 +206,13 @@ describe('App shell — header actions', () => {
     const api = new AppApi();
     const asCostApi: CostApi = api;
     vi.spyOn(asCostApi, 'getUIPreferences').mockResolvedValue({ theme: 'dark', palette: 'standard', defaultViewId: 'deleted-view' });
-    renderApp(api);
+    const user = renderApp(api);
 
     expect(await screen.findByRole('heading', { name: 'Cost Overview' })).toBeDefined();
     // A dashboard that no longer exists counts as the overview for Home too.
-    expect(headerButton('Home').getAttribute('title')).toBe('Go to Cost Overview');
+    expect(headerButton('Home').getAttribute('aria-current')).toBe('page');
+    await user.hover(headerButton('Home'));
+    expect(within(await screen.findByRole('tooltip')).getByText('Your default dashboard: Cost Overview')).toBeDefined();
   });
 
   it('falls back to the seed dashboard when none are configured', async () => {
@@ -226,6 +232,56 @@ describe('App shell — header actions', () => {
 
     await user.click(headerButton('Dashboards'));
     expect(within(await screen.findByRole('menu')).getAllByRole('menuitem').map(i => i.textContent)).toEqual(['Cost Overview']);
+  });
+});
+
+describe('App shell — header tooltips', () => {
+  it.each([
+    { button: 'Home', name: 'Home', line: 'Your default dashboard: Cost Overview' },
+    { button: 'Dashboards', name: 'Dashboards', line: 'Switch or pin a dashboard' },
+    { button: 'Trends', name: 'Trends', line: 'Period-over-period changes' },
+    { button: 'Findings', name: 'Findings', line: 'Savings recommendations' },
+    { button: 'Baselines', name: 'Baselines', line: 'Track drift against a baseline' },
+    { button: 'Tags', name: 'Tags', line: 'Find untagged spend' },
+    { button: 'Explorer', name: 'Explorer', line: 'Inspect the raw billing data' },
+    { button: 'Debug panel', name: 'Debug panel', line: 'Queries and logs' },
+    { button: 'Reload data', name: 'Reload data', line: 'Clear cache and refetch' },
+    { button: 'Data sync', name: 'Data sync', line: 'Billing data downloads' },
+    { button: 'Rollup status', name: 'Rollup', line: 'Pre-aggregated data for fast dashboards' },
+    { button: 'Settings', name: 'Settings', line: 'App and workspace settings' },
+  ])('names $button and what it does on hover, with no native title', async ({ button, name, line }) => {
+    const user = await bootApp();
+    expect(headerButton(button).getAttribute('title')).toBeNull();
+    await user.hover(headerButton(button));
+    const tip = await screen.findByRole('tooltip');
+    expect(within(tip).getByText(name)).toBeDefined();
+    expect(within(tip).getByText(line)).toBeDefined();
+  });
+
+  it('explains Done while Settings is open', async () => {
+    const user = await bootApp();
+    await openSettingsTab(user, 'Performance');
+    const done = headerButton('Done, return to dashboards');
+    expect(done.getAttribute('title')).toBeNull();
+    await user.hover(done);
+    const tip = await screen.findByRole('tooltip');
+    expect(within(tip).getByText('Done')).toBeDefined();
+    expect(within(tip).getByText('Back to dashboards')).toBeDefined();
+  });
+
+  it('pops no tooltip on the button the palette hands focus back to, after a keyboard pick', async () => {
+    const user = await bootApp();
+    await user.click(headerButton('Explorer'));
+    await user.unhover(headerButton('Explorer'));
+    expect(document.activeElement).toBe(headerButton('Explorer'));
+
+    await user.keyboard('{Meta>}k{/Meta}');
+    await user.type(await screen.findByPlaceholderText('Type to search...'), 'Team costs');
+    await user.keyboard('{Enter}');
+    expect(await screen.findByRole('heading', { name: 'Team costs' })).toBeDefined();
+
+    await waitFor(() => { expect(document.activeElement).toBe(headerButton('Explorer')); });
+    expect(screen.queryByRole('tooltip')).toBeNull();
   });
 });
 
@@ -387,7 +443,11 @@ describe('App shell — settings', () => {
     await user.selectOptions(await screen.findByRole('combobox', { name: 'Default dashboard' }), 'Team costs');
     await user.click(headerButton('Done, return to dashboards'));
 
-    await waitFor(() => { expect(headerButton('Home').getAttribute('title')).toBe('Go to Team costs'); });
+    await screen.findByRole('heading', { name: 'Cost Overview' });
+    await user.hover(headerButton('Home'));
+    expect(within(await screen.findByRole('tooltip')).getByText('Your default dashboard: Team costs')).toBeDefined();
+    await user.click(headerButton('Home'));
+    expect(await screen.findByRole('heading', { name: 'Team costs' })).toBeDefined();
   });
 
   it('checks for updates from General', async () => {
@@ -422,8 +482,10 @@ describe('App shell — settings', () => {
     await user.click(within(prompt).getByRole('button', { name: 'Dismiss' }));
     await waitFor(() => { expect(screen.queryByRole('dialog')).toBeNull(); });
 
-    // The gear carries the update dot and lands on General.
-    expect(headerButton('Settings').getAttribute('title')).toBe('Update available');
+    // The gear carries the update dot, says so on hover, and lands on General.
+    expect(headerButton('Settings').getAttribute('data-update-available')).toBe('true');
+    await user.hover(headerButton('Settings'));
+    expect(within(await screen.findByRole('tooltip')).getByText('Update available')).toBeDefined();
     await user.click(headerButton('Settings'));
     await user.click(await screen.findByRole('button', { name: 'v1.4.0 available' }));
 
@@ -473,7 +535,7 @@ describe('App shell — command palette', () => {
       ? { status: 'syncing', phase: 'downloading', progress: 0.3, filesTotal: 10, filesDone: 3, bytesTotal: 0, bytesDone: 0, message: '' }
       : IDLE);
     const user = await bootApp(api);
-    await waitFor(() => { expect(headerButton('Data sync').getAttribute('title')).toBe('Syncing…'); });
+    await waitFor(() => { expect(headerButton('Data sync').textContent).toBe('7'); });
 
     await user.click(screen.getByTestId('workspace-chip'));
     await user.click(screen.getByRole('button', { name: 'client-acme' }));
@@ -605,8 +667,8 @@ describe('App shell — sync status', () => {
     holdInventoryCheck(api);
     await bootApp(api);
 
-    await waitFor(() => { expect(headerButton('Data sync').getAttribute('title')).toBe('Sync error — Rate exceeded'); });
-    expect(syncErrorAnnouncement()).toBe('Sync error: Rate exceeded');
+    await waitFor(() => { expect(syncErrorAnnouncement()).toBe('Sync error: Rate exceeded'); });
+    expect(headerButton('Data sync').textContent).toBe('!');
   });
 
   it('surfaces a failed tier download', async () => {
@@ -616,7 +678,8 @@ describe('App shell — sync status', () => {
       : IDLE);
     holdInventoryCheck(api);
     await bootApp(api);
-    await waitFor(() => { expect(headerButton('Data sync').getAttribute('title')).toBe('Sync error — AccessDenied: hourly bucket'); });
+    await waitFor(() => { expect(syncErrorAnnouncement()).toBe('Sync error: AccessDenied: hourly bucket'); });
+    expect(headerButton('Data sync').textContent).toBe('!');
   });
 
   it('counts closed months with no or outdated local data as not synced', async () => {
@@ -631,7 +694,7 @@ describe('App shell — sync status', () => {
     const user = await bootApp(api);
 
     await waitFor(() => { expect(syncAnnouncement()).toBe('2 billing periods not synced'); });
-    expect(headerButton('Data sync').getAttribute('title')).toBe('2 billing periods not synced');
+    expect(headerButton('Data sync').textContent).toBe('2');
     await user.click(headerButton('Data sync'));
     expect(await screen.findByText('2 periods not synced')).toBeDefined();
   });
@@ -648,7 +711,7 @@ describe('App shell — sync status', () => {
     await bootApp(api);
 
     await waitFor(() => { expect(syncAnnouncement()).toBe('1 billing period not synced'); });
-    expect(headerButton('Data sync').getAttribute('title')).toBe('1 billing period not synced');
+    expect(headerButton('Data sync').textContent).toBe('1');
   });
 
   it('falls back to a year of retention when no provider is configured', async () => {
@@ -668,7 +731,8 @@ describe('App shell — sync status', () => {
     const api = new AppApi();
     vi.spyOn(api, 'getDataInventory').mockRejectedValue(thrown);
     await bootApp(api);
-    await waitFor(() => { expect(headerButton('Data sync').getAttribute('title')).toBe(`Sync error — ${shown}`); });
+    await waitFor(() => { expect(syncErrorAnnouncement()).toBe(`Sync error: ${shown}`); });
+    expect(headerButton('Data sync').textContent).toBe('!');
   });
 
   it('opens Data & Sync from the sync popover', async () => {

@@ -195,10 +195,11 @@ function headerGrid(page: Page): Locator {
   return page.locator('nav:has(> nav[aria-label="Sync and settings"])');
 }
 
-/** The gear while it carries the update dot — CSS, so it still resolves while
- *  a modal has hidden the page from the accessibility tree. */
+/** The gear while it carries the update dot (`data-update-available`) — CSS,
+ *  so it still resolves while a modal has hidden the page from the
+ *  accessibility tree. */
 function gearWithUpdate(page: Page): Locator {
-  return page.locator('nav[aria-label="Sync and settings"] button[aria-label="Settings"][title="Update available"]');
+  return page.locator('nav[aria-label="Sync and settings"] button[aria-label="Settings"][data-update-available="true"]');
 }
 
 /** A release that is long enough, and full enough of links, that an update
@@ -454,7 +455,7 @@ test.describe('Clickability (workspace mode)', () => {
         enter: async () => {
           await ensureViewMode(p);
           await leftNav.getByRole('button', { name: 'Home' }).click({ timeout: 5_000 });
-          await expect(leftNav.getByRole('button', { name: 'Dashboards' })).toHaveText(/Dashboards/);
+          await expect(leftNav.getByRole('button', { name: 'Home' })).toHaveAttribute('aria-current', 'page');
         },
       },
       ...['Baselines', 'Explorer'].map(label => ({
@@ -764,5 +765,23 @@ test.describe('Clickability (workspace mode)', () => {
     await p.getByRole('navigation', { name: SETTINGS_NAV_LABEL }).getByRole('button', { name: 'Dimensions' }).click();
     await expect(p.getByRole('heading', { name: 'Dimensions', exact: true })).toBeVisible();
     expect(await onArrow()).toEqual([]);
+  });
+
+  test('a header tooltip never takes a click meant for what it covers', async () => {
+    const { page: p } = launched();
+    await ensureViewMode(p);
+    await p.getByRole('navigation', { name: 'Dashboards and analysis' }).getByRole('button', { name: 'Trends' }).hover();
+    const tip = p.getByRole('tooltip');
+    await expect(tip).toBeVisible();
+    const box = await tip.boundingBox();
+    if (box === null) throw new Error('tooltip has no box');
+    // Radix portals the card inside a positioned wrapper of its own size: the
+    // card's pointer-events:none alone leaves that wrapper hit-testable.
+    const hit = await p.evaluate(({ x, y }) => {
+      const el = document.elementFromPoint(x, y);
+      return el?.closest('[data-radix-popper-content-wrapper]') === null ? 'through' : 'tooltip';
+    }, { x: box.x + box.width / 2, y: box.y + box.height / 2 });
+    expect(hit).toBe('through');
+    await p.mouse.move(640, 700);
   });
 });
