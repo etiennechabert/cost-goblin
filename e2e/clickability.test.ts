@@ -16,7 +16,7 @@ import {
   expectCloudSandboxed,
   finishCoverage,
   launchElectron,
-  openDashboardsDropdown,
+  openDashboardsSidebar,
   openSettings,
 } from './helpers.js';
 
@@ -491,37 +491,29 @@ test.describe('Clickability (workspace mode)', () => {
     await ensureViewMode(p);
   });
 
-  test('the Dashboards popover\'s first row is clear of the header drag region', async () => {
+  test('the Dashboards sidebar\'s first row is clear of the header drag region', async () => {
     const { page: p } = launched();
     await ensureViewMode(p);
     await p.getByRole('navigation', { name: 'Dashboards and analysis' }).getByRole('button', { name: 'Home' }).click();
-    await openDashboardsDropdown(p);
-    const firstRow = p.getByRole('menu').locator('li').first();
-    await expectClickable(p, firstRow.getByRole('menuitem'));
+    const firstRow = (await openDashboardsSidebar(p)).getByRole('listitem').first();
     await expectClickable(p, firstRow.getByRole('button').first());
-    await p.keyboard.press('Escape');
+    await expectClickable(p, firstRow.getByRole('button').last());
   });
 
-  // It used to double as Home: from anywhere but the default dashboard (another
-  // dashboard, or a page like Trends) the first click went back to the default
-  // one instead of opening the list. The goblin is Home. The fixtures hold a
-  // single dashboard, so this starts from Trends — the same branch.
-  test('the Dashboards button opens its list from any page', async () => {
+  // The goblin is Home; the Dashboards button goes back to the dashboard left
+  // last. The fixtures hold a single dashboard, so that is the Cost Overview.
+  test('the Dashboards button reopens the last dashboard from any page', async () => {
     const { page: p } = launched();
     await ensureViewMode(p);
     const nav = p.getByRole('navigation', { name: 'Dashboards and analysis' });
     await nav.getByRole('button', { name: 'Trends' }).click();
-    const trends = nav.getByRole('button', { name: 'Trends' });
-    await expect(trends).toHaveAttribute('aria-current', 'page');
+    await expect(nav.getByRole('button', { name: 'Trends' })).toHaveAttribute('aria-current', 'page');
+    await expect(p.getByRole('navigation', { name: 'Dashboards', exact: true })).toHaveCount(0);
 
-    const trigger = nav.getByRole('button', { name: 'Dashboards' });
-    await trigger.click();
-    await expect(trigger).toHaveAttribute('aria-expanded', 'true');
-    await expect(trends).toHaveAttribute('aria-current', 'page');
-
-    await p.getByRole('menu').getByRole('menuitem', { name: 'Cost Overview' }).click();
-    await expect(p.getByRole('menu')).toHaveCount(0);
+    await nav.getByRole('button', { name: 'Dashboards' }).click();
     await expect(p.getByRole('heading', { name: 'Cost Overview' })).toBeVisible();
+    await expect(nav.getByRole('button', { name: 'Dashboards' })).toHaveAttribute('aria-current', 'page');
+    await expect(p.getByRole('navigation', { name: 'Dashboards', exact: true })).toBeVisible();
   });
 
   test('an update arriving under the switch confirm waits for it to close', async () => {
