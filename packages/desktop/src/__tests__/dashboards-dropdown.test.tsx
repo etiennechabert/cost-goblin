@@ -83,6 +83,7 @@ describe('DashboardsDropdown', () => {
     await user.hover(trigger());
     await openMenu(user);
     expect(screen.queryByRole('tooltip')).toBeNull();
+    expect(trigger().getAttribute('data-state')).toBe('open');
     await user.unhover(trigger());
     await user.hover(trigger());
     expect(screen.queryByRole('tooltip')).toBeNull();

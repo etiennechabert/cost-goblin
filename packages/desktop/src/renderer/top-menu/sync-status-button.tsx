@@ -177,13 +177,13 @@ export function SyncStatusButton({
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <ButtonTooltip
-        name="Data sync"
-        description="Billing data downloads"
-        status={tooltipStatus({ error, activity, filesRemaining, missingPeriods, currentMonthUpdating })}
-        suppressed={open}
-      >
-        <PopoverTrigger asChild>
+      <PopoverTrigger asChild>
+        <ButtonTooltip
+          name="Data sync"
+          description="Billing data downloads"
+          status={tooltipStatus({ error, activity, filesRemaining, missingPeriods, currentMonthUpdating })}
+          suppressed={open}
+        >
           <button
             type="button"
             aria-label="Data sync"
@@ -210,8 +210,8 @@ export function SyncStatusButton({
               <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-warning px-1 text-[10px] font-bold text-bg-primary">{String(missingPeriods)}</span>
             )}
           </button>
-        </PopoverTrigger>
-      </ButtonTooltip>
+        </ButtonTooltip>
+      </PopoverTrigger>
       <PopoverContent align="end" className="w-72" arrow>
         <div className="mb-2 flex items-center justify-between">
           <div className="flex items-center gap-2">

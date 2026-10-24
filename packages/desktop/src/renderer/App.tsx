@@ -1149,8 +1149,10 @@ function AppShell(): React.JSX.Element {
           <nav className="flex items-center gap-1" aria-label="Dashboards and analysis">
             {(() => {
               const isActiveDefault = view.page === 'custom' && shownViewId(view.viewId) === homeViewId;
+              // Names the dashboard Home opens, which the default setting picks.
+              const home = customNav.find(c => c.id === homeViewId);
               return (
-                <ButtonTooltip name="Home" description="Your default dashboard">
+                <ButtonTooltip name="Home" description={home === undefined ? 'Your default dashboard' : `Your default dashboard: ${home.name}`}>
                   <button
                     type="button"
                     onClick={() => { handleNavClick(homeViewId); }}

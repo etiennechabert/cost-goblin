@@ -1,8 +1,14 @@
-import { act, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ButtonTooltip } from '../components/ui/tooltip.js';
-import { Popover, PopoverContent } from '../components/ui/popover.js';
+import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover.js';
+
+/** Lets timers queued so far run: Radix's zero-delay open, and the end of a
+ *  keystroke. */
+async function nextTask(): Promise<void> {
+  await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 0); }); });
+}
 
 function renderTooltip(suppressed?: boolean): { user: ReturnType<typeof userEvent.setup>; button: HTMLElement; rerender: (suppressed: boolean) => void } {
   const user = userEvent.setup();
@@ -68,6 +74,57 @@ describe('ButtonTooltip', () => {
     expect(screen.queryByRole('tooltip')).toBeNull();
   });
 
+  it('stays shut when focus comes back by code after a keystroke, as when a palette is picked with Enter', async () => {
+    render(
+      <ButtonTooltip name="Data sync" description="Billing data downloads">
+        <button type="button" aria-label="Data sync">x</button>
+      </ButtonTooltip>,
+    );
+    // The palette closes on Enter's keydown and refocuses its opener from a
+    // timer, before the key is even released.
+    fireEvent.keyDown(document.body, { key: 'Enter' });
+    await nextTask();
+    act(() => { screen.getByRole('button', { name: 'Data sync' }).focus(); });
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
+  it('stays shut over an open popover, so Escape still closes the popover', async () => {
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
+    render(
+      <>
+        <Popover open onOpenChange={onOpenChange}><PopoverContent>a menu</PopoverContent></Popover>
+        <ButtonTooltip name="Data sync" description="Billing data downloads">
+          <button type="button" aria-label="Data sync">x</button>
+        </ButtonTooltip>
+      </>,
+    );
+    await user.hover(screen.getByRole('button', { name: 'Data sync' }));
+    await nextTask();
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    await user.keyboard('{Escape}');
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it('lets a popover trigger slotted around it reach the button and keep its state there', async () => {
+    const user = userEvent.setup();
+    render(
+      <Popover>
+        <PopoverTrigger asChild>
+          <ButtonTooltip name="Data sync" description="Billing data downloads">
+            <button type="button" aria-label="Data sync">x</button>
+          </ButtonTooltip>
+        </PopoverTrigger>
+        <PopoverContent>the popover</PopoverContent>
+      </Popover>,
+    );
+    const button = screen.getByRole('button', { name: 'Data sync' });
+    await user.click(button);
+    expect(await screen.findByText('the popover')).toBeDefined();
+    expect(button.getAttribute('data-state')).toBe('open');
+    expect(button.getAttribute('aria-expanded')).toBe('true');
+  });
+
   it('closes on click and stays closed while the pointer stays on the button', async () => {
     const { user, button } = renderTooltip();
     await user.hover(button);
@@ -117,10 +174,13 @@ describe('ButtonTooltip', () => {
     expect(arrow?.getAttribute('height')).toBe('6');
   });
 
-  it('cannot take the pointer', async () => {
+  it('cannot take the pointer, nor can the wrapper Radix positions it in', async () => {
     const { user, button } = renderTooltip();
     await user.hover(button);
-    expect((await screen.findByRole('tooltip')).classList.contains('pointer-events-none')).toBe(true);
+    const tip = await screen.findByRole('tooltip');
+    expect(tip.classList.contains('pointer-events-none')).toBe(true);
+    expect(tip.parentElement?.hasAttribute('data-radix-popper-content-wrapper')).toBe(true);
+    expect(tip.parentElement?.style.pointerEvents).toBe('none');
   });
 });
 
@@ -152,5 +212,11 @@ describe('PopoverContent arrow', () => {
     unmount();
     render(<Popover open><PopoverContent>without</PopoverContent></Popover>);
     expect(screen.getByText('without').querySelector('[data-card-arrow]')).toBeNull();
+  });
+
+  it('still slots onto its child with asChild when it has no arrow', () => {
+    render(<Popover open><PopoverContent asChild><section>slotted</section></PopoverContent></Popover>);
+    expect(screen.getByText('slotted').tagName).toBe('SECTION');
+    expect(screen.getByText('slotted').getAttribute('role')).toBe('dialog');
   });
 });

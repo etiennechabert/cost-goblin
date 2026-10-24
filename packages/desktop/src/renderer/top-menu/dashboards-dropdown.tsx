@@ -37,8 +37,8 @@ export function DashboardsDropdown({
     // is open (icon and label, like the analysis pages), and the goblin next
     // to it is the way Home.
     <Popover open={open} onOpenChange={setOpen}>
-      <ButtonTooltip name="Dashboards" description="Switch or pin a dashboard" suppressed={open}>
-        <PopoverTrigger asChild>
+      <PopoverTrigger asChild>
+        <ButtonTooltip name="Dashboards" description="Switch or pin a dashboard" suppressed={open}>
           <button
             type="button"
             className={[
@@ -58,8 +58,8 @@ export function DashboardsDropdown({
               className={open ? 'rotate-180 transition-transform' : 'transition-transform'}
             />
           </button>
-        </PopoverTrigger>
-      </ButtonTooltip>
+        </ButtonTooltip>
+      </PopoverTrigger>
       <PopoverContent align="start" className="w-64 p-1">
         <ul className="flex flex-col" role="menu">
           {sorted.map((item) => {

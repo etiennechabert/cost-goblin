@@ -25,7 +25,7 @@ Most top-bar buttons are bare icons, and their only explanation is a native `tit
 
 | Button | Name | Line |
 |---|---|---|
-| Goblin logo | Home | Your default dashboard |
+| Goblin logo | Home | Your default dashboard: <its name> |
 | Dashboards menu | Dashboards | Switch or pin a dashboard |
 | Trends | Trends | Period-over-period changes |
 | Findings | Findings | Savings recommendations |
@@ -43,8 +43,8 @@ Most top-bar buttons are bare icons, and their only explanation is a native `tit
 
 - Opens with no delay; moving between buttons switches tooltips instantly.
 - Placed below the button, arrow pointing up; shifts to stay inside the window (Settings sits at the right edge).
-- Closes on click, and stays closed while that button's popover or menu (Dashboards, Data sync, Rollup) is open.
-- Also opens on keyboard focus.
+- Closes on click, and stays closed while that button's popover or menu (Dashboards, Data sync, Rollup) is open. Never opens while any other popover or menu is open either: it would cover it and take its Escape.
+- Also opens when a keystroke (Tab) moves focus to the button, but not when a closing menu, palette or dialog hands focus back to it.
 - Active nav items get the tooltip too, even though their label is visible.
 - `title=` is removed from these buttons; `aria-label`s stay, and the tooltip text is linked as the button's description.
 
@@ -62,7 +62,7 @@ Style A from the mockups: the chart-tooltip card (`bg-bg-secondary`, `border-bor
 
 - `Tooltip` / `TooltipProvider` / `TooltipTrigger` / `TooltipContent` (shadcn-style) in `packages/ui/src/components/ui/tooltip.tsx`, plus a small `IconTooltip`-style wrapper taking `name` and `description`.
 - One `TooltipProvider delayDuration={0}` around the app in `App.tsx`.
-- Popover buttons nest `TooltipTrigger asChild` inside `PopoverTrigger asChild`; the tooltip is held closed while the popover is open.
+- Popover buttons nest the tooltip inside `PopoverTrigger asChild`, so the button keeps the popover's `data-state`; the tooltip is held closed while the popover is open.
 - `PopoverContent` gets an optional `arrow` prop, enabled for Sync and Rollup.
 
 ## Left to the builder

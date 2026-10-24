@@ -49,8 +49,8 @@ export function RollupStatusButton({ status }: Readonly<Props>): React.JSX.Eleme
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <ButtonTooltip name="Rollup" description="Pre-aggregated data for fast dashboards" status={tooltipStatus(status)} suppressed={open}>
-        <PopoverTrigger asChild>
+      <PopoverTrigger asChild>
+        <ButtonTooltip name="Rollup" description="Pre-aggregated data for fast dashboards" status={tooltipStatus(status)} suppressed={open}>
           <button
             type="button"
             aria-label="Rollup status"
@@ -69,8 +69,8 @@ export function RollupStatusButton({ status }: Readonly<Props>): React.JSX.Eleme
               <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-accent animate-pulse" aria-hidden="true" />
             )}
           </button>
-        </PopoverTrigger>
-      </ButtonTooltip>
+        </ButtonTooltip>
+      </PopoverTrigger>
       <PopoverContent align="end" className="w-72" arrow>
         <div className="mb-2 flex items-center gap-2">
           <Layers size={14} className="text-accent" />

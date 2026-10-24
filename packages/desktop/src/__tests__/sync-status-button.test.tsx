@@ -115,6 +115,8 @@ describe('SyncStatusButton — the header indicator', () => {
     await user.hover(trigger());
     const popover = await openPopover(user);
     expect(screen.queryByRole('tooltip')).toBeNull();
+    // The popover's state, not the held-shut tooltip's, is the one on the button.
+    expect(trigger().getAttribute('data-state')).toBe('open');
     await user.unhover(trigger());
     await user.hover(trigger());
     expect(screen.queryByRole('tooltip')).toBeNull();

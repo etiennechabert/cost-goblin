@@ -31,12 +31,16 @@ export const PopoverContent = React.forwardRef<
       )}
       {...props}
     >
-      {children}
-      {arrow && (
-        <PopoverPrimitive.Arrow asChild {...CARD_ARROW_SIZE}>
-          <CardArrowShape />
-        </PopoverPrimitive.Arrow>
-      )}
+      {/* Without an arrow the children pass through untouched, so `asChild`
+          still slots onto a single child. */}
+      {arrow ? (
+        <>
+          {children}
+          <PopoverPrimitive.Arrow asChild {...CARD_ARROW_SIZE}>
+            <CardArrowShape />
+          </PopoverPrimitive.Arrow>
+        </>
+      ) : children}
     </PopoverPrimitive.Content>
   </PopoverPrimitive.Portal>
 ));

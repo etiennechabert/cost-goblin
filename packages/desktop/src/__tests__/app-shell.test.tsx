@@ -175,9 +175,12 @@ describe('App shell — header actions', () => {
     await waitFor(() => { expect(headerButton('Debug panel').textContent).toBe('4'); });
   });
 
-  it('goes home to the default dashboard', async () => {
+  it('goes home to the default dashboard, naming it in the tooltip', async () => {
     const user = await bootApp();
     expect(headerButton('Home').getAttribute('aria-current')).toBe('page');
+    await user.hover(headerButton('Home'));
+    expect(within(await screen.findByRole('tooltip')).getByText('Your default dashboard: Cost Overview')).toBeDefined();
+    await user.unhover(headerButton('Home'));
 
     await runCommand(user, 'Team costs');
     expect(await screen.findByRole('heading', { name: 'Team costs' })).toBeDefined();
@@ -203,11 +206,13 @@ describe('App shell — header actions', () => {
     const api = new AppApi();
     const asCostApi: CostApi = api;
     vi.spyOn(asCostApi, 'getUIPreferences').mockResolvedValue({ theme: 'dark', palette: 'standard', defaultViewId: 'deleted-view' });
-    renderApp(api);
+    const user = renderApp(api);
 
     expect(await screen.findByRole('heading', { name: 'Cost Overview' })).toBeDefined();
     // A dashboard that no longer exists counts as the overview for Home too.
     expect(headerButton('Home').getAttribute('aria-current')).toBe('page');
+    await user.hover(headerButton('Home'));
+    expect(within(await screen.findByRole('tooltip')).getByText('Your default dashboard: Cost Overview')).toBeDefined();
   });
 
   it('falls back to the seed dashboard when none are configured', async () => {
@@ -232,7 +237,7 @@ describe('App shell — header actions', () => {
 
 describe('App shell — header tooltips', () => {
   it.each([
-    { button: 'Home', name: 'Home', line: 'Your default dashboard' },
+    { button: 'Home', name: 'Home', line: 'Your default dashboard: Cost Overview' },
     { button: 'Dashboards', name: 'Dashboards', line: 'Switch or pin a dashboard' },
     { button: 'Trends', name: 'Trends', line: 'Period-over-period changes' },
     { button: 'Findings', name: 'Findings', line: 'Savings recommendations' },
@@ -262,6 +267,21 @@ describe('App shell — header tooltips', () => {
     const tip = await screen.findByRole('tooltip');
     expect(within(tip).getByText('Done')).toBeDefined();
     expect(within(tip).getByText('Back to dashboards')).toBeDefined();
+  });
+
+  it('pops no tooltip on the button the palette hands focus back to, after a keyboard pick', async () => {
+    const user = await bootApp();
+    await user.click(headerButton('Explorer'));
+    await user.unhover(headerButton('Explorer'));
+    expect(document.activeElement).toBe(headerButton('Explorer'));
+
+    await user.keyboard('{Meta>}k{/Meta}');
+    await user.type(await screen.findByPlaceholderText('Type to search...'), 'Team costs');
+    await user.keyboard('{Enter}');
+    expect(await screen.findByRole('heading', { name: 'Team costs' })).toBeDefined();
+
+    await waitFor(() => { expect(document.activeElement).toBe(headerButton('Explorer')); });
+    expect(screen.queryByRole('tooltip')).toBeNull();
   });
 });
 
@@ -424,6 +444,8 @@ describe('App shell — settings', () => {
     await user.click(headerButton('Done, return to dashboards'));
 
     await screen.findByRole('heading', { name: 'Cost Overview' });
+    await user.hover(headerButton('Home'));
+    expect(within(await screen.findByRole('tooltip')).getByText('Your default dashboard: Team costs')).toBeDefined();
     await user.click(headerButton('Home'));
     expect(await screen.findByRole('heading', { name: 'Team costs' })).toBeDefined();
   });
