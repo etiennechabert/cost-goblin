@@ -152,7 +152,7 @@ describe('BaselineStore', () => {
     dataDir: SYNTHETIC_DIR,
     stateDir,
     getFirstProviderName: () => Promise.resolve(FIXTURE_PROVIDER),
-    getQueryProviders: () => Promise.resolve([{ name: FIXTURE_PROVIDER, availablePeriods: ['2026-01', '2026-02'] }]),
+    getQueryProviders: () => Promise.resolve([{ name: FIXTURE_PROVIDER, type: 'aws', availablePeriods: ['2026-01', '2026-02'] }]),
     getQueryDimensions: () => Promise.resolve(dimensions),
     getCostScope: () => Promise.resolve(costScope),
     getAccountMap: () => Promise.resolve(new Map<string, string>()),
@@ -706,6 +706,7 @@ describe('BaselineStore', () => {
       // (basis) cost scope, grain from the dimensions, org digest of the absent
       // org-accounts.json. lagDays and marketplace don't enter the signature.
       builtSignature = computeShapeSignature({
+        providerType: 'aws',
         dimensions,
         costMetric: costScope.costMetric,
         rules: costScope.rules,
@@ -715,7 +716,7 @@ describe('BaselineStore', () => {
       const buildSql = (period: string, outPath: string): string =>
         buildRollupPartitionQuery(period, 'daily', outPath, {
           dataDir: SYNTHETIC_DIR, dimensions, costScope,
-          providers: [{ name: FIXTURE_PROVIDER, availablePeriods: [period] }],
+          providers: [{ name: FIXTURE_PROVIDER, type: 'aws', availablePeriods: [period] }],
         });
       await rollup.maintainPeriods(['2026-01', '2026-02'], buildSql, { '2026-01': { f: 'h1' }, '2026-02': { f: 'h2' } }, shape);
 

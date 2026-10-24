@@ -224,7 +224,7 @@ describe('queryAggregatedRows against DuckDB', () => {
         dataDir: SYNTHETIC_DIR,
         tier: 'daily',
         dimensions: { builtIn: [], tags: [] },
-        providers: [{ name: FIXTURE_PROVIDER, periods: ['2026-01'] }],
+        providers: [{ name: FIXTURE_PROVIDER, type: 'aws', periods: ['2026-01'] }],
       }),
       where: "WHERE usage_date BETWEEN '2026-01-01' AND '2026-01-31'",
       groupBy: explorerGroupBy(['charge_category'], new Map()),
@@ -296,7 +296,7 @@ describe('queryAggregatedRows against DuckDB', () => {
     });
 
     const query = (tier: 'daily' | 'hourly', ids: readonly string[]): AggregatedRowsQuery => ({
-      source: buildSource({ dataDir, tier, dimensions, providers: [{ name: FIXTURE_PROVIDER, periods: ['2026-01'] }], costMetric: 'effective' }),
+      source: buildSource({ dataDir, tier, dimensions, providers: [{ name: FIXTURE_PROVIDER, type: 'aws', periods: ['2026-01'] }], costMetric: 'effective' }),
       where: '',
       groupBy: explorerGroupBy(ids, tagSqlColumnsById(dimensions.tags)),
       rowFilters: [],

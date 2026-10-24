@@ -49,8 +49,10 @@ import type {
   DimensionsConfig,
   OrgNode,
   ProviderAuth,
+  ProviderConfig,
   ProviderName,
   ProviderSourceSpec,
+  ProviderType,
   RegionEnrichment,
   SyncStatus,
   ViewsConfig,
@@ -133,9 +135,10 @@ export interface AppContext {
    *  provider with its on-disk months for `tier`.
    *  Empty while onboarding. */
   readonly getQueryProviders: (tier: 'daily' | 'hourly') => Promise<readonly ProviderSourceSpec[]>;
-  /** Build-affecting shape signature for a dimensions config — compare against
-   *  rollupStore.getBuiltSignature() to tell if the built rollup matches a grain. */
-  readonly signatureForDimensions: (dims: DimensionsConfig) => Promise<string>;
+  /** Build-affecting shape signature for a dimensions config, for a rollup of a
+   *  provider of `providerType` — compare against rollupStore.getBuiltSignature()
+   *  to tell if the built rollup matches a grain. */
+  readonly signatureForDimensions: (dims: DimensionsConfig, providerType: ProviderType) => Promise<string>;
   readonly queryLog: QueryLog;
   /** Persistent per-period pre-aggregated rollup backing dashboard queries. */
   readonly rollupStore: RollupStore;
@@ -419,9 +422,13 @@ export function createAppContext(ctx: IpcContext): AppContext {
 
   // First configured provider, or null during onboarding. Cached via
   // getConfig's own cache.
-  async function getFirstProviderName(): Promise<ProviderName | null> {
+  async function getFirstProvider(): Promise<ProviderConfig | null> {
     const config = await getConfig().catch(() => null);
-    return config?.providers[0]?.name ?? null;
+    return config?.providers[0] ?? null;
+  }
+
+  async function getFirstProviderName(): Promise<ProviderName | null> {
+    return (await getFirstProvider())?.name ?? null;
   }
 
   // ProviderSourceSpec list for QueryContextOptions: EVERY configured
@@ -433,7 +440,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     if (config === null) return [];
     return Promise.all(config.providers.map(async provider => {
       const availablePeriods = await listLocalMonths(ctx.dataDir, provider.name, tier);
-      return { name: provider.name, availablePeriods };
+      return { name: provider.name, type: provider.type, availablePeriods };
     }));
   }
 
@@ -519,14 +526,16 @@ export function createAppContext(ctx: IpcContext): AppContext {
   // drift would silently make the estimate's matched-check always false).
   // computeShapeSignature ignores aliases/labels/region-enrichment, so the raw
   // editor `candidate` and the query-enriched dims hash identically for the same
-  // enabled grain.
-  async function signatureForDimensions(dimensions: DimensionsConfig): Promise<string> {
+  // enabled grain. The provider type picks how its columns are read, which the
+  // stored values depend on.
+  async function signatureForDimensions(dimensions: DimensionsConfig, providerType: ProviderType): Promise<string> {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
     const costScope = await getQueryCostScope();
     let orgRaw = '';
     try { orgRaw = await fs.readFile(path.join(ctx.stateDir, 'org-accounts.json'), 'utf-8'); } catch { /* no org sync yet */ }
     return computeShapeSignature({
+      providerType,
       dimensions,
       costMetric: costScope.costMetric,
       rules: costScope.rules,
@@ -535,22 +544,20 @@ export function createAppContext(ctx: IpcContext): AppContext {
     });
   }
 
-  async function getRollupShape(): Promise<RollupShape> {
+  async function getRollupShape(providerType: ProviderType): Promise<RollupShape> {
     const dimensions = await getQueryDimensions();
-    const signature = await signatureForDimensions(dimensions);
+    const signature = await signatureForDimensions(dimensions, providerType);
     return { signature, grainDimensions: rollupGrainColumns(dimensions) };
   }
 
-  async function buildRollupSqlFor(): Promise<BuildPartitionSql> {
+  async function buildRollupSqlFor(provider: ProviderConfig): Promise<BuildPartitionSql> {
     const dimensions = await getQueryDimensions();
     const orgPath = await getOrgAccountsPath();
     const accountReverseMap = await getAccountReverseMap();
     const costScope = await getQueryCostScope();
-    const provider = await getFirstProviderName();
-    if (provider === null) throw new Error('No provider configured');
     return (period, outPath) => Promise.resolve(buildRollupPartitionQuery(period, 'daily', outPath, {
       dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, accountReverseMap, costScope,
-      providers: [{ name: provider }],
+      providers: [{ name: provider.name, type: provider.type }],
     }));
   }
 
@@ -559,18 +566,18 @@ export function createAppContext(ctx: IpcContext): AppContext {
   // or stale daily partitions (recent months first). Never blocks the app.
   async function warmupRollup(): Promise<void> {
     try {
-      const provider = await getFirstProviderName();
+      const provider = await getFirstProvider();
       if (provider === null) { rollupStore.markSettled(); return; }
-      const shape = await getRollupShape();
+      const shape = await getRollupShape(provider.type);
       // Rejects if the sidecar can't be read (catch below): validating against
       // `{}` would mark every partition stale and stamp the rebuilds with that
       // hash, so the next warmup would rebuild them all again.
-      const etags = await readEtags(ctx.dataDir, provider, 'daily');
+      const etags = await readEtags(ctx.dataDir, provider.name, 'daily');
       const validation = await rollupStore.loadAndValidate(shape, etags);
-      const available = await listLocalMonths(ctx.dataDir, provider, 'daily');
+      const available = await listLocalMonths(ctx.dataDir, provider.name, 'daily');
       const toBuild = available.filter(p => !validation.validPeriods.has(p)).sort((a, b) => b.localeCompare(a));
       if (toBuild.length === 0) { rollupStore.markSettled(); return; }
-      const buildSql = await buildRollupSqlFor();
+      const buildSql = await buildRollupSqlFor(provider);
       // Wrap the fire-and-forget rebuild in a transaction (the span is tied to the
       // promise, so it stays open until the background builds settle), mirroring
       // rollup.maintain — the rollup.build child spans nest under it.
@@ -588,16 +595,16 @@ export function createAppContext(ctx: IpcContext): AppContext {
   // results so dashboards re-render from the fresh partitions.
   async function maintainRollupForPeriods(changed: readonly string[]): Promise<void> {
     try {
-      const provider = await getFirstProviderName();
+      const provider = await getFirstProvider();
       if (provider === null) return;
-      const available = await listLocalMonths(ctx.dataDir, provider, 'daily');
+      const available = await listLocalMonths(ctx.dataDir, provider.name, 'daily');
       const periods = changed.filter(p => available.includes(p));
       if (periods.length === 0) return;
-      const shape = await getRollupShape();
+      const shape = await getRollupShape(provider.type);
       // These months' raw files just changed, so they're rebuilt even when the
       // etags can't be read (null) — stamped unverified, which the next warmup
       // rebuilds. An unloaded store serves nothing and can't load without them.
-      const etags = await readEtags(ctx.dataDir, provider, 'daily').catch((err: unknown) => {
+      const etags = await readEtags(ctx.dataDir, provider.name, 'daily').catch((err: unknown) => {
         logger.warn(`rollup-maintain: ${err instanceof Error ? err.message : String(err)}`);
         return null;
       });
@@ -606,7 +613,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
         if (etags === null) { resultCache.clear(); return; }
         await rollupStore.loadAndValidate(shape, etags);
       }
-      const buildSql = await buildRollupSqlFor();
+      const buildSql = await buildRollupSqlFor(provider);
       await traceSpan(
         { name: 'rollup.maintain', op: SPAN_OP.rollupMaintain, forceTransaction: true, attributes: { 'rollup.periods': periods.length } },
         () => rollupStore.maintainPeriods(periods, buildSql, etags, shape, { force: true }),

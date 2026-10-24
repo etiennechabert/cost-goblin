@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildCostQuery, buildDailyCostsQuery, buildTrendQuery, buildMissingTagsQuery, buildNonResourceCostQuery, buildEntityDetailQuery, buildSource, computePeriodsInRange } from '../query/builder.js';
+import type { ProviderSourceSpec } from '../query/builder.js';
 import type { DimensionsConfig } from '../types/config.js';
 import { asDimensionId, asDateString, asDollars, asEntityRef, asHourString, asProviderName, asTagValue, tagSqlColumn } from '../types/branded.js';
 
@@ -23,7 +24,7 @@ const dimensions: DimensionsConfig = {
 
 // Single provider named 'aws' keeps the pre-#516 '/data/aws/raw/...' path
 // literals valid: the path segment is now the provider name.
-const providers = [{ name: asProviderName('aws') }];
+const providers: ProviderSourceSpec[] = [{ name: asProviderName('aws'), type: 'aws' }];
 
 describe('buildCostQuery', () => {
   it('generates valid SQL for built-in dimension', () => {
@@ -124,7 +125,7 @@ describe('computePeriodsInRange', () => {
 
 describe('buildSource narrowed paths', () => {
   it('emits read_parquet with a list of month paths when periods are given', () => {
-    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions, providers: [{ name: asProviderName('aws'), periods: ['2026-03', '2026-04'] }] });
+    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions, providers: [{ name: asProviderName('aws'), type: 'aws', periods: ['2026-03', '2026-04'] }] });
     expect(sql).toContain("'/data/aws/raw/daily-2026-03/*.parquet'");
     expect(sql).toContain("'/data/aws/raw/daily-2026-04/*.parquet'");
     expect(sql).not.toContain("daily-*/*.parquet");
@@ -137,14 +138,14 @@ describe('buildSource narrowed paths', () => {
   });
 
   it('falls back to the wildcard when periods are empty or omitted', () => {
-    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions, providers: [{ name: asProviderName('aws'), periods: [] }] });
+    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions, providers: [{ name: asProviderName('aws'), type: 'aws', periods: [] }] });
     expect(sql).toContain("read_parquet('/data/aws/raw/daily-*/*.parquet', union_by_name=true)");
     const sql2 = buildSource({ dataDir: '/data', tier: 'daily', dimensions, providers });
     expect(sql2).toContain("read_parquet('/data/aws/raw/daily-*/*.parquet', union_by_name=true)");
   });
 
   it('uses the hourly prefix when tier is hourly', () => {
-    const sql = buildSource({ dataDir: '/data', tier: 'hourly', dimensions, providers: [{ name: asProviderName('aws'), periods: ['2026-04'] }] });
+    const sql = buildSource({ dataDir: '/data', tier: 'hourly', dimensions, providers: [{ name: asProviderName('aws'), type: 'aws', periods: ['2026-04'] }] });
     expect(sql).toContain("'/data/aws/raw/hourly-2026-04/*.parquet'");
   });
 });

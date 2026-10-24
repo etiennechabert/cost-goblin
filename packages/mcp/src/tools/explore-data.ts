@@ -105,6 +105,7 @@ export async function exploreData(
   const branches = allProviders
     .map(p => ({
       name: p.name,
+      type: p.type,
       periods: required.filter(m => p.availablePeriods?.includes(m) ?? false),
     }))
     .filter(b => b.periods.length > 0);

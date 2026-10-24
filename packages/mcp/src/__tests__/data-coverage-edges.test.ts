@@ -148,7 +148,7 @@ describe('buildQueryContextOpts', () => {
     expect(opts.costScope).toBe(COST_SCOPE);
     expect(opts.materializedSource).toBe('cost_base');
     expect(opts.orgAccountsPath).toBe('/state/org-accounts.json');
-    expect(opts.providers).toEqual([{ name: 'aws', availablePeriods: ['2026-01', '2026-02'] }]);
+    expect(opts.providers).toEqual([{ name: 'aws', type: 'aws', availablePeriods: ['2026-01', '2026-02'] }]);
     expect(opts.accountReverseMap?.get('Prod')).toEqual(['111']);
     expect(sources).toEqual(['2026-01-01..2026-01-31@daily']);
   });
@@ -163,7 +163,7 @@ describe('buildQueryContextOpts', () => {
   it('reads the hourly tier when asked and is empty when that tier has no month in range', async () => {
     const { opts, empty } = await buildQueryContextOpts(ctxWith(janFeb), JAN, 'hourly');
     expect(empty).toBe(true);
-    expect(opts.providers).toEqual([{ name: 'aws', availablePeriods: [] }]);
+    expect(opts.providers).toEqual([{ name: 'aws', type: 'aws', availablePeriods: [] }]);
     expect(opts.costScope).toEqual(COST_SCOPE);
     expect(opts.materializedSource).toBeUndefined();
   });

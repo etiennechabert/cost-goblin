@@ -152,6 +152,7 @@ export function registerCostScopeHandlers(app: AppContext): void {
     const branches = providers
       .map(p => ({
         name: p.name,
+        type: p.type,
         periods: required.filter(m => p.availablePeriods?.includes(m) ?? false),
       }))
       .filter(b => b.periods.length > 0);

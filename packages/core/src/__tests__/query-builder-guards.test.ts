@@ -36,7 +36,7 @@ const dimensions: DimensionsConfig = {
 };
 
 const JAN = { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') };
-const opts: QueryContextOptions = { dataDir: '/data', dimensions, providers: [{ name: asProviderName('aws') }] };
+const opts: QueryContextOptions = { dataDir: '/data', dimensions, providers: [{ name: asProviderName('aws'), type: 'aws' }] };
 const noFilters: FilterMap = {};
 
 function filters(entries: Record<string, readonly string[]>): FilterMap {
@@ -129,7 +129,7 @@ describe('buildSource edge inputs', () => {
   });
 
   it('emits NULL for an account-only tag dimension when there is no org join', () => {
-    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: { builtIn: [], tags: [BU] }, providers: [{ name: asProviderName('aws') }] });
+    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: { builtIn: [], tags: [BU] }, providers: [{ name: asProviderName('aws'), type: 'aws' }] });
     expect(sql).toContain(`NULL AS ${tagSqlColumn(BU)}`);
     expect(sql).not.toContain('acct_tags');
   });
@@ -138,7 +138,7 @@ describe('buildSource edge inputs', () => {
     const tag: TagDimension = { ...COST_CENTER, missingValueTemplate: 'unassigned' };
     const sql = buildSource({
       dataDir: '/data', tier: 'daily', dimensions: { builtIn: [], tags: [tag] },
-      orgAccountsPath: '/state/org-accounts.json', providers: [{ name: asProviderName('aws') }],
+      orgAccountsPath: '/state/org-accounts.json', providers: [{ name: asProviderName('aws'), type: 'aws' }],
     });
     const col = tagSqlColumn(tag);
     expect(sql).toContain(`COALESCE(NULLIF(element_at(src.Tags, 'cc')[1], ''), 'unassigned' || acct_tags.fallback_${col} || '') AS ${col}`);
@@ -147,7 +147,7 @@ describe('buildSource edge inputs', () => {
   it('emits raw tag columns only for resource tags that carry an account fallback', () => {
     const sql = buildSource({
       dataDir: '/data', tier: 'daily', dimensions: { builtIn: [], tags: [TEAM, COST_CENTER, BU] },
-      orgAccountsPath: '/state/org-accounts.json', providers: [{ name: asProviderName('aws') }], includeRawTags: true,
+      orgAccountsPath: '/state/org-accounts.json', providers: [{ name: asProviderName('aws'), type: 'aws' }], includeRawTags: true,
     });
     expect(sql).toContain(`element_at(src.Tags, 'cc')[1] AS raw_${tagSqlColumn(COST_CENTER)}`);
     expect(sql).not.toContain(`raw_${tagSqlColumn(TEAM)}`);
@@ -157,7 +157,7 @@ describe('buildSource edge inputs', () => {
   it('keeps every provider on its wildcard glob when none reports a month on disk', () => {
     const { sql } = buildCostQuery({ groupBy: asDimensionId('service'), dateRange: JAN, filters: noFilters }, {
       ...opts,
-      providers: [{ name: asProviderName('aws'), availablePeriods: [] }, { name: asProviderName('gcp'), availablePeriods: [] }],
+      providers: [{ name: asProviderName('aws'), type: 'aws', availablePeriods: [] }, { name: asProviderName('gcp'), type: 'gcp', availablePeriods: [] }],
     });
     expect(sql).toContain("read_parquet('/data/aws/raw/daily-*/*.parquet', union_by_name=true)");
     expect(sql).toContain("read_parquet('/data/gcp/raw/daily-*/*.parquet', union_by_name=true)");
@@ -166,7 +166,7 @@ describe('buildSource edge inputs', () => {
   it('drops a provider with no months on disk while another has data', () => {
     const { sql } = buildCostQuery({ groupBy: asDimensionId('service'), dateRange: JAN, filters: noFilters }, {
       ...opts,
-      providers: [{ name: asProviderName('aws'), availablePeriods: [] }, { name: asProviderName('gcp'), availablePeriods: ['2026-01'] }],
+      providers: [{ name: asProviderName('aws'), type: 'aws', availablePeriods: [] }, { name: asProviderName('gcp'), type: 'gcp', availablePeriods: ['2026-01'] }],
     });
     expect(sql).toContain("'/data/gcp/raw/daily-2026-01/*.parquet'");
     expect(sql).not.toContain('/data/aws/raw/');

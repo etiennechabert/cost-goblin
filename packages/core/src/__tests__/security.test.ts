@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildCostQuery, buildTrendQuery, buildMissingTagsQuery, buildNonResourceCostQuery, buildEntityDetailQuery, buildDailyCostsQuery, buildGrainProbeQuery, buildSource } from '../query/builder.js';
+import type { ProviderSourceSpec } from '../query/builder.js';
 import { SecurityError } from '../query/identifier-validator.js';
 import { rollupGrainColumns } from '../rollup/grain.js';
 import type { DimensionsConfig } from '../types/config.js';
@@ -27,7 +28,7 @@ const dimensions: DimensionsConfig = {
 
 // Single provider named 'aws' keeps the pre-#516 '/data/aws/raw/...' path
 // literals valid: the path segment is now the provider name.
-const providers = [{ name: asProviderName('aws') }];
+const providers: ProviderSourceSpec[] = [{ name: asProviderName('aws'), type: 'aws' }];
 
 describe('SQL Injection Prevention', () => {
   describe('Filter values are parameterized', () => {
@@ -287,13 +288,13 @@ describe('SQL Injection Prevention', () => {
         dataDir: '/data',
         tier: 'daily',
         dimensions,
-        providers: [{ name: asProviderName('aws'), periods: ["2026-01'*') UNION SELECT 1 --"] }],
+        providers: [{ name: asProviderName('aws'), type: 'aws', periods: ["2026-01'*') UNION SELECT 1 --"] }],
       })).toThrow(SecurityError);
       expect(() => buildSource({
         dataDir: '/data',
         tier: 'daily',
         dimensions,
-        providers: [{ name: asProviderName('aws'), periods: ['2026-01', '../../../etc/passwd'] }],
+        providers: [{ name: asProviderName('aws'), type: 'aws', periods: ['2026-01', '../../../etc/passwd'] }],
       })).toThrow(SecurityError);
     });
 
@@ -302,13 +303,13 @@ describe('SQL Injection Prevention', () => {
         dataDir: '/data',
         tier: "daily'*') UNION SELECT 1 --",
         dimensions,
-        providers: [{ name: asProviderName('aws') }],
+        providers: [{ name: asProviderName('aws'), type: 'aws' }],
       })).toThrow(SecurityError);
       expect(() => buildSource({
         dataDir: '/data',
         tier: 'weekly',
         dimensions,
-        providers: [{ name: asProviderName('aws') }],
+        providers: [{ name: asProviderName('aws'), type: 'aws' }],
       })).toThrow(SecurityError);
     });
 
@@ -317,7 +318,7 @@ describe('SQL Injection Prevention', () => {
         dataDir: '/data',
         tier: 'daily',
         dimensions,
-        providers: [{ name: asProviderName('aws'), periods: ['2026-01', '2026-02'] }],
+        providers: [{ name: asProviderName('aws'), type: 'aws', periods: ['2026-01', '2026-02'] }],
       });
       expect(narrowed).toContain("'/data/aws/raw/daily-2026-01/*.parquet'");
       expect(narrowed).toContain("'/data/aws/raw/daily-2026-02/*.parquet'");
@@ -326,7 +327,7 @@ describe('SQL Injection Prevention', () => {
         dataDir: '/data',
         tier: 'hourly',
         dimensions,
-        providers: [{ name: asProviderName('aws') }],
+        providers: [{ name: asProviderName('aws'), type: 'aws' }],
       });
       expect(wildcard).toContain("'/data/aws/raw/hourly-*/*.parquet'");
     });
@@ -538,7 +539,7 @@ describe('SQL Injection Prevention', () => {
       expect(() => buildSource({
         dataDir: '/data', tier: 'daily', dimensions: dims,
         orgAccountsPath: '/state/org-account-tags.json',
-        providers: [{ name: asProviderName('aws') }],
+        providers: [{ name: asProviderName('aws'), type: 'aws' }],
       })).toThrow(SecurityError);
     });
 
@@ -559,12 +560,12 @@ describe('SQL Injection Prevention', () => {
     it('escapes an apostrophe in the data directory', () => {
       const src = buildSource({
         dataDir: "/data/o'brien", tier: 'daily', dimensions,
-        providers: [{ name: asProviderName('aws'), periods: ['2026-01'] }],
+        providers: [{ name: asProviderName('aws'), type: 'aws', periods: ['2026-01'] }],
       });
       expect(src).toContain("'/data/o''brien/aws/raw/");
       const wildcard = buildSource({
         dataDir: "/data/o'brien", tier: 'daily', dimensions,
-        providers: [{ name: asProviderName('aws') }],
+        providers: [{ name: asProviderName('aws'), type: 'aws' }],
       });
       expect(wildcard).toContain("'/data/o''brien/aws/raw/");
     });
@@ -577,7 +578,7 @@ describe('SQL Injection Prevention', () => {
       const src = buildSource({
         dataDir: '/data', tier: 'daily', dimensions: dims,
         orgAccountsPath: "/s/o'b.json",
-        providers: [{ name: asProviderName('aws') }],
+        providers: [{ name: asProviderName('aws'), type: 'aws' }],
       });
       expect(src).toContain("read_json('/s/o''b.json', format='array'");
       expect(src).not.toContain('read_json_auto');

@@ -61,7 +61,7 @@ function scope(rules: CostScopeConfig['rules']): CostScopeConfig {
 }
 
 function rawSourceJan(): string {
-  return buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, providers: [{ name: PROVIDER, periods: [PERIOD] }], costMetric: 'effective' });
+  return buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, providers: [{ name: PROVIDER, type: 'aws', periods: [PERIOD] }], costMetric: 'effective' });
 }
 
 describe('rollupGrainDimensions', () => {
@@ -161,7 +161,7 @@ describe('buildRollupPartitionQuery', () => {
   afterAll(async () => { await rm(outPath, { force: true }); });
 
   it('writes a partition whose columns are exactly the grain + cost + line_items', async () => {
-    await conn.run(buildRollupPartitionQuery(PERIOD, 'daily', outPath, { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER, availablePeriods: [PERIOD] }], costScope: scope([]) }));
+    await conn.run(buildRollupPartitionQuery(PERIOD, 'daily', outPath, { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER, type: 'aws', availablePeriods: [PERIOD] }], costScope: scope([]) }));
     const desc = await queryAll(conn, `DESCRIBE SELECT * FROM ${glob}`);
     const cols = desc.map(r => String(r['column_name'])).sort((a, b) => a.localeCompare(b));
     const expected = [...rollupGrainColumns(dimensions), 'cost', 'line_items'].sort((a, b) => a.localeCompare(b));
@@ -172,7 +172,7 @@ describe('buildRollupPartitionQuery', () => {
   });
 
   it('pre-aggregation is lossless: rollup SUM(cost) == raw SUM(cost) for the month, overall and per-service', async () => {
-    await conn.run(buildRollupPartitionQuery(PERIOD, 'daily', outPath, { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER, availablePeriods: [PERIOD] }], costScope: scope([]) }));
+    await conn.run(buildRollupPartitionQuery(PERIOD, 'daily', outPath, { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER, type: 'aws', availablePeriods: [PERIOD] }], costScope: scope([]) }));
 
     const rawWhere = `WHERE usage_date >= '${PERIOD}-01' AND usage_date < '2026-02-01'`;
     const rawTotal = Number((await queryAll(conn, `SELECT CAST(SUM(cost) AS DOUBLE) t FROM ${rawSourceJan()} ${rawWhere}`))[0]?.['t']);
@@ -193,7 +193,7 @@ describe('buildRollupPartitionQuery', () => {
     // The Table widget's overview routes through the rollup (SUM(cost) /
     // SUM(line_items) per usage_date). For total_rows to match the raw path's
     // COUNT(*), the per-grain line_items must sum back to the raw row count.
-    await conn.run(buildRollupPartitionQuery(PERIOD, 'daily', outPath, { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER, availablePeriods: [PERIOD] }], costScope: scope([]) }));
+    await conn.run(buildRollupPartitionQuery(PERIOD, 'daily', outPath, { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER, type: 'aws', availablePeriods: [PERIOD] }], costScope: scope([]) }));
     const rawWhere = `WHERE usage_date >= '${PERIOD}-01' AND usage_date < '2026-02-01'`;
     const rawCount = Number((await queryAll(conn, `SELECT CAST(COUNT(*) AS BIGINT) n FROM ${rawSourceJan()} ${rawWhere}`))[0]?.['n']);
     const rollCount = Number((await queryAll(conn, `SELECT CAST(SUM(line_items) AS BIGINT) n FROM ${glob}`))[0]?.['n']);
@@ -209,7 +209,7 @@ describe('buildRollupPartitionQuery', () => {
     const rawTotal = Number((await queryAll(conn, `SELECT CAST(SUM(cost) AS DOUBLE) t FROM ${rawSourceJan()} ${rawWhere}`))[0]?.['t']);
 
     const rule = { id: 'x', name: 'exclude top service', enabled: true, builtIn: false, conditions: [{ dimensionId: asDimensionId('service'), values: [excludedService] }] };
-    await conn.run(buildRollupPartitionQuery(PERIOD, 'daily', outPath, { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER, availablePeriods: [PERIOD] }], costScope: scope([rule]) }));
+    await conn.run(buildRollupPartitionQuery(PERIOD, 'daily', outPath, { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER, type: 'aws', availablePeriods: [PERIOD] }], costScope: scope([rule]) }));
 
     const rollTotal = Number((await queryAll(conn, `SELECT CAST(SUM(cost) AS DOUBLE) t FROM ${glob}`))[0]?.['t']);
     expect(rollTotal).toBeCloseTo(rawTotal - excludedCost, 2);

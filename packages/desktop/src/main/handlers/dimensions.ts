@@ -176,7 +176,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
     const source = buildSource({
       dataDir: ctx.dataDir, tier: 'daily', dimensions: await getQueryDimensions(),
       orgAccountsPath,
-      providers: [{ name: firstProvider.name, periods: [period] }],
+      providers: [{ name: firstProvider.name, type: firstProvider.type, periods: [period] }],
       costMetric: 'billed',
       marketplaceAttribution: costScope.marketplaceAttribution,
     });
@@ -285,7 +285,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
     // against (same signatureForDimensions path getRollupShape uses). When they
     // match, `current` is the real size of this grain, not an estimate.
     const builtSignature = rollupStore.getBuiltSignature();
-    const candidateSignature = await signatureForDimensions(dims);
+    const candidateSignature = await signatureForDimensions(dims, firstProvider.type);
     const currentMatchesCandidate = current !== null && builtSignature !== null && builtSignature === candidateSignature;
 
     return computeRollupEstimate({

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { DuckDBInstance } from '@duckdb/node-api';
 import { join } from 'node:path';
 import { buildSource } from '../query/builder.js';
-import type { DimensionsConfig } from '../types/config.js';
+import type { DimensionsConfig, ProviderType } from '../types/config.js';
 import { asDimensionId, asProviderName, tagSqlColumn } from '../types/branded.js';
 import { FIXTURE_GCP_PROVIDER_NAME, FIXTURE_PROVIDER_NAME } from '../__fixtures__/layout.js';
 
@@ -88,13 +88,17 @@ describe('the gcp-main fixture is genuinely GCP-shaped', () => {
   });
 });
 
+function fixtureType(name: string): ProviderType {
+  return name === FIXTURE_GCP_PROVIDER_NAME ? 'gcp' : 'aws';
+}
+
 describe('the fixture tree serves a mixed workspace', () => {
   function source(providers: readonly string[]): string {
     return buildSource({
       dataDir: DATA_DIR,
       tier: 'daily',
       dimensions,
-      providers: providers.map(name => ({ name: asProviderName(name), periods: ['2026-01', '2026-02'] })),
+      providers: providers.map(name => ({ name: asProviderName(name), type: fixtureType(name), periods: ['2026-01', '2026-02'] })),
       costMetric: 'billed',
     });
   }

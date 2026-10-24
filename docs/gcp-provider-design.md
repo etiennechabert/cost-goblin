@@ -278,6 +278,11 @@ union + injected `provider` column already shipped in #516).
 | `SkuMeter` | `COALESCE(SkuMeter, SkuId)` | 1.2-conditional column **[LIVE-GATE: verify]** |
 | `Tags` | list-of-struct → MAP; merge of `Tags` + `x_Labels` + `x_ProjectLabels` **[LIVE-GATE: decide precedence]** | the canonicalization step |
 
+Two columns pass through the canonicalizer unchanged but are read differently at query time
+(`providerColumnExprs` in `packages/core/src/query/provider-projection.ts`): `region` falls back to
+`x_Location` where `RegionId` is empty (multi-region and global charges: `us`, `europe`, `global`),
+and `pricing_category` takes FOCUS casing (the export writes `standard`).
+
 Currency: GCP bills in the billing account currency. Multi-currency workspaces remain the
 documented #516 v1 caveat — not GCP-specific, no new work here.
 
