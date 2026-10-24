@@ -351,7 +351,7 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
                     priority={offset + colIdx}
                     minHeight={placeholderMinHeight(w.type)}
                     className="relative min-w-0 flex flex-col"
-                    style={widgetFlex(w.size)}
+                    style={widgetFlex(w.size, row.widgets.map(rw => rw.size))}
                   >
                     {reRolling && <UpdatingBadge />}
                     <Renderer

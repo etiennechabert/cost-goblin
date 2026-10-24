@@ -99,7 +99,7 @@ const SIZE_TO_FRACTION: Readonly<Record<WidgetSize, number>> = {
  *  so a share of it alone can leave a widget too narrow to read. */
 const SIZE_TO_MIN_WIDTH: Readonly<Record<WidgetSize, string>> = {
   small: '14rem',
-  medium: '20rem',
+  medium: '19rem',
   large: '20rem',
   full: '0',
 };
@@ -111,13 +111,19 @@ export interface WidgetFlex {
   readonly minWidth: string;
 }
 
-/** Lay a widget out in its (wrapping, flex) row. Widgets share the row in
- *  proportion to their size, out of 4 columns: from a zero basis, each grows
- *  by its share, so a row whose sizes add up to more than 4 (three mediums)
- *  still fits on one line. A row wraps only once a widget would get narrower
- *  than its minimum, and a widget alone on a line fills it. */
-export function widgetFlex(size: WidgetSize): WidgetFlex {
-  return { flexGrow: SIZE_TO_FRACTION[size], flexShrink: 1, flexBasis: '0%', minWidth: SIZE_TO_MIN_WIDTH[size] };
+/** Lay a widget out in its (wrapping, flex) row, out of 4 columns. A row that
+ *  fills them or more (three mediums) shares its width by size from a zero
+ *  basis, so it still fits on one line, as it did when widgets only shrank. A
+ *  row short of them keeps each widget's share as its basis and splits what is
+ *  left evenly, as before. Either way a row wraps only once a widget would get
+ *  narrower than its minimum, and a widget alone on a line fills it. */
+export function widgetFlex(size: WidgetSize, rowSizes: readonly WidgetSize[]): WidgetFlex {
+  const minWidth = SIZE_TO_MIN_WIDTH[size];
+  const rowColumns = rowSizes.reduce((n, s) => n + SIZE_TO_FRACTION[s], 0);
+  if (rowColumns < 4) {
+    return { flexGrow: 1, flexShrink: 1, flexBasis: `${String(SIZE_TO_FRACTION[size] * 25)}%`, minWidth };
+  }
+  return { flexGrow: SIZE_TO_FRACTION[size], flexShrink: 1, flexBasis: '0%', minWidth };
 }
 
 /** Stable key for a FilterMap. Used as a useQuery dep so widgets refetch on
