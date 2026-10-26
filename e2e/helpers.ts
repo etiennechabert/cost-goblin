@@ -568,7 +568,7 @@ export async function expectVisibleData(page: Page): Promise<void> {
 // for a page by its historical name; clickNavButton hides where it now lives:
 //
 // - View-mode pages (Trends/Findings/Tags/Explorer + custom dashboards) live in
-//   the left nav / Dashboards popover, only visible while NOT in setting mode.
+//   the top-bar nav / Dashboards sidebar, only visible while NOT in setting mode.
 // - Configuration pages are tabs in the settings rail, reached by opening the
 //   gear ("Settings") and clicking the tab by its registry label.
 const DIRECT_NAV = new Set(['Trends', 'Findings', 'Tags', 'Explorer', 'Dashboards', 'Home']);
@@ -598,16 +598,6 @@ const NAV_SIDE: Record<string, 'left' | 'right'> = {
   Dashboards: 'left', Home: 'left',
 };
 
-async function openIfClosed(trigger: ReturnType<Page['getByRole']>): Promise<void> {
-  // Radix Popover toggles open/closed on each trigger click. If a previous
-  // test or step left the popover open, clicking again would CLOSE it and
-  // the subsequent menu-item lookup would time out. Check aria-expanded
-  // first.
-  const expanded = await trigger.getAttribute('aria-expanded').catch(() => null);
-  if (expanded === 'true') return;
-  await trigger.click();
-}
-
 function topNav(page: Page, side: 'left' | 'right'): ReturnType<Page['getByRole']> {
   return page.getByRole('navigation', { name: side === 'left' ? LEFT_NAV_LABEL : RIGHT_NAV_LABEL });
 }
@@ -631,10 +621,16 @@ export async function ensureViewMode(page: Page): Promise<void> {
   if (expanded === 'true') await gear.click();
 }
 
-export async function openDashboardsDropdown(page: Page): Promise<void> {
-  const trigger = topNav(page, 'left').getByRole('button', { name: 'Dashboards', exact: false }).first();
-  await openIfClosed(trigger);
-  await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+/** The dashboards sidebar, shown beside an open dashboard. Leaves setting mode
+ *  and, from any other page, opens the last dashboard with the top-bar button. */
+export async function openDashboardsSidebar(page: Page): Promise<Locator> {
+  await ensureViewMode(page);
+  const sidebar = page.getByRole('navigation', { name: 'Dashboards', exact: true });
+  if (!(await sidebar.isVisible())) {
+    await topNav(page, 'left').getByRole('button', { name: 'Dashboards', exact: true }).click();
+  }
+  await expect(sidebar).toBeVisible();
+  return sidebar;
 }
 
 export async function clickNavButton(page: Page, name: string): Promise<void> {
@@ -646,17 +642,17 @@ export async function clickNavButton(page: Page, name: string): Promise<void> {
       .getByRole('button', { name: railLabel, exact: true }).click();
     return;
   }
-  // View-mode target — leave setting mode first so the left nav / Dashboards
-  // popover is on screen.
+  // View-mode target — leave setting mode first so the top-bar nav is on
+  // screen.
   await ensureViewMode(page);
   if (DIRECT_NAV.has(resolved)) {
     const side = NAV_SIDE[resolved] ?? 'left';
     await topNav(page, side).getByRole('button', { name: resolved, exact: false }).first().click();
     return;
   }
-  // Custom dashboard — hidden behind the Dashboards popover.
-  await openDashboardsDropdown(page);
-  await page.getByRole('menuitem', { name: new RegExp(resolved) }).first().click();
+  // Custom dashboard — listed in the sidebar beside an open dashboard.
+  const sidebar = await openDashboardsSidebar(page);
+  await sidebar.getByRole('button', { name: resolved, exact: true }).click();
 }
 
 export async function navigateTo(page: Page, buttonName: string, headingName: string): Promise<void> {

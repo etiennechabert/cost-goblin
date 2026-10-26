@@ -29,6 +29,28 @@ const SPEC: ViewSpec = {
   ],
 };
 
+/** One row short of the full width (small + medium = 3 of 4 columns) and one
+ *  past it (medium + medium + large = 7). */
+const LAYOUT_SPEC: ViewSpec = {
+  id: 'layout',
+  name: 'Layout View',
+  rows: [
+    {
+      widgets: [
+        { id: 'u-s', type: 'summary', size: 'small', metric: 'total' },
+        { id: 'u-m', type: 'pie', size: 'medium', groupBy: asDimensionId('service') },
+      ],
+    },
+    {
+      widgets: [
+        { id: 'o-m1', type: 'pie', size: 'medium', groupBy: asDimensionId('service') },
+        { id: 'o-m2', type: 'pie', size: 'medium', groupBy: asDimensionId('account') },
+        { id: 'o-l', type: 'topNBar', size: 'large', groupBy: asDimensionId('account'), topN: 5 },
+      ],
+    },
+  ],
+};
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
@@ -56,6 +78,41 @@ describe('CustomView', () => {
     await waitFor(() => {
       expect(screen.getByText('Total Cost')).toBeDefined();
     });
+  });
+
+  it('wraps a row onto a new line before a widget gets too narrow to read', async () => {
+    const { container } = renderView(LAYOUT_SPEC);
+    await waitFor(() => { expect(container.querySelector('[data-widget-id="u-s"]')).not.toBeNull(); });
+    const slot = (id: string): HTMLElement => {
+      const el = container.querySelector(`[data-widget-id="${id}"]`);
+      if (!(el instanceof HTMLElement)) throw new Error(`no slot ${id}`);
+      return el;
+    };
+    expect(slot('u-s').parentElement?.className).toContain('flex-wrap');
+    expect(slot('u-s').style.minWidth).toBe('14rem');
+    expect(slot('u-m').style.minWidth).toBe('19rem');
+    expect(slot('o-l').style.minWidth).toBe('20rem');
+
+    // A row short of the full width keeps its percentage bases and splits what
+    // is left evenly, as before rows wrapped.
+    expect(slot('u-s').style.flexBasis).toBe('25%');
+    expect(slot('u-m').style.flexBasis).toBe('50%');
+    expect(slot('u-s').style.flexGrow).toBe('1');
+    expect(slot('u-m').style.flexGrow).toBe('1');
+
+    // A full or overfull row shares by size from a zero basis, so it only
+    // wraps once a widget would drop below its minimum.
+    expect(slot('o-m1').style.flexBasis).toBe('0%');
+    expect(slot('o-m1').style.flexGrow).toBe('2');
+    expect(slot('o-l').style.flexGrow).toBe('3');
+  });
+
+  it('moves the date picker under the title rather than squeezing it', () => {
+    renderView();
+    const titleColumn = screen.getByRole('heading', { name: 'Test View' }).parentElement;
+    expect(titleColumn?.className).toContain('flex-[1_1_20rem]');
+    expect(titleColumn?.className).toContain('min-w-0');
+    expect(titleColumn?.parentElement?.className).toContain('flex-wrap');
   });
 
   it('does not crash with an empty spec', () => {

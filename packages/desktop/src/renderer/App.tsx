@@ -5,7 +5,7 @@ import type { ChartPalette, CostApi, DataSharingStatus, Dimension, FilterMap, Sy
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagDimColumn } from '@costgoblin/core/browser';
 import { Download, RefreshCw, TrendingUp, Lightbulb, Tag, Search, Gauge, Terminal, RotateCw, Settings, ArrowLeft, GitBranch, GitPullRequest } from 'lucide-react';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
-import { DashboardsDropdown } from './top-menu/dashboards-dropdown.js';
+import { DashboardsSidebar, resolveLastDashboard } from './dashboards-sidebar.js';
 import { SyncStatusButton, type SyncActivity, type SyncTier } from './top-menu/sync-status-button.js';
 import { RollupStatusButton } from './top-menu/rollup-status-button.js';
 import { GeneralTab } from './settings/general-tab.js';
@@ -98,6 +98,18 @@ type SetupCheck =
   | { status: 'needs-setup' }
   | { status: 'telemetry' }
   | { status: 'ready' };
+
+/** A top-bar page button: an icon, which spells out its label while its page
+ *  is open. */
+function navButtonClass(isActive: boolean): string {
+  return [
+    'flex items-center rounded-md transition-colors [-webkit-app-region:no-drag]',
+    'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-primary',
+    isActive
+      ? 'gap-1.5 px-3 py-1.5 text-sm font-medium bg-bg-tertiary text-text-primary'
+      : 'p-1.5 text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
+  ].join(' ');
+}
 
 const FALLBACK_VIEWS: ViewsConfig = { views: [OVERVIEW_SEED_VIEW] };
 
@@ -508,6 +520,12 @@ function AppShell(): React.JSX.Element {
   // SettingsShell). Entering settings never touches `view`, so exiting just
   // clears this and the user lands back exactly where they were.
   const [settingsTab, setSettingsTab] = useState<SettingsTabId | null>(null);
+  // The dashboard the top bar's Dashboards button reopens. Kept for the
+  // session only: until one is opened, the button opens the default.
+  const [lastViewId, setLastViewId] = useState<string | null>(null);
+  useEffect(() => {
+    if (view.page === 'custom') setLastViewId(view.viewId);
+  }, [view]);
   const [missingPeriods, setMissingPeriods] = useState(0);
   const [currentMonthUpdating, setCurrentMonthUpdating] = useState(false);
   const [isDark, setIsDark] = useState(true);
@@ -1165,13 +1183,23 @@ function AppShell(): React.JSX.Element {
                 </ButtonTooltip>
               );
             })()}
-            <DashboardsDropdown
-              items={customNav}
-              activeId={active}
-              defaultId={homeViewId}
-              onSelect={handleNavClick}
-              onSetDefault={handleSetDefaultView}
-            />
+            {(() => {
+              const isActive = view.page === 'custom';
+              return (
+                <ButtonTooltip name="Dashboards" description="Open the last dashboard">
+                  <button
+                    type="button"
+                    onClick={() => { handleNavClick(resolveLastDashboard(lastViewId, customNav, homeViewId)); }}
+                    className={navButtonClass(isActive)}
+                    aria-current={isActive ? 'page' : undefined}
+                    aria-label={isActive ? undefined : 'Dashboards'}
+                  >
+                    <Gauge size={isActive ? 14 : 18} />
+                    {isActive && 'Dashboards'}
+                  </button>
+                </ButtonTooltip>
+              );
+            })()}
             {ANALYTICAL_NAV.map((item) => {
               const Icon = item.Icon;
               const isActive = active === item.id;
@@ -1180,13 +1208,7 @@ function AppShell(): React.JSX.Element {
                   <button
                     type="button"
                     onClick={() => { handleNavClick(item.id); }}
-                    className={[
-                      'flex items-center rounded-md transition-colors [-webkit-app-region:no-drag]',
-                      'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-primary',
-                      isActive
-                        ? 'gap-1.5 px-3 py-1.5 text-sm font-medium bg-bg-tertiary text-text-primary'
-                        : 'p-1.5 text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
-                    ].join(' ')}
+                    className={navButtonClass(isActive)}
                     aria-current={isActive ? 'page' : undefined}
                     aria-label={isActive ? undefined : item.label}
                   >
@@ -1330,16 +1352,26 @@ function AppShell(): React.JSX.Element {
               // own overview, the one the menu marks active.
               const spec = findViewSpec(shownViewId(view.viewId)) ?? OVERVIEW_SEED_VIEW;
               return (
-                <>
-                  {viewsState.status === 'failed' && (
-                    <div className="px-6 pt-6">
-                      <ViewsLoadError message={viewsState.message} onRetry={loadViews} showOpenFolder />
-                    </div>
-                  )}
-                  <Profiler id={`custom:${view.viewId}`} onRender={onPerfRender}>
-                    <CustomView spec={spec} headerSubtitle={spec.description ?? 'Cloud spending visibility'} initialFilter={view.initialFilter} rollupStatus={rollupStatus} />
-                  </Profiler>
-                </>
+                <div className="flex items-start">
+                  <DashboardsSidebar
+                    items={customNav}
+                    activeId={spec.id}
+                    defaultId={homeViewId}
+                    onSelect={handleNavClick}
+                    onSetDefault={handleSetDefaultView}
+                    topOffset={headerHeight}
+                  />
+                  <div className="min-w-0 flex-1">
+                    {viewsState.status === 'failed' && (
+                      <div className="px-6 pt-6">
+                        <ViewsLoadError message={viewsState.message} onRetry={loadViews} showOpenFolder />
+                      </div>
+                    )}
+                    <Profiler id={`custom:${view.viewId}`} onRender={onPerfRender}>
+                      <CustomView spec={spec} headerSubtitle={spec.description ?? 'Cloud spending visibility'} initialFilter={view.initialFilter} rollupStatus={rollupStatus} />
+                    </Profiler>
+                  </div>
+                </div>
               );
             })()}
             {view.page === 'trends' && (

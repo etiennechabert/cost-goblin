@@ -87,6 +87,18 @@ function headerButton(name: string): HTMLButtonElement {
   return el;
 }
 
+function dashboardsSidebar(): HTMLElement | null {
+  return screen.queryByRole('navigation', { name: 'Dashboards' });
+}
+
+function sidebarButton(name: string): HTMLElement {
+  return within(screen.getByRole('navigation', { name: 'Dashboards' })).getByRole('button', { name });
+}
+
+function sidebarRows(): (string | null)[] {
+  return within(screen.getByRole('navigation', { name: 'Dashboards' })).getAllByRole('listitem').map(i => i.textContent);
+}
+
 async function openSettingsTab(user: User, label: string): Promise<void> {
   if (screen.queryByRole('navigation', { name: 'Settings sections' }) === null) {
     await user.click(headerButton('Settings'));
@@ -218,9 +230,8 @@ describe('App shell — header actions', () => {
   it('falls back to the seed dashboard when none are configured', async () => {
     const api = new AppApi();
     api.views = { views: [] };
-    const user = await bootApp(api);
-    await user.click(headerButton('Dashboards'));
-    expect(within(await screen.findByRole('menu')).getAllByRole('menuitem').map(i => i.textContent)).toEqual(['Cost Overview']);
+    await bootApp(api);
+    expect(sidebarRows()).toEqual(['Cost Overview']);
   });
 
   it('still boots when the dashboards, preferences or update status cannot be read', async () => {
@@ -228,17 +239,54 @@ describe('App shell — header actions', () => {
     vi.spyOn(api, 'getViewsConfig').mockRejectedValue(new Error('views.yaml is corrupt'));
     vi.spyOn(api, 'getUIPreferences').mockRejectedValue(new Error('ipc down'));
     vi.spyOn(fakeUpdate, 'getStatus').mockRejectedValue(new Error('ipc down'));
-    const user = await bootApp(api);
+    await bootApp(api);
+
+    expect(sidebarRows()).toEqual(['Cost Overview']);
+  });
+
+  it('shows the dashboards sidebar only on a dashboard', async () => {
+    const user = await bootApp();
+    expect(dashboardsSidebar()).not.toBeNull();
+    expect(headerButton('Dashboards').getAttribute('aria-current')).toBe('page');
+
+    await user.click(headerButton('Explorer'));
+    await waitFor(() => { expect(dashboardsSidebar()).toBeNull(); });
+    expect(headerButton('Dashboards').getAttribute('aria-current')).toBeNull();
+  });
+
+  it('switches dashboards from the sidebar', async () => {
+    const user = await bootApp();
+    await user.click(sidebarButton('Team costs'));
+    expect(await screen.findByRole('heading', { name: 'Team costs' })).toBeDefined();
+    expect(sidebarButton('Team costs').getAttribute('aria-current')).toBe('page');
+    expect(sidebarButton('Cost Overview').getAttribute('aria-current')).toBeNull();
+  });
+
+  it('the Dashboards button reopens the last dashboard', async () => {
+    const user = await bootApp();
+    await user.click(sidebarButton('Team costs'));
+    await screen.findByRole('heading', { name: 'Team costs' });
+    await user.click(headerButton('Trends'));
+    await waitFor(() => { expect(dashboardsSidebar()).toBeNull(); });
 
     await user.click(headerButton('Dashboards'));
-    expect(within(await screen.findByRole('menu')).getAllByRole('menuitem').map(i => i.textContent)).toEqual(['Cost Overview']);
+    expect(await screen.findByRole('heading', { name: 'Team costs' })).toBeDefined();
+  });
+
+  it('the Dashboards button opens the default dashboard first', async () => {
+    const user = await bootApp();
+    await user.click(headerButton('Trends'));
+    await waitFor(() => { expect(dashboardsSidebar()).toBeNull(); });
+
+    await user.click(headerButton('Dashboards'));
+    expect(await screen.findByRole('heading', { name: 'Cost Overview' })).toBeDefined();
   });
 });
 
 describe('App shell — header tooltips', () => {
   it.each([
     { button: 'Home', name: 'Home', line: 'Your default dashboard: Cost Overview' },
-    { button: 'Dashboards', name: 'Dashboards', line: 'Switch or pin a dashboard' },
+    { button: 'Dashboards', name: 'Dashboards', line: 'Open the last dashboard' },
     { button: 'Trends', name: 'Trends', line: 'Period-over-period changes' },
     { button: 'Findings', name: 'Findings', line: 'Savings recommendations' },
     { button: 'Baselines', name: 'Baselines', line: 'Track drift against a baseline' },

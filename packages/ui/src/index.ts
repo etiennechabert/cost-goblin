@@ -57,7 +57,7 @@ export { useCostFocus, useCostFocusDispatch, useCostFocusReducer, CostFocusProvi
 
 export { WIDGET_REGISTRY, WIDGET_CATALOG } from './widgets/registry.js';
 export type { WidgetCatalogEntry } from './widgets/registry.js';
-export { widgetFlexBasis } from './widgets/widget.js';
+export { widgetFlex } from './widgets/widget.js';
 export type { WidgetCommonProps, WidgetComponent } from './widgets/widget.js';
 
 export { CustomView } from './views/custom-view.js';

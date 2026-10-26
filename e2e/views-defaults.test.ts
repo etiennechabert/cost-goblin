@@ -14,7 +14,7 @@ import {
   clickNavButton,
   navigateTo,
   ensureViewMode,
-  openDashboardsDropdown,
+  openDashboardsSidebar,
   selectDatePreset,
   expectVisibleData,
 } from './helpers.js';
@@ -30,10 +30,6 @@ const DEFAULT_VIEWS = [
   'Spend pacing',
   'Where the money goes',
 ];
-
-function escapeRe(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 function slug(s: string): string {
   return s.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
@@ -90,22 +86,18 @@ test.describe('default dashboards', () => {
 
   test('a starred default the migration dropped opens the Cost Overview', async () => {
     await expect(page.getByRole('heading', { name: 'Cost Overview', exact: true })).toBeVisible();
-    await openDashboardsDropdown(page);
-    await expect(page.getByRole('menuitem', { name: 'Cost Overview' })).toHaveAttribute('aria-current', 'page');
-    await expect(page.getByRole('button', { name: 'Cost Overview is the default dashboard' })).toBeVisible();
-    await page.keyboard.press('Escape');
+    const sidebar = await openDashboardsSidebar(page);
+    await expect(sidebar.getByRole('button', { name: 'Cost Overview', exact: true })).toHaveAttribute('aria-current', 'page');
+    await expect(sidebar.getByRole('button', { name: 'Cost Overview is the default dashboard' })).toBeVisible();
   });
 
-  test('the Dashboards menu lists the default dashboards and keeps the edited one', async () => {
-    await openDashboardsDropdown(page);
+  test('the Dashboards sidebar lists the default dashboards and keeps the edited one', async () => {
+    const sidebar = await openDashboardsSidebar(page);
     // Untouched retired dashboards are gone; the edited one stays as the user's own.
-    await expect(page.getByRole('menuitem')).toHaveText([...DEFAULT_VIEWS, 'Top spenders']);
+    await expect(sidebar.getByRole('listitem')).toHaveText([...DEFAULT_VIEWS, 'Top spenders']);
     for (const name of DEFAULT_VIEWS) {
-      await expect(
-        page.getByRole('menuitem', { name: new RegExp(escapeRe(name)) }).first(),
-      ).toBeVisible();
+      await expect(sidebar.getByRole('button', { name, exact: true })).toBeVisible();
     }
-    await page.keyboard.press('Escape');
   });
 
   test('writes the migrated dashboards back to views.yaml', async () => {
@@ -243,9 +235,8 @@ test.describe('a views.yaml that fails to load', () => {
     await loadError(p).getByRole('button', { name: 'Retry' }).click();
 
     await expect(loadError(p)).toHaveCount(0);
-    await openDashboardsDropdown(p);
-    await expect(p.getByRole('menuitem', { name: /Team costs/ })).toBeVisible();
-    await p.keyboard.press('Escape');
+    const sidebar = await openDashboardsSidebar(p);
+    await expect(sidebar.getByRole('button', { name: 'Team costs', exact: true })).toBeVisible();
     expect(readFileSync(viewsPath, 'utf-8')).toBe(FIXED_VIEWS_YAML);
   });
 });

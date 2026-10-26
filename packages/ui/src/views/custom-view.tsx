@@ -44,7 +44,7 @@ import { ListMetricBanner } from '../components/list-metric-banner.js';
 import { DateRangePicker } from '../components/date-range-picker.js';
 import type { DateRange, Granularity } from '../components/date-range-picker.js';
 import { WIDGET_REGISTRY } from '../widgets/registry.js';
-import { widgetFlexBasis } from '../widgets/widget.js';
+import { widgetFlex } from '../widgets/widget.js';
 import { withEnabledGroupBys } from '../widgets/enabled-group-by.js';
 import { LazyWidgetSlot, WidgetSchedulerProvider } from '../hooks/widget-load-scheduler.js';
 
@@ -289,21 +289,25 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <div className="flex items-start justify-between">
-        <div>
+      {/* The title column gives way down to 20rem, then the picker moves under
+          it (kept to the right) instead of squeezing its label. */}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-[1_1_20rem]">
           <h2 className="text-xl font-semibold text-text-primary">{spec.name}</h2>
           {headerSubtitle !== undefined && (
             <p className="text-sm text-text-secondary mt-0.5">{headerSubtitle}</p>
           )}
         </div>
-        <DateRangePicker
-          value={dateRange}
-          granularity={granularity}
-          onChange={(range, g) => { setDateRange(range); setGranularity(g); }}
-          lagDays={lagDays}
-          compareEnabled={compareEnabled}
-          onCompareChange={setCompareEnabled}
-        />
+        <div className="ml-auto">
+          <DateRangePicker
+            value={dateRange}
+            granularity={granularity}
+            onChange={(range, g) => { setDateRange(range); setGranularity(g); }}
+            lagDays={lagDays}
+            compareEnabled={compareEnabled}
+            onCompareChange={setCompareEnabled}
+          />
+        </div>
       </div>
 
       {dimensions.length > 0 && (
@@ -337,7 +341,7 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
           // Flat display order across rows = load priority (top-left first).
           const offset = shownSpec.rows.slice(0, rowIdx).reduce((n, r) => n + r.widgets.length, 0);
           return (
-            <div key={row.widgets.map(w => w.id).join('-')} className="flex gap-4 items-stretch min-w-0">
+            <div key={row.widgets.map(w => w.id).join('-')} className="flex flex-wrap gap-4 items-stretch min-w-0">
               {row.widgets.map((w, colIdx) => {
                 const Renderer = WIDGET_REGISTRY[w.type];
                 return (
@@ -347,7 +351,7 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
                     priority={offset + colIdx}
                     minHeight={placeholderMinHeight(w.type)}
                     className="relative min-w-0 flex flex-col"
-                    style={{ flexBasis: widgetFlexBasis(w.size), flexGrow: 1, flexShrink: 1 }}
+                    style={widgetFlex(w.size, row.widgets.map(rw => rw.size))}
                   >
                     {reRolling && <UpdatingBadge />}
                     <Renderer

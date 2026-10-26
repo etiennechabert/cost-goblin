@@ -42,7 +42,7 @@ import {
   closeApp,
   ensureViewMode,
   launchElectron,
-  openDashboardsDropdown,
+  openDashboardsSidebar,
   openSettings,
   waitForQuerySettle,
 } from '../helpers.js';
@@ -497,7 +497,7 @@ test.describe('clickability sweep', () => {
     // ---- Home dashboard + header chrome ---------------------------------
     await visit('home', () => Promise.resolve());
     await visit('home (scrolled)', scrollDown, scrollTop);
-    await visit('home › Dashboards popover', () => openDashboardsDropdown(page), escape);
+    await visit('home › Dashboards sidebar', () => openDashboardsSidebar(page).then(() => undefined));
     await visit('home › workspace chip popover', () => page.getByTestId('workspace-chip').click(), escape);
     await visit('home › Data sync popover', () => page.getByRole('button', { name: 'Data sync' }).click(), escape);
     await visit('home › Rollup status popover', () => page.getByRole('button', { name: 'Rollup status' }).click(), escape);
