@@ -11,8 +11,8 @@
 // 3.1.2 (electron/notarize#306) retries the staple, and the root package.json's
 // `overrides` force that version under app-builder-lib. These tests fail when
 // an electron-builder bump brings an older copy back, and when electron-builder
-// ships the fix itself, so the override is dropped instead of pinning
-// app-builder-lib's own newer copy back to 3.1.2.
+// asks for a fixed version itself (27.0.0-alpha.13 asks for ^3.1.1), so the
+// override is dropped instead of holding app-builder-lib at 3.1.2 from then on.
 
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
@@ -30,7 +30,8 @@ const appBuilderLibs = Object.keys(lock).filter((path) => path.endsWith('node_mo
 // installed at `from`: its own node_modules first, then each enclosing one.
 function resolveFrom(from, name) {
   for (let dir = from; ; ) {
-    const candidate = `${dir === '' ? '' : `${dir}/`}node_modules/${name}`;
+    const prefix = dir === '' ? '' : `${dir}/`;
+    const candidate = `${prefix}node_modules/${name}`;
     if (Object.hasOwn(lock, candidate)) return candidate;
     if (dir === '') return undefined;
     const parent = dir.lastIndexOf('node_modules/');
@@ -38,19 +39,53 @@ function resolveFrom(from, name) {
   }
 }
 
-// A version (or the lowest version an exact, ^, ~ or >= spec allows) as
-// [major, minor, patch]; undefined for prereleases and anything else.
-function lowest(spec) {
-  const match = /^(?:\^|~|>=)?\s*(\d+)\.(\d+)\.(\d+)$/.exec(spec ?? '');
+// A release version as [major, minor, patch]; undefined for prereleases and
+// anything else.
+function release(version) {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version ?? '');
   return match === null ? undefined : match.slice(1).map(Number);
 }
 
-function hasStapleRetry(spec) {
-  const version = lowest(spec);
-  const fixed = lowest(FIXED);
-  if (version === undefined) return false;
-  const differs = version.findIndex((part, i) => part !== fixed[i]);
-  return differs === -1 || version[differs] > fixed[differs];
+const FIXED_PARTS = release(FIXED);
+
+// Whether [major, minor, patch] `a` comes before `b`.
+function precedes(a, b) {
+  const differs = a.findIndex((part, i) => part !== b[i]);
+  return differs !== -1 && a[differs] < b[differs];
+}
+
+function hasStapleRetry(version) {
+  const parts = release(version);
+  return parts !== undefined && !precedes(parts, FIXED_PARTS);
+}
+
+// The first version a ^ or ~ range no longer allows.
+function rangeEnd(operator, [major, minor, patch]) {
+  if (operator === '~') return [major, minor + 1, 0];
+  if (major > 0) return [major + 1, 0, 0];
+  if (minor > 0) return [0, minor + 1, 0];
+  return [0, 0, patch + 1];
+}
+
+// Whether npm could pick a version >= FIXED for a spec app-builder-lib
+// declares: an exact version, or a ^, ~ or >= range.
+function allowsStapleRetry(spec) {
+  const match = /^(\^|~|>=)?\s*(\d+\.\d+\.\d+)$/.exec(spec ?? '');
+  if (match === null) return false;
+  const [, operator, version] = match;
+  if (operator === undefined) return hasStapleRetry(version);
+  return operator === '>=' || precedes(FIXED_PARTS, rangeEnd(operator, release(version)));
+}
+
+// Whether package.json's overrides pin NOTARIZE anywhere: under app-builder-lib
+// as now, at the top level, or under a version-qualified key.
+function forcesNotarize(overrides) {
+  return Object.entries(overrides ?? {}).some(
+    ([key, value]) =>
+      key === NOTARIZE ||
+      key.startsWith(`${NOTARIZE}@`) ||
+      (typeof value === 'object' && value !== null && forcesNotarize(value)),
+  );
 }
 
 describe('@electron/notarize used by electron-builder', () => {
@@ -69,16 +104,16 @@ describe('@electron/notarize used by electron-builder', () => {
     }
   });
 
-  it('is forced only while electron-builder ships an older version', () => {
-    const forced = readJson('package.json').overrides?.['app-builder-lib']?.[NOTARIZE];
-    const shipsFix =
-      forced === undefined
-        ? []
-        : appBuilderLibs.filter((from) => hasStapleRetry(lock[from].dependencies?.[NOTARIZE]));
+  it('is forced only while electron-builder asks for an older version', () => {
+    const asksForFix = forcesNotarize(readJson('package.json').overrides)
+      ? appBuilderLibs
+          .filter((from) => allowsStapleRetry(lock[from].dependencies?.[NOTARIZE]))
+          .map((from) => `${from} asks for ${NOTARIZE} ${lock[from].dependencies[NOTARIZE]}`)
+      : [];
     expect(
-      shipsFix,
-      `electron-builder now ships ${NOTARIZE} >= ${FIXED} itself: remove "app-builder-lib" from ` +
-        `package.json's overrides, which would otherwise hold it at ${forced}.`,
+      asksForFix,
+      `electron-builder's own ${NOTARIZE} spec now allows >= ${FIXED}: remove ${NOTARIZE} from package.json's ` +
+        'overrides, or it stays pinned at the forced version as electron-builder moves on.',
     ).toEqual([]);
   });
 });
