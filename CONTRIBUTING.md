@@ -40,3 +40,13 @@ has signed:
 
 Found a security problem? Please don't open a public issue: use the contact
 details on [costgoblin.com/imprint.html](https://costgoblin.com/imprint.html).
+
+## Updating the Nix flake
+
+The flake pins the version and the npm dependency hash, so both need a refresh
+when a release changes them.
+
+1. Set `version` in `flake.nix` to the version in `package.json`.
+2. If `package-lock.json` changed, clear `npmDepsHash` and run `nix build
+   --no-link`. The build fails with the correct hash; paste it into `flake.nix`.
+3. Run `nix flake update`, then `nix build --no-link` and `nix run .` to verify.

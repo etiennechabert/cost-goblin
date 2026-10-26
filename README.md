@@ -49,6 +49,33 @@ CostGoblin is a desktop app that syncs your AWS billing data locally and queries
 
 Download the latest release for your platform from [costgoblin.com](https://costgoblin.com/#download). macOS binaries are signed and notarized. See the [code signing policy](https://costgoblin.com/code-signing.html) for details.
 
+<details>
+<summary>Nix / NixOS</summary>
+
+Run directly from the repository:
+
+```bash
+nix run github:mipmip/cost-goblin
+```
+
+Install into your profile:
+
+```bash
+nix profile install github:mipmip/cost-goblin
+```
+
+The flake builds the Electron bundle with `buildNpmPackage` and runs it with
+Electron from nixpkgs. A development shell with Node.js 24 and Electron is
+available too:
+
+```bash
+nix develop
+npm ci
+make dev
+```
+
+</details>
+
 Release builds check GitHub Releases for a new version once at launch and prompt you when one is out. Downloading and installing are one click each and never happen without your confirmation; **Check for updates** in Settings → General runs a check on demand. To turn the launch check off, choose **Manual only** under Settings → General → Update check (saved per workspace), or set `COSTGOBLIN_DISABLE_UPDATE_CHECK=1` in the app's environment, which covers every workspace (macOS GUI apps don't read shell profiles: use `launchctl setenv COSTGOBLIN_DISABLE_UPDATE_CHECK 1`, e.g. from an MDM LaunchAgent). Turning it off is advisable where github.com is blocked. The prompt is a notification, not a patching mechanism: fleets should enforce versions through MDM.
 
 ## Quick Start
