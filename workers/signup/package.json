@@ -7,7 +7,11 @@
     "deploy": "wrangler deploy"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20261015.1",
-    "wrangler": "^4.151.0"
+    "@cloudflare/workers-types": "^5.20261019.1",
+    "wrangler": "^4.151.1"
+  },
+  "_overridesNote": "undici is forced past miniflare's exact 7.29.1 pin for GHSA-4qv8-2p9j-2685, GHSA-f72v-6w45-q472 and GHSA-xjj6-f33q-929c (high). It only serves local `wrangler dev`. The key is scoped to that pin, so once a wrangler release's miniflare pins another undici the override stops applying instead of downgrading it; drop it then (through 4.152.0, every miniflare still pins 7.29.1).",
+  "overrides": {
+    "undici@7.29.1": "7.30.1"
   }
 }
