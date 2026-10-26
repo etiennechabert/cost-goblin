@@ -1,5 +1,7 @@
 /** The FOCUS 1.2 columns the query layer reads (see `buildSource`). A
- *  candidate export missing any of these can't back the app.
+ *  candidate export missing any of these can't back the app. A column only
+ *  one provider type reads, which its files may lack, is not here but in
+ *  that type's `OPTIONAL_SOURCE_COLUMNS` (`query/provider-projection.ts`).
  *
  *  Verified against a live AWS FOCUS 1.2 Data Export's `Manifest.json` column
  *  list. Two entries are AWS extension columns rather than FOCUS ones —

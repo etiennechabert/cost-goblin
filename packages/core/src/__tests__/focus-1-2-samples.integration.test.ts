@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { buildSource, NO_ACCOUNT_SENTINEL } from '../query/builder.js';
-import type { DimensionsConfig } from '../types/config.js';
+import type { DimensionsConfig, ProviderType } from '../types/config.js';
 import { asDimensionId, asProviderName, tagSqlColumn } from '../types/branded.js';
 
 const TEAM_COLUMN = tagSqlColumn({ tagName: 'team' });
@@ -77,6 +77,12 @@ function num(value: unknown): number {
   throw new Error(`not a number: ${JSON.stringify(value)}`);
 }
 
+/** The provider type whose projection reads a sample. Azure is not a provider
+ *  type: its contract shape is plain FOCUS, which is how AWS is read. */
+function sourceType(provider: SampleProvider): ProviderType {
+  return provider === 'gcp' ? 'gcp' : 'aws';
+}
+
 function sourceFor(
   provider: SampleProvider,
   dimensions: DimensionsConfig,
@@ -84,7 +90,7 @@ function sourceFor(
 ): string {
   return buildSource({
     dataDir, tier: 'daily', dimensions,
-    providers: [{ name: asProviderName(sample(provider, shape).providerName), periods: [SAMPLE_MONTH] }],
+    providers: [{ name: asProviderName(sample(provider, shape).providerName), type: sourceType(provider), periods: [SAMPLE_MONTH] }],
     costMetric: 'billed',
   });
 }
@@ -206,7 +212,7 @@ describe('AWS FOCUS 1.2 Data Export', () => {
     // The contracted metric now equals the usage-only sum, not the naive one.
     const contractedSource = buildSource({
       dataDir, tier: 'daily', dimensions: WITH_TAGS,
-      providers: [{ name: asProviderName(sample('aws', 'native').providerName), periods: [SAMPLE_MONTH] }],
+      providers: [{ name: asProviderName(sample('aws', 'native').providerName), type: 'aws', periods: [SAMPLE_MONTH] }],
       costMetric: 'contracted',
     });
     const [row] = await rowsOf(`SELECT ROUND(SUM(cost), 2) AS total FROM ${contractedSource}`);
@@ -229,7 +235,7 @@ describe('AWS FOCUS 1.2 Data Export', () => {
 
     const source = buildSource({
       dataDir, tier: 'daily', dimensions: NO_TAGS,
-      providers: [{ name: asProviderName('aws-noacct'), periods: [SAMPLE_MONTH] }],
+      providers: [{ name: asProviderName('aws-noacct'), type: 'aws', periods: [SAMPLE_MONTH] }],
       costMetric: 'billed',
     });
 
@@ -266,7 +272,7 @@ describe('Azure Cost Management FOCUS 1.2 export (provider not supported yet)', 
     // makes the canonicalization step mandatory rather than cosmetic.
     const source = buildSource({
       dataDir, tier: 'daily', dimensions: NO_TAGS,
-      providers: [{ name: asProviderName('azure-native'), periods: [SAMPLE_MONTH] }],
+      providers: [{ name: asProviderName('azure-native'), type: 'aws', periods: [SAMPLE_MONTH] }],
       costMetric: 'billed',
     });
     await expect(rowsOf(`SELECT SUM(cost) FROM ${source}`)).rejects.toThrow(/x_ServiceCode/);
@@ -409,7 +415,7 @@ describe('cross-provider', () => {
   it('answers one query over all three exports once they share the contract', async () => {
     const source = buildSource({
       dataDir, tier: 'daily', dimensions: NO_TAGS,
-      providers: SAMPLE_PROVIDERS.map(p => ({ name: asProviderName(p), periods: [SAMPLE_MONTH] })),
+      providers: SAMPLE_PROVIDERS.map(p => ({ name: asProviderName(p), type: sourceType(p), periods: [SAMPLE_MONTH] })),
       costMetric: 'billed',
     });
     const rows = await rowsOf(`SELECT provider, COUNT(*) AS n, ROUND(SUM(cost), 2) AS total FROM ${source} GROUP BY provider ORDER BY provider`);

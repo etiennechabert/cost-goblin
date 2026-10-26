@@ -83,7 +83,7 @@ describe('RollupStore cold rebuild over multiple months', () => {
   let runQuery: (sql: string) => Promise<RawRow[]>;
 
   const buildPerPeriod: BuildPartitionSql = (period, outPath) =>
-    buildRollupPartitionQuery(period, 'daily', outPath, { dataDir, dimensions, costScope, providers: [{ name: providerName() }] });
+    buildRollupPartitionQuery(period, 'daily', outPath, { dataDir, dimensions, costScope, providers: [{ name: providerName(), type: 'aws' }] });
 
   function sqlValue(col: string, type: string, row: FixtureRow): string {
     switch (col) {

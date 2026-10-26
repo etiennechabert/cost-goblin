@@ -28,7 +28,7 @@ const dimensions: DimensionsConfig = {
   ],
   tags: [],
 };
-const opts: QueryContextOptions = { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER }] };
+const opts: QueryContextOptions = { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER, type: 'aws' }] };
 
 // Jan 1 2026 is a Thursday, so the first weekly bucket starts in December.
 const RANGE: DateRange = { start: asDateString('2026-01-01'), end: asDateString('2026-02-28') };

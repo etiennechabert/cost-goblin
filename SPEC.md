@@ -399,7 +399,7 @@ the DuckDB session's time zone (the machine's), so both come from
 | `usage_hour` | `TIMESTAMP` | `CHARGE_PERIOD_START_UTC_SQL` | UTC hour of usage (hourly tier only) |
 | `account_id` | `VARCHAR` | `SubAccountId` | Cloud account/project/subscription ID |
 | `account_name` | `VARCHAR` | `SubAccountName` | Friendly account name |
-| `region` | `VARCHAR` | `RegionId` | Cloud region |
+| `region` | `VARCHAR` | `RegionId` (GCP: `x_Location` when empty) | Cloud region; on GCP a multi-region (`us`, `europe`) or `global` |
 | `service` | `VARCHAR` | `ServiceName` | Service display name (with marketplace re-attribution) |
 | `service_code` | `VARCHAR` | `x_ServiceCode` | Exact provider service code |
 | `service_category` | `VARCHAR` | `ServiceCategory` | Standardized cross-cloud category |
@@ -409,7 +409,7 @@ the DuckDB session's time zone (the machine's), so both come from
 | `cost` | `DOUBLE` | metric column | Active cost metric (see Cost Scope) |
 | `list_cost` | `DOUBLE` | `ListCost` | Public list price (marketplace fallback to `BilledCost`) |
 | `charge_category` | `VARCHAR` | `ChargeCategory` | Usage / Purchase / Tax / Credit / Adjustment |
-| `pricing_category` | `VARCHAR` | `PricingCategory` | Standard / Committed / Dynamic |
+| `pricing_category` | `VARCHAR` | `PricingCategory` (in FOCUS casing; GCP writes it lowercase) | Standard / Committed / Dynamic |
 | `commitment_status` | `VARCHAR` | `CommitmentDiscountStatus` | Used / Unused commitment |
 | `sku_meter` | `VARCHAR` | `SkuMeter` | Usage meter (usage-type equivalent) |
 | `operation` | `VARCHAR` | `x_Operation` | Operation type |

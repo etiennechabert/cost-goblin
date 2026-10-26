@@ -240,6 +240,7 @@ async function buildCostsCte(ctx: McpContext, dateRange: { start: string; end: s
   const branches = allProviders
     .map(pr => ({
       name: pr.name,
+      type: pr.type,
       periods: required.filter(m => pr.availablePeriods?.includes(m) ?? false),
     }))
     .filter(b => b.periods.length > 0);

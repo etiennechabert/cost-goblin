@@ -112,7 +112,7 @@ export async function getQueryProviders(
   if (config === null) return [];
   return Promise.all(config.providers.map(async provider => {
     const availablePeriods = await listLocalMonths(ctx.dataDir, provider.name, tier);
-    return { name: provider.name, availablePeriods };
+    return { name: provider.name, type: provider.type, availablePeriods };
   }));
 }
 

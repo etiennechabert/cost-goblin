@@ -1,5 +1,5 @@
 import { DuckDBInstance } from '@duckdb/node-api';
-import { mkdir, access } from 'node:fs/promises';
+import { mkdir, access, readFile, writeFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -10,6 +10,14 @@ import { writeGcpProvider } from './gcp-fixture.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SYNTHETIC_DIR = join(__dirname, 'synthetic');
+
+/** What a tree holds beyond which files it has. The artifact probe in setup()
+ *  only notices a missing file, so a generator change that rewrites files a
+ *  tree already has (a column added, values changed) bumps this, and a tree
+ *  stamped otherwise is rebuilt instead of served stale.
+ *  2: GCP rows name multi-region and global locations in x_Location. */
+const TREE_VERSION = '2';
+const TREE_VERSION_FILE = join(SYNTHETIC_DIR, '.tree-version');
 
 type FixtureConfig = FocusFixtureConfig;
 
@@ -106,7 +114,7 @@ export async function setup(): Promise<void> {
   ];
   try {
     await Promise.all(expectedArtifacts.map((artifact) => access(artifact)));
-    return;
+    if (await readFile(TREE_VERSION_FILE, 'utf-8') === TREE_VERSION) return;
   } catch {
     // needs generation
   }
@@ -207,5 +215,8 @@ export async function setup(): Promise<void> {
   `);
   await conn.run(`INSERT INTO cost_opt VALUES ${costOptRows.join(',')}`);
   await conn.run(`COPY (SELECT * FROM cost_opt) TO '${join(costOptDir, 'data.parquet')}' (FORMAT PARQUET)`);
+
+  // Last, so a generation that fails part-way is not stamped complete.
+  await writeFile(TREE_VERSION_FILE, TREE_VERSION);
 
 }

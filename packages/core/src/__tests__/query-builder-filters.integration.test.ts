@@ -117,7 +117,7 @@ describe('query builders on DuckDB', () => {
     };
     await writeMonth('2026-01', JAN_ROWS);
     await writeMonth('2025-12', DEC_ROWS);
-    opts = { dataDir, dimensions, providers: [{ name: PROVIDER, availablePeriods: ['2025-12', '2026-01'] }] };
+    opts = { dataDir, dimensions, providers: [{ name: PROVIDER, type: 'aws', availablePeriods: ['2025-12', '2026-01'] }] };
   });
 
   afterAll(async () => {

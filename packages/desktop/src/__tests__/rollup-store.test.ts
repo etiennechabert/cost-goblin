@@ -52,7 +52,7 @@ describe('RollupStore', () => {
   let runQuery: (sql: string) => Promise<RawRow[]>;
 
   const buildSql = (period: string, outPath: string) =>
-    buildRollupPartitionQuery(period, 'daily', outPath, { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: FIXTURE_PROVIDER, availablePeriods: [period] }], costScope });
+    buildRollupPartitionQuery(period, 'daily', outPath, { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: FIXTURE_PROVIDER, type: 'aws', availablePeriods: [period] }], costScope });
 
   beforeAll(async () => {
     db = await DuckDBInstance.create();

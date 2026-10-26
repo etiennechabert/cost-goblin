@@ -118,7 +118,7 @@ describe('SQL escaping of config literals (DuckDB execution)', () => {
       builtIn: [],
       tags: [{ tagName: QUOTED_TAG_KEY, label: "O'Brien Team" }],
     };
-    const source = buildSource({ dataDir, tier: 'daily', dimensions, providers: [{ name: PROVIDER }] });
+    const source = buildSource({ dataDir, tier: 'daily', dimensions, providers: [{ name: PROVIDER, type: 'aws' }] });
 
     // The quote arrives doubled in the generated SQL...
     expect(source).toContain("element_at(Tags, 'o''brien team')");
@@ -140,7 +140,7 @@ describe('SQL escaping of config literals (DuckDB execution)', () => {
         missingValueTemplate: "don't know ({fallback})",
       }],
     };
-    const source = buildSource({ dataDir, tier: 'daily', dimensions, orgAccountsPath, providers: [{ name: PROVIDER }] });
+    const source = buildSource({ dataDir, tier: 'daily', dimensions, orgAccountsPath, providers: [{ name: PROVIDER, type: 'aws' }] });
 
     // Both config literals arrive escaped in the generated SQL.
     expect(source).toContain("tags->>'cost''center'");
@@ -156,7 +156,7 @@ describe('SQL escaping of config literals (DuckDB execution)', () => {
 
   it('runs against the quoted data dir (the apostrophe is escaped in the glob)', () => {
     expect(dataDir).toContain("o'brien");
-    const source = buildSource({ dataDir, tier: 'daily', dimensions: { builtIn: [], tags: [] }, providers: [{ name: PROVIDER, periods: ['2026-01'] }] });
+    const source = buildSource({ dataDir, tier: 'daily', dimensions: { builtIn: [], tags: [] }, providers: [{ name: PROVIDER, type: 'aws', periods: ['2026-01'] }] });
     expect(source).toContain(`${sqlEscapeString(dataDir)}/aws/raw/daily-2026-01/*.parquet'`);
   });
 
@@ -174,7 +174,7 @@ describe('SQL escaping of config literals (DuckDB execution)', () => {
   it('reads an empty org-accounts file without error, falling back to NULL', async () => {
     const emptyOrg = join(dataDir, "empty-o'rg.json").replaceAll('\\', '/');
     await writeFile(emptyOrg, '[]');
-    const source = buildSource({ dataDir, tier: 'daily', dimensions: fallbackDims, orgAccountsPath: emptyOrg, providers: [{ name: PROVIDER }] });
+    const source = buildSource({ dataDir, tier: 'daily', dimensions: fallbackDims, orgAccountsPath: emptyOrg, providers: [{ name: PROVIDER, type: 'aws' }] });
     const rows = await queryAll(conn, `SELECT account_id, ${tagSqlColumn({ tagName: 'team' })} AS team, ${tagSqlColumn({ accountTagFallback: OU_PATH_SOURCE_KEY })} AS ou FROM ${source} ORDER BY account_id`);
     expect(rows).toHaveLength(2);
     expect(rows.every(r => r['team'] === null && r['ou'] === null)).toBe(true);
@@ -187,7 +187,7 @@ describe('SQL escaping of config literals (DuckDB execution)', () => {
       { id: 'acct-1', name: 'Account One', tags: { [QUOTED_FALLBACK_KEY]: 'cc-one' } },
       { id: 'acct-2' },
     ]));
-    const source = buildSource({ dataDir, tier: 'daily', dimensions: fallbackDims, orgAccountsPath: legacyOrg, providers: [{ name: PROVIDER }] });
+    const source = buildSource({ dataDir, tier: 'daily', dimensions: fallbackDims, orgAccountsPath: legacyOrg, providers: [{ name: PROVIDER, type: 'aws' }] });
     const rows = await queryAll(conn, `SELECT account_id, ${tagSqlColumn({ tagName: 'team' })} AS team, ${tagSqlColumn({ accountTagFallback: OU_PATH_SOURCE_KEY })} AS ou FROM ${source} ORDER BY account_id`);
     expect(rows).toHaveLength(2);
     expect(rows[0]?.['team']).toBe('cc-one');
@@ -206,7 +206,7 @@ describe('SQL escaping of config literals (DuckDB execution)', () => {
       tags: [],
     };
     expect(() => buildRollupPartitionQuery('2026-01', 'daily', outPath, {
-      dataDir, dimensions: unsafe, providers: [{ name: PROVIDER }],
+      dataDir, dimensions: unsafe, providers: [{ name: PROVIDER, type: 'aws' }],
     })).toThrow(SecurityError);
     await expect(access(outPath)).rejects.toThrow();
   });

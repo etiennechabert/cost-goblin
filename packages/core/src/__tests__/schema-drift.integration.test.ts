@@ -107,12 +107,12 @@ describe('FOCUS schema drift across months (DuckDB end-to-end)', () => {
 
   it.each([
     // effective — old month 6 + 3 + 2 = 11; new month 8 + 5 + 100 (Tax) + 1 = 114.
-    { metric: 'effective', label: 'explicit periods', providers: [{ name: PROVIDER, periods: ['2025-10', '2026-04'] }], oldTotal: 11, newTotal: 114 },
-    { metric: 'effective', label: 'wildcard fallback, no periods', providers: [{ name: PROVIDER }], oldTotal: 11, newTotal: 114 },
+    { metric: 'effective', label: 'explicit periods', providers: [{ name: PROVIDER, type: 'aws', periods: ['2025-10', '2026-04'] }], oldTotal: 11, newTotal: 114 },
+    { metric: 'effective', label: 'wildcard fallback, no periods', providers: [{ name: PROVIDER, type: 'aws' }], oldTotal: 11, newTotal: 114 },
     // billed — 7 + 4 + 2 = 13; 9 + 8 + 100 + 1 = 118.
-    { metric: 'billed', label: 'explicit periods', providers: [{ name: PROVIDER, periods: ['2025-10', '2026-04'] }], oldTotal: 13, newTotal: 118 },
+    { metric: 'billed', label: 'explicit periods', providers: [{ name: PROVIDER, type: 'aws', periods: ['2025-10', '2026-04'] }], oldTotal: 13, newTotal: 118 },
     // list restricts to Usage charge categories — 10 + 5 + 3 = 18; 12 + 9 + 2 = 23 (Tax row excluded).
-    { metric: 'list', label: 'explicit periods', providers: [{ name: PROVIDER, periods: ['2025-10', '2026-04'] }], oldTotal: 18, newTotal: 23 },
+    { metric: 'list', label: 'explicit periods', providers: [{ name: PROVIDER, type: 'aws', periods: ['2025-10', '2026-04'] }], oldTotal: 18, newTotal: 23 },
   ] as const)('$metric over the mixed span ($label): both export revisions union cleanly', async ({ metric, providers, oldTotal, newTotal }) => {
     const source = buildSource({ dataDir, tier: 'daily', dimensions, providers, costMetric: metric });
     const totals = await monthTotals(conn, source);
@@ -121,7 +121,7 @@ describe('FOCUS schema drift across months (DuckDB end-to-end)', () => {
   });
 
   it('the missing x_ column is NULL-filled and coalesced, so grouping on it spans both shapes', async () => {
-    const source = buildSource({ dataDir, tier: 'daily', dimensions, providers: [{ name: PROVIDER, periods: ['2025-10', '2026-04'] }], costMetric: 'effective' });
+    const source = buildSource({ dataDir, tier: 'daily', dimensions, providers: [{ name: PROVIDER, type: 'aws', periods: ['2025-10', '2026-04'] }], costMetric: 'effective' });
     const result = await conn.run(
       `SELECT strftime(usage_date, '%Y-%m') AS m, operation FROM ${source} GROUP BY m, operation ORDER BY m, operation`,
     );

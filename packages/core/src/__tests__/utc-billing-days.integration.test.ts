@@ -144,10 +144,10 @@ describe.each(ZONES)('billing days with the DuckDB session in %s', (zone) => {
   let rollupFiles: string[];
   const opts = (): QueryContextOptions => ({
     dataDir, dimensions, costScope,
-    providers: [{ name: PROVIDER, availablePeriods: [...MONTHS] }],
+    providers: [{ name: PROVIDER, type: 'aws', availablePeriods: [...MONTHS] }],
   });
   const rawSource = (tier: 'daily' | 'hourly'): string =>
-    buildSource({ dataDir, tier, dimensions, providers: [{ name: PROVIDER, periods: [...MONTHS] }], costMetric: 'effective' });
+    buildSource({ dataDir, tier, dimensions, providers: [{ name: PROVIDER, type: 'aws', periods: [...MONTHS] }], costMetric: 'effective' });
 
   beforeAll(async () => {
     db = await DuckDBInstance.create(':memory:', { TimeZone: zone });
@@ -158,7 +158,7 @@ describe.each(ZONES)('billing days with the DuckDB session in %s', (zone) => {
       const dir = join(rollupDir, `daily-${month}`);
       await mkdir(dir, { recursive: true });
       const file = join(dir, 'rollup.parquet').replaceAll('\\', '/');
-      await conn.run(buildRollupPartitionQuery(month, 'daily', file, { ...opts(), providers: [{ name: PROVIDER, availablePeriods: [month] }] }));
+      await conn.run(buildRollupPartitionQuery(month, 'daily', file, { ...opts(), providers: [{ name: PROVIDER, type: 'aws', availablePeriods: [month] }] }));
       rollupFiles.push(file);
     }
   });

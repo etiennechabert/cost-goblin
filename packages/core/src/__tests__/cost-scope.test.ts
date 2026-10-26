@@ -39,7 +39,7 @@ const baseParams = {
 };
 
 function buildQuery(costScope?: CostScopeConfig): string {
-  return buildCostQuery(baseParams, { dataDir: '/data', dimensions, providers: [{ name: PROVIDER }], costScope }, 5).sql;
+  return buildCostQuery(baseParams, { dataDir: '/data', dimensions, providers: [{ name: PROVIDER, type: 'aws' }], costScope }, 5).sql;
 }
 
 // NOTE (FOCUS 1.2 migration): the CUR-era tests for the amortized CASE
@@ -123,7 +123,7 @@ describe('exclusion clauses', () => {
   it('enabled rule with one condition produces a NULL-safe NOT clause', () => {
     const result = buildCostQuery(
       baseParams,
-      { dataDir: '/data', dimensions, providers: [{ name: PROVIDER }], costScope: {
+      { dataDir: '/data', dimensions, providers: [{ name: PROVIDER, type: 'aws' }], costScope: {
         costMetric: 'effective',
         rules: [{ id: 'test', name: 'Test', enabled: true, builtIn: false, conditions: [{ dimensionId: asDimensionId('service_code'), values: ['AWSSupportEnterprise'] }] }],
       } },
@@ -137,7 +137,7 @@ describe('exclusion clauses', () => {
   it('rule with multiple values uses an IN list', () => {
     const result = buildCostQuery(
       baseParams,
-      { dataDir: '/data', dimensions, providers: [{ name: PROVIDER }], costScope: {
+      { dataDir: '/data', dimensions, providers: [{ name: PROVIDER, type: 'aws' }], costScope: {
         costMetric: 'effective',
         rules: [{ id: 'test', name: 'Test', enabled: true, builtIn: false, conditions: [{ dimensionId: asDimensionId('charge_category'), values: ['Purchase', 'Tax'] }] }],
       } },
@@ -151,7 +151,7 @@ describe('exclusion clauses', () => {
   it('rule with multiple conditions uses AND', () => {
     const result = buildCostQuery(
       baseParams,
-      { dataDir: '/data', dimensions, providers: [{ name: PROVIDER }], costScope: {
+      { dataDir: '/data', dimensions, providers: [{ name: PROVIDER, type: 'aws' }], costScope: {
         costMetric: 'effective',
         rules: [{ id: 'test', name: 'Test', enabled: true, builtIn: false, conditions: [
           { dimensionId: asDimensionId('service'), values: ['EC2'] },
@@ -168,7 +168,7 @@ describe('exclusion clauses', () => {
   it('tag dimension resolves through alias CASE', () => {
     const { sql, params } = buildCostQuery(
       { ...baseParams, groupBy: asDimensionId('service') },
-      { dataDir: '/data', dimensions, providers: [{ name: PROVIDER }], costScope: {
+      { dataDir: '/data', dimensions, providers: [{ name: PROVIDER, type: 'aws' }], costScope: {
         costMetric: 'effective',
         rules: [{ id: 'test', name: 'Test', enabled: true, builtIn: false, conditions: [{ dimensionId: asDimensionId('tag_org_team'), values: ['core-banking'] }] }],
       } },
@@ -226,7 +226,7 @@ describe('exclusion clauses', () => {
     };
     const { params } = buildCostQuery(
       baseParams,
-      { dataDir: '/data', dimensions: dimsWithNormalize, providers: [{ name: PROVIDER }], costScope: {
+      { dataDir: '/data', dimensions: dimsWithNormalize, providers: [{ name: PROVIDER, type: 'aws' }], costScope: {
         costMetric: 'effective',
         rules: [{ id: 'test', name: 'Test', enabled: true, builtIn: false, conditions: [{ dimensionId: asDimensionId('charge_category'), values: ['Purchase', 'Tax'] }] }],
       } },
@@ -244,7 +244,7 @@ describe('exclusion clauses', () => {
   it('applies no part of a rule with a condition on a dimension the config lacks', () => {
     const result = buildCostQuery(
       baseParams,
-      { dataDir: '/data', dimensions, providers: [{ name: PROVIDER }], costScope: {
+      { dataDir: '/data', dimensions, providers: [{ name: PROVIDER, type: 'aws' }], costScope: {
         costMetric: 'effective',
         rules: [{ id: 'mixed', name: 'Mixed', enabled: true, builtIn: false, conditions: [
           { dimensionId: asDimensionId('service'), values: ['EC2'] },
@@ -685,7 +685,7 @@ describe('buildDailyCostsQuery with costScope', () => {
   it('injects exclusion clause in daily costs query', () => {
     const { sql, params } = buildDailyCostsQuery(
       { ...baseParams, granularity: 'daily' },
-      { dataDir: '/data', dimensions, providers: [{ name: PROVIDER }], costScope: {
+      { dataDir: '/data', dimensions, providers: [{ name: PROVIDER, type: 'aws' }], costScope: {
         costMetric: 'billed',
         rules: [{ id: 'support', name: 'Support', enabled: true, builtIn: true, conditions: [{ dimensionId: asDimensionId('service_code'), values: ['AWSSupportEnterprise'] }] }],
       } },

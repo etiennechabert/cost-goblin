@@ -59,7 +59,7 @@ describe('buildTrendResult', () => {
         deltaThreshold: asDollars(deltaThreshold),
         percentThreshold,
       },
-      { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: FIXTURE_PROVIDER, availablePeriods: ['2026-01', '2026-02'] }] },
+      { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: FIXTURE_PROVIDER, type: 'aws', availablePeriods: ['2026-01', '2026-02'] }] },
     );
     return buildTrendResult(await fetchRowsPrepared(conn, sql, params), deltaThreshold, percentThreshold);
   }

@@ -169,7 +169,7 @@ describe('DuckDB sandbox (real DuckDB)', () => {
         builtIn: [],
         tags: [{ tagName: 'team', label: 'Team', accountTagFallback: 'cost-center' }],
       };
-      const source = buildSource({ dataDir, tier: 'daily', dimensions, orgAccountsPath, providers: [{ name: PROVIDER }] });
+      const source = buildSource({ dataDir, tier: 'daily', dimensions, orgAccountsPath, providers: [{ name: PROVIDER, type: 'aws' }] });
       // The org-accounts join reads with an explicit-schema read_json (#603);
       // it must still resolve inside the sandbox's allowed_paths.
       expect(source).toContain(`read_json('${orgAccountsPath}', format='array'`);

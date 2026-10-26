@@ -98,7 +98,7 @@ describe('exclusion rules and missing values (DuckDB execution)', () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  const source = (): string => buildSource({ dataDir, tier: 'daily', dimensions, providers: [{ name: PROVIDER, periods: ['2026-01'] }], costMetric: 'effective' });
+  const source = (): string => buildSource({ dataDir, tier: 'daily', dimensions, providers: [{ name: PROVIDER, type: 'aws', periods: ['2026-01'] }], costMetric: 'effective' });
 
   /** What a live query keeps: the WHERE clauses with values bound. */
   async function liveTotal(rules: readonly ExclusionRule[]): Promise<number> {
@@ -113,7 +113,7 @@ describe('exclusion rules and missing values (DuckDB execution)', () => {
   async function rollupPartition(rules: readonly ExclusionRule[], dims: DimensionsConfig = dimensions): Promise<string> {
     const outPath = join(dataDir, `rollup-${String(Math.random()).slice(2)}.parquet`).replaceAll('\\', '/');
     await conn.run(buildRollupPartitionQuery('2026-01', 'daily', outPath, {
-      dataDir, dimensions: dims, providers: [{ name: PROVIDER, availablePeriods: ['2026-01'] }], costScope: { costMetric: 'effective', rules },
+      dataDir, dimensions: dims, providers: [{ name: PROVIDER, type: 'aws', availablePeriods: ['2026-01'] }], costScope: { costMetric: 'effective', rules },
     }));
     return `read_parquet(${sqlStringLiteral(outPath)})`;
   }
@@ -227,7 +227,7 @@ describe('exclusion rules and missing values (DuckDB execution)', () => {
     const detailTotal = async (entity: string): Promise<number> => {
       const { sql, params } = buildEntityDetailQuery(
         { entity: asEntityRef(entity), dimension: TEAM_ID, dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') }, filters: {} },
-        { dataDir, dimensions, providers: [{ name: PROVIDER, availablePeriods: ['2026-01'] }] },
+        { dataDir, dimensions, providers: [{ name: PROVIDER, type: 'aws', availablePeriods: ['2026-01'] }] },
       );
       const [r] = await runPrepared(conn, `SELECT COALESCE(SUM(cost), 0)::DOUBLE AS total FROM (${sql})`, params);
       return Number(r?.['total']);
@@ -252,7 +252,7 @@ describe('exclusion rules and missing values (DuckDB execution)', () => {
     const costRows = async (materializedSource: string | undefined): Promise<unknown[]> => {
       const { sql, params } = buildCostQuery(
         { groupBy: TEAM_ID, dateRange: JANUARY, filters: {} },
-        { dataDir, dimensions, providers: [{ name: PROVIDER, availablePeriods: ['2026-01'] }], materializedSource },
+        { dataDir, dimensions, providers: [{ name: PROVIDER, type: 'aws', availablePeriods: ['2026-01'] }], materializedSource },
       );
       const rows = await runPrepared(conn, sql, params);
       return rows.map(r => ({ entity: r['entity'], total: Number(r['total_cost']), service: r['service'], serviceCost: Number(r['service_cost']) }));
@@ -269,7 +269,7 @@ describe('exclusion rules and missing values (DuckDB execution)', () => {
   it("compares costs with no value as one '' trend row", async () => {
     const { sql, params } = buildTrendQuery(
       { groupBy: TEAM_ID, dateRange: JANUARY, filters: {}, deltaThreshold: asDollars(0), percentThreshold: 0 },
-      { dataDir, dimensions, providers: [{ name: PROVIDER, availablePeriods: ['2026-01'] }] },
+      { dataDir, dimensions, providers: [{ name: PROVIDER, type: 'aws', availablePeriods: ['2026-01'] }] },
     );
     const rows = await runPrepared(conn, sql, params);
     expect(rows.map(r => [r['entity'], Number(r['current_cost']), Number(r['previous_cost'])])).toEqual([

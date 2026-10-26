@@ -99,6 +99,7 @@ export function registerFilterHandlers(app: AppContext): void {
         dataDir: ctx.dataDir, tier: 'daily', dimensions, orgAccountsPath: orgPath,
         providers: active.map(p => ({
           name: p.name,
+          type: p.type,
           periods: required?.filter(m => p.availablePeriods?.includes(m) ?? false),
         })),
         costMetric: 'billed',

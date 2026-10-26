@@ -4,6 +4,7 @@ import type { DuckDBConnection } from '@duckdb/node-api';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildTrendQuery } from '../query/builder.js';
+import type { ProviderSourceSpec } from '../query/builder.js';
 import { trendPercentChange, trendPercentChangeSql } from '../query/trend-change.js';
 import { FIXTURE_PROVIDER_NAME } from '../__fixtures__/layout.js';
 import { asDateString, asDimensionId, asDollars, asProviderName } from '../types/branded.js';
@@ -26,7 +27,7 @@ const dimensions: DimensionsConfig = {
   ],
   tags: [],
 };
-const providers = [{ name: asProviderName(FIXTURE_PROVIDER_NAME), availablePeriods: ['2026-01', '2026-02'] }];
+const providers: ProviderSourceSpec[] = [{ name: asProviderName(FIXTURE_PROVIDER_NAME), type: 'aws', availablePeriods: ['2026-01', '2026-02'] }];
 
 /** Positional $1..$n binding, mirroring the duckdb-worker's. */
 async function runPrepared(conn: DuckDBConnection, sql: string, params: readonly unknown[]): Promise<Record<string, unknown>[]> {
