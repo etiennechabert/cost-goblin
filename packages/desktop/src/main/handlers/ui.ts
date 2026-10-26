@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron';
 import { isChartPalette, parseJsonObject, isStringRecord } from '@costgoblin/core';
-import type { UIPreferences, PerformanceInfo, PerformanceSettings } from '@costgoblin/core';
+import type { UIPreferences, UIPreferencesUpdate, PerformanceInfo, PerformanceSettings } from '@costgoblin/core';
 import { readAppStateSync } from '../workspace-env.js';
 import { type AppContext, prefsPath } from './context.js';
 import { updatePrefsFile } from './prefs-file.js';
@@ -33,13 +33,30 @@ function parsePerformance(parsed: Record<string, unknown> | null): PerformanceSe
   };
 }
 
+/** The fields of a `ui:save-preferences` payload that are well-formed
+ *  preferences; anything else is dropped. */
+function parseUIPreferencesUpdate(raw: unknown): UIPreferencesUpdate {
+  if (!isStringRecord(raw)) return {};
+  const theme = raw['theme'];
+  const palette = raw['palette'];
+  const defaultViewId = raw['defaultViewId'];
+  const pinned = raw['dashboardsSidebarPinned'];
+  return {
+    ...(theme === 'dark' || theme === 'light' ? { theme } : {}),
+    ...(isChartPalette(palette) ? { palette } : {}),
+    ...(typeof defaultViewId === 'string' ? { defaultViewId } : {}),
+    ...(typeof pinned === 'boolean' ? { dashboardsSidebarPinned: pinned } : {}),
+  };
+}
+
 export function registerUIHandlers(app: AppContext): void {
   const { ctx } = app;
 
   const uiPrefsPath = () => prefsPath(ctx.stateDir, 'ui-preferences');
-  // Theme + chart palette are machine-level (shared across workspaces), stored
-  // in app-state.json. In pinned mode (env-overridden paths — dev/e2e) there is
-  // no app-state; they stay in the workspace's ui-preferences.json as before.
+  // Theme, chart palette and the dashboards sidebar's pin are machine-level
+  // (shared across workspaces), stored in app-state.json. In pinned mode
+  // (env-overridden paths — dev/e2e) there is no app-state; they stay in the
+  // workspace's ui-preferences.json as before.
   const appStatePath = ctx.workspaceEnv.mode === 'workspace' ? ctx.workspaceEnv.appStatePath : null;
 
   async function readPrefs(): Promise<Record<string, unknown> | null> {
@@ -74,20 +91,18 @@ export function registerUIHandlers(app: AppContext): void {
     };
   });
 
-  ipcMain.handle('ui:save-preferences', async (_event, prefs: UIPreferences): Promise<void> => {
-    // Serialized merge so saving (e.g.) theme never clobbers the separately-managed
+  ipcMain.handle('ui:save-preferences', async (_event, payload: unknown): Promise<void> => {
+    const { defaultViewId, ...machineLevel } = parseUIPreferencesUpdate(payload);
+    // Serialized merge of only the fields this save carries, so saving (e.g.)
+    // the sidebar's pin never touches the theme, nor the separately-managed
     // `performance` / `telemetry` blocks written through the same file.
-    await updatePrefsFile(await uiPrefsPath(), (existing) => ({ ...existing, ...prefs }));
+    await updatePrefsFile(await uiPrefsPath(), (existing) => ({
+      ...existing,
+      ...machineLevel,
+      ...(defaultViewId === undefined ? {} : { defaultViewId }),
+    }));
     if (appStatePath !== null) {
-      const pinned = prefs.dashboardsSidebarPinned;
-      await updatePrefsFile(appStatePath, (existing) => ({
-        ...existing,
-        theme: prefs.theme,
-        palette: prefs.palette,
-        // Only the pin's own save carries it: a theme or default-dashboard
-        // save leaves the saved pin alone.
-        ...(typeof pinned === 'boolean' ? { dashboardsSidebarPinned: pinned } : {}),
-      }));
+      await updatePrefsFile(appStatePath, (existing) => ({ ...existing, ...machineLevel }));
     }
   });
 

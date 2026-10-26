@@ -103,6 +103,11 @@ export interface UIPreferences {
   readonly dashboardsSidebarPinned?: boolean | undefined;
 }
 
+/** What a `saveUIPreferences` call sets: only the fields it carries are
+ *  written, so a save never echoes the others back. Performance settings have
+ *  their own save. */
+export type UIPreferencesUpdate = Partial<Pick<UIPreferences, 'theme' | 'palette' | 'defaultViewId' | 'dashboardsSidebarPinned'>>;
+
 /** User overrides for DuckDB resource tuning. `null` means "auto" — use the
  *  default (machine-derived for memory/threads; a fixed 2 for rollupConcurrency). */
 export interface PerformanceSettings {
@@ -405,7 +410,7 @@ export interface CostApi {
   getSavingsPreferences(): Promise<SavingsPreferences>;
   saveSavingsPreferences(prefs: SavingsPreferencesUpdate): Promise<void>;
   getUIPreferences(): Promise<UIPreferences>;
-  saveUIPreferences(prefs: UIPreferences): Promise<void>;
+  saveUIPreferences(prefs: UIPreferencesUpdate): Promise<void>;
   discoverTagKeys(): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }>;
   /** Preview of a built-in column's values for the dimension editor. The
    *  main process rejects `nameStripPatterns` beyond the caps in

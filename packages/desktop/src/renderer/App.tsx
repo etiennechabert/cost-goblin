@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, Profiler } from 'react';
+import { useState, useEffect, useCallback, useId, useLayoutEffect, useMemo, useRef, Profiler } from 'react';
 import { CostTrends, MissingTags, Savings, Baselines, DataManagement, DimensionsView, CostScopeView, CostScopeLoadError, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, ViewsLoadError, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, SharingActiveBanner, SettingsShell, SETTINGS_TABS, isSettingsTabId, WorkspacesView, WorkspaceChip, ConfirmModal, ReleaseNotes, useModalLayerCount, ButtonTooltip } from '@costgoblin/ui';
 import type { NavItem, SettingsTabId } from '@costgoblin/ui';
 import type { ChartPalette, CostApi, DataSharingStatus, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus, RollupStatus, BaselineRecomputeStatus, WorkspacesInfo } from '@costgoblin/core/browser';
@@ -534,6 +534,7 @@ function AppShell(): React.JSX.Element {
   const [sidebarOpenOn, setSidebarOpenOn] = useState<View | null>(null);
   const sidebarOpen = sidebarOpenOn === view;
   const sidebarToggleRef = useRef<HTMLButtonElement>(null);
+  const sidebarId = useId();
   const [missingPeriods, setMissingPeriods] = useState(0);
   const [currentMonthUpdating, setCurrentMonthUpdating] = useState(false);
   const [isDark, setIsDark] = useState(true);
@@ -811,13 +812,9 @@ function AppShell(): React.JSX.Element {
 
   function handleSetSidebarPinned(pinned: boolean) {
     setSidebarPinned(pinned);
-    setSidebarOpenOn(null);
-    api.saveUIPreferences({
-      theme: isDark ? 'dark' : 'light',
-      palette,
-      defaultViewId,
-      dashboardsSidebarPinned: pinned,
-    }).catch(() => undefined);
+    // Only the pin: echoing the theme or default dashboard from here would
+    // write the boot defaults over the saved ones when they failed to load.
+    api.saveUIPreferences({ dashboardsSidebarPinned: pinned }).catch(() => undefined);
   }
 
   function handleCheckForUpdates() {
@@ -906,9 +903,6 @@ function AppShell(): React.JSX.Element {
     if (settingsTab === tab) return;
     confirmLeave(() => {
       api.cancelPendingQueries().catch(() => undefined);
-      // Settings covers the dashboard without leaving it: close the unpinned
-      // sidebar, or it would be open again on the way back.
-      setSidebarOpenOn(null);
       setSettingsTab(tab);
     });
   }
@@ -1223,6 +1217,7 @@ function AppShell(): React.JSX.Element {
                     className={navButtonClass(isActive)}
                     aria-current={isActive ? 'page' : undefined}
                     aria-expanded={showsSidebar ? sidebarOpen : undefined}
+                    aria-controls={showsSidebar ? sidebarId : undefined}
                     aria-label={isActive ? undefined : 'Dashboards'}
                   >
                     <Gauge size={isActive ? 14 : 18} />
@@ -1396,6 +1391,7 @@ function AppShell(): React.JSX.Element {
                     open={sidebarOpen}
                     onOpenChange={(open) => { setSidebarOpenOn(open ? view : null); }}
                     toggleRef={sidebarToggleRef}
+                    id={sidebarId}
                   />
                   <div className="min-w-0 flex-1">
                     {viewsState.status === 'failed' && (

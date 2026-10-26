@@ -536,29 +536,41 @@ test.describe('Clickability (workspace mode)', () => {
     await expect(sidebar).toBeVisible();
     const pinnedLeft = await leftOf(heading);
 
-    await sidebar.getByRole('button', { name: 'Pin sidebar' }).click();
-    await expect(sidebar).toBeHidden();
-    // The dashboard takes the sidebar's column back.
-    await expect.poll(() => leftOf(heading)).toBeLessThan(pinnedLeft - 100);
-    await expect.poll(savedPin).toBe(false);
-    await p.reload();
-    await expect(heading).toBeVisible({ timeout: 15_000 });
-    await expect(sidebar).toBeHidden();
+    try {
+      await sidebar.getByRole('button', { name: 'Pin sidebar' }).click();
+      await expect(sidebar).toBeHidden();
+      // The dashboard takes the sidebar's column back.
+      await expect.poll(() => leftOf(heading)).toBeLessThan(pinnedLeft - 100);
+      await expect.poll(savedPin).toBe(false);
+      await p.reload();
+      await expect(heading).toBeVisible({ timeout: 15_000 });
+      await expect(sidebar).toBeHidden();
 
-    await p.mouse.move(2, 400);
-    await expectClickable(p, sidebar.getByRole('button', { name: 'Cost Overview', exact: true }));
-    expect(await leftOf(heading)).toBeLessThan(pinnedLeft - 100);
-    await p.mouse.move(700, 400);
-    await expect(sidebar).toBeHidden();
+      await p.mouse.move(2, 400);
+      await expectClickable(p, sidebar.getByRole('button', { name: 'Cost Overview', exact: true }));
+      expect(await leftOf(heading)).toBeLessThan(pinnedLeft - 100);
+      await p.mouse.move(700, 400);
+      await expect(sidebar).toBeHidden();
 
-    // The Dashboards button shows it too, and its pin docks it again.
-    await nav.getByRole('button', { name: 'Dashboards' }).click();
-    const pin = sidebar.getByRole('button', { name: 'Pin sidebar' });
-    await expectClickable(p, pin);
-    await pin.click();
-    await expect(pin).toHaveAttribute('aria-pressed', 'true');
-    await expect.poll(() => leftOf(heading)).toBeCloseTo(pinnedLeft, 0);
-    await expect.poll(savedPin).toBe(true);
+      // The Dashboards button shows it too, and its pin docks it again.
+      await nav.getByRole('button', { name: 'Dashboards' }).click();
+      const pin = sidebar.getByRole('button', { name: 'Pin sidebar' });
+      await expectClickable(p, pin);
+      await pin.click();
+      await expect(pin).toHaveAttribute('aria-pressed', 'true');
+      await expect.poll(() => leftOf(heading)).toBeCloseTo(pinnedLeft, 0);
+      await expect.poll(savedPin).toBe(true);
+    } finally {
+      // A failure part-way must not leave the tests after this one an
+      // unpinned sidebar: pin it on disk and reload.
+      if (savedPin() === false && !p.isClosed()) {
+        const path = join(userDataDir, 'app-state.json');
+        const state: unknown = JSON.parse(readFileSync(path, 'utf-8'));
+        writeFileSync(path, JSON.stringify({ ...(typeof state === 'object' && state !== null ? state : {}), dashboardsSidebarPinned: true }));
+        await p.reload();
+        await expect(heading).toBeVisible({ timeout: 15_000 });
+      }
+    }
   });
 
   test('an update arriving under the switch confirm waits for it to close', async () => {

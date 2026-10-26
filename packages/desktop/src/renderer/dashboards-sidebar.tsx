@@ -30,6 +30,11 @@ interface Props extends RowsProps {
    *  Dashboards button). Focus moving to it is the toggle's click starting,
    *  not focus leaving the sidebar. */
   readonly toggleRef: React.RefObject<HTMLElement | null>;
+  /** The list's id, for the toggle's aria-controls. */
+  readonly id: string;
+}
+
+/** How long| null>;
 }
 
 /** How long the pointer rests on the left edge before the unpinned sidebar
@@ -73,12 +78,14 @@ export function DashboardsSidebar({
   open,
   onOpenChange,
   toggleRef,
+  id,
 }: Readonly<Props>): React.JSX.Element {
   const rows: RowsProps = { items, activeId, defaultId, onSelect, onSetDefault };
   return pinned
-    ? <DockedSidebar rows={rows} topOffset={topOffset} onPinnedChange={onPinnedChange} />
+    ? <DockedSidebar id={id} rows={rows} topOffset={topOffset} onPinnedChange={onPinnedChange} />
     : (
       <PeekSidebar
+        id={id}
         rows={rows}
         topOffset={topOffset}
         onPinnedChange={onPinnedChange}
@@ -90,16 +97,18 @@ export function DashboardsSidebar({
 }
 
 interface DockedProps {
+  readonly id: string;
   readonly rows: RowsProps;
   readonly topOffset: number;
   readonly onPinnedChange: (pinned: boolean) => void;
 }
 
-function DockedSidebar({ rows, topOffset, onPinnedChange }: DockedProps): React.JSX.Element {
+function DockedSidebar({ id, rows, topOffset, onPinnedChange }: DockedProps): React.JSX.Element {
   return (
     // Scrolls on its own when the list outgrows the window, so a long list
     // never stretches the page below the dashboard.
     <nav
+      id={id}
       aria-label="Dashboards"
       className="sticky w-56 shrink-0 self-start overflow-y-auto border-r border-border bg-bg-secondary/40 p-3"
       style={{
@@ -124,7 +133,7 @@ interface PeekProps extends DockedProps {
  *  it, and it slides in over the dashboard instead of taking a column, so the
  *  widgets keep the full width. It hides again shortly after the pointer
  *  leaves it, once a dashboard is picked, on Escape, or when focus moves out. */
-function PeekSidebar({ rows, topOffset, onPinnedChange, open, onOpenChange, toggleRef }: PeekProps): React.JSX.Element {
+function PeekSidebar({ id, rows, topOffset, onPinnedChange, open, onOpenChange, toggleRef }: PeekProps): React.JSX.Element {
   const navRef = useRef<HTMLElement>(null);
   const revealTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -139,9 +148,12 @@ function PeekSidebar({ rows, topOffset, onPinnedChange, open, onOpenChange, togg
   const onOpenChangeRef = useRef(onOpenChange);
   useLayoutEffect(() => { onOpenChangeRef.current = onOpenChange; });
 
+  // Off the screen (Settings over the dashboard, pinned, another page) is
+  // closed, so it never comes back open by itself.
   useEffect(() => () => {
     cancel(revealTimer);
     cancel(hideTimer);
+    onOpenChangeRef.current(false);
   }, []);
 
   useLayoutEffect(() => {
@@ -170,7 +182,10 @@ function PeekSidebar({ rows, topOffset, onPinnedChange, open, onOpenChange, togg
     cancel(hideTimer);
     hideTimer.current = setTimeout(() => {
       hideTimer.current = null;
+      const hadFocus = navRef.current?.contains(document.activeElement) === true;
       onOpenChangeRef.current(false);
+      // Hidden, the row holding focus would drop it to the page.
+      if (hadFocus) giveFocusBack();
     }, HIDE_DELAY_MS);
   }
 
@@ -206,6 +221,7 @@ function PeekSidebar({ rows, topOffset, onPinnedChange, open, onOpenChange, togg
       />
       <nav
         ref={navRef}
+        id={id}
         aria-label="Dashboards"
         className={[
           'fixed bottom-0 left-0 z-40 w-56 overflow-y-auto border-r border-border bg-bg-secondary p-3 shadow-xl',
@@ -231,6 +247,9 @@ function PeekSidebar({ rows, topOffset, onPinnedChange, open, onOpenChange, togg
           giveFocusBack();
         }}
         onBlur={(event) => {
+          // Switching apps blurs the focused row but leaves it the focused
+          // element: the list is still in use.
+          if (event.target.ownerDocument.activeElement === event.target) return;
           const next = event.relatedTarget;
           if (next instanceof Node && navRef.current?.contains(next) === true) return;
           // The toggle's own click is on its way and decides.

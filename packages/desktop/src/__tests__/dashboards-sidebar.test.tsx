@@ -36,6 +36,7 @@ function renderSidebar(fields: Partial<Parameters<typeof DashboardsSidebar>[0]> 
       open={false}
       onOpenChange={() => undefined}
       toggleRef={{ current: null }}
+      id="dashboards-sidebar"
       {...fields}
     />,
   );
@@ -72,6 +73,7 @@ function renderUnpinned(): {
           open={open}
           onOpenChange={setOpen}
           toggleRef={toggleRef}
+          id="dashboards-sidebar"
         />
         <p>Dashboard content</p>
       </>
@@ -215,6 +217,16 @@ describe('DashboardsSidebar — unpinned', () => {
     expect(document.activeElement).toBe(trigger);
   });
 
+  it('stays open while the user switches to another app', async () => {
+    const { user } = renderUnpinned();
+    await user.click(screen.getByRole('button', { name: 'Show dashboards' }));
+    const row = within(sidebar()).getByRole('button', { name: 'Team costs' });
+    // The window losing focus blurs the row, which stays the focused element.
+    fireEvent.focusOut(row, { relatedTarget: null });
+    expect(document.activeElement).toBe(row);
+    expect(shownSidebar()).not.toBeNull();
+  });
+
   it('closes when focus moves out of it', async () => {
     const { user } = renderUnpinned();
     await user.click(screen.getByRole('button', { name: 'Show dashboards' }));
@@ -283,6 +295,21 @@ describe('DashboardsSidebar — unpinned', () => {
       fireEvent.pointerEnter(sidebar());
       advance(HIDE_DELAY_MS);
       expect(shownSidebar()).not.toBeNull();
+    });
+
+    it('gives focus back to the Dashboards button when it hides with focus inside', () => {
+      renderUnpinned();
+      const trigger = screen.getByRole('button', { name: 'Show dashboards' });
+      act(() => { trigger.focus(); });
+      fireEvent.click(trigger);
+      const nav = sidebar();
+      expect(document.activeElement).toBe(within(nav).getByRole('button', { name: 'Team costs' }));
+
+      fireEvent.pointerEnter(nav);
+      fireEvent.pointerLeave(nav);
+      advance(HIDE_DELAY_MS);
+      expect(shownSidebar()).toBeNull();
+      expect(document.activeElement).toBe(trigger);
     });
 
     it('hides for a pointer that leaves the edge without coming onto it', () => {

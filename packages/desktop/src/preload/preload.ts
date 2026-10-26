@@ -34,6 +34,7 @@ import type {
   SavingsPreferences,
   SavingsPreferencesUpdate,
   UIPreferences,
+  UIPreferencesUpdate,
   PerformanceInfo,
   PerformanceSettings,
   DimensionsConfig,
@@ -275,7 +276,7 @@ const api: CostApi = {
   getUIPreferences(): Promise<UIPreferences> {
     return invoke<UIPreferences>('ui:get-preferences');
   },
-  saveUIPreferences(prefs: UIPreferences): Promise<void> {
+  saveUIPreferences(prefs: UIPreferencesUpdate): Promise<void> {
     return invoke<undefined>('ui:save-preferences', prefs).then(() => undefined);
   },
   syncOrgAccounts(profile: string, providerName?: string): Promise<OrgSyncResult> {

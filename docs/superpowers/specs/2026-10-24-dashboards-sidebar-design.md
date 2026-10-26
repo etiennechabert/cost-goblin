@@ -89,11 +89,13 @@ bar's Dashboards button is clicked on a dashboard page. That button then works
 as a toggle (`aria-expanded`), which gives the keyboard a way in: focus moves to
 the open dashboard's row and goes back to the button on Escape or once a
 dashboard is picked. The sidebar hides 300ms after the pointer leaves it,
-including a pointer that leaves the edge strip without coming onto it, and
-also when a dashboard is picked, on Escape, or when focus moves out. While
-hidden, `visibility: hidden` keeps it out of the tab order and the
-accessibility tree. The slide is a CSS transition that reduced motion turns
-off.
+including a pointer that leaves the edge strip without coming onto it (focus
+inside goes back to the button), and also when a dashboard is picked, on
+Escape while it has focus, or when focus moves out (switching apps doesn't
+count). Leaving the screen closes it, so it never comes back open after
+Settings. While hidden, `visibility: hidden` keeps it out of the tab order and
+the accessibility tree. The slide is a CSS transition that reduced motion
+turns off.
 
 The pin is saved with the display preferences (`dashboardsSidebarPinned`) and
 is machine-level, like the theme and palette: it lives in app-state.json in
