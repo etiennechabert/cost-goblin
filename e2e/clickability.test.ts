@@ -552,6 +552,14 @@ test.describe('Clickability (workspace mode)', () => {
       await p.mouse.move(700, 400);
       await expect(sidebar).toBeHidden();
 
+      // The tab on the edge says it is there, and shows it.
+      const tab = p.getByRole('button', { name: 'Show the dashboards sidebar' });
+      await expectClickable(p, tab);
+      await tab.click();
+      await expectClickable(p, sidebar.getByRole('button', { name: 'Cost Overview', exact: true }));
+      await p.mouse.move(700, 400);
+      await expect(sidebar).toBeHidden();
+
       // The Dashboards button shows it too, and its pin docks it again.
       await nav.getByRole('button', { name: 'Dashboards' }).click();
       const pin = sidebar.getByRole('button', { name: 'Pin sidebar' });

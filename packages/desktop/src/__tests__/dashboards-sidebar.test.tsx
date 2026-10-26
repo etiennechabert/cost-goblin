@@ -98,6 +98,11 @@ function edge(): HTMLElement {
   return screen.getByTestId('dashboards-sidebar-edge');
 }
 
+/** The tab on the window's left edge that says the unpinned sidebar is there. */
+function edgeTab(): HTMLElement {
+  return screen.getByRole('button', { name: 'Show the dashboards sidebar' });
+}
+
 function advance(ms: number): void {
   act(() => { vi.advanceTimersByTime(ms); });
 }
@@ -165,6 +170,7 @@ describe('DashboardsSidebar', () => {
   it('pinned, it has no edge to hover', () => {
     renderSidebar();
     expect(screen.queryByTestId('dashboards-sidebar-edge')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Show the dashboards sidebar' })).toBeNull();
   });
 });
 
@@ -179,6 +185,25 @@ describe('DashboardsSidebar — unpinned', () => {
     expect(edge().style.top).toBe('72px');
     // Its slide is a CSS transition that reduced motion turns off.
     expect(nav.className).toContain('motion-reduce:transition-none');
+  });
+
+  it('shows a tab on the left edge, level with the dashboard title, that opens it', async () => {
+    const { user } = renderUnpinned();
+    const tab = edgeTab();
+    expect(tab.className).toContain('fixed');
+    // The dashboard's 24px padding, below the 72px header.
+    expect(tab.style.top).toBe('96px');
+    expect(tab.getAttribute('aria-controls')).toBe('dashboards-sidebar');
+    expect(tab.getAttribute('aria-expanded')).toBe('false');
+
+    await user.click(tab);
+    expect(shownSidebar()).not.toBeNull();
+    expect(tab.getAttribute('aria-expanded')).toBe('true');
+    expect(document.activeElement).toBe(within(sidebar()).getByRole('button', { name: 'Team costs' }));
+
+    await user.keyboard('{Escape}');
+    expect(shownSidebar()).toBeNull();
+    expect(document.activeElement).toBe(tab);
   });
 
   it('closes once a dashboard is picked, but not for a star', async () => {
@@ -257,6 +282,33 @@ describe('DashboardsSidebar — unpinned', () => {
       expect(shownSidebar()).toBeNull();
       advance(1);
       expect(shownSidebar()).not.toBeNull();
+    });
+
+    it('shows for a pointer resting on the edge tab, as on the edge', () => {
+      renderUnpinned();
+      fireEvent.pointerEnter(edgeTab());
+      advance(REVEAL_DELAY_MS - 1);
+      expect(shownSidebar()).toBeNull();
+      advance(1);
+      expect(shownSidebar()).not.toBeNull();
+
+      fireEvent.pointerLeave(edgeTab());
+      advance(HIDE_DELAY_MS);
+      expect(shownSidebar()).toBeNull();
+    });
+
+    it('a click on the edge tab opens it at once, and the pending reveal does not reopen it', () => {
+      renderUnpinned();
+      const tab = edgeTab();
+      fireEvent.pointerEnter(tab);
+      act(() => { tab.focus(); });
+      fireEvent.click(tab);
+      expect(shownSidebar()).not.toBeNull();
+
+      fireEvent.keyDown(sidebar(), { key: 'Escape' });
+      expect(shownSidebar()).toBeNull();
+      advance(REVEAL_DELAY_MS);
+      expect(shownSidebar()).toBeNull();
     });
 
     it('ignores a pointer that only passes over the edge', () => {

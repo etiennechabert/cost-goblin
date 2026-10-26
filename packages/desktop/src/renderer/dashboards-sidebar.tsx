@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
-import { Pin, Star } from 'lucide-react';
+import { PanelLeftOpen, Pin, Star } from 'lucide-react';
 import { ButtonTooltip } from '@costgoblin/ui';
 
 export interface DashboardItem {
@@ -38,6 +38,10 @@ interface Props extends RowsProps {
  *  slides in, so a pointer only passing through, out of the window, leaves it
  *  hidden. */
 export const REVEAL_DELAY_MS = 150;
+
+/** The dashboard's own padding (CustomView's `p-6`), so the edge tab sits
+ *  level with its title. */
+const VIEW_PADDING_PX = 24;
 
 /** How long the unpinned sidebar stays after the pointer leaves it, so a
  *  pointer overshooting its edge can come back. */
@@ -126,8 +130,8 @@ interface PeekProps extends DockedProps {
   readonly toggleRef: React.RefObject<HTMLElement | null>;
 }
 
-/** The unpinned sidebar: a thin strip along the window's left edge reveals
- *  it, and it slides in over the dashboard instead of taking a column, so the
+/** The unpinned sidebar: a thin strip along the window's left edge, marked
+ *  by a tab level with the dashboard's title, reveals it, and it slides in over the dashboard instead of taking a column, so the
  *  widgets keep the full width. It hides again shortly after the pointer
  *  leaves it, once a dashboard is picked, on Escape, or when focus moves out. */
 function PeekSidebar({ id, rows, topOffset, onPinnedChange, open, onOpenChange, toggleRef }: PeekProps): React.JSX.Element {
@@ -186,6 +190,24 @@ function PeekSidebar({ id, rows, topOffset, onPinnedChange, open, onOpenChange, 
     }, HIDE_DELAY_MS);
   }
 
+  function revealSoon(): void {
+    if (open) return;
+    cancel(revealTimer);
+    revealTimer.current = setTimeout(() => {
+      revealTimer.current = null;
+      openedByPointer.current = true;
+      onOpenChangeRef.current(true);
+    }, REVEAL_DELAY_MS);
+  }
+
+  function leaveEdge(): void {
+    cancel(revealTimer);
+    // The sidebar slid in under a pointer resting on the edge, which then
+    // left without crossing it: that is leaving too. Entering the sidebar
+    // cancels this.
+    if (open) hideSoon();
+  }
+
   function giveFocusBack(): void {
     const target = returnFocus.current;
     returnFocus.current = null;
@@ -199,23 +221,31 @@ function PeekSidebar({ id, rows, topOffset, onPinnedChange, open, onOpenChange, 
         aria-hidden="true"
         className="fixed bottom-0 left-0 z-40 w-2"
         style={{ top: topOffset }}
-        onPointerEnter={() => {
-          if (open) return;
-          cancel(revealTimer);
-          revealTimer.current = setTimeout(() => {
-            revealTimer.current = null;
-            openedByPointer.current = true;
-            onOpenChangeRef.current(true);
-          }, REVEAL_DELAY_MS);
-        }}
-        onPointerLeave={() => {
-          cancel(revealTimer);
-          // The sidebar slid in under a pointer resting on the edge, which
-          // then left without crossing it: that is leaving too. Entering the
-          // sidebar cancels this.
-          if (open) hideSoon();
-        }}
+        onPointerEnter={revealSoon}
+        onPointerLeave={leaveEdge}
       />
+      {/* The edge strip is invisible: this tab shows the sidebar is there.
+          The pointer resting on it reveals the sidebar as the strip does, and
+          a click (or Enter) shows it at once. The sidebar slides in over it. */}
+      <button
+        type="button"
+        aria-label="Show the dashboards sidebar"
+        aria-controls={id}
+        aria-expanded={open}
+        className={[
+          'fixed left-0 z-40 flex h-10 w-5 items-center justify-center rounded-r-lg border border-l-0 border-text-muted/60 bg-bg-tertiary text-text-secondary transition-colors hover:text-text-primary',
+          'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-primary',
+        ].join(' ')}
+        style={{ top: topOffset + VIEW_PADDING_PX }}
+        onPointerEnter={revealSoon}
+        onPointerLeave={leaveEdge}
+        onClick={() => {
+          cancel(revealTimer);
+          onOpenChangeRef.current(true);
+        }}
+      >
+        <PanelLeftOpen size={14} />
+      </button>
       <nav
         ref={navRef}
         id={id}

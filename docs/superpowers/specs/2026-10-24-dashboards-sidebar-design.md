@@ -97,6 +97,13 @@ Settings. While hidden, `visibility: hidden` keeps it out of the tab order and
 the accessibility tree. The slide is a CSS transition that reduced motion
 turns off.
 
+Unpinned, a small tab on the window's left edge, level with the dashboard's
+title and inside its 24px padding, shows the sidebar is there (a
+`PanelLeftOpen` icon; the edge strip alone gave no hint). The pointer resting
+on it reveals the sidebar as the strip does, and a click or Enter shows it at
+once, moving focus in like the Dashboards button. The sidebar slides in over
+it.
+
 The pin is saved with the display preferences (`dashboardsSidebarPinned`) and
 is machine-level, like the theme and palette: it lives in app-state.json in
 workspace mode, so it holds across workspaces. `resolveWorkspaceEnv` rewrites
