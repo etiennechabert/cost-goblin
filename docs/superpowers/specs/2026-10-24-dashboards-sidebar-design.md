@@ -18,7 +18,8 @@ one click.
 ## Non-goals
 
 - No sidebar on Trends, Findings, Baselines, Tags, Explorer or Settings.
-- No collapsing, resizing or reordering of the sidebar.
+- No resizing or reordering of the sidebar. (Hiding it came later: see
+  "Follow-up: pin and auto-hide".)
 - No change to Settings' rail (`SettingsShell`).
 
 ## Constraints
@@ -77,3 +78,33 @@ shares its width by size from a zero flex basis, so a row of three mediums still
 fits on one line; a row short of them keeps its percentage bases and splits the
 rest evenly, as before. The title column gives way down to 20rem, then the date
 picker moves under it.
+
+## Follow-up: pin and auto-hide
+
+A pin in the sidebar's header keeps it in its column (the default) or unpins
+it. Unpinned, the sidebar is hidden and the dashboard takes the full width. It
+slides in over the dashboard, without reflowing the widgets, when the pointer
+rests on an 8px strip along the window's left edge for 150ms, or when the top
+bar's Dashboards button is clicked on a dashboard page. That button then works
+as a toggle (`aria-expanded`), which gives the keyboard a way in: focus moves to
+the open dashboard's row and goes back to the button on Escape or once a
+dashboard is picked. The sidebar hides 300ms after the pointer leaves it,
+including a pointer that leaves the edge strip without coming onto it (focus
+inside goes back to the button), and also when a dashboard is picked, on
+Escape while it has focus, or when focus moves out (switching apps doesn't
+count). Leaving the screen closes it, so it never comes back open after
+Settings. While hidden, `visibility: hidden` keeps it out of the tab order and
+the accessibility tree. The slide is a CSS transition that reduced motion
+turns off.
+
+Unpinned, a small tab on the window's left edge, level with the dashboard's
+title and inside its 24px padding, shows the sidebar is there (a
+`PanelLeftOpen` icon; the edge strip alone gave no hint). The pointer resting
+on it reveals the sidebar as the strip does, and a click or Enter shows it at
+once, moving focus in like the Dashboards button. The sidebar slides in over
+it.
+
+The pin is saved with the display preferences (`dashboardsSidebarPinned`) and
+is machine-level, like the theme and palette: it lives in app-state.json in
+workspace mode, so it holds across workspaces. `resolveWorkspaceEnv` rewrites
+app-state.json at every launch and carries the pin over.

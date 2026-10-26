@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import type {
@@ -280,6 +280,72 @@ describe('App shell — header actions', () => {
 
     await user.click(headerButton('Dashboards'));
     expect(await screen.findByRole('heading', { name: 'Cost Overview' })).toBeDefined();
+  });
+
+  it('unpinned, the sidebar stays hidden until the Dashboards button shows it', async () => {
+    const api = new AppApi();
+    const asCostApi: CostApi = api;
+    vi.spyOn(asCostApi, 'getUIPreferences').mockResolvedValue({ theme: 'dark', palette: 'standard', dashboardsSidebarPinned: false });
+    const user = await bootApp(api);
+    await waitFor(() => { expect(dashboardsSidebar()).toBeNull(); });
+    expect(headerButton('Dashboards').getAttribute('aria-expanded')).toBe('false');
+    // A hidden element has no accessible name, so find the list by its id.
+    const controls = headerButton('Dashboards').getAttribute('aria-controls');
+    const controlled = controls === null ? null : document.getElementById(controls);
+    expect(controlled?.getAttribute('aria-label')).toBe('Dashboards');
+    await user.hover(headerButton('Dashboards'));
+    expect(within(await screen.findByRole('tooltip')).getByText('Show the dashboards list')).toBeDefined();
+
+    await user.click(headerButton('Dashboards'));
+    expect(headerButton('Dashboards').getAttribute('aria-expanded')).toBe('true');
+    await user.click(headerButton('Dashboards'));
+    expect(dashboardsSidebar()).toBeNull();
+    expect(headerButton('Dashboards').getAttribute('aria-expanded')).toBe('false');
+
+    await user.click(headerButton('Dashboards'));
+    await user.click(sidebarButton('Team costs'));
+    expect(await screen.findByRole('heading', { name: 'Team costs' })).toBeDefined();
+    expect(dashboardsSidebar()).toBeNull();
+
+    // Away from the dashboards, the button still reopens the last one.
+    await user.click(headerButton('Trends'));
+    expect(headerButton('Dashboards').getAttribute('aria-expanded')).toBeNull();
+    await user.click(headerButton('Dashboards'));
+    expect(await screen.findByRole('heading', { name: 'Team costs' })).toBeDefined();
+    expect(dashboardsSidebar()).toBeNull();
+  });
+
+  it('unpinned, the sidebar shown from the left edge is closed again after Settings', async () => {
+    const api = new AppApi();
+    const asCostApi: CostApi = api;
+    vi.spyOn(asCostApi, 'getUIPreferences').mockResolvedValue({ theme: 'dark', palette: 'standard', dashboardsSidebarPinned: false });
+    const user = await bootApp(api);
+    await waitFor(() => { expect(dashboardsSidebar()).toBeNull(); });
+    fireEvent.pointerEnter(screen.getByTestId('dashboards-sidebar-edge'));
+    await waitFor(() => { expect(dashboardsSidebar()).not.toBeNull(); });
+
+    // Settings opens over the dashboard, which stays the current page.
+    await user.click(headerButton('Settings'));
+    await user.click(await screen.findByRole('button', { name: 'Done, return to dashboards' }));
+    await screen.findByRole('heading', { name: 'Cost Overview' });
+    expect(dashboardsSidebar()).toBeNull();
+  });
+
+  it('saves the sidebar\'s pin with the other display preferences', async () => {
+    const api = new AppApi();
+    const save = vi.spyOn(api, 'saveUIPreferences');
+    const user = await bootApp(api);
+
+    // Only the pin: the theme, palette and default dashboard stay as saved.
+    await user.click(sidebarButton('Pin sidebar'));
+    expect(save).toHaveBeenLastCalledWith({ dashboardsSidebarPinned: false });
+    await waitFor(() => { expect(dashboardsSidebar()).toBeNull(); });
+
+    await user.click(headerButton('Dashboards'));
+    await user.click(sidebarButton('Pin sidebar'));
+    expect(save).toHaveBeenLastCalledWith({ dashboardsSidebarPinned: true });
+    expect(dashboardsSidebar()).not.toBeNull();
+    expect(headerButton('Dashboards').getAttribute('aria-expanded')).toBeNull();
   });
 });
 

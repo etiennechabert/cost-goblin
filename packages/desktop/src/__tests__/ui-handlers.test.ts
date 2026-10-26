@@ -95,6 +95,53 @@ describe('ui:get-preferences / ui:save-preferences', () => {
     await h.ipc.invoke('ui:save-preferences', { theme: 'light', palette: 'standard' });
     expect(JSON.parse(await readFile(appStatePath(h.ws), 'utf-8'))).toMatchObject({ theme: 'light', palette: 'standard' });
   });
+
+  it('keeps the dashboards sidebar pin through saves that leave it out', async () => {
+    const h = await uiApp();
+    await h.ipc.invoke('ui:save-preferences', { theme: 'dark', palette: 'standard', dashboardsSidebarPinned: false });
+    expect(await h.ipc.invoke('ui:get-preferences')).toMatchObject({ dashboardsSidebarPinned: false });
+    // A theme change or a new default dashboard saves without the pin.
+    await h.ipc.invoke('ui:save-preferences', { theme: 'light', palette: 'standard', defaultViewId: 'overview' });
+    expect(await h.ipc.invoke('ui:get-preferences')).toMatchObject({ theme: 'light', dashboardsSidebarPinned: false });
+
+    await writeFile(prefsFile(h), JSON.stringify({ dashboardsSidebarPinned: 'no' }));
+    expect(at(await h.ipc.invoke('ui:get-preferences'), 'dashboardsSidebarPinned')).toBeUndefined();
+  });
+
+  it('writes only the well-formed fields a save carries', async () => {
+    const h = await uiApp();
+    await writeFile(prefsFile(h), JSON.stringify({ theme: 'light', palette: 'colorblind', defaultViewId: 'teams' }));
+    await h.ipc.invoke('ui:save-preferences', { dashboardsSidebarPinned: false });
+    expect(await h.ipc.invoke('ui:get-preferences')).toMatchObject({
+      theme: 'light', palette: 'colorblind', defaultViewId: 'teams', dashboardsSidebarPinned: false,
+    });
+
+    const before = await readFile(prefsFile(h), 'utf-8');
+    await h.ipc.invoke('ui:save-preferences', { theme: 'neon', palette: 3, defaultViewId: 9, dashboardsSidebarPinned: 'yes', performance: 'fast' });
+    await h.ipc.invoke('ui:save-preferences', 'not an object');
+    expect(JSON.parse(await readFile(prefsFile(h), 'utf-8'))).toEqual(JSON.parse(before));
+  });
+
+  it('keeps the machine-level theme and palette when a save carries only the pin', async () => {
+    const h = await uiApp('workspace');
+    await writeFile(appStatePath(h.ws), JSON.stringify({ theme: 'light', palette: 'vivid' }));
+    await h.ipc.invoke('ui:save-preferences', { dashboardsSidebarPinned: false });
+    expect(JSON.parse(await readFile(appStatePath(h.ws), 'utf-8'))).toEqual({ theme: 'light', palette: 'vivid', dashboardsSidebarPinned: false });
+  });
+
+  it('keeps the dashboards sidebar pin machine-level in workspace mode', async () => {
+    const h = await uiApp('workspace');
+    await writeFile(prefsFile(h), JSON.stringify({ dashboardsSidebarPinned: false }));
+    // No app-state value yet: the workspace file answers.
+    expect(await h.ipc.invoke('ui:get-preferences')).toMatchObject({ dashboardsSidebarPinned: false });
+    await writeFile(appStatePath(h.ws), JSON.stringify({ dashboardsSidebarPinned: true }));
+    expect(await h.ipc.invoke('ui:get-preferences')).toMatchObject({ dashboardsSidebarPinned: true });
+
+    await h.ipc.invoke('ui:save-preferences', { theme: 'dark', palette: 'standard', dashboardsSidebarPinned: false });
+    expect(JSON.parse(await readFile(appStatePath(h.ws), 'utf-8'))).toMatchObject({ dashboardsSidebarPinned: false });
+    await h.ipc.invoke('ui:save-preferences', { theme: 'light', palette: 'standard' });
+    expect(JSON.parse(await readFile(appStatePath(h.ws), 'utf-8'))).toMatchObject({ theme: 'light', dashboardsSidebarPinned: false });
+  });
 });
 
 describe('Performance settings', () => {

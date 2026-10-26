@@ -400,6 +400,7 @@ test.describe('Clickability (workspace mode)', () => {
   let app: ElectronApplication | undefined;
   let page: Page | undefined;
   let opened: string[];
+  let userDataDir = '';
 
   function launched(): { app: ElectronApplication; page: Page } {
     if (app === undefined || page === undefined) throw new Error('app not launched');
@@ -408,6 +409,7 @@ test.describe('Clickability (workspace mode)', () => {
 
   test.beforeAll(async () => {
     const seeded = seedWorkspaces(LONG_WORKSPACE, 'client-b');
+    userDataDir = seeded.userDataDir;
     ({ app, page } = await launchWorkspaceApp(seeded.runRoot, seeded.userDataDir));
     opened = await stubOpenExternal(app, page);
     // The header's build indicator: packaged builds show the version, a dev
@@ -514,6 +516,69 @@ test.describe('Clickability (workspace mode)', () => {
     await expect(p.getByRole('heading', { name: 'Cost Overview' })).toBeVisible();
     await expect(nav.getByRole('button', { name: 'Dashboards' })).toHaveAttribute('aria-current', 'page');
     await expect(p.getByRole('navigation', { name: 'Dashboards', exact: true })).toBeVisible();
+  });
+
+  // Unpinned, the list hides until the pointer rests on the window's left
+  // edge, then slides in over the dashboard instead of taking a column. The
+  // pin is saved machine-wide, so it holds across a reload.
+  test('the unpinned Dashboards sidebar shows from the left edge, over the dashboard', async () => {
+    const { page: p } = launched();
+    await ensureViewMode(p);
+    const nav = p.getByRole('navigation', { name: 'Dashboards and analysis' });
+    await nav.getByRole('button', { name: 'Home' }).click();
+    const sidebar = p.getByRole('navigation', { name: 'Dashboards', exact: true });
+    const heading = p.getByRole('heading', { name: 'Cost Overview' });
+    const leftOf = async (l: Locator): Promise<number> => (await l.boundingBox())?.x ?? Number.NaN;
+    const savedPin = (): unknown => {
+      const state: unknown = JSON.parse(readFileSync(join(userDataDir, 'app-state.json'), 'utf-8'));
+      return typeof state === 'object' && state !== null && 'dashboardsSidebarPinned' in state ? state.dashboardsSidebarPinned : undefined;
+    };
+    await expect(sidebar).toBeVisible();
+    const pinnedLeft = await leftOf(heading);
+
+    try {
+      await sidebar.getByRole('button', { name: 'Pin sidebar' }).click();
+      await expect(sidebar).toBeHidden();
+      // The dashboard takes the sidebar's column back.
+      await expect.poll(() => leftOf(heading)).toBeLessThan(pinnedLeft - 100);
+      await expect.poll(savedPin).toBe(false);
+      await p.reload();
+      await expect(heading).toBeVisible({ timeout: 15_000 });
+      await expect(sidebar).toBeHidden();
+
+      await p.mouse.move(2, 400);
+      await expectClickable(p, sidebar.getByRole('button', { name: 'Cost Overview', exact: true }));
+      expect(await leftOf(heading)).toBeLessThan(pinnedLeft - 100);
+      await p.mouse.move(700, 400);
+      await expect(sidebar).toBeHidden();
+
+      // The tab on the edge says it is there, and shows it.
+      const tab = p.getByRole('button', { name: 'Show the dashboards sidebar' });
+      await expectClickable(p, tab);
+      await tab.click();
+      await expectClickable(p, sidebar.getByRole('button', { name: 'Cost Overview', exact: true }));
+      await p.mouse.move(700, 400);
+      await expect(sidebar).toBeHidden();
+
+      // The Dashboards button shows it too, and its pin docks it again.
+      await nav.getByRole('button', { name: 'Dashboards' }).click();
+      const pin = sidebar.getByRole('button', { name: 'Pin sidebar' });
+      await expectClickable(p, pin);
+      await pin.click();
+      await expect(pin).toHaveAttribute('aria-pressed', 'true');
+      await expect.poll(() => leftOf(heading)).toBeCloseTo(pinnedLeft, 0);
+      await expect.poll(savedPin).toBe(true);
+    } finally {
+      // A failure part-way must not leave the tests after this one an
+      // unpinned sidebar: pin it on disk and reload.
+      if (savedPin() === false && !p.isClosed()) {
+        const path = join(userDataDir, 'app-state.json');
+        const state: unknown = JSON.parse(readFileSync(path, 'utf-8'));
+        writeFileSync(path, JSON.stringify({ ...(typeof state === 'object' && state !== null ? state : {}), dashboardsSidebarPinned: true }));
+        await p.reload();
+        await expect(heading).toBeVisible({ timeout: 15_000 });
+      }
+    }
   });
 
   test('an update arriving under the switch confirm waits for it to close', async () => {

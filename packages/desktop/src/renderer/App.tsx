@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, Profiler } from 'react';
+import { useState, useEffect, useCallback, useId, useLayoutEffect, useMemo, useRef, Profiler } from 'react';
 import { CostTrends, MissingTags, Savings, Baselines, DataManagement, DimensionsView, CostScopeView, CostScopeLoadError, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, ViewsLoadError, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, SharingActiveBanner, SettingsShell, SETTINGS_TABS, isSettingsTabId, WorkspacesView, WorkspaceChip, ConfirmModal, ReleaseNotes, useModalLayerCount, ButtonTooltip } from '@costgoblin/ui';
 import type { NavItem, SettingsTabId } from '@costgoblin/ui';
 import type { ChartPalette, CostApi, DataSharingStatus, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus, RollupStatus, BaselineRecomputeStatus, WorkspacesInfo } from '@costgoblin/core/browser';
@@ -526,6 +526,15 @@ function AppShell(): React.JSX.Element {
   useEffect(() => {
     if (view.page === 'custom') setLastViewId(view.viewId);
   }, [view]);
+  // Pinned, the dashboards sidebar keeps its column; unpinned, it shows over
+  // the dashboard only when wanted. Saved with the display preferences.
+  const [sidebarPinned, setSidebarPinned] = useState(true);
+  // The page the unpinned sidebar was shown on: it is open only while that
+  // page is, so any navigation (picking a dashboard included) closes it.
+  const [sidebarOpenOn, setSidebarOpenOn] = useState<View | null>(null);
+  const sidebarOpen = sidebarOpenOn === view;
+  const sidebarToggleRef = useRef<HTMLButtonElement>(null);
+  const sidebarId = useId();
   const [missingPeriods, setMissingPeriods] = useState(0);
   const [currentMonthUpdating, setCurrentMonthUpdating] = useState(false);
   const [isDark, setIsDark] = useState(true);
@@ -697,6 +706,7 @@ function AppShell(): React.JSX.Element {
     api.getUIPreferences().then(prefs => {
       setIsDark(prefs.theme === 'dark');
       setPalette(prefs.palette);
+      setSidebarPinned(prefs.dashboardsSidebarPinned ?? true);
       const defaultId = prefs.defaultViewId ?? OVERVIEW_SEED_VIEW.id;
       setDefaultViewId(defaultId);
       // Only redirect to the configured default once on startup, so that
@@ -798,6 +808,13 @@ function AppShell(): React.JSX.Element {
       palette,
       defaultViewId: id,
     }).catch(() => undefined);
+  }
+
+  function handleSetSidebarPinned(pinned: boolean) {
+    setSidebarPinned(pinned);
+    // Only the pin: echoing the theme or default dashboard from here would
+    // write the boot defaults over the saved ones when they failed to load.
+    api.saveUIPreferences({ dashboardsSidebarPinned: pinned }).catch(() => undefined);
   }
 
   function handleCheckForUpdates() {
@@ -1185,13 +1202,22 @@ function AppShell(): React.JSX.Element {
             })()}
             {(() => {
               const isActive = view.page === 'custom';
+              // On a dashboard with the sidebar unpinned, the button shows the
+              // hidden sidebar instead: the keyboard's way to it.
+              const showsSidebar = isActive && !sidebarPinned;
               return (
-                <ButtonTooltip name="Dashboards" description="Open the last dashboard">
+                <ButtonTooltip name="Dashboards" description={showsSidebar ? 'Show the dashboards list' : 'Open the last dashboard'}>
                   <button
+                    ref={sidebarToggleRef}
                     type="button"
-                    onClick={() => { handleNavClick(resolveLastDashboard(lastViewId, customNav, homeViewId)); }}
+                    onClick={() => {
+                      if (showsSidebar) setSidebarOpenOn(sidebarOpen ? null : view);
+                      else handleNavClick(resolveLastDashboard(lastViewId, customNav, homeViewId));
+                    }}
                     className={navButtonClass(isActive)}
                     aria-current={isActive ? 'page' : undefined}
+                    aria-expanded={showsSidebar ? sidebarOpen : undefined}
+                    aria-controls={showsSidebar ? sidebarId : undefined}
                     aria-label={isActive ? undefined : 'Dashboards'}
                   >
                     <Gauge size={isActive ? 14 : 18} />
@@ -1360,6 +1386,12 @@ function AppShell(): React.JSX.Element {
                     onSelect={handleNavClick}
                     onSetDefault={handleSetDefaultView}
                     topOffset={headerHeight}
+                    pinned={sidebarPinned}
+                    onPinnedChange={handleSetSidebarPinned}
+                    open={sidebarOpen}
+                    onOpenChange={(open) => { setSidebarOpenOn(open ? view : null); }}
+                    toggleRef={sidebarToggleRef}
+                    id={sidebarId}
                   />
                   <div className="min-w-0 flex-1">
                     {viewsState.status === 'failed' && (
