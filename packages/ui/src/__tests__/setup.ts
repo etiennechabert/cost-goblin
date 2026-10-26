@@ -131,8 +131,10 @@ function makeResizeEntry(target: Element): ResizeObserverEntry {
 // Lay the element out at the size its entry reports, as a browser would. Some
 // observers ignore the entry and measure the element on notification:
 // @tanstack/virtual-core (since 3.19.6) reads clientWidth/clientHeight, which
-// jsdom leaves at 0, so DataTable would never virtualize in tests.
+// jsdom leaves at 0, so DataTable would never virtualize in tests. An element
+// a test has already sized (on itself or its prototype) keeps that size.
 function layOut(target: Element): void {
+  if (target.clientWidth !== 0 || target.clientHeight !== 0) return;
   Object.defineProperty(target, 'clientWidth', { configurable: true, get: () => MOCK_CONTAINER_WIDTH });
   Object.defineProperty(target, 'clientHeight', { configurable: true, get: () => MOCK_CONTAINER_HEIGHT });
 }

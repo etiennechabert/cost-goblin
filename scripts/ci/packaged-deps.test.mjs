@@ -34,4 +34,17 @@ describe('packaged runtime dependencies', () => {
     const copies = Object.keys(lock).filter((path) => path.endsWith('node_modules/google-auth-library'));
     expect(copies).toEqual(['node_modules/google-auth-library']);
   });
+
+  it('builds the app with the root pinned vite, beside a hoisted electron-vite', () => {
+    // electron-vite resolves its vite peer from where it is installed, and no
+    // override pins it (npm rejects one against electron-vite 6's peer range).
+    // Hoisted, it gets the root's exact vite; nested under packages/desktop it
+    // would get desktop's vite 8 and silently move the shipped bundle to
+    // Rolldown, a major dependabot.yml leaves to be taken by hand.
+    const lock = readJson('package-lock.json').packages;
+    const copies = Object.keys(lock).filter((path) => path.endsWith('node_modules/electron-vite'));
+    expect(copies).toEqual(['node_modules/electron-vite']);
+    expect(Object.hasOwn(lock, 'node_modules/electron-vite/node_modules/vite')).toBe(false);
+    expect(lock['node_modules/vite'].version).toBe(readJson('package.json').devDependencies.vite);
+  });
 });
