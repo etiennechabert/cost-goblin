@@ -55,12 +55,14 @@ export function registerUIHandlers(app: AppContext): void {
     const parsed = await readPrefs();
     let theme = parsed?.['theme'];
     let palette = parsed?.['palette'];
+    let sidebarPinned = parsed?.['dashboardsSidebarPinned'];
     if (appStatePath !== null) {
       // Machine-level values win; the workspace file is only the fallback for
       // a workspace migrated before its theme was copied to app-state.
       const appState = readAppStateSync(appStatePath);
       theme = appState.theme ?? theme;
       palette = appState.palette ?? palette;
+      sidebarPinned = appState.dashboardsSidebarPinned ?? sidebarPinned;
     }
     const defaultViewId = parsed?.['defaultViewId'];
     return {
@@ -68,6 +70,7 @@ export function registerUIHandlers(app: AppContext): void {
       palette: isChartPalette(palette) ? palette : 'standard',
       defaultViewId: typeof defaultViewId === 'string' ? defaultViewId : undefined,
       performance: parsePerformance(parsed),
+      dashboardsSidebarPinned: typeof sidebarPinned === 'boolean' ? sidebarPinned : undefined,
     };
   });
 
@@ -76,7 +79,15 @@ export function registerUIHandlers(app: AppContext): void {
     // `performance` / `telemetry` blocks written through the same file.
     await updatePrefsFile(await uiPrefsPath(), (existing) => ({ ...existing, ...prefs }));
     if (appStatePath !== null) {
-      await updatePrefsFile(appStatePath, (existing) => ({ ...existing, theme: prefs.theme, palette: prefs.palette }));
+      const pinned = prefs.dashboardsSidebarPinned;
+      await updatePrefsFile(appStatePath, (existing) => ({
+        ...existing,
+        theme: prefs.theme,
+        palette: prefs.palette,
+        // Only the pin's own save carries it: a theme or default-dashboard
+        // save leaves the saved pin alone.
+        ...(typeof pinned === 'boolean' ? { dashboardsSidebarPinned: pinned } : {}),
+      }));
     }
   });
 

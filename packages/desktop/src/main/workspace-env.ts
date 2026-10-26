@@ -28,14 +28,16 @@ export type WorkspaceEnv =
       readonly appStatePath: string; // {userData}/app-state.json
     });
 
-/** Machine-level state at `{userData}/app-state.json`. Theme + chart palette
- *  live here in workspace mode (they are machine prefs, not workspace prefs). */
+/** Machine-level state at `{userData}/app-state.json`. Theme, chart palette and
+ *  the dashboards sidebar's pin live here in workspace mode (they are machine
+ *  prefs, not workspace prefs). */
 export interface AppStateFile {
   schemaVersion?: number; // currently 1
   lastWorkspace?: string;
   lastUsed?: Record<string, string>; // name -> ISO timestamp
   theme?: 'dark' | 'light';
   palette?: ChartPalette;
+  dashboardsSidebarPinned?: boolean;
   /** A directory rename to perform on the next launch, before any file inside
    *  the workspace is opened. Renaming the ACTIVE workspace in-process fails on
    *  Windows (DuckDB holds its temp_directory and mmapped Parquet handles
@@ -105,6 +107,8 @@ export function readAppStateSync(appStatePath: string): AppStateFile {
   if (theme === 'dark' || theme === 'light') state.theme = theme;
   const palette = parsed['palette'];
   if (isChartPalette(palette)) state.palette = palette;
+  const sidebarPinned = parsed['dashboardsSidebarPinned'];
+  if (typeof sidebarPinned === 'boolean') state.dashboardsSidebarPinned = sidebarPinned;
   const pendingRename = parsed['pendingRename'];
   if (isStringRecord(pendingRename)) {
     const from = pendingRename['from'];
@@ -322,6 +326,7 @@ export function resolveWorkspaceEnv(userDataPath: string, env: NodeJS.ProcessEnv
   if (theme !== undefined) nextState.theme = theme;
   const palette = appState.palette ?? migration.palette;
   if (palette !== undefined) nextState.palette = palette;
+  if (appState.dashboardsSidebarPinned !== undefined) nextState.dashboardsSidebarPinned = appState.dashboardsSidebarPinned;
   writeAppStateSync(appStatePath, nextState);
 
   return { mode: 'workspace', name, workspacesRoot, appStatePath, ...paths };

@@ -242,6 +242,18 @@ describe('resolveWorkspaceEnv — workspace pick order', () => {
     expect(env.name).toBe('alpha');
   });
 
+  it('keeps the machine-level prefs it rewrites app-state.json around', async () => {
+    await seedWorkspaces();
+    writeAppStateSync(join(userData, 'app-state.json'), {
+      lastWorkspace: 'alpha',
+      theme: 'light',
+      palette: 'vivid',
+      dashboardsSidebarPinned: false,
+    });
+    const env = expectWorkspaceMode(resolveWorkspaceEnv(userData, {}));
+    expect(readAppStateSync(env.appStatePath)).toMatchObject({ theme: 'light', palette: 'vivid', dashboardsSidebarPinned: false });
+  });
+
   it('falls back to the most recently used workspace when lastWorkspace points nowhere', async () => {
     await seedWorkspaces();
     writeAppStateSync(join(userData, 'app-state.json'), {
@@ -414,12 +426,19 @@ describe('readAppStateSync', () => {
         lastUsed: { good: '2026-01-01T00:00:00.000Z', bad: 7 },
         theme: 'blue',
         palette: 'colorblind',
+        dashboardsSidebarPinned: 'no',
       }),
     );
     expect(readAppStateSync(path)).toEqual({
       lastUsed: { good: '2026-01-01T00:00:00.000Z' },
       palette: 'colorblind',
     });
+  });
+
+  it('reads the dashboards sidebar pin', async () => {
+    const path = join(userData, 'app-state.json');
+    await writeFile(path, JSON.stringify({ dashboardsSidebarPinned: false }));
+    expect(readAppStateSync(path).dashboardsSidebarPinned).toBe(false);
   });
 
   it('parses a well-formed pendingRename and drops malformed ones', async () => {

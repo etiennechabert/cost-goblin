@@ -526,6 +526,14 @@ function AppShell(): React.JSX.Element {
   useEffect(() => {
     if (view.page === 'custom') setLastViewId(view.viewId);
   }, [view]);
+  // Pinned, the dashboards sidebar keeps its column; unpinned, it shows over
+  // the dashboard only when wanted. Saved with the display preferences.
+  const [sidebarPinned, setSidebarPinned] = useState(true);
+  // The page the unpinned sidebar was shown on: it is open only while that
+  // page is, so any navigation (picking a dashboard included) closes it.
+  const [sidebarOpenOn, setSidebarOpenOn] = useState<View | null>(null);
+  const sidebarOpen = sidebarOpenOn === view;
+  const sidebarToggleRef = useRef<HTMLButtonElement>(null);
   const [missingPeriods, setMissingPeriods] = useState(0);
   const [currentMonthUpdating, setCurrentMonthUpdating] = useState(false);
   const [isDark, setIsDark] = useState(true);
@@ -697,6 +705,7 @@ function AppShell(): React.JSX.Element {
     api.getUIPreferences().then(prefs => {
       setIsDark(prefs.theme === 'dark');
       setPalette(prefs.palette);
+      setSidebarPinned(prefs.dashboardsSidebarPinned ?? true);
       const defaultId = prefs.defaultViewId ?? OVERVIEW_SEED_VIEW.id;
       setDefaultViewId(defaultId);
       // Only redirect to the configured default once on startup, so that
@@ -800,6 +809,17 @@ function AppShell(): React.JSX.Element {
     }).catch(() => undefined);
   }
 
+  function handleSetSidebarPinned(pinned: boolean) {
+    setSidebarPinned(pinned);
+    setSidebarOpenOn(null);
+    api.saveUIPreferences({
+      theme: isDark ? 'dark' : 'light',
+      palette,
+      defaultViewId,
+      dashboardsSidebarPinned: pinned,
+    }).catch(() => undefined);
+  }
+
   function handleCheckForUpdates() {
     globalThis.costgoblinUpdate.checkForUpdates().catch(() => undefined);
   }
@@ -886,6 +906,9 @@ function AppShell(): React.JSX.Element {
     if (settingsTab === tab) return;
     confirmLeave(() => {
       api.cancelPendingQueries().catch(() => undefined);
+      // Settings covers the dashboard without leaving it: close the unpinned
+      // sidebar, or it would be open again on the way back.
+      setSidebarOpenOn(null);
       setSettingsTab(tab);
     });
   }
@@ -1185,13 +1208,21 @@ function AppShell(): React.JSX.Element {
             })()}
             {(() => {
               const isActive = view.page === 'custom';
+              // On a dashboard with the sidebar unpinned, the button shows the
+              // hidden sidebar instead: the keyboard's way to it.
+              const showsSidebar = isActive && !sidebarPinned;
               return (
-                <ButtonTooltip name="Dashboards" description="Open the last dashboard">
+                <ButtonTooltip name="Dashboards" description={showsSidebar ? 'Show the dashboards list' : 'Open the last dashboard'}>
                   <button
+                    ref={sidebarToggleRef}
                     type="button"
-                    onClick={() => { handleNavClick(resolveLastDashboard(lastViewId, customNav, homeViewId)); }}
+                    onClick={() => {
+                      if (showsSidebar) setSidebarOpenOn(sidebarOpen ? null : view);
+                      else handleNavClick(resolveLastDashboard(lastViewId, customNav, homeViewId));
+                    }}
                     className={navButtonClass(isActive)}
                     aria-current={isActive ? 'page' : undefined}
+                    aria-expanded={showsSidebar ? sidebarOpen : undefined}
                     aria-label={isActive ? undefined : 'Dashboards'}
                   >
                     <Gauge size={isActive ? 14 : 18} />
@@ -1360,6 +1391,11 @@ function AppShell(): React.JSX.Element {
                     onSelect={handleNavClick}
                     onSetDefault={handleSetDefaultView}
                     topOffset={headerHeight}
+                    pinned={sidebarPinned}
+                    onPinnedChange={handleSetSidebarPinned}
+                    open={sidebarOpen}
+                    onOpenChange={(open) => { setSidebarOpenOn(open ? view : null); }}
+                    toggleRef={sidebarToggleRef}
                   />
                   <div className="min-w-0 flex-1">
                     {viewsState.status === 'failed' && (

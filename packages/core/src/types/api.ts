@@ -97,6 +97,10 @@ export interface UIPreferences {
   readonly palette: ChartPalette;
   readonly defaultViewId?: string | undefined;
   readonly performance?: PerformanceSettings | undefined;
+  /** Whether the dashboards sidebar keeps its column beside the dashboard.
+   *  Unpinned, it stays hidden until the pointer rests on the window's left
+   *  edge. Unset reads as pinned. Machine-level, like theme and palette. */
+  readonly dashboardsSidebarPinned?: boolean | undefined;
 }
 
 /** User overrides for DuckDB resource tuning. `null` means "auto" — use the

@@ -95,6 +95,32 @@ describe('ui:get-preferences / ui:save-preferences', () => {
     await h.ipc.invoke('ui:save-preferences', { theme: 'light', palette: 'standard' });
     expect(JSON.parse(await readFile(appStatePath(h.ws), 'utf-8'))).toMatchObject({ theme: 'light', palette: 'standard' });
   });
+
+  it('keeps the dashboards sidebar pin through saves that leave it out', async () => {
+    const h = await uiApp();
+    await h.ipc.invoke('ui:save-preferences', { theme: 'dark', palette: 'standard', dashboardsSidebarPinned: false });
+    expect(await h.ipc.invoke('ui:get-preferences')).toMatchObject({ dashboardsSidebarPinned: false });
+    // A theme change or a new default dashboard saves without the pin.
+    await h.ipc.invoke('ui:save-preferences', { theme: 'light', palette: 'standard', defaultViewId: 'overview' });
+    expect(await h.ipc.invoke('ui:get-preferences')).toMatchObject({ theme: 'light', dashboardsSidebarPinned: false });
+
+    await writeFile(prefsFile(h), JSON.stringify({ dashboardsSidebarPinned: 'no' }));
+    expect(at(await h.ipc.invoke('ui:get-preferences'), 'dashboardsSidebarPinned')).toBeUndefined();
+  });
+
+  it('keeps the dashboards sidebar pin machine-level in workspace mode', async () => {
+    const h = await uiApp('workspace');
+    await writeFile(prefsFile(h), JSON.stringify({ dashboardsSidebarPinned: false }));
+    // No app-state value yet: the workspace file answers.
+    expect(await h.ipc.invoke('ui:get-preferences')).toMatchObject({ dashboardsSidebarPinned: false });
+    await writeFile(appStatePath(h.ws), JSON.stringify({ dashboardsSidebarPinned: true }));
+    expect(await h.ipc.invoke('ui:get-preferences')).toMatchObject({ dashboardsSidebarPinned: true });
+
+    await h.ipc.invoke('ui:save-preferences', { theme: 'dark', palette: 'standard', dashboardsSidebarPinned: false });
+    expect(JSON.parse(await readFile(appStatePath(h.ws), 'utf-8'))).toMatchObject({ dashboardsSidebarPinned: false });
+    await h.ipc.invoke('ui:save-preferences', { theme: 'light', palette: 'standard' });
+    expect(JSON.parse(await readFile(appStatePath(h.ws), 'utf-8'))).toMatchObject({ theme: 'light', dashboardsSidebarPinned: false });
+  });
 });
 
 describe('Performance settings', () => {
