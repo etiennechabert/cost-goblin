@@ -34,9 +34,6 @@ interface Props extends RowsProps {
   readonly id: string;
 }
 
-/** How long| null>;
-}
-
 /** How long the pointer rests on the left edge before the unpinned sidebar
  *  slides in, so a pointer only passing through, out of the window, leaves it
  *  hidden. */
