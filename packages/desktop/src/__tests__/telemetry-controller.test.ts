@@ -158,6 +158,13 @@ describe('telemetry status', () => {
 
     expect(telemetry.getStatus().tracesSampleRate).toBe(0.1);
   });
+
+  it('samples a distro package at the release rate when its launcher sets COSTGOBLIN_PACKAGED', async () => {
+    vi.stubEnv('COSTGOBLIN_PACKAGED', '1');
+    const telemetry = await loadController();
+
+    expect(telemetry.getStatus().tracesSampleRate).toBe(0.1);
+  });
 });
 
 describe('telemetry start', () => {
@@ -225,6 +232,19 @@ describe('telemetry start', () => {
     expect('initialScope' in options).toBe(false);
     expect(telemetry.getStatus().armed).toEqual(EVERYTHING);
     expect(telemetry.isTracingActive()).toBe(true);
+  });
+
+  it('labels a distro package as production and skips its dev tags', async () => {
+    vi.stubEnv('COSTGOBLIN_PACKAGED', '1');
+    const telemetry = await loadController();
+
+    telemetry.start(ERRORS_ONLY);
+
+    const options = initOptions();
+    expect(options.environment).toBe('production');
+    expect(options.tracesSampleRate).toBe(0);
+    expect(fake.readDevTagsSync).toHaveBeenCalledWith(true, '/apps/costgoblin');
+    expect('initialScope' in options).toBe(false);
   });
 
   it('drops the native crash handler unless the native channel is on', async () => {

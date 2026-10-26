@@ -18,11 +18,13 @@
         {
           default = pkgs.buildNpmPackage {
             pname = "costgoblin";
-            version = "0.9.2";
+            version = (pkgs.lib.importJSON ./package.json).version;
 
             src = ./.;
 
-            npmDepsHash = "sha256-7KU0uFsdL47AOlzeLrQlMgPaVT7lsWB3SkAXyQsmF9U=";
+            npmDeps = pkgs.importNpmLock { npmRoot = ./.; };
+
+            npmConfigHook = pkgs.importNpmLock.npmConfigHook;
 
             env = {
               ELECTRON_SKIP_BINARY_DOWNLOAD = "1";
@@ -57,14 +59,15 @@
 
               mkdir -p $out/bin
               makeWrapper ${pkgs.electron_44}/bin/electron $out/bin/costgoblin \
-                --add-flags "$out/share/costgoblin"
+                --add-flags "$out/share/costgoblin" \
+                --set-default COSTGOBLIN_PACKAGED 1
 
               runHook postInstall
             '';
 
             meta = with pkgs.lib; {
               description = "Desktop app for cloud cost visibility";
-              homepage = "https://github.com/mipmip/cost-goblin";
+              homepage = "https://github.com/etiennechabert/cost-goblin";
               license = licenses.agpl3Only;
               maintainers = [ ];
               mainProgram = "costgoblin";

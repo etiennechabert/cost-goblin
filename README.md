@@ -55,13 +55,13 @@ Download the latest release for your platform from [costgoblin.com](https://cost
 Run directly from the repository:
 
 ```bash
-nix run github:mipmip/cost-goblin
+nix run github:etiennechabert/cost-goblin
 ```
 
 Install into your profile:
 
 ```bash
-nix profile install github:mipmip/cost-goblin
+nix profile install github:etiennechabert/cost-goblin
 ```
 
 The flake builds the Electron bundle with `buildNpmPackage` and runs it with
