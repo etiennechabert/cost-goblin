@@ -3,11 +3,9 @@ import type {
   CostMetric,
   CostScopeConfig,
   MarketplaceAttributionConfig,
-  CostScopeDailyRow,
   CostScopePreviewRange,
   CostScopePreviewResult,
   CostScopePreviewRow,
-  CostScopeSampleRow,
   ExclusionCondition,
   ExclusionRule,
   Dimension,
@@ -73,9 +71,47 @@ function formatExcluded(cost: number, rows: number): string {
   return `${formatDollars(cost)} excluded · ${String(rows)} rows`;
 }
 
-interface PreviewState {
-  result: CostScopePreviewResult | null;
-  loading: boolean;
+/** How the last preview request ended: its answer, or why it failed. */
+type SettledPreview =
+  | { readonly status: 'success'; readonly result: CostScopePreviewResult }
+  | { readonly status: 'error'; readonly message: string };
+
+/** The preview. A request in flight keeps what was shown before it on
+ *  screen (`shown`), so an edit doesn't blank the panel for every keystroke. */
+type PreviewState =
+  | { readonly status: 'idle' }
+  | { readonly status: 'loading'; readonly shown: SettledPreview | null }
+  | SettledPreview;
+
+/** What the panel shows: the last settled preview, if any. */
+function shownPreview(state: PreviewState): SettledPreview | null {
+  switch (state.status) {
+    case 'idle': return null;
+    case 'loading': return state.shown;
+    default: return state;
+  }
+}
+
+/** Where the preview's answer would be, says it failed and why: a failed
+ *  preview must not read as an empty period. In the chart's place it takes
+ *  the chart's height, and is the one a screen reader announces. */
+function PreviewFailed({ testId, what, message, inPlaceOf }: Readonly<{
+  testId: string;
+  what: string;
+  message: string;
+  inPlaceOf: 'chart' | 'table';
+}>): React.JSX.Element {
+  const chart = inPlaceOf === 'chart';
+  return (
+    <div
+      data-testid={testId}
+      role={chart ? 'alert' : undefined}
+      className={`${chart ? 'min-h-[120px] ' : ''}flex flex-col justify-center gap-1 rounded-md border border-negative bg-negative-muted px-3 py-2 text-xs text-negative break-words`}
+    >
+      <span className="font-medium">{what}</span>
+      <span>{message}</span>
+    </div>
+  );
 }
 
 /** The period the preview covers. A "Last N days" preset stays relative to
@@ -395,9 +431,7 @@ function RuleCard({ rule, preview, dimensions, suggestionsByDim, onUpdate, onDel
 }
 
 interface PreviewHistogramProps {
-  readonly days: readonly CostScopeDailyRow[];
-  readonly loading: boolean;
-  readonly hasResult: boolean;
+  readonly shown: SettledPreview | null;
   readonly height?: number;
 }
 
@@ -409,11 +443,11 @@ const MAX_GUTTERED_BARS = 92;
  *  `kept` (solid accent) over `excluded` (muted). Purpose-built rather than
  *  reusing the dashboard's StackedBarChart because that component is tied
  *  to the Groups/Products/Services tab model. */
-function PreviewHistogram({ days, loading, hasResult, height = 120 }: PreviewHistogramProps) {
-  if (loading && !hasResult) {
+function PreviewHistogram({ shown, height = 120 }: PreviewHistogramProps) {
+  if (shown === null) {
     // Initial load — show an explicit label so tests / users can tell
-    // "loading" apart from "no data". Once a result arrives we keep
-    // rendering it even while the next debounce is in-flight (below).
+    // "loading" apart from "no data". Once a preview settles we keep
+    // rendering it even while the next debounce is in-flight.
     return (
       <div
         data-testid="preview-histogram-loading"
@@ -423,6 +457,10 @@ function PreviewHistogram({ days, loading, hasResult, height = 120 }: PreviewHis
       </div>
     );
   }
+  if (shown.status === 'error') {
+    return <PreviewFailed testId="preview-histogram-error" what="The preview failed." message={shown.message} inPlaceOf="chart" />;
+  }
+  const days = shown.result.dailyTotals;
   const maxTotal = days.reduce((m, d) => Math.max(m, d.keptCost + d.excludedCost), 0);
   if (days.length === 0 || maxTotal === 0) {
     return (
@@ -461,12 +499,8 @@ function PreviewHistogram({ days, loading, hasResult, height = 120 }: PreviewHis
 }
 
 interface SampleRowsTableProps {
-  readonly rows: readonly CostScopeSampleRow[];
-  readonly tagColumns: readonly { readonly id: string; readonly label: string }[];
-  readonly totalRowCount: number;
+  readonly shown: SettledPreview | null;
   readonly hasEnabledRules: boolean;
-  readonly loading: boolean;
-  readonly hasResult: boolean;
 }
 
 /** Signed-dollar formatter — keeps the sign so credits/refunds read as
@@ -481,19 +515,23 @@ function formatSignedDollars(n: number): string {
  *  sit at the top. Horizontal scroll + sticky header + vertical scroll;
  *  rendered as a plain table rather than TanStack because sort/pagination
  *  are server-side and there's no interaction beyond "look". */
-function SampleRowsTable({ rows, tagColumns, totalRowCount, hasEnabledRules, loading, hasResult }: SampleRowsTableProps): React.JSX.Element {
+function SampleRowsTable({ shown, hasEnabledRules }: SampleRowsTableProps): React.JSX.Element {
   // Default on: most of the time the user wants to inspect what made it
   // *into* scope, not what was carved out. The handler returns up to N
   // kept + N excluded so flipping this off still shows something useful.
   const [hideExcluded, setHideExcluded] = useState(true);
 
-  if (loading && !hasResult) {
+  if (shown === null) {
     return (
       <div data-testid="preview-table-loading" className="text-xs text-text-muted py-4 text-center">
         Loading preview…
       </div>
     );
   }
+  if (shown.status === 'error') {
+    return <PreviewFailed testId="preview-table-error" what="No line items: the preview failed." message={shown.message} inPlaceOf="table" />;
+  }
+  const { sampleRows: rows, tagColumns, sampleTotalRowCount: totalRowCount } = shown.result;
   if (rows.length === 0) {
     return (
       <div data-testid="preview-table-empty" className="text-xs text-text-muted py-4 text-center">
@@ -685,7 +723,7 @@ export function CostScopeView({ onConfigLoaded }: CostScopeViewProps = {}): Reac
   const [loadAttempt, setLoadAttempt] = useState(0);
   const editable = load.status === 'loaded';
   const [dimensions, setDimensions] = useState<Dimension[]>([]);
-  const [preview, setPreview] = useState<PreviewState>({ result: null, loading: false });
+  const [preview, setPreview] = useState<PreviewState>({ status: 'idle' });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [suggestionsByDim, setSuggestionsByDim] = useState(new Map<string, readonly string[]>());
@@ -755,10 +793,12 @@ export function CostScopeView({ onConfigLoaded }: CostScopeViewProps = {}): Reac
     // the week picked once it was in flight.
     previewSeqRef.current += 1;
     const seq = previewSeqRef.current;
-    setPreview(p => ({ ...p, loading: true }));
+    setPreview(p => ({ status: 'loading', shown: shownPreview(p) }));
     api.previewCostScope(config, range)
-      .then(result => { if (seq === previewSeqRef.current) setPreview({ result, loading: false }); })
-      .catch(() => { if (seq === previewSeqRef.current) setPreview({ result: null, loading: false }); });
+      .then(result => { if (seq === previewSeqRef.current) setPreview({ status: 'success', result }); })
+      .catch((err: unknown) => {
+        if (seq === previewSeqRef.current) setPreview({ status: 'error', message: err instanceof Error ? err.message : String(err) });
+      });
   }, [api]);
 
   useEffect(() => {
@@ -852,19 +892,19 @@ export function CostScopeView({ onConfigLoaded }: CostScopeViewProps = {}): Reac
   }
 
   const enabledRules = draft.rules.filter(r => r.enabled);
-  let combinedText: string;
-  if (preview.result === null) combinedText = preview.loading ? 'loading…' : 'no data';
-  else combinedText = formatExcluded(preview.result.combined.excludedCost, preview.result.combined.excludedRows);
+  const shown = shownPreview(preview);
+  // Idle only until the first preview's debounce fires: it is on its way.
+  const previewLoading = preview.status === 'loading' || preview.status === 'idle';
 
   function getPreviewRow(ruleId: string): CostScopePreviewRow | undefined {
-    return preview.result?.perRule.find(p => p.ruleId === ruleId);
+    if (shown?.status !== 'success') return undefined;
+    return shown.result.perRule.find(p => p.ruleId === ruleId);
   }
 
   const preview_ = (
     <PreviewPanel
-      preview={preview}
-      loading={preview.loading}
-      combinedText={combinedText}
+      shown={shown}
+      loading={previewLoading}
       metric={draft.costMetric}
       hasEnabledRules={enabledRules.length > 0}
       range={{ start: rangeStart, end: rangeEnd }}
@@ -1067,16 +1107,15 @@ export function CostScopeView({ onConfigLoaded }: CostScopeViewProps = {}): Reac
       {/* Line items — full-width card below so the ~14-col table keeps its
           horizontal budget. Separate card lets the sticky preview above
           stay compact. */}
-      <LineItemsCard preview={preview} loading={preview.loading} hasEnabledRules={enabledRules.length > 0} />
+      <LineItemsCard shown={shown} hasEnabledRules={enabledRules.length > 0} />
       </>)}
     </div>
   );
 }
 
 interface PreviewPanelProps {
-  readonly preview: PreviewState;
+  readonly shown: SettledPreview | null;
   readonly loading: boolean;
-  readonly combinedText: string;
   readonly metric: CostMetric;
   readonly hasEnabledRules: boolean;
   readonly range: CostScopePreviewRange;
@@ -1089,8 +1128,9 @@ interface PreviewPanelProps {
  *  summary tiles + histogram — just enough to see the effect of rule
  *  toggles while scrolling through a long rules list. The detailed line-
  *  items table lives in its own full-width card below. */
-function PreviewPanel({ preview, loading, combinedText, metric, hasEnabledRules, range, lagDays, onRangeChange }: PreviewPanelProps): React.JSX.Element {
-  const result = preview.result;
+function PreviewPanel({ shown, loading, metric, hasEnabledRules, range, lagDays, onRangeChange }: PreviewPanelProps): React.JSX.Element {
+  const result = shown?.status === 'success' ? shown.result : null;
+  const failed = shown?.status === 'error';
   const metricLabel = METRIC_LABELS[metric].label;
   const excludedPct = useMemo(() => {
     if (result === null || result.unscopedTotalCost <= 0) return 0;
@@ -1101,8 +1141,10 @@ function PreviewPanel({ preview, loading, combinedText, metric, hasEnabledRules,
   // disk — showing "$0.00 · 0.0% excluded" in that state looks like a
   // real answer. Collapse both "no result yet" and "handler returned
   // zeros" into a single "no data" rendering that matches the histogram.
+  // A failed preview has no figures either, and its tiles say so.
   const hasData = result !== null && result.dailyTotals.length > 0;
-  const placeholder = loading ? '…' : '—';
+  const placeholder = loading && !failed ? '…' : '—';
+  const noDataHint = failed ? 'Preview failed' : '';
 
   return (
     <Card data-testid="cost-scope-preview" className="shadow-lg @container">
@@ -1135,18 +1177,18 @@ function PreviewPanel({ preview, loading, combinedText, metric, hasEnabledRules,
           <SummaryTile
             label="Unscoped total"
             value={hasData ? formatDollars(result.unscopedTotalCost) : placeholder}
-            hint={`Raw ${metricLabel.toLowerCase()} over the window`}
+            hint={failed ? noDataHint : `Raw ${metricLabel.toLowerCase()} over the window`}
           />
           <SummaryTile
             label="After scope"
             value={hasData ? formatDollars(result.scopedTotalCost) : placeholder}
-            hint={(() => { if (!hasData) { return ''; } return hasEnabledRules ? `${excludedPct.toFixed(1)}% excluded` : 'No rules enabled'; })()}
+            hint={(() => { if (!hasData) { return noDataHint; } return hasEnabledRules ? `${excludedPct.toFixed(1)}% excluded` : 'No rules enabled'; })()}
             emphasis
           />
           <SummaryTile
             label="Excluded"
-            value={hasData && hasEnabledRules ? combinedText : placeholder}
-            hint={(() => { if (!hasData) { return ''; } return hasEnabledRules ? 'Union of enabled rules' : 'Toggle a rule'; })()}
+            value={hasData && hasEnabledRules ? formatExcluded(result.combined.excludedCost, result.combined.excludedRows) : placeholder}
+            hint={(() => { if (!hasData) { return noDataHint; } return hasEnabledRules ? 'Union of enabled rules' : 'Toggle a rule'; })()}
           />
         </div>
 
@@ -1161,12 +1203,8 @@ function PreviewPanel({ preview, loading, combinedText, metric, hasEnabledRules,
               )}
             </div>
           </div>
-          <PreviewHistogram
-            days={result?.dailyTotals ?? []}
-            loading={loading}
-            hasResult={result !== null}
-          />
-          {result !== null && result.dailyTotals.length > 0 && (
+          <PreviewHistogram shown={shown} />
+          {hasData && (
             <div className="flex justify-between text-[10px] text-text-muted mt-1">
               <span>{result.startDate}</span>
               <span>{result.endDate}</span>
@@ -1179,30 +1217,21 @@ function PreviewPanel({ preview, loading, combinedText, metric, hasEnabledRules,
 }
 
 interface LineItemsCardProps {
-  readonly preview: PreviewState;
-  readonly loading: boolean;
+  readonly shown: SettledPreview | null;
   readonly hasEnabledRules: boolean;
 }
 
 /** Full-width card holding the raw line-items inspection table. Separated
  *  from PreviewPanel so the sticky summary stays compact and this stays
  *  wide enough to show the ~14-column table without horizontal scroll. */
-function LineItemsCard({ preview, loading, hasEnabledRules }: LineItemsCardProps): React.JSX.Element {
-  const result = preview.result;
+function LineItemsCard({ shown, hasEnabledRules }: LineItemsCardProps): React.JSX.Element {
   return (
     <Card data-testid="cost-scope-line-items">
       <CardHeader className="pb-3">
         <CardTitle className="text-base">Line items</CardTitle>
       </CardHeader>
       <CardContent>
-        <SampleRowsTable
-          rows={result?.sampleRows ?? []}
-          tagColumns={result?.tagColumns ?? []}
-          totalRowCount={result?.sampleTotalRowCount ?? 0}
-          hasEnabledRules={hasEnabledRules}
-          loading={loading}
-          hasResult={result !== null}
-        />
+        <SampleRowsTable shown={shown} hasEnabledRules={hasEnabledRules} />
       </CardContent>
     </Card>
   );
