@@ -42,6 +42,13 @@ const EXCLUDE_EC2 = {
   conditions: [{ dimensionId: 'service', values: ['Amazon Elastic Compute Cloud'] }],
 };
 
+/** EXCLUDE_EC2 with a second condition just added in the editor: no values
+ *  typed yet, Missing values unticked. */
+const EXCLUDE_EC2_DRAFT = {
+  ...EXCLUDE_EC2,
+  conditions: [...EXCLUDE_EC2.conditions, { dimensionId: 'region', values: [] }],
+};
+
 describe('cost-scope:get-config', () => {
   it('serves the loaded scope', async () => {
     const h = await scopeApp({ data: 'none' });
@@ -100,6 +107,19 @@ describe('cost-scope:save-config', () => {
     await expect(h.ipc.invoke('cost-scope:save-config', scope([dangling])))
       .rejects.toThrow("Rule 'No EC2' references unknown dimension 'nope'.");
   });
+
+  it('saves a disabled rule whose added condition is still blank, and refuses it enabled', async () => {
+    const h = await scopeApp({ data: 'none' });
+    await h.ipc.invoke('cost-scope:save-config', scope([{ ...EXCLUDE_EC2_DRAFT, enabled: false }]));
+    const reloaded = list(at(await h.ipc.invoke('cost-scope:get-config'), 'rules')).find(r => at(r, 'id') === 'no-ec2');
+    expect(at(reloaded, 'enabled')).toBe(false);
+    expect(at(reloaded, 'conditions')).toEqual(EXCLUDE_EC2_DRAFT.conditions);
+
+    const before = await readFile(h.ws.costScopePath, 'utf-8');
+    await expect(h.ipc.invoke('cost-scope:save-config', scope([EXCLUDE_EC2_DRAFT])))
+      .rejects.toThrow('costScope.rules[0].conditions[1].values must have at least one entry unless matchMissing is true or the rule is disabled');
+    expect(await readFile(h.ws.costScopePath, 'utf-8')).toBe(before);
+  });
 });
 
 describe('cost-scope:preview', () => {
@@ -142,6 +162,19 @@ describe('cost-scope:preview', () => {
     const lagged = { start: '2026-02-25', end: '2026-02-28' };
     expect(await h.ipc.invoke('cost-scope:preview', { ...scope([EXCLUDE_EC2]), lagDays: 7 }, lagged))
       .toMatchObject({ windowDays: 4, startDate: '2026-02-25', endDate: '2026-02-28', unscopedTotalCost: 0, dailyTotals: [] });
+  });
+
+  // Adding a condition must not blank the preview: until it has a value, the
+  // rule previews as it was, whether it is enabled or not.
+  it('previews a rule whose added condition is still blank as the rule without it', async () => {
+    const h = await scopeApp();
+    const without = await h.ipc.invoke('cost-scope:preview', scope([EXCLUDE_EC2]), FEBRUARY);
+    const disabledDraft = { ...EXCLUDE_EC2_DRAFT, id: 'off', enabled: false };
+    const drafted = await h.ipc.invoke('cost-scope:preview', scope([EXCLUDE_EC2_DRAFT, disabledDraft]), FEBRUARY);
+    expect(num(at(drafted, 'combined', 'excludedCost'))).toBeGreaterThan(0);
+    expect(at(drafted, 'combined')).toEqual(at(without, 'combined'));
+    expect(at(drafted, 'perRule')).toEqual(at(without, 'perRule'));
+    expect(at(drafted, 'scopedTotalCost')).toEqual(at(without, 'scopedTotalCost'));
   });
 
   it('treats a rule on an unknown dimension as excluding nothing, and no rules as no exclusion', async () => {

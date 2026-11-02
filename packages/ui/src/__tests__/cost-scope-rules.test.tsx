@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BUILTIN_EXCLUSION_RULES, DEFAULT_COST_SCOPE, DEFAULT_MARKETPLACE_ATTRIBUTION, asDimensionId, tagDimColumn } from '@costgoblin/core/browser';
+import { BUILTIN_EXCLUSION_RULES, DEFAULT_COST_SCOPE, DEFAULT_MARKETPLACE_ATTRIBUTION, asDimensionId, tagDimColumn, validateCostScope } from '@costgoblin/core/browser';
 import type { CostScopeConfig, CostScopePreviewRange, CostScopePreviewResult, CostScopeSampleRow, Dimension } from '@costgoblin/core/browser';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
@@ -54,7 +54,13 @@ class ScopeApi extends MockCostApi {
     if (this.previewAnswer === 'base') return super.previewCostScope(config, range);
     this.costScopePreviewRanges.push(range);
     if (this.previewAnswer === 'pending') return new Promise<CostScopePreviewResult>(() => undefined);
-    return this.previewAnswer instanceof Error ? Promise.reject(this.previewAnswer) : Promise.resolve(this.previewAnswer);
+    const answer = this.previewAnswer;
+    return Promise.resolve().then(() => {
+      // Refuses what the main process's preview refuses, as MockCostApi does.
+      validateCostScope(config, undefined, { preview: true });
+      if (answer instanceof Error) throw answer;
+      return answer;
+    });
   }
 
   override getDimensions(): Promise<Dimension[]> {
@@ -386,6 +392,39 @@ describe('CostScopeView — editing rules', () => {
     const card = await ruleCard('Tax');
     await waitFor(() => { expect(failingValues).toHaveBeenCalledTimes(1); });
     expect(card.querySelector('datalist')).toBeNull();
+  });
+
+  // A condition added to a rule is blank until its values are typed. The
+  // preview carries on meanwhile, and a disabled rule saves with it.
+  it('keeps previewing and saves a disabled rule whose added condition is still blank', async () => {
+    const { api, user } = renderView();
+    await user.click(await screen.findByRole('button', { name: 'Add rule' }));
+    const card = await ruleCard('New rule');
+    await user.type(within(card).getByPlaceholderText('Values (comma-separated)'), 'WIZ');
+    await user.tab();
+    const before = api.costScopePreviewRanges.length;
+    await user.click(within(card).getByRole('button', { name: '+ Add condition' }));
+    await waitFor(() => { expect(api.costScopePreviewRanges.length).toBeGreaterThan(before); });
+    await waitFor(() => { expect(within(tile('Unscoped total')).getByText(formatDollars(1000))).toBeDefined(); });
+
+    const saved = await save(user, api);
+    expect(saved.rules.find(r => r.name === 'New rule')?.conditions).toEqual([
+      { dimensionId: 'provider', values: ['WIZ'] },
+      { dimensionId: 'provider', values: [] },
+    ]);
+  });
+
+  it('keeps previewing an enabled rule whose added condition is still blank, and holds the save', async () => {
+    const { api, user } = renderView();
+    const tax = await ruleCard('Tax');
+    await user.click(within(tax).getByRole('switch'));
+    await waitFor(() => { expect(within(tile('After scope')).getByText('4.5% excluded')).toBeDefined(); });
+    const before = api.costScopePreviewRanges.length;
+    await user.click(within(tax).getByRole('button', { name: '+ Add condition' }));
+    expect(screen.getByText(/has a condition with no values/)).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', true);
+    await waitFor(() => { expect(api.costScopePreviewRanges.length).toBeGreaterThan(before); });
+    await waitFor(() => { expect(within(tile('After scope')).getByText('4.5% excluded')).toBeDefined(); });
   });
 
   it('starts a new rule disabled on "service" when no dimension is known, and deletes it', async () => {

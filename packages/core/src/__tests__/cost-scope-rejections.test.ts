@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { costScopeToYaml } from '../config/cost-scope-serialize.js';
 import { validateCostScope } from '../config/cost-scope-validator.js';
 import { ConfigValidationError } from '../config/validator.js';
 
@@ -63,9 +64,9 @@ describe('validateCostScope: exclusion rules', () => {
     ['has a condition without a value list', withCondition({ values: 'Amazon EC2' }), 'costScope.rules[0].conditions[0].values must be an array'],
     ['has a non-string condition value', withCondition({ values: ['Amazon EC2', 7] }), 'costScope.rules[0].conditions[0].values[1] must be a string'],
     [
-      'has a condition matching nothing',
+      'is enabled with a condition matching nothing',
       withCondition({ values: [] }),
-      'costScope.rules[0].conditions[0].values must have at least one entry unless matchMissing is true',
+      'costScope.rules[0].conditions[0].values must have at least one entry unless matchMissing is true or the rule is disabled',
     ],
   ])('rejects a rule that %s', (_label, raw, message) => {
     expect(configError(() => validateCostScope(raw))).toBe(message);
@@ -74,6 +75,34 @@ describe('validateCostScope: exclusion rules', () => {
   it('names the index of the broken rule and condition', () => {
     const raw = scopeWith({ rules: [rule, { ...rule, id: 'user:two', conditions: [condition, { dimensionId: 'region' }] }] });
     expect(configError(() => validateCostScope(raw))).toBe('costScope.rules[1].conditions[1].values must be an array');
+  });
+});
+
+// A draft condition (no values, no matchMissing) constrains nothing yet: the
+// query layer skips it. The editor lets a disabled rule keep one.
+describe('validateCostScope: draft conditions', () => {
+  const draft = { dimensionId: 'region', values: [] };
+  const ruleWithDraft = (enabled: boolean): Record<string, unknown> => withRule({ enabled, conditions: [condition, draft] });
+
+  it('keeps one in a disabled rule, through a save and a reload', () => {
+    const cfg = validateCostScope(ruleWithDraft(false));
+    expect(cfg.rules[0]?.conditions).toEqual([condition, draft]);
+    expect(validateCostScope(costScopeToYaml(cfg))).toEqual(cfg);
+  });
+
+  it('refuses one in an enabled rule, which it would widen', () => {
+    expect(configError(() => validateCostScope(ruleWithDraft(true))))
+      .toBe('costScope.rules[0].conditions[1].values must have at least one entry unless matchMissing is true or the rule is disabled');
+  });
+
+  it('lets the preview take one in an enabled rule too', () => {
+    const cfg = validateCostScope(ruleWithDraft(true), undefined, { preview: true });
+    expect(cfg.rules[0]?.conditions).toEqual([condition, draft]);
+  });
+
+  it('still refuses a rule with no conditions, even disabled or previewed', () => {
+    expect(configError(() => validateCostScope(withRule({ enabled: false, conditions: [] }), undefined, { preview: true })))
+      .toBe('costScope.rules[0].conditions must have at least one entry');
   });
 });
 

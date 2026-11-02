@@ -137,9 +137,9 @@ function ConditionRow({ condition, dimensions, suggestions, onUpdate, onRemove, 
 
   function commitValues() {
     const values = valuesInput.split(',').map(v => v.trim()).filter(v => v.length > 0);
-    // Empty is valid local state (draft in-progress) — parent decides how to
-    // treat it (disables save, skips preview). We still push the empty array
-    // so the parent sees the latest user intent.
+    // Empty is valid local state (draft in-progress): an enabled rule can't
+    // save it, and the preview skips it. We still push the empty array so the
+    // parent sees the latest user intent.
     onUpdate({ ...condition, values });
   }
 
@@ -643,9 +643,10 @@ function Td({ children, align = 'left', mono, truncate, className, title }: Read
  *  every condition matches something: a value, or missing values. Disabled
  *  rules can hold empty conditions without blocking saves — they're
  *  effectively draft scaffolding.
- *  The validator on the main-process side enforces the same shape, so we
- *  mirror it here to surface the check as UI affordance rather than a silent
- *  IPC rejection. */
+ *  The main process's validator enforces the same shape on save
+ *  (validateCostScope), so we mirror it here to surface the check as UI
+ *  affordance rather than a rejected save. Its preview takes empty conditions
+ *  in enabled rules too, which is why the preview runs regardless. */
 function describeDraftError(draft: CostScopeConfig): string | null {
   for (const rule of draft.rules) {
     if (!rule.enabled) continue;
@@ -764,14 +765,8 @@ export function CostScopeView({ onConfigLoaded }: CostScopeViewProps = {}): Reac
     clearTimeout(debounceRef.current);
     // Until cost-scope.yaml loads, the draft is the defaults, not the user's.
     if (!editable) return;
-    // Skip preview for drafts the main-process validator would reject — those
-    // IPC calls always fail and would blank the preview, making the user
-    // think the numbers dropped to zero while they were mid-edit.
-    if (describeDraftError(draft) !== null) {
-      previewSeqRef.current += 1;
-      setPreview({ result: null, loading: false });
-      return;
-    }
+    // A draft that can't be saved yet still previews: a condition just added
+    // to a rule has no values, and the rule previews as it was without it.
     debounceRef.current = setTimeout(() => { refreshPreview(draft, { start: rangeStart, end: rangeEnd }); }, 300);
     return () => { clearTimeout(debounceRef.current); };
   }, [draft, rangeStart, rangeEnd, refreshPreview, editable]);
@@ -823,9 +818,9 @@ export function CostScopeView({ onConfigLoaded }: CostScopeViewProps = {}): Reac
   function addRule() {
     const firstDim = dimensions.find(d => d.enabled !== false);
     const dimId = firstDim === undefined ? 'service' : getDimensionId(firstDim);
-    // New rules start disabled: they have empty `values` by default, which
-    // fails validation — shipping them enabled by default would instantly
-    // block saves and blank the preview until the user fills the field in.
+    // New rules start disabled: they have empty `values` by default, which an
+    // enabled rule can't save — shipping them enabled by default would
+    // instantly block saves until the user fills the field in.
     const newRule: ExclusionRule = {
       id: `user:${crypto.randomUUID()}`,
       name: 'New rule',
