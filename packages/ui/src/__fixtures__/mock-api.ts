@@ -73,7 +73,7 @@ import {
   type ExplorerPreferencesUpdate,
   type UIPreferences,
 } from '@costgoblin/core/browser';
-import { DEFAULT_COST_SCOPE, DEFAULT_EXPLORER_HIDDEN_COLUMNS, SAVINGS_PREFERENCES_DEFAULTS, computeRollupEstimate, tagSqlColumn } from '@costgoblin/core/browser';
+import { DEFAULT_COST_SCOPE, DEFAULT_EXPLORER_HIDDEN_COLUMNS, SAVINGS_PREFERENCES_DEFAULTS, computeRollupEstimate, tagSqlColumn, validateCostScope } from '@costgoblin/core/browser';
 import { daysBetween } from '../lib/dates.js';
 import { commitmentPurchase, resourceAction } from './savings-recommendations.js';
 
@@ -578,15 +578,20 @@ export class MockCostApi implements CostApi {
   getCostScope(): Promise<CostScopeConfig> { return Promise.resolve(DEFAULT_COST_SCOPE); }
   /** Every config `saveCostScope` was asked to persist, oldest first. */
   readonly savedCostScopes: CostScopeConfig[] = [];
+  /** Refuses what the main process's save refuses, so an editor test can't
+   *  pass on a scope the app would not write. */
   saveCostScope(config: CostScopeConfig): Promise<void> {
-    this.savedCostScopes.push(config);
-    return Promise.resolve();
+    return Promise.resolve().then(() => {
+      validateCostScope(config);
+      this.savedCostScopes.push(config);
+    });
   }
   /** The period of every preview requested, oldest first. */
   readonly costScopePreviewRanges: CostScopePreviewRange[] = [];
+  /** Refuses what the main process's preview refuses, as `saveCostScope`. */
   previewCostScope(config: CostScopeConfig, range: CostScopePreviewRange): Promise<CostScopePreviewResult> {
     this.costScopePreviewRanges.push(range);
-    return Promise.resolve({
+    return Promise.resolve().then(() => validateCostScope(config, undefined, { preview: true })).then(() => ({
       windowDays: daysBetween(range.start, range.end),
       startDate: range.start,
       endDate: range.end,
@@ -598,7 +603,7 @@ export class MockCostApi implements CostApi {
       sampleRows: [],
       sampleTotalRowCount: 0,
       tagColumns: [],
-    });
+    }));
   }
   revealCostScopeFolder(): Promise<void> { return Promise.resolve(); }
   queryExplorerOverview(): Promise<ExplorerOverviewResult> {

@@ -51,10 +51,15 @@ class ScopeApi extends MockCostApi {
   override getCostScope(): Promise<CostScopeConfig> { return Promise.resolve(this.scope); }
 
   override previewCostScope(config: CostScopeConfig, range: CostScopePreviewRange): Promise<CostScopePreviewResult> {
-    if (this.previewAnswer === 'base') return super.previewCostScope(config, range);
-    this.costScopePreviewRanges.push(range);
-    if (this.previewAnswer === 'pending') return new Promise<CostScopePreviewResult>(() => undefined);
-    return this.previewAnswer instanceof Error ? Promise.reject(this.previewAnswer) : Promise.resolve(this.previewAnswer);
+    // The base records the period and refuses what the main process refuses.
+    const base = super.previewCostScope(config, range);
+    const answer = this.previewAnswer;
+    if (answer === 'base') return base;
+    return base.then(() => {
+      if (answer === 'pending') return new Promise<CostScopePreviewResult>(() => undefined);
+      if (answer instanceof Error) throw answer;
+      return answer;
+    });
   }
 
   override getDimensions(): Promise<Dimension[]> {
@@ -386,6 +391,39 @@ describe('CostScopeView — editing rules', () => {
     const card = await ruleCard('Tax');
     await waitFor(() => { expect(failingValues).toHaveBeenCalledTimes(1); });
     expect(card.querySelector('datalist')).toBeNull();
+  });
+
+  // A condition added to a rule is blank until its values are typed. The
+  // preview carries on meanwhile, and a disabled rule saves with it.
+  it('keeps previewing and saves a disabled rule whose added condition is still blank', async () => {
+    const { api, user } = renderView();
+    await user.click(await screen.findByRole('button', { name: 'Add rule' }));
+    const card = await ruleCard('New rule');
+    await user.type(within(card).getByPlaceholderText('Values (comma-separated)'), 'WIZ');
+    await user.tab();
+    const before = api.costScopePreviewRanges.length;
+    await user.click(within(card).getByRole('button', { name: '+ Add condition' }));
+    await waitFor(() => { expect(api.costScopePreviewRanges.length).toBeGreaterThan(before); });
+    await waitFor(() => { expect(within(tile('Unscoped total')).getByText(formatDollars(1000))).toBeDefined(); });
+
+    const saved = await save(user, api);
+    expect(saved.rules.find(r => r.name === 'New rule')?.conditions).toEqual([
+      { dimensionId: 'provider', values: ['WIZ'] },
+      { dimensionId: 'provider', values: [] },
+    ]);
+  });
+
+  it('keeps previewing an enabled rule whose added condition is still blank, and holds the save', async () => {
+    const { api, user } = renderView();
+    const tax = await ruleCard('Tax');
+    await user.click(within(tax).getByRole('switch'));
+    await waitFor(() => { expect(within(tile('After scope')).getByText('4.5% excluded')).toBeDefined(); });
+    const before = api.costScopePreviewRanges.length;
+    await user.click(within(tax).getByRole('button', { name: '+ Add condition' }));
+    expect(screen.getByText(/has a condition with no values/)).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', true);
+    await waitFor(() => { expect(api.costScopePreviewRanges.length).toBeGreaterThan(before); });
+    await waitFor(() => { expect(within(tile('After scope')).getByText('4.5% excluded')).toBeDefined(); });
   });
 
   it('starts a new rule disabled on "service" when no dimension is known, and deletes it', async () => {

@@ -5,7 +5,7 @@ import type { DimensionId, ProviderName } from '../types/branded.js';
 import { tagDimColumn, tagSqlColumn } from '../types/branded.js';
 import { OU_PATH_SOURCE_KEY } from '../types/config.js';
 import type { CostMetric, CostScopeConfig, ExclusionRule, MarketplaceAttributionConfig, MarketplaceAttributionRule } from '../types/cost-scope.js';
-import { DEFAULT_COST_METRIC } from '../types/cost-scope.js';
+import { DEFAULT_COST_METRIC, isDraftCondition } from '../types/cost-scope.js';
 import { buildAliasSqlCase, normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
 import { costExprFor, isUsageOnlyMetric, USAGE_ONLY_METRIC_CHARGE_CATEGORIES } from './cost-metric.js';
 import { QueryBuilder, type ParameterizedQuery } from './parameterized.js';
@@ -243,12 +243,6 @@ function missingValueSql(resolved: ResolvedDimension): string {
   return `(${empty} OR ${resolved.rawField} = '${NO_ACCOUNT_SENTINEL}')`;
 }
 
-/** A condition with no values and no `matchMissing` is a draft: it constrains
- *  nothing, so a rule skips it. */
-function matchesNothingYet(cond: ExclusionRule['conditions'][number]): boolean {
-  return cond.values.length === 0 && cond.matchMissing !== true;
-}
-
 /** SQL for one rule condition: true when the row's value is one of the
  *  condition's values or, with `matchMissing`, when it has none. Never NULL:
  *  `x IN (…)` is NULL when x is, and an exclusion's `NOT (NULL)` drops the row
@@ -262,7 +256,7 @@ function buildConditionSql(
   qb: QueryBuilder | undefined,
 ): string | null {
   const matchMissing = cond.matchMissing === true;
-  if (matchesNothingYet(cond)) return null;
+  if (isDraftCondition(cond)) return null;
   const resolved = tryResolveField(cond.dimensionId, dimensions);
   if (resolved === null) return null;
   const parts: string[] = [];
@@ -302,7 +296,7 @@ export function buildRuleMatchExpr(
   // Checked before any condition binds a value on `qb`: an early return must
   // leave no parameter behind that the SQL never references.
   if (unknownDimension === 'match-nothing'
-    && rule.conditions.some(c => !matchesNothingYet(c) && tryResolveField(c.dimensionId, dimensions) === null)) {
+    && rule.conditions.some(c => !isDraftCondition(c) && tryResolveField(c.dimensionId, dimensions) === null)) {
     return null;
   }
   const conditionSqls: string[] = [];

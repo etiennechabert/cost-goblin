@@ -49,6 +49,8 @@ export { isGcpBucketListDeniedMessage, isGcpCredentialError, isGcpImpersonationE
 export { GCP_PROJECT_ID_RULES, isValidGcpProjectId } from './config/gcp-project-id.js';
 export { isDiscoverableBeaconLocation, splitS3Location, suggestedConfigBeaconLocation } from './config/sharing-location.js';
 export { DEFAULT_COST_SCOPE, DEFAULT_MARKETPLACE_ATTRIBUTION, BUILTIN_EXCLUSION_RULES } from './config/cost-scope-seed.js';
+// The UI's mock API refuses what the main process's save and preview refuse.
+export { validateCostScope } from './config/cost-scope-validator.js';
 export {
   DEFAULT_WORKSPACE_NAME,
   RESERVED_WORKSPACE_NAMES,

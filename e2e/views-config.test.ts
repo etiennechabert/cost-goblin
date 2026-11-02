@@ -596,6 +596,43 @@ test.describe('Cost Scope', () => {
     await expect(page.locator('input[value="New rule"]')).toHaveCount(0);
   });
 
+  // The editor adds a condition with no values. The main process used to
+  // refuse that in every rule, so the preview went blank and the save failed.
+  test('a condition just added to a rule keeps the preview going', async () => {
+    await page.getByRole('button', { name: 'Add rule' }).click();
+    await page.locator('select').last().selectOption({ label: 'Service' });
+    const values = page.getByPlaceholder('Values (comma-separated)').last();
+    await values.fill('Amazon Elastic Compute Cloud');
+    await values.blur();
+    const toggle = page.getByRole('switch').last();
+    const tally = toggle.locator('xpath=../span');
+    await toggle.click();
+    await expect(tally).toHaveText(/excluded · [1-9]\d* rows$/, { timeout: LOAD_TIMEOUT });
+    const withoutDraft = await tally.textContent();
+    // A disabled rule is not tallied: '—' once that preview has landed.
+    await toggle.click();
+    await expect(tally).toHaveText('—', { timeout: LOAD_TIMEOUT });
+
+    // Disabled, the blank condition saves as it stands.
+    await page.getByRole('button', { name: '+ Add condition' }).last().click();
+    await expect(page.getByRole('button', { name: 'Save' })).toBeEnabled();
+
+    // Enabled, it holds the save, and the rule previews as it was without it.
+    await toggle.click();
+    await expect(page.getByText(/has a condition with no values/)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Save' })).toBeDisabled();
+    await expect(tally).toHaveText(withoutDraft ?? '', { timeout: LOAD_TIMEOUT });
+
+    // Disabled again: '—' arrives with the next preview, or with a refused one;
+    // only a landed preview draws the bars.
+    await toggle.click();
+    await expect(tally).toHaveText('—', { timeout: LOAD_TIMEOUT });
+    await expect(costScopePreviewBars(page).first()).toBeVisible();
+
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    await expect(page.locator('input[value="New rule"]')).toHaveCount(0);
+  });
+
   test('rule name and description fields are editable', async () => {
     // Find the first rule's name input — it's the input currently showing the
     // built-in name. Add a suffix, verify Save appears, Cancel reverts.

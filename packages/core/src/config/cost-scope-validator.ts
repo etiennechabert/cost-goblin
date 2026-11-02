@@ -9,7 +9,7 @@ import type {
   MarketplaceAttributionConfig,
   MarketplaceAttributionRule,
 } from '../types/cost-scope.js';
-import { COST_METRICS } from '../types/cost-scope.js';
+import { COST_METRICS, isDraftCondition } from '../types/cost-scope.js';
 import { DEFAULT_MARKETPLACE_ATTRIBUTION } from './cost-scope-seed.js';
 import { migrateLegacyDimensionId } from './legacy-renames.js';
 
@@ -27,7 +27,21 @@ const LEGACY_METRIC_MIGRATIONS: Readonly<Record<string, CostMetric>> = {
   blended: 'effective',
 };
 
-function validateCondition(raw: unknown, ctx: string, liveDimensionIds?: ReadonlySet<string>): ExclusionCondition {
+export interface ValidateCostScopeOptions {
+  /** The editor's preview, which shows the draft being edited: an enabled
+   *  rule may hold a draft condition too (no values, no matchMissing). The
+   *  query layer skips one (buildRuleMatchExpr), so the rule previews as it
+   *  was before the condition was added. A save never passes it: an enabled
+   *  rule saved that way would exclude more than its conditions say. */
+  readonly preview?: boolean | undefined;
+}
+
+function validateCondition(
+  raw: unknown,
+  ctx: string,
+  liveDimensionIds: ReadonlySet<string> | undefined,
+  draftAllowed: boolean,
+): ExclusionCondition {
   assertObject(raw, ctx);
   assertString(raw['dimensionId'], `${ctx}.dimensionId`);
   assertArray(raw['values'], `${ctx}.values`);
@@ -36,8 +50,10 @@ function validateCondition(raw: unknown, ctx: string, liveDimensionIds?: Readonl
     return v;
   });
   const matchMissing = raw['matchMissing'] === true;
-  if (values.length === 0 && !matchMissing) {
-    throw new ConfigValidationError(`${ctx}.values must have at least one entry unless matchMissing is true`);
+  if (!draftAllowed && isDraftCondition({ values, matchMissing })) {
+    throw new ConfigValidationError(
+      `${ctx}.values must have at least one entry unless matchMissing is true or the rule is disabled`,
+    );
   }
   // Persisted rules (cost-scope.yaml and every baseline basis routed through
   // validateCostScope) may reference retired dimension ids. Without the
@@ -53,7 +69,12 @@ function validateCondition(raw: unknown, ctx: string, liveDimensionIds?: Readonl
   };
 }
 
-function validateRule(raw: unknown, ctx: string, liveDimensionIds?: ReadonlySet<string>): ExclusionRule {
+function validateRule(
+  raw: unknown,
+  ctx: string,
+  liveDimensionIds: ReadonlySet<string> | undefined,
+  options: ValidateCostScopeOptions,
+): ExclusionRule {
   assertObject(raw, ctx);
   assertString(raw['id'], `${ctx}.id`);
   assertString(raw['name'], `${ctx}.name`);
@@ -61,14 +82,18 @@ function validateRule(raw: unknown, ctx: string, liveDimensionIds?: ReadonlySet<
   if (raw['conditions'].length === 0) {
     throw new ConfigValidationError(`${ctx}.conditions must have at least one entry`);
   }
+  const enabled = raw['enabled'] === true;
+  // A disabled rule excludes nothing, so it may keep a condition still being
+  // written: the editor adds every condition with no values, and saves a
+  // disabled rule as it stands.
+  const draftAllowed = !enabled || options.preview === true;
   const conditions = raw['conditions'].map((c, i) =>
-    validateCondition(c, `${ctx}.conditions[${String(i)}]`, liveDimensionIds),
+    validateCondition(c, `${ctx}.conditions[${String(i)}]`, liveDimensionIds, draftAllowed),
   );
   const description =
     raw['description'] === undefined
       ? undefined
       : (assertString(raw['description'], `${ctx}.description`), raw['description']);
-  const enabled = raw['enabled'] === true;
   const builtIn = raw['builtIn'] === true;
   return {
     id: raw['id'],
@@ -134,7 +159,11 @@ function validateMarketplaceAttribution(raw: unknown): MarketplaceAttributionCon
 /** `liveDimensionIds` (when the caller has the current dimensions config in
  *  scope — save handlers, sharing bundles, baselines) exempts current
  *  dimension ids from the CUR-era renames; see migrateLegacyDimensionId. */
-export function validateCostScope(raw: unknown, liveDimensionIds?: ReadonlySet<string>): CostScopeConfig {
+export function validateCostScope(
+  raw: unknown,
+  liveDimensionIds?: ReadonlySet<string>,
+  options: ValidateCostScopeOptions = {},
+): CostScopeConfig {
   assertObject(raw, 'costScope');
   assertString(raw['costMetric'], 'costScope.costMetric');
   let costMetricRaw: string = raw['costMetric'];
@@ -165,7 +194,7 @@ export function validateCostScope(raw: unknown, liveDimensionIds?: ReadonlySet<s
   }
 
   assertArray(raw['rules'], 'costScope.rules');
-  const rules = raw['rules'].map((r, i) => validateRule(r, `costScope.rules[${String(i)}]`, liveDimensionIds));
+  const rules = raw['rules'].map((r, i) => validateRule(r, `costScope.rules[${String(i)}]`, liveDimensionIds, options));
   const marketplaceAttribution = validateMarketplaceAttribution(raw['marketplaceAttribution']);
   return {
     costMetric: costMetricRaw,

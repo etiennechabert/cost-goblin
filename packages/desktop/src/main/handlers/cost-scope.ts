@@ -118,7 +118,9 @@ export function registerCostScopeHandlers(app: AppContext): void {
 
   ipcMain.handle('cost-scope:preview', async (_event, payload: unknown, range: unknown): Promise<CostScopePreviewResult> => {
     const dimensions = await getQueryDimensions();
-    const config = validateCostScope(payload, dimensionIdSet(dimensions));
+    // The draft being edited: an enabled rule's condition the user has just
+    // added holds no values yet, and the rule previews as it was without it.
+    const config = validateCostScope(payload, dimensionIdSet(dimensions), { preview: true });
     const enabledRules = config.rules.filter(r => r.enabled);
 
     const lagDays = config.lagDays ?? DEFAULT_LAG_DAYS;

@@ -43,9 +43,10 @@ export const DEFAULT_COST_METRIC: CostMetric = 'effective';
 
 /** One AND-ed condition inside an exclusion rule. Matches when the row's
  *  value for `dimensionId` is in `values` (OR within values), or — with
- *  `matchMissing` — when the row has no value for it. A condition must match
- *  something: empty `values` is invalid unless `matchMissing` is set (the
- *  validator rejects it). */
+ *  `matchMissing` — when the row has no value for it. A condition with
+ *  neither is a draft the editor just added: it constrains nothing (queries
+ *  skip it), so only a disabled rule may be saved with one (the validator
+ *  rejects it in an enabled rule, except for the preview). */
 export interface ExclusionCondition {
   readonly dimensionId: DimensionId;
   readonly values: readonly string[];
@@ -55,6 +56,13 @@ export interface ExclusionCondition {
    *  so a rule on a tag keeps the untagged rows. Only `true` has an effect;
    *  the serializer omits the key otherwise. */
   readonly matchMissing?: boolean | undefined;
+}
+
+/** A draft condition: no values, and Missing values unticked, as the editor
+ *  adds every condition. It constrains nothing: queries skip it
+ *  (buildRuleMatchExpr), and only a disabled rule may be saved with one. */
+export function isDraftCondition(cond: Pick<ExclusionCondition, 'values' | 'matchMissing'>): boolean {
+  return cond.values.length === 0 && cond.matchMissing !== true;
 }
 
 export interface ExclusionRule {
@@ -69,8 +77,8 @@ export interface ExclusionRule {
   readonly enabled: boolean;
   /** True for rules shipped with the app. Cannot be deleted, only toggled. */
   readonly builtIn: boolean;
-  /** AND-ed conditions. At least one condition; each condition has at least
-   *  one value. Enforced by the validator. */
+  /** AND-ed conditions. At least one condition; in an enabled rule, each one
+   *  has a value or `matchMissing`. Enforced by the validator. */
   readonly conditions: readonly ExclusionCondition[];
 }
 
