@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BUILTIN_EXCLUSION_RULES, DEFAULT_COST_SCOPE, DEFAULT_MARKETPLACE_ATTRIBUTION, asDimensionId, tagDimColumn } from '@costgoblin/core/browser';
@@ -116,6 +116,29 @@ function tile(label: string): HTMLElement {
   return box;
 }
 
+/** What the main process says when the preview fails: Electron prefixes the
+ *  handler's error. */
+const PREVIEW_ERROR = "Error invoking remote method 'cost-scope:preview': Error: Out of Memory Error: failed to allocate data of size 16.0 MiB";
+
+interface DeferredPreview {
+  readonly resolve: (result: CostScopePreviewResult) => void;
+  readonly reject: (reason: Error) => void;
+}
+
+/** Holds every preview requested from now on until the test answers it. */
+function deferPreviews(api: ScopeApi): DeferredPreview[] {
+  const answers: DeferredPreview[] = [];
+  vi.spyOn(api, 'previewCostScope').mockImplementation(() => new Promise((resolve, reject) => {
+    answers.push({ resolve, reject });
+  }));
+  return answers;
+}
+
+/** Lets an answered preview's handlers run. */
+async function settle(): Promise<void> {
+  await act(async () => { await new Promise(resolve => { setTimeout(resolve, 0); }); });
+}
+
 async function save(user: ReturnType<typeof userEvent.setup>, api: ScopeApi): Promise<CostScopeConfig> {
   const before = api.savedCostScopes.length;
   await user.click(screen.getByRole('button', { name: 'Save' }));
@@ -190,14 +213,107 @@ describe('CostScopeView — preview', () => {
     expect(within(tile('Unscoped total')).getByText('…')).toBeDefined();
   });
 
-  it('shows no data, not zeros, when the preview fails', async () => {
+  // The first preview waits out the edit debounce: until it is asked for,
+  // the panel says it is on its way, not that the period is empty.
+  it('says it is loading, not empty, before the first preview is asked for', async () => {
     const api = new ScopeApi();
-    api.previewAnswer = new Error('DuckDB: out of memory');
+    const answers = deferPreviews(api);
     renderView(api);
-    await waitFor(() => { expect(api.costScopePreviewRanges.length).toBeGreaterThan(0); });
-    await waitFor(() => { expect(screen.queryByTestId('preview-loading')).toBeNull(); });
-    expect(screen.getByTestId('preview-histogram-empty')).toBeDefined();
-    expect(screen.getByTestId('preview-table-empty')).toBeDefined();
+    expect(await screen.findByTestId('preview-histogram-loading')).toBeDefined();
+    expect(answers).toHaveLength(0);
+    expect(screen.getByTestId('preview-table-loading')).toBeDefined();
+    expect(screen.getByTestId('preview-loading')).toBeDefined();
+    expect(within(tile('Unscoped total')).getByText('…')).toBeDefined();
+    expect(screen.queryByTestId('preview-histogram-empty')).toBeNull();
+    expect(screen.queryByTestId('preview-table-empty')).toBeNull();
+    await waitFor(() => { expect(answers).toHaveLength(1); });
+  });
+
+  // A failed preview is not an empty period: "No data" would send the user
+  // off to sync, when the draft or the query is what failed.
+  it.each([
+    { name: 'an error', reason: new Error(PREVIEW_ERROR), text: PREVIEW_ERROR },
+    { name: 'anything else', reason: 'EIO', text: 'EIO' },
+  ])('says the preview failed, and why, when it rejects with $name', async ({ reason, text }) => {
+    const api = new ScopeApi();
+    vi.spyOn(api, 'previewCostScope').mockRejectedValue(reason);
+    renderView(api);
+    expect(within(await screen.findByTestId('preview-histogram-error')).getByText(text)).toBeDefined();
+    expect(within(screen.getByTestId('preview-table-error')).getByText(text)).toBeDefined();
+    // Announced once, not once per card.
+    expect(screen.getAllByRole('alert')).toEqual([screen.getByTestId('preview-histogram-error')]);
+    expect(screen.queryByTestId('preview-histogram-empty')).toBeNull();
+    expect(screen.queryByTestId('preview-table-empty')).toBeNull();
+    expect(screen.queryByTestId('preview-loading')).toBeNull();
+    // No figures, and no zeros either: each tile says why it has none.
+    for (const label of ['Unscoped total', 'After scope', 'Excluded']) {
+      expect(within(tile(label)).getByText('—')).toBeDefined();
+      expect(within(tile(label)).getByText('Preview failed')).toBeDefined();
+    }
+  });
+
+  it('clears the failure once a later preview succeeds', async () => {
+    const api = new ScopeApi();
+    api.previewAnswer = new Error(PREVIEW_ERROR);
+    const { user } = renderView(api);
+    await screen.findByTestId('preview-histogram-error');
+
+    api.previewAnswer = RESULT;
+    await user.click(within(await ruleCard('Tax')).getByRole('switch'));
+    await waitFor(() => { expect(within(tile('After scope')).getByText('4.5% excluded')).toBeDefined(); });
+    expect(screen.queryByText(PREVIEW_ERROR)).toBeNull();
+    expect(screen.queryByText('Preview failed')).toBeNull();
+    expect(previewCard().querySelectorAll('[title^="2026-"]')).toHaveLength(3);
+    expect(within(screen.getByTestId('cost-scope-line-items')).getByRole('table')).toBeDefined();
+  });
+
+  it.each([
+    { name: 'figures', first: RESULT, shown: () => within(tile('Unscoped total')).getByText(formatDollars(1000)) },
+    { name: 'failure', first: new Error(PREVIEW_ERROR), shown: () => within(screen.getByTestId('preview-histogram-error')).getByText(PREVIEW_ERROR) },
+  ])('keeps the last $name on screen while the next preview loads', async ({ first, shown }) => {
+    const api = new ScopeApi();
+    api.previewAnswer = first;
+    const { user } = renderView(api);
+    await waitFor(() => { expect(shown()).toBeDefined(); });
+
+    api.previewAnswer = 'pending';
+    await user.click(within(await ruleCard('Tax')).getByRole('switch'));
+    expect(await screen.findByTestId('preview-loading')).toBeDefined();
+    expect(shown()).toBeDefined();
+    expect(screen.queryByTestId('preview-histogram-loading')).toBeNull();
+    expect(screen.queryByTestId('preview-table-loading')).toBeNull();
+  });
+
+  // Only the latest request may land, whichever of the two answers first.
+  it('ignores a failure that answers after a newer preview', async () => {
+    const api = new ScopeApi();
+    const answers = deferPreviews(api);
+    const { user } = renderView(api);
+    await waitFor(() => { expect(answers).toHaveLength(1); });
+    await user.click(within(await ruleCard('Tax')).getByRole('switch'));
+    await waitFor(() => { expect(answers).toHaveLength(2); });
+
+    answers[1]?.resolve(RESULT);
+    await waitFor(() => { expect(within(tile('After scope')).getByText('4.5% excluded')).toBeDefined(); });
+    answers[0]?.reject(new Error(PREVIEW_ERROR));
+    await settle();
+    expect(screen.queryByText(PREVIEW_ERROR)).toBeNull();
+    expect(within(tile('After scope')).getByText('4.5% excluded')).toBeDefined();
+  });
+
+  it('ignores an answer that arrives after a newer preview failed', async () => {
+    const api = new ScopeApi();
+    const answers = deferPreviews(api);
+    const { user } = renderView(api);
+    await waitFor(() => { expect(answers).toHaveLength(1); });
+    await user.click(within(await ruleCard('Tax')).getByRole('switch'));
+    await waitFor(() => { expect(answers).toHaveLength(2); });
+
+    answers[1]?.reject(new Error(PREVIEW_ERROR));
+    await screen.findByTestId('preview-histogram-error');
+    answers[0]?.resolve(RESULT);
+    await settle();
+    expect(screen.getByTestId('preview-histogram-error')).toBeDefined();
     expect(within(tile('Unscoped total')).getByText('—')).toBeDefined();
   });
 });
