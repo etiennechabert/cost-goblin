@@ -9,7 +9,7 @@ import type {
   MarketplaceAttributionConfig,
   MarketplaceAttributionRule,
 } from '../types/cost-scope.js';
-import { COST_METRICS } from '../types/cost-scope.js';
+import { COST_METRICS, isDraftCondition } from '../types/cost-scope.js';
 import { DEFAULT_MARKETPLACE_ATTRIBUTION } from './cost-scope-seed.js';
 import { migrateLegacyDimensionId } from './legacy-renames.js';
 
@@ -50,7 +50,7 @@ function validateCondition(
     return v;
   });
   const matchMissing = raw['matchMissing'] === true;
-  if (values.length === 0 && !matchMissing && !draftAllowed) {
+  if (!draftAllowed && isDraftCondition({ values, matchMissing })) {
     throw new ConfigValidationError(
       `${ctx}.values must have at least one entry unless matchMissing is true or the rule is disabled`,
     );

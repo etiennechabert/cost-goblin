@@ -58,6 +58,13 @@ export interface ExclusionCondition {
   readonly matchMissing?: boolean | undefined;
 }
 
+/** A draft condition: no values, and Missing values unticked, as the editor
+ *  adds every condition. It constrains nothing: queries skip it
+ *  (buildRuleMatchExpr), and only a disabled rule may be saved with one. */
+export function isDraftCondition(cond: Pick<ExclusionCondition, 'values' | 'matchMissing'>): boolean {
+  return cond.values.length === 0 && cond.matchMissing !== true;
+}
+
 export interface ExclusionRule {
   /** Stable id. Built-ins use `builtin:<slug>`; user rules get a uuid-v4
    *  minted by the UI on creation. */

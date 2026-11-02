@@ -125,7 +125,7 @@ export type {
   CostScopePreviewResult,
   CostScopeSampleRow,
 } from './cost-scope.js';
-export { COST_METRICS, DEFAULT_COST_METRIC, DEFAULT_LAG_DAYS } from './cost-scope.js';
+export { COST_METRICS, DEFAULT_COST_METRIC, DEFAULT_LAG_DAYS, isDraftCondition } from './cost-scope.js';
 
 export type {
   BaselineScope,

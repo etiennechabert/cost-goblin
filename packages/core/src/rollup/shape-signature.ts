@@ -1,5 +1,6 @@
 import type { BuiltInDimension, DimensionsConfig, ProviderType, TagDimension } from '../types/config.js';
 import type { CostMetric, ExclusionCondition, ExclusionRule, MarketplaceAttributionConfig } from '../types/cost-scope.js';
+import { isDraftCondition } from '../types/cost-scope.js';
 import { tagDimColumn, tagSqlColumn } from '../types/branded.js';
 import { normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
 import { SOURCE_PROJECTION_REVISION } from '../query/provider-projection.js';
@@ -45,7 +46,7 @@ function findDim(dimensionId: string, dims: DimensionsConfig): BuiltInDimension 
  *  the dimension coming back puts it in again. */
 function matchesNothingAtBuild(rule: ExclusionRule, dims: DimensionsConfig): boolean {
   return rule.conditions.some(c =>
-    (c.values.length > 0 || c.matchMissing === true) && findDim(c.dimensionId, dims) === undefined);
+    !isDraftCondition(c) && findDim(c.dimensionId, dims) === undefined);
 }
 
 /** A condition's missing-value treatment, where it decides the stored bytes.

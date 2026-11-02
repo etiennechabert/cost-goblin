@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BUILTIN_EXCLUSION_RULES, DEFAULT_COST_SCOPE, DEFAULT_MARKETPLACE_ATTRIBUTION, asDimensionId, tagDimColumn, validateCostScope } from '@costgoblin/core/browser';
+import { BUILTIN_EXCLUSION_RULES, DEFAULT_COST_SCOPE, DEFAULT_MARKETPLACE_ATTRIBUTION, asDimensionId, tagDimColumn } from '@costgoblin/core/browser';
 import type { CostScopeConfig, CostScopePreviewRange, CostScopePreviewResult, CostScopeSampleRow, Dimension } from '@costgoblin/core/browser';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
@@ -51,13 +51,12 @@ class ScopeApi extends MockCostApi {
   override getCostScope(): Promise<CostScopeConfig> { return Promise.resolve(this.scope); }
 
   override previewCostScope(config: CostScopeConfig, range: CostScopePreviewRange): Promise<CostScopePreviewResult> {
-    if (this.previewAnswer === 'base') return super.previewCostScope(config, range);
-    this.costScopePreviewRanges.push(range);
-    if (this.previewAnswer === 'pending') return new Promise<CostScopePreviewResult>(() => undefined);
+    // The base records the period and refuses what the main process refuses.
+    const base = super.previewCostScope(config, range);
     const answer = this.previewAnswer;
-    return Promise.resolve().then(() => {
-      // Refuses what the main process's preview refuses, as MockCostApi does.
-      validateCostScope(config, undefined, { preview: true });
+    if (answer === 'base') return base;
+    return base.then(() => {
+      if (answer === 'pending') return new Promise<CostScopePreviewResult>(() => undefined);
       if (answer instanceof Error) throw answer;
       return answer;
     });

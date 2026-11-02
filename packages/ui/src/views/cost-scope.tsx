@@ -12,7 +12,7 @@ import type {
   ExclusionRule,
   Dimension,
 } from '@costgoblin/core/browser';
-import { BUILTIN_EXCLUSION_RULES, DEFAULT_COST_SCOPE, DEFAULT_LAG_DAYS, DEFAULT_MARKETPLACE_ATTRIBUTION, asDimensionId } from '@costgoblin/core/browser';
+import { BUILTIN_EXCLUSION_RULES, DEFAULT_COST_SCOPE, DEFAULT_LAG_DAYS, DEFAULT_MARKETPLACE_ATTRIBUTION, asDimensionId, isDraftCondition } from '@costgoblin/core/browser';
 import { getDimensionId, isTagDimension } from '../lib/dimensions.js';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useUnsavedChanges } from '../hooks/use-unsaved-changes.js';
@@ -378,7 +378,7 @@ function RuleCard({ rule, preview, dimensions, suggestionsByDim, onUpdate, onDel
               onUpdate={next => { updateCondition(i, next); }}
               onRemove={() => { removeCondition(i); }}
               canRemove={rule.conditions.length > 1}
-              invalid={rule.enabled && cond.values.length === 0 && cond.matchMissing !== true}
+              invalid={rule.enabled && isDraftCondition(cond)}
             />
           ))}
         </div>
@@ -654,7 +654,7 @@ function describeDraftError(draft: CostScopeConfig): string | null {
       return `Rule '${rule.name}' has no conditions.`;
     }
     for (const cond of rule.conditions) {
-      if (cond.values.length === 0 && cond.matchMissing !== true) {
+      if (isDraftCondition(cond)) {
         return `Rule '${rule.name}' has a condition with no values — fill in the values field, tick Missing values, or disable the rule.`;
       }
     }
