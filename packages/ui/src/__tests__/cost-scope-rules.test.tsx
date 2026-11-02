@@ -213,6 +213,22 @@ describe('CostScopeView — preview', () => {
     expect(within(tile('Unscoped total')).getByText('…')).toBeDefined();
   });
 
+  // The first preview waits out the edit debounce: until it is asked for,
+  // the panel says it is on its way, not that the period is empty.
+  it('says it is loading, not empty, before the first preview is asked for', async () => {
+    const api = new ScopeApi();
+    const answers = deferPreviews(api);
+    renderView(api);
+    expect(await screen.findByTestId('preview-histogram-loading')).toBeDefined();
+    expect(answers).toHaveLength(0);
+    expect(screen.getByTestId('preview-table-loading')).toBeDefined();
+    expect(screen.getByTestId('preview-loading')).toBeDefined();
+    expect(within(tile('Unscoped total')).getByText('…')).toBeDefined();
+    expect(screen.queryByTestId('preview-histogram-empty')).toBeNull();
+    expect(screen.queryByTestId('preview-table-empty')).toBeNull();
+    await waitFor(() => { expect(answers).toHaveLength(1); });
+  });
+
   // A failed preview is not an empty period: "No data" would send the user
   // off to sync, when the draft or the query is what failed.
   it.each([
@@ -270,8 +286,9 @@ describe('CostScopeView — preview', () => {
 
   // Only the latest request may land, whichever of the two answers first.
   it('ignores a failure that answers after a newer preview', async () => {
-    const { api, user } = renderView();
+    const api = new ScopeApi();
     const answers = deferPreviews(api);
+    const { user } = renderView(api);
     await waitFor(() => { expect(answers).toHaveLength(1); });
     await user.click(within(await ruleCard('Tax')).getByRole('switch'));
     await waitFor(() => { expect(answers).toHaveLength(2); });
@@ -285,8 +302,9 @@ describe('CostScopeView — preview', () => {
   });
 
   it('ignores an answer that arrives after a newer preview failed', async () => {
-    const { api, user } = renderView();
+    const api = new ScopeApi();
     const answers = deferPreviews(api);
+    const { user } = renderView(api);
     await waitFor(() => { expect(answers).toHaveLength(1); });
     await user.click(within(await ruleCard('Tax')).getByRole('switch'));
     await waitFor(() => { expect(answers).toHaveLength(2); });

@@ -94,7 +94,9 @@ function shownPreview(state: PreviewState): SettledPreview | null {
 
 /** Where the preview's answer would be, says it failed and why: a failed
  *  preview must not read as an empty period. In the chart's place it takes
- *  the chart's height, and is the one a screen reader announces. */
+ *  the chart's height, and is the one a screen reader announces. The message
+ *  keeps its line breaks (a DuckDB error points at its query line with a
+ *  caret below it) and scrolls once it is long. */
 function PreviewFailed({ testId, what, message, inPlaceOf }: Readonly<{
   testId: string;
   what: string;
@@ -106,10 +108,10 @@ function PreviewFailed({ testId, what, message, inPlaceOf }: Readonly<{
     <div
       data-testid={testId}
       role={chart ? 'alert' : undefined}
-      className={`${chart ? 'min-h-[120px] ' : ''}flex flex-col justify-center gap-1 rounded-md border border-negative bg-negative-muted px-3 py-2 text-xs text-negative break-words`}
+      className={`${chart ? 'min-h-[120px] ' : ''}flex flex-col justify-center gap-1 rounded-md border border-negative bg-negative-muted px-3 py-2 text-xs text-negative`}
     >
-      <span className="font-medium">{what}</span>
-      <span>{message}</span>
+      <p className="font-medium">{what}</p>
+      <p className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words font-mono">{message}</p>
     </div>
   );
 }
