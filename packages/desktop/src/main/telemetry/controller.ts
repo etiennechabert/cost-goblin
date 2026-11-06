@@ -25,6 +25,14 @@ import { SENTRY_DATA_COLLECTION, SENTRY_TRACE_LIFECYCLE } from './sentry-privacy
 const DSN_ENV = 'COSTGOBLIN_SENTRY_DSN';
 /** Optional self-hosted tunnel/relay endpoint (Sentry `tunnel` option). */
 const TUNNEL_ENV = 'COSTGOBLIN_SENTRY_TUNNEL';
+/** Distro packages run the app from an unpacked store path, where Electron
+ *  reports `app.isPackaged` false. Their launcher sets this so telemetry is
+ *  labelled and sampled as a release instead of a developer checkout. */
+const PACKAGED_ENV = 'COSTGOBLIN_PACKAGED';
+
+function isPackagedBuild(): boolean {
+  return app.isPackaged || process.env[PACKAGED_ENV] === '1';
+}
 
 /**
  * Owns the opt-in Sentry SDK lifecycle in the main process. `Sentry.init` only
@@ -78,7 +86,7 @@ class TelemetryController {
    *  Resolved once here from `app.isPackaged` and surfaced via {@link getStatus}
    *  so the renderer samples at the same rate (no cross-process drift). */
   private tracesSampleRate(): number {
-    return resolveTracesSampleRate(!app.isPackaged);
+    return resolveTracesSampleRate(!isPackagedBuild());
   }
 
   /** What each channel is *actually* doing this session (vs. the desired state in
@@ -138,13 +146,14 @@ class TelemetryController {
   private init(dsn: string): void {
     try {
       const tunnel = process.env[TUNNEL_ENV];
+      const packaged = isPackagedBuild();
       // Dev builds get { branch, commit } tags so locally-run sessions can be
       // told apart; packaged builds get none (they're a release version).
-      const devTags = readDevTagsSync(app.isPackaged, app.getAppPath());
+      const devTags = readDevTagsSync(packaged, app.getAppPath());
       Sentry.init({
         dsn,
         ...(typeof tunnel === 'string' && tunnel.length > 0 ? { tunnel } : {}),
-        environment: app.isPackaged ? 'production' : 'development',
+        environment: packaged ? 'production' : 'development',
         release: `costgoblin@${app.getVersion()}`,
         ...(Object.keys(devTags).length > 0 ? { initialScope: { tags: devTags } } : {}),
         // QUERY_CANCELLED_MESSAGE is an expected control-flow signal emitted by
