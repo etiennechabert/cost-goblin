@@ -11,6 +11,7 @@ import type {
   DimensionsConfig,
   FilterMap,
   ViewSpec,
+  WidgetSpec,
 } from '@costgoblin/core/browser';
 import {
   QUERY_CANCELLED_MESSAGE,
@@ -25,6 +26,7 @@ import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { PaletteProvider } from '../hooks/use-palette.js';
 import { daysAgo } from '../lib/dates.js';
 import { CustomView } from '../views/custom-view.js';
+import { WIDGET_REGISTRY } from '../widgets/registry.js';
 import { setReducedMotion } from './setup.js';
 
 const ACCOUNT = asDimensionId('account');
@@ -58,6 +60,10 @@ const AWS_ONLY: DimensionsConfig = {
   ],
   tags: [],
 };
+
+/** A cancelled query as the renderer receives it: Electron prefixes a rejection
+ *  from the main process. */
+const CANCELLED_OVER_IPC = `Error invoking remote method 'query:costs': Error: ${QUERY_CANCELLED_MESSAGE}`;
 
 const COST_PER_GROUP = 100;
 
@@ -323,12 +329,74 @@ describe('charts grouped by Service once the filters leave one service', () => {
 
     it('leaves a cancelled fallback to useQuery to retry, rather than settling on the one service', async () => {
       const api = new WorkspaceApi(GCP_ONLY, GCP_VALUES);
-      api.failures.set(DESCRIPTION, [QUERY_CANCELLED_MESSAGE]);
+      api.failures.set(DESCRIPTION, [CANCELLED_OVER_IPC]);
       const { slot } = renderView(api, pieOnly(SERVICE), FILTERED_TO_BIGQUERY);
       const pie = within(await slot('pie'));
 
       expect(await pie.findByRole('button', { name: /^Analysis/ })).toBeDefined();
       expect(groupBys(api.costCalls)).toEqual(['service', 'description', 'service', 'description']);
+    });
+
+    it('retries a cancelled first query, rather than showing an error', async () => {
+      const api = new WorkspaceApi(GCP_ONLY, GCP_VALUES);
+      api.failures.set(SERVICE, [CANCELLED_OVER_IPC]);
+      const { slot } = renderView(api, pieOnly(SERVICE));
+      const pie = within(await slot('pie'));
+
+      expect(await pie.findByRole('button', { name: /^BigQuery/ })).toBeDefined();
+      expect(groupBys(api.costCalls)).toEqual(['service', 'service']);
+    });
+
+    it.each<WidgetSpec>([
+      { id: 'chart', type: 'line', size: 'full', groupBy: SERVICE },
+      { id: 'chart', type: 'heatmap', size: 'full', groupBy: SERVICE },
+      { id: 'chart', type: 'topNBar', size: 'full', groupBy: SERVICE },
+      { id: 'chart', type: 'treemap', size: 'full', groupBy: SERVICE },
+    ])('titles a $type chart with the label of a dimension that is off', async spec => {
+      const api = new WorkspaceApi(GCP_ONLY, GCP_VALUES);
+      const view: ViewSpec = { id: 'chart-view', name: 'Chart view', rows: [{ widgets: [spec] }] };
+      const { slot } = renderView(api, view, FILTERED_TO_BIGQUERY);
+      const chart = within(await slot('chart'));
+
+      // The line and heatmap titles go on: "Description over time".
+      expect(await chart.findByRole('button', { name: /^Description/ })).toBeDefined();
+      expect(chart.queryByRole('button', { name: /^description/ })).toBeNull();
+    });
+
+    it.each<WidgetSpec>([
+      { id: 'chart', type: 'pie', size: 'medium', groupBy: SERVICE },
+      { id: 'chart', type: 'topNBar', size: 'full', groupBy: SERVICE },
+      { id: 'chart', type: 'treemap', size: 'full', groupBy: SERVICE },
+      { id: 'chart', type: 'line', size: 'full', groupBy: SERVICE },
+    ])('compares a $type chart that fell back on the dimension it shows', async spec => {
+      const api = new WorkspaceApi(GCP_ONLY, GCP_VALUES);
+      const Widget = WIDGET_REGISTRY[spec.type];
+      const range = { start: daysAgo(30), end: daysAgo(1) };
+      render(
+        <PaletteProvider>
+          <CostApiProvider value={api}>
+            <Widget
+              spec={spec}
+              dateRange={range}
+              previousDateRange={range}
+              compareEnabled
+              granularity="daily"
+              globalFilters={FILTERED_TO_BIGQUERY}
+              dimensions={[]}
+              onSetFilter={() => undefined}
+            />
+          </CostApiProvider>
+        </PaletteProvider>,
+      );
+
+      const previousGroupBys = (): string[] => groupBys(
+        [...api.costCalls, ...api.dailyCalls].filter(call => call.origin?.endsWith('/prev') === true),
+      );
+      await waitFor(() => { expect(previousGroupBys()).toContain('description'); });
+      if (spec.type === 'pie') {
+        // Each row found its value from the previous period.
+        expect(await screen.findAllByText('↑0.0%')).toHaveLength(2);
+      }
     });
 
     it('asks for nothing more when the filters leave no data', async () => {
@@ -400,6 +468,7 @@ describe('charts grouped by Service once the filters leave one service', () => {
 
     expect(await pie.findByRole('button', { name: /^us/ })).toBeDefined();
     expect(groupBys(api.costCalls)).toEqual(['region']);
+    expect(api.configReads).toBe(0);
   });
 
   it('leaves a chart with several values alone', async () => {

@@ -82,10 +82,10 @@ export function LineWidget({
   });
 
   const prevQuery = useQuery<DailyCostsResult | null>(
-    () => compareEnabled && effectiveGroupBy !== undefined
-      ? api.queryDailyCosts({ groupBy: effectiveGroupBy, dateRange: previousDateRange, filters: globalFilters, granularity, origin: `${origin}/prev` })
+    () => compareEnabled && activeGroupBy !== undefined
+      ? api.queryDailyCosts({ groupBy: activeGroupBy, dateRange: previousDateRange, filters: globalFilters, granularity, origin: `${origin}/prev` })
       : Promise.resolve(null),
-    [compareEnabled, effectiveGroupBy, previousDateRange.start, previousDateRange.end, previousDateRange.startHour, previousDateRange.endHour, fk, granularity, api, origin],
+    [compareEnabled, activeGroupBy, previousDateRange.start, previousDateRange.end, previousDateRange.startHour, previousDateRange.endHour, fk, granularity, api, origin],
   );
 
   // Weekly/Monthly: every period of the selection gets a point, the current

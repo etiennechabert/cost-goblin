@@ -8,7 +8,7 @@ export type {
 export { TELEMETRY_DEFAULTS, isTelemetryEnabled } from './telemetry/types.js';
 export * from './normalize/index.js';
 export * from './models/index.js';
-export { QUERY_CANCELLED_MESSAGE } from './query/cancellation.js';
+export { QUERY_CANCELLED_MESSAGE, isQueryCancelled } from './query/cancellation.js';
 // The Trends view recomputes the change after netting its buckets, with the
 // same definition the trend SQL reports it by. No Node imports.
 export { trendPercentChange } from './query/trend-change.js';

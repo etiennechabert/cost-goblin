@@ -2,8 +2,9 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { sqlStringLiteral } from '@costgoblin/core';
+import { registerDimensionsHandlers } from '../main/handlers/dimensions.js';
 import { registerQueryHandlers } from '../main/handlers/query.js';
-import { at, createHarness, FEBRUARY_READABLE_NOW_MS, FIXTURE_AWS_PROVIDER, list, num, setCostScopeLag, str, type Harness, type HarnessOptions } from './helpers/ipc-harness.js';
+import { at, configYaml, createHarness, FEBRUARY_READABLE_NOW_MS, FIXTURE_AWS_PROVIDER, FIXTURE_GCP_PROVIDER, gcpProviderYaml, list, num, setCostScopeLag, str, type Harness, type HarnessOptions } from './helpers/ipc-harness.js';
 
 /** The dashboard query channels — costs, daily costs, entity detail, trends,
  *  filter values, missing tags and savings — run end to end against a real
@@ -108,6 +109,52 @@ describe('query:costs', () => {
     expect(list(at(flat, 'rows')).some(r => at(r, 'isVirtual') === true)).toBe(false);
     expect(entities(flat)).toEqual(expect.arrayContaining(['payments', 'platform', 'frontend']));
     expect(num(at(flat, 'totalCost'))).toBeCloseTo(num(at(rolled, 'totalCost')), 4);
+  });
+});
+
+describe('what a chart falls back to on a GCP-only workspace', () => {
+  const ONE_SERVICE = { service: ['Compute Engine'] };
+
+  async function gcpOnlyApp(): Promise<Harness> {
+    const h = await queryApp({ config: 'multi', data: 'synthetic' });
+    registerDimensionsHandlers(h.app);
+    await writeFile(h.ws.configPath, configYaml(gcpProviderYaml(FIXTURE_GCP_PROVIDER)));
+    return h;
+  }
+
+  it('lists Description and not the dimensions a GCP export cannot fill, and refuses those', async () => {
+    const h = await gcpOnlyApp();
+
+    const names = list(at(await h.ipc.invoke('dimensions:get-config'), 'builtIn')).map(d => str(at(d, 'name')));
+    expect(names).toContain('description');
+    expect(names).not.toContain('service_category');
+    expect(names).not.toContain('sku_meter');
+
+    await expect(h.ipc.invoke('query:costs', { groupBy: 'service_category', dateRange: FEBRUARY, filters: ONE_SERVICE })).rejects.toThrow(/service_category/);
+  });
+
+  it('splits one service by Description, for the same total', async () => {
+    const h = await gcpOnlyApp();
+
+    const service = await h.ipc.invoke('query:costs', { groupBy: 'service', dateRange: FEBRUARY, filters: ONE_SERVICE });
+    expect(entities(service)).toEqual(['Compute Engine']);
+
+    const split = await h.ipc.invoke('query:costs', { groupBy: 'description', dateRange: FEBRUARY, filters: ONE_SERVICE });
+    expect(entities(split).length).toBeGreaterThan(1);
+    expect(num(at(split, 'totalCost'))).toBeCloseTo(num(at(service, 'totalCost')), 4);
+
+    const daily = await h.ipc.invoke('query:daily-costs', { groupBy: 'description', dateRange: FEBRUARY, filters: ONE_SERVICE });
+    expect(list(at(daily, 'groups')).length).toBeGreaterThan(1);
+  });
+
+  it('filters on a Description while the dimension is off', async () => {
+    const h = await gcpOnlyApp();
+
+    const split = await h.ipc.invoke('query:costs', { groupBy: 'description', dateRange: FEBRUARY, filters: ONE_SERVICE });
+    const description = at(list(at(split, 'rows'))[0], 'entity');
+    const filtered = await h.ipc.invoke('query:costs', { groupBy: 'description', dateRange: FEBRUARY, filters: { ...ONE_SERVICE, description: [str(description)] } });
+
+    expect(entities(filtered)).toEqual([str(description)]);
   });
 });
 

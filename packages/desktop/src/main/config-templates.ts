@@ -18,10 +18,10 @@ export type TemplateProviderType = 'aws' | 'gcp';
  *  x_ServiceCode from x_ServiceId, opaque ids that only restate SKU and
  *  Service. AWS does fill ChargeDescription, but with one sentence per price,
  *  and SKU Meter already breaks an AWS service down, so Description stays out
- *  of an AWS-only workspace. Shared by the setup writer (which omits them for a
- *  gcp provider) and the default-dimension merge (which drops them from, and
- *  never re-adds them to, a workspace whose every provider is one that cannot
- *  fill them). */
+ *  of an AWS-only workspace. Shared by the setup writer (which omits them for
+ *  that provider type) and the default-dimension merge (which drops them from,
+ *  and never re-adds them to, a workspace whose every provider is one that
+ *  cannot fill them). */
 export const PROVIDER_ABSENT_DIMENSIONS: Record<TemplateProviderType, ReadonlySet<string>> = {
   aws: new Set(['description']),
   gcp: new Set(['service_category', 'service_code', 'commitment_status', 'operation', 'sku_meter']),

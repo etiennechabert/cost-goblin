@@ -130,6 +130,8 @@ type QueryState<T> =
 
 In Vitest, a `vi.fn(impl)` from a `vi.mock` factory is reset with `mockReset()` in `afterEach`: since Vitest 3, `vi.restoreAllMocks()` only restores `vi.spyOn` spies, so an override or an unused `…Once` leaks into the next test.
 
+A main-process rejection reaches the renderer prefixed by Electron (`Error invoking remote method 'query:costs': Error: …`), so nothing compares an IPC error's whole message: a cancelled query goes through `isQueryCancelled`, and a UI test's mock rejects with the prefixed text. A bare message in a mock is how `useQuery`'s retry stayed dead in the app with its tests green.
+
 ### Layer 1: Core Logic (Vitest)
 Pure functions: config loader, tag normalizer, alias resolver, org tree traversal, cost math.
 No I/O, no DuckDB. Tests run in milliseconds.

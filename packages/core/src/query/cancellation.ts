@@ -11,3 +11,12 @@
  * retries.
  */
 export const QUERY_CANCELLED_MESSAGE = 'Query cancelled';
+
+/** Whether a rejected query is the worker's cancellation. A rejection reaches
+ *  the renderer through Electron, which prefixes it ("Error invoking remote
+ *  method 'query:costs': Error: Query cancelled"), so comparing the message with
+ *  QUERY_CANCELLED_MESSAGE never matches in the app. */
+export function isQueryCancelled(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return message === QUERY_CANCELLED_MESSAGE || message.endsWith(`: ${QUERY_CANCELLED_MESSAGE}`);
+}

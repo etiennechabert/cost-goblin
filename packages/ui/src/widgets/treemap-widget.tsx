@@ -50,10 +50,10 @@ export function TreemapWidget({
   });
 
   const prevQuery = useQuery<CostResult | null>(
-    () => compareEnabled && effectiveGroupBy !== undefined
-      ? api.queryCosts({ groupBy: effectiveGroupBy, dateRange: previousDateRange, filters: globalFilters, granularity, origin: `${origin}/prev` })
+    () => compareEnabled && activeGroupBy !== undefined
+      ? api.queryCosts({ groupBy: activeGroupBy, dateRange: previousDateRange, filters: globalFilters, granularity, origin: `${origin}/prev` })
       : Promise.resolve(null),
-    [compareEnabled, effectiveGroupBy, previousDateRange.start, previousDateRange.end, previousDateRange.startHour, previousDateRange.endHour, fk, granularity, api, origin],
+    [compareEnabled, activeGroupBy, previousDateRange.start, previousDateRange.end, previousDateRange.startHour, previousDateRange.endHour, fk, granularity, api, origin],
   );
 
   const cells = useMemo(

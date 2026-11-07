@@ -35,6 +35,12 @@ const GENERAL_SPLITS: readonly DimensionId[] = [asDimensionId('account'), asDime
  *  dimension the user can disable (Account) would read the raw Parquet. */
 export const TOTALS_GROUP_BY: DimensionId = asDimensionId('service');
 
+/** Whether a chart grouped by `dimId` has anywhere to go when the filters leave
+ *  it a single value. Saves reading the config for one that never does. */
+export function hasDimensionFallbacks(dimId: DimensionId): boolean {
+  return DIMENSION_DRILL_DOWNS.has(dimId);
+}
+
 /** What a chart grouped by `dimId` tries, in order, when the filters leave it a
  *  single value, as clicking one does. Only dimensions in `config`: main refuses
  *  any other. A drill-down counts even when disabled, since SKU Meter and

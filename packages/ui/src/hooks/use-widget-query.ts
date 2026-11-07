@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useCostApi } from './use-cost-api.js';
 import { useQuery } from './use-query.js';
-import { QUERY_CANCELLED_MESSAGE } from '@costgoblin/core/browser';
+import { isQueryCancelled } from '@costgoblin/core/browser';
 import type {
   CostApi,
   CostResult,
@@ -12,7 +12,7 @@ import type {
   Granularity,
   QueryState,
 } from '@costgoblin/core/browser';
-import { dimensionLabelFor, filtersKey, getDimensionFallbacks } from '../widgets/widget.js';
+import { dimensionLabelFor, filtersKey, getDimensionFallbacks, hasDimensionFallbacks } from '../widgets/widget.js';
 
 interface GroupedResult<R> {
   readonly result: R;
@@ -21,9 +21,6 @@ interface GroupedResult<R> {
    *  and the `dimensions` a widget gets list only the enabled ones. */
   readonly fallbackLabel?: string;
 }
-
-type DailyQueryResult = GroupedResult<DailyCostsResult>;
-type CostQueryResult = GroupedResult<CostResult>;
 
 /** `specGroupBy`'s result, unless the filters leave it a single group, which a
  *  chart can't split: then the first fallback dimension that does split it. A
@@ -37,7 +34,7 @@ async function fetchWithFallback<R>(
   groupCount: (result: R) => number,
 ): Promise<GroupedResult<R>> {
   const primary = await query(specGroupBy, origin);
-  if (groupCount(primary) !== 1) return { result: primary, groupBy: specGroupBy };
+  if (groupCount(primary) !== 1 || !hasDimensionFallbacks(specGroupBy)) return { result: primary, groupBy: specGroupBy };
   try {
     const config = await api.getDimensionsConfig();
     for (const dim of getDimensionFallbacks(specGroupBy, config)) {
@@ -45,7 +42,7 @@ async function fetchWithFallback<R>(
       if (groupCount(result) > 1) return { result, groupBy: dim, fallbackLabel: dimensionLabelFor(config.builtIn, dim) };
     }
   } catch (err: unknown) {
-    if (err instanceof Error && err.message === QUERY_CANCELLED_MESSAGE) throw err;
+    if (isQueryCancelled(err)) throw err;
   }
   return { result: primary, groupBy: specGroupBy };
 }
@@ -58,86 +55,75 @@ interface WidgetQueryArgs {
   readonly origin: string;
 }
 
-interface DailyWidgetQueryResult {
-  readonly query: QueryState<DailyQueryResult | null>;
+interface GroupedQueryParams {
+  readonly groupBy: DimensionId;
+  readonly dateRange: DateRange;
+  readonly filters: FilterMap;
+  readonly granularity: Granularity;
+  readonly origin: string;
+}
+
+interface WidgetQueryState<R> {
+  readonly query: QueryState<GroupedResult<R> | null>;
   readonly activeGroupBy: DimensionId | undefined;
   /** Set when the chart fell back: the label to show for `activeGroupBy`. */
   readonly fallbackLabel: string | undefined;
+  readonly result: R | null;
+}
+
+function useGroupedQuery<R>(
+  { specGroupBy, dateRange, granularity, globalFilters, origin }: WidgetQueryArgs,
+  run: (api: CostApi, params: GroupedQueryParams) => Promise<R>,
+  groupCount: (result: R) => number,
+): WidgetQueryState<R> {
+  const api = useCostApi();
+  const fk = filtersKey(globalFilters);
+
+  const query = useQuery<GroupedResult<R> | null>(
+    () => specGroupBy === undefined
+      ? Promise.resolve(null)
+      : fetchWithFallback(
+          api,
+          specGroupBy,
+          origin,
+          (groupBy, queryOrigin) => run(api, { groupBy, dateRange, filters: globalFilters, granularity, origin: queryOrigin }),
+          groupCount,
+        ),
+    [specGroupBy, dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour, fk, granularity, api, origin],
+  );
+
+  const activeGroupBy = query.status === 'success' && query.data !== null ? query.data.groupBy : specGroupBy;
+  const fallbackLabel = query.status === 'success' ? query.data?.fallbackLabel : undefined;
+  const result = useMemo(
+    () => (query.status === 'success' && query.data !== null ? query.data.result : null),
+    [query],
+  );
+
+  return { query, activeGroupBy, fallbackLabel, result };
+}
+
+type DailyWidgetQueryResult = Omit<WidgetQueryState<DailyCostsResult>, 'result'> & {
   readonly dailyResult: DailyCostsResult | null;
-  readonly filters: FilterMap;
+};
+
+export function useDailyWidgetQuery(args: WidgetQueryArgs): DailyWidgetQueryResult {
+  const { result, ...state } = useGroupedQuery(
+    args,
+    (api, params) => api.queryDailyCosts(params),
+    daily => daily.groups.length,
+  );
+  return { ...state, dailyResult: result };
 }
 
-export function useDailyWidgetQuery({
-  specGroupBy,
-  dateRange,
-  granularity,
-  globalFilters,
-  origin,
-}: WidgetQueryArgs): DailyWidgetQueryResult {
-  const api = useCostApi();
-  const fk = filtersKey(globalFilters);
-
-  const query = useQuery<DailyQueryResult | null>(
-    () => specGroupBy === undefined
-      ? Promise.resolve(null)
-      : fetchWithFallback(
-          api,
-          specGroupBy,
-          origin,
-          (groupBy, queryOrigin) => api.queryDailyCosts({ groupBy, dateRange, filters: globalFilters, granularity, origin: queryOrigin }),
-          result => result.groups.length,
-        ),
-    [specGroupBy, dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour, fk, granularity, api, origin],
-  );
-
-  const activeGroupBy = query.status === 'success' && query.data !== null ? query.data.groupBy : specGroupBy;
-  const fallbackLabel = query.status === 'success' ? query.data?.fallbackLabel : undefined;
-  const dailyResult = useMemo(
-    () => (query.status === 'success' && query.data !== null ? query.data.result : null),
-    [query],
-  );
-
-  return { query, activeGroupBy, fallbackLabel, dailyResult, filters: globalFilters };
-}
-
-interface CostWidgetQueryResult {
-  readonly query: QueryState<CostQueryResult | null>;
-  readonly activeGroupBy: DimensionId | undefined;
-  /** Set when the chart fell back: the label to show for `activeGroupBy`. */
-  readonly fallbackLabel: string | undefined;
+type CostWidgetQueryResult = Omit<WidgetQueryState<CostResult>, 'result'> & {
   readonly costResult: CostResult | null;
-  readonly filters: FilterMap;
-}
+};
 
-export function useCostWidgetQuery({
-  specGroupBy,
-  dateRange,
-  granularity,
-  globalFilters,
-  origin,
-}: WidgetQueryArgs): CostWidgetQueryResult {
-  const api = useCostApi();
-  const fk = filtersKey(globalFilters);
-
-  const query = useQuery<CostQueryResult | null>(
-    () => specGroupBy === undefined
-      ? Promise.resolve(null)
-      : fetchWithFallback(
-          api,
-          specGroupBy,
-          origin,
-          (groupBy, queryOrigin) => api.queryCosts({ groupBy, dateRange, filters: globalFilters, granularity, origin: queryOrigin }),
-          result => result.rows.length,
-        ),
-    [specGroupBy, dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour, fk, granularity, api, origin],
+export function useCostWidgetQuery(args: WidgetQueryArgs): CostWidgetQueryResult {
+  const { result, ...state } = useGroupedQuery(
+    args,
+    (api, params) => api.queryCosts(params),
+    costs => costs.rows.length,
   );
-
-  const activeGroupBy = query.status === 'success' && query.data !== null ? query.data.groupBy : specGroupBy;
-  const fallbackLabel = query.status === 'success' ? query.data?.fallbackLabel : undefined;
-  const costResult = useMemo(
-    () => (query.status === 'success' && query.data !== null ? query.data.result : null),
-    [query],
-  );
-
-  return { query, activeGroupBy, fallbackLabel, costResult, filters: globalFilters };
+  return { ...state, costResult: result };
 }

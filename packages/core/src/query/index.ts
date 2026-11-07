@@ -33,7 +33,7 @@ export { capDateRange, capToFreshnessLag, freshnessCutoff } from './freshness.js
 export { isNewTrend, meetsTrendThresholds, previousTrendPeriod, trendPercentChange } from './trend-change.js';
 export type { TrendChange } from './trend-change.js';
 
-export { QUERY_CANCELLED_MESSAGE } from './cancellation.js';
+export { QUERY_CANCELLED_MESSAGE, isQueryCancelled } from './cancellation.js';
 
 export { buildDuckDbSandboxStatements, isDuckDbSandboxOptions } from './duckdb-sandbox.js';
 export type { DuckDbSandboxOptions } from './duckdb-sandbox.js';
