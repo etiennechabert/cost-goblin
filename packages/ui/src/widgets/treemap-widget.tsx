@@ -41,7 +41,7 @@ export function TreemapWidget({
   const fk = filtersKey(globalFilters);
 
   const origin = `widget:treemap:${String(effectiveGroupBy ?? '')}`;
-  const { query, activeGroupBy, costResult } = useCostWidgetQuery({
+  const { query, activeGroupBy, fallbackLabel, costResult } = useCostWidgetQuery({
     specGroupBy: effectiveGroupBy,
     dateRange,
     granularity,
@@ -50,10 +50,10 @@ export function TreemapWidget({
   });
 
   const prevQuery = useQuery<CostResult | null>(
-    () => compareEnabled && effectiveGroupBy !== undefined
-      ? api.queryCosts({ groupBy: effectiveGroupBy, dateRange: previousDateRange, filters: globalFilters, granularity, origin: `${origin}/prev` })
+    () => compareEnabled && activeGroupBy !== undefined
+      ? api.queryCosts({ groupBy: activeGroupBy, dateRange: previousDateRange, filters: globalFilters, granularity, origin: `${origin}/prev` })
       : Promise.resolve(null),
-    [compareEnabled, effectiveGroupBy, previousDateRange.start, previousDateRange.end, previousDateRange.startHour, previousDateRange.endHour, fk, granularity, api, origin],
+    [compareEnabled, activeGroupBy, previousDateRange.start, previousDateRange.end, previousDateRange.startHour, previousDateRange.endHour, fk, granularity, api, origin],
   );
 
   const cells = useMemo(
@@ -69,7 +69,7 @@ export function TreemapWidget({
 
   if (spec.type !== 'treemap' || effectiveGroupBy === undefined || activeGroupBy === undefined) return null;
 
-  const label = dimensionLabelFor(dimensions, activeGroupBy);
+  const label = fallbackLabel ?? dimensionLabelFor(dimensions, activeGroupBy);
 
   if (query.status === 'loading') return (
     <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-4">

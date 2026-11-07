@@ -16,6 +16,7 @@ import { rollupGate } from '../lib/rollup-gate.js';
 import type {
   Dimension,
   DimensionId,
+  DimensionsConfig,
   EntityRef,
   FilterMap,
   RollupStatus,
@@ -154,6 +155,22 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
   // is about to leave (a disabled dimension is read from the raw Parquet), or
   // without the default filters.
   const dimensionsSettled = dimensionsQuery.status === 'success' || dimensionsQuery.status === 'error';
+
+  // A click on a chart that fell back to a dimension that's off (SKU Meter,
+  // Description) filters on it. It gets a chip like any other filter: without
+  // one, nothing shows the filter or clears it alone.
+  const enabledNames: readonly string[] = enabledIds;
+  const hasOffDimensionFilter = dimensionsQuery.status === 'success'
+    && Object.keys(filters).some(id => !enabledNames.includes(id));
+  const offDimensionsQuery = useQuery<DimensionsConfig | null>(
+    () => hasOffDimensionFilter ? api.getDimensionsConfig() : Promise.resolve(null),
+    [hasOffDimensionFilter, api],
+  );
+  const filterBarDimensions = useMemo((): Dimension[] => {
+    if (offDimensionsQuery.status !== 'success' || offDimensionsQuery.data === null) return dimensions;
+    const off = offDimensionsQuery.data.builtIn.filter(d => filters[d.name] !== undefined && !enabledIds.includes(d.name));
+    return [...dimensions, ...off];
+  }, [offDimensionsQuery, dimensions, enabledIds, filters]);
 
   // Seeded while rendering, not in an effect: the widgets mount in the commit
   // the dimensions arrive in, and an effect would run after their first
@@ -312,7 +329,7 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
 
       {dimensions.length > 0 && (
         <FilterBar
-          dimensions={dimensions}
+          dimensions={filterBarDimensions}
           filters={filters}
           onFilterChange={setFilters}
           getFilterValues={handleGetFilterValues}

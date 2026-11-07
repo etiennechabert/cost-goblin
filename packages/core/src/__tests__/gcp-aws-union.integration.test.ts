@@ -211,6 +211,17 @@ describe('aws + gcp in one union (DuckDB end-to-end)', () => {
     ]);
   });
 
+  it('reads a GCP charge\'s Description from the export\'s ChargeDescription', async () => {
+    const withDescription: DimensionsConfig = {
+      ...dimensions,
+      builtIn: [...dimensions.builtIn, { name: asDimensionId('description'), label: 'Description', field: 'description', enabled: false }],
+    };
+    const { fieldExpr } = resolveField(asDimensionId('description'), withDescription);
+    const rows = await rowsOf(`SELECT ${fieldExpr} AS description, SUM(cost) AS cost
+      FROM ${source()} WHERE provider = 'gcp-main' GROUP BY 1`);
+    expect(rows).toEqual([{ description: 'N1 Predefined Instance Core', cost: 37 }]);
+  });
+
   it('filters to one provider like any other dimension', async () => {
     const { fieldExpr } = resolveField(asDimensionId('provider'), dimensions);
     const rows = await rowsOf(`SELECT SUM(cost) AS cost FROM ${source()} WHERE ${fieldExpr} = 'gcp-main'`);

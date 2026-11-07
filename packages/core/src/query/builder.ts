@@ -1346,13 +1346,15 @@ export function buildRollupPartitionQuery(
   const costMetric = costScope?.costMetric ?? DEFAULT_COST_METRIC;
 
   // Rollup partitions are built per provider: the caller passes exactly the
-  // provider whose store is being (re)built, with the explicit period.
+  // provider whose store is being (re)built, with the explicit period. Not slim:
+  // the grain or an exclusion rule can read Description, and the SELECT below
+  // names its columns, so DuckDB prunes the ones nothing here reads.
   const source = buildSource({
     dataDir, tier, dimensions, orgAccountsPath,
     providers: providers.map(pr => ({ name: pr.name, type: pr.type, periods: [period] })),
     costMetric,
     marketplaceAttribution: costScope?.marketplaceAttribution,
-    includeRawTags: false, slim: true,
+    includeRawTags: false,
   });
 
   const exclusionClauses = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap);
@@ -1412,12 +1414,13 @@ export function buildGrainProbeQuery(
   const { dataDir, dimensions, orgAccountsPath, providers, accountReverseMap, costScope } = opts;
   const costMetric = costScope?.costMetric ?? DEFAULT_COST_METRIC;
 
+  // Not slim, for the same reason as buildRollupPartitionQuery.
   const source = buildSource({
     dataDir, tier: 'daily', dimensions, orgAccountsPath,
     providers: providers.map(pr => ({ name: pr.name, type: pr.type, periods: [period] })),
     costMetric,
     marketplaceAttribution: costScope?.marketplaceAttribution,
-    includeRawTags: false, slim: true,
+    includeRawTags: false,
   });
 
   const exclusionClauses = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap);

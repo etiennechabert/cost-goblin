@@ -240,6 +240,7 @@ describe('createAppContext: config caches', () => {
     await writeFile(gcpOnly.ws.dimensionsPath, MINIMAL_DIMENSIONS());
     const gcpNames = (await gcpOnly.app.getDimensions()).builtIn.map(d => String(d.name));
     expect(gcpNames).toContain('service');
+    expect(gcpNames).toContain('description');
     expect(gcpNames).not.toContain('service_category');
     expect(await gcpOnly.app.getDimensions()).toBe(await gcpOnly.app.getDimensions());
   });
