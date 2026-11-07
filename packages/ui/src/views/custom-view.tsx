@@ -159,8 +159,9 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
   // A click on a chart that fell back to a dimension that's off (SKU Meter,
   // Description) filters on it. It gets a chip like any other filter: without
   // one, nothing shows the filter or clears it alone.
+  const enabledNames: readonly string[] = enabledIds;
   const hasOffDimensionFilter = dimensionsQuery.status === 'success'
-    && Object.keys(filters).some(id => !enabledIds.some(enabled => enabled === id));
+    && Object.keys(filters).some(id => !enabledNames.includes(id));
   const offDimensionsQuery = useQuery<DimensionsConfig | null>(
     () => hasOffDimensionFilter ? api.getDimensionsConfig() : Promise.resolve(null),
     [hasOffDimensionFilter, api],
