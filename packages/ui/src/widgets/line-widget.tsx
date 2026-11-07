@@ -73,7 +73,7 @@ export function LineWidget({
   const fk = filtersKey(globalFilters);
 
   const origin = `widget:line:${String(effectiveGroupBy ?? '')}`;
-  const { query, activeGroupBy, dailyResult } = useDailyWidgetQuery({
+  const { query, activeGroupBy, fallbackLabel, dailyResult } = useDailyWidgetQuery({
     specGroupBy: effectiveGroupBy,
     dateRange,
     granularity,
@@ -117,7 +117,7 @@ export function LineWidget({
 
   if (spec.type !== 'line' || effectiveGroupBy === undefined || activeGroupBy === undefined) return null;
 
-  const label = dimensionLabelFor(dimensions, activeGroupBy);
+  const label = fallbackLabel ?? dimensionLabelFor(dimensions, activeGroupBy);
 
   if (query.status === 'loading') return (
     <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-4">

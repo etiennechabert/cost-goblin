@@ -46,7 +46,7 @@ export function TopNBarWidget({
   const fk = filtersKey(globalFilters);
 
   const origin = `widget:topNBar:${String(effectiveGroupBy ?? '')}`;
-  const { query, activeGroupBy, costResult } = useCostWidgetQuery({
+  const { query, activeGroupBy, fallbackLabel, costResult } = useCostWidgetQuery({
     specGroupBy: effectiveGroupBy,
     dateRange,
     granularity,
@@ -74,7 +74,7 @@ export function TopNBarWidget({
 
   if (spec.type !== 'topNBar' || effectiveGroupBy === undefined || activeGroupBy === undefined) return null;
 
-  const label = dimensionLabelFor(dimensions, activeGroupBy);
+  const label = fallbackLabel ?? dimensionLabelFor(dimensions, activeGroupBy);
 
   if (query.status === 'loading') return (
     <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-4">

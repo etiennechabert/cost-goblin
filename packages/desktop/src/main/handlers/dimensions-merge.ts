@@ -25,6 +25,11 @@ export const DEFAULT_BUILT_INS: readonly BuiltInDimension[] = [
   { name: asDimensionId('pricing_category'), label: 'Pricing Category', field: 'pricing_category', description: 'How the usage was priced: Standard (on-demand), Committed (covered by a Savings Plan, RI or CUD), Dynamic (spot). Commitment and spot coverage at a glance.', enabled: false },
   { name: asDimensionId('commitment_status'), label: 'Commitment Status', field: 'commitment_status', description: 'Used vs Unused commitment (RI/SP) cost. Filter to Unused to see commitment waste.', enabled: false },
   { name: asDimensionId('sku_meter'), label: 'SKU Meter', field: 'sku_meter', description: 'Fine-grained usage meter like EUC1-Requests-Tier2 (the CUR usage-type equivalent). Use for instance/storage-tier breakdowns.', enabled: false },
+  // What a GCP service breaks down into, where SKU Meter only holds an id. Off
+  // by default, so the rollup doesn't carry it; a chart that falls back to it
+  // reads the raw Parquet, as SKU Meter does on AWS. An AWS-only workspace
+  // leaves it out (PROVIDER_ABSENT_DIMENSIONS).
+  { name: asDimensionId('description'), label: 'Description', field: 'description', description: 'What the charge is for, in the provider\'s words, such as "N2 Instance Core running". Breaks a service down into what it bills.', enabled: false },
   { name: asDimensionId('operation'), label: 'Operation', field: 'operation', description: 'API operation billed for (RunInstances, GetObject). Useful for API-level cost attribution.', enabled: false },
   // Very high cardinality. The Explorer references it directly, so
   // click-to-filter on a resource cell works whether or not this dim is

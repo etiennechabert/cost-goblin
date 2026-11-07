@@ -129,6 +129,18 @@ describe('buildGrainProbeQuery', () => {
   });
   afterAll(async () => { /* in-memory db, nothing to clean */ });
 
+  it('probes a grain holding Description, so turning it on shows what it costs', async () => {
+    const withDescription: DimensionsConfig = {
+      ...stableGrain,
+      builtIn: [...stableGrain.builtIn, { name: asDimensionId('description'), label: 'Description', field: 'description' }],
+    };
+    const { lineItems, grainRows, cards } = await probe(conn, withDescription);
+    const stable = await probe(conn, stableGrain);
+    expect(cards.get('description')).toBeGreaterThan(1);
+    expect(lineItems).toBe(stable.lineItems);
+    expect(grainRows).toBeGreaterThanOrEqual(stable.grainRows);
+  });
+
   it('a stable grain aggregates well below the line-item count', async () => {
     const { lineItems, grainRows, cards, loo } = await probe(conn, stableGrain);
     expect(lineItems).toBeGreaterThan(0);

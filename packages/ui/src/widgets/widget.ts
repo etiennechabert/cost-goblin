@@ -5,6 +5,7 @@ import type {
   DailyCostsResult,
   Dimension,
   DimensionId,
+  DimensionsConfig,
   EntityRef,
   FilterMap,
   Granularity,
@@ -17,19 +18,39 @@ import { asDimensionId, countPeriods, isPeriodGranularity } from '@costgoblin/co
 import { getDimensionId, getDimensionLabel } from '../lib/dimensions.js';
 import { daysBetween } from '../lib/dates.js';
 
-const DIMENSION_FALLBACK_CHAINS: ReadonlyMap<DimensionId, readonly DimensionId[]> = new Map([
-  [asDimensionId('service'), [asDimensionId('service_category'), asDimensionId('sku_meter')]],
-  [asDimensionId('service_category'), [asDimensionId('service'), asDimensionId('sku_meter')]],
+/** Where a chart grouped by a dimension drills down to. No workspace has all of
+ *  these: a GCP-only one has no Service Category or SKU Meter, and an AWS-only
+ *  one no Description. */
+const DIMENSION_DRILL_DOWNS: ReadonlyMap<DimensionId, readonly DimensionId[]> = new Map([
+  [asDimensionId('service'), [asDimensionId('service_category'), asDimensionId('sku_meter'), asDimensionId('description')]],
+  [asDimensionId('service_category'), [asDimensionId('service'), asDimensionId('sku_meter'), asDimensionId('description')]],
 ]);
+
+/** What a drill-down falls through to: every provider fills these, and they are
+ *  low-cardinality enough to chart. */
+const GENERAL_SPLITS: readonly DimensionId[] = [asDimensionId('account'), asDimensionId('region')];
 
 /** The group-by of a query read only for its totals, which no grouping
  *  changes. Service is locked on, so it is always in the rollup grain; a
  *  dimension the user can disable (Account) would read the raw Parquet. */
 export const TOTALS_GROUP_BY: DimensionId = asDimensionId('service');
 
-// Fallback candidates are built-in canonical columns — always queryable regardless of enabled state.
-export function getDimensionFallbacks(dimId: DimensionId): readonly DimensionId[] {
-  return DIMENSION_FALLBACK_CHAINS.get(dimId) ?? [];
+/** What a chart grouped by `dimId` tries, in order, when the filters leave it a
+ *  single value, as clicking one does. Only dimensions in `config`: main refuses
+ *  any other. A drill-down counts even when disabled, since SKU Meter and
+ *  Description are off by default, but a general split doesn't: charts stay off
+ *  a dimension the user turned off (see enabledGroupBys). */
+export function getDimensionFallbacks(dimId: DimensionId, config: DimensionsConfig): readonly DimensionId[] {
+  const drillDowns = DIMENSION_DRILL_DOWNS.get(dimId);
+  if (drillDowns === undefined) return [];
+  const builtIns = new Map(config.builtIn.map(d => [d.name, d]));
+  return [
+    ...drillDowns.filter(id => builtIns.has(id)),
+    ...GENERAL_SPLITS.filter(id => {
+      const split = builtIns.get(id);
+      return split !== undefined && split.enabled !== false;
+    }),
+  ];
 }
 
 /** Props every widget renderer receives. The host view owns the global

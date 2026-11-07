@@ -87,3 +87,67 @@ describe('rollup multi-month glob == raw over the window', () => {
     expect(roll).toBeCloseTo(raw, 2);
   });
 });
+
+// Description is off by default, so a rollup rarely stores it, but the build
+// must still be able to read it: for the grain once the user turns it on, and
+// for an exclusion rule on it either way. A build that can't read it fails on
+// every month, and the dashboards with it.
+describe('rollup partitions reading Description', () => {
+  const MONTH = '2026-01';
+  const JANUARY = `usage_date >= '2026-01-01' AND usage_date < '2026-02-01'`;
+  const DESCRIPTION = { name: asDimensionId('description'), label: 'Description', field: 'description' };
+  let db: Awaited<ReturnType<typeof DuckDBInstance.create>>;
+  let conn: Awaited<ReturnType<typeof db.connect>>;
+  let rollupDir: string;
+
+  beforeAll(async () => {
+    db = await DuckDBInstance.create();
+    conn = await db.connect();
+    rollupDir = await mkdtemp(join(tmpdir(), 'cg-rollup-description-'));
+  });
+  afterAll(async () => { await rm(rollupDir, { recursive: true, force: true }); });
+
+  async function buildPartition(name: string, dims: DimensionsConfig, scope: CostScopeConfig): Promise<string> {
+    const out = join(rollupDir, `${name}.parquet`);
+    await conn.run(buildRollupPartitionQuery(MONTH, 'daily', out, { dataDir: SYNTHETIC_DIR, dimensions: dims, providers: [{ name: PROVIDER, type: 'aws', availablePeriods: [MONTH] }], costScope: scope }));
+    return `read_parquet('${out.replaceAll('\\', '/')}')`;
+  }
+  const rawJanuary = (dims: DimensionsConfig): string => buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions: dims, providers: [{ name: PROVIDER, type: 'aws', periods: [MONTH] }], costMetric: 'effective' });
+
+  it('stores it when the dimension is on, with raw\'s total for each description', async () => {
+    const on: DimensionsConfig = { ...dimensions, builtIn: [...dimensions.builtIn, DESCRIPTION] };
+    const rollup = await buildPartition('on', on, costScope);
+
+    const raw = await queryAll(conn, `SELECT description k, CAST(SUM(cost) AS DOUBLE) c FROM ${rawJanuary(on)} WHERE ${JANUARY} GROUP BY 1`);
+    const rolled = await queryAll(conn, `SELECT description k, CAST(SUM(cost) AS DOUBLE) c FROM ${rollup} GROUP BY 1`);
+    expect(raw.length).toBeGreaterThan(1);
+    expect(rolled).toHaveLength(raw.length);
+    const rawByDescription = new Map(raw.map(r => [String(r['k']), Number(r['c'])]));
+    for (const r of rolled) expect(Number(r['c'])).toBeCloseTo(rawByDescription.get(String(r['k'])) ?? -1, 2);
+  });
+
+  it('applies an exclusion rule on it when the dimension is off, without storing it', async () => {
+    const off: DimensionsConfig = { ...dimensions, builtIn: [...dimensions.builtIn, { ...DESCRIPTION, enabled: false }] };
+    const top = String((await queryAll(conn, `SELECT description k FROM ${rawJanuary(off)} WHERE ${JANUARY} GROUP BY 1 ORDER BY SUM(cost) DESC LIMIT 1`))[0]?.['k']);
+    const rule = { id: 'no-top', name: 'No top description', enabled: true, builtIn: false, conditions: [{ dimensionId: DESCRIPTION.name, values: [top] }] };
+    const rollup = await buildPartition('off', off, { ...costScope, rules: [rule] });
+
+    const kept = Number((await queryAll(conn, `SELECT CAST(SUM(cost) AS DOUBLE) t FROM ${rawJanuary(off)} WHERE ${JANUARY} AND description <> '${top.replaceAll("'", "''")}'`))[0]?.['t']);
+    const rolled = Number((await queryAll(conn, `SELECT CAST(SUM(cost) AS DOUBLE) t FROM ${rollup}`))[0]?.['t']);
+    expect(kept).toBeGreaterThan(0);
+    expect(rolled).toBeCloseTo(kept, 2);
+    const columns = await queryAll(conn, `DESCRIBE SELECT * FROM ${rollup}`);
+    expect(columns.map(c => c['column_name'])).not.toContain('description');
+  });
+
+  it('reads no column the partition does not need', async () => {
+    const rollup = buildRollupPartitionQuery(MONTH, 'daily', join(rollupDir, 'plan.parquet'), { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER, type: 'aws', availablePeriods: [MONTH] }], costScope });
+    const select = rollup.slice(rollup.indexOf('(') + 1, rollup.lastIndexOf(') TO '));
+    const plan = (await queryAll(conn, `EXPLAIN ${select}`)).map(r => String(r['explain_value'])).join('\n');
+    // Not slim any more, so nothing but DuckDB's pruning keeps a rebuild from
+    // scanning these strings across every line item of the month.
+    expect(plan).toContain('ServiceName');
+    expect(plan).not.toContain('ChargeDescription');
+    expect(plan).not.toContain('ConsumedQuantity');
+  });
+});

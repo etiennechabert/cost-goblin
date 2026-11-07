@@ -111,7 +111,7 @@ export function StackedBarWidget({
   const fk = filtersKey(globalFilters);
 
   const origin = `widget:stackedBar:${String(effectiveGroupBy ?? '')}`;
-  const { query, activeGroupBy, dailyResult } = useDailyWidgetQuery({
+  const { query, activeGroupBy, fallbackLabel, dailyResult } = useDailyWidgetQuery({
     specGroupBy: effectiveGroupBy,
     dateRange,
     granularity,
@@ -154,7 +154,7 @@ export function StackedBarWidget({
   const defaultTitle = costsTitle(granularity);
   let title: React.ReactNode = spec.title ?? defaultTitle;
   if (spec.title === undefined && activeGroupBy !== undefined) {
-    const label = dimensionLabelFor(dimensions, activeGroupBy);
+    const label = fallbackLabel ?? dimensionLabelFor(dimensions, activeGroupBy);
     title = <GroupByTitle dimensions={dimensions} currentGroupBy={activeGroupBy} onGroupByChange={setGroupByOverride} label={label} />;
   }
 

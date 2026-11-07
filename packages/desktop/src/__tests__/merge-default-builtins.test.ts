@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { asDimensionId } from '@costgoblin/core';
-import type { DimensionsConfig } from '@costgoblin/core';
+import type { BuiltInDimension, DimensionsConfig } from '@costgoblin/core';
 import { DEFAULT_BUILT_INS, mergeDefaultBuiltIns } from '../main/handlers/dimensions-merge.js';
 import { PROVIDER_ABSENT_DIMENSIONS, type TemplateProviderType } from '../main/config-templates.js';
 
@@ -67,7 +67,7 @@ describe('mergeDefaultBuiltIns provider awareness', () => {
       order: ['builtin:service_code', 'builtin:account'],
     };
     const gcpOnly = mergeDefaultBuiltIns(carried, ['gcp']);
-    expect(names(gcpOnly)).toEqual(['account', 'region', 'service', 'provider', 'charge_category', 'pricing_category', 'resource_id']);
+    expect(names(gcpOnly)).toEqual(['account', 'region', 'service', 'provider', 'charge_category', 'pricing_category', 'description', 'resource_id']);
     expect(gcpOnly.order).toEqual(carried.order);
     // One provider that can fill them is enough to keep them, enabled as they were.
     const mixed = mergeDefaultBuiltIns(carried, ['aws', 'gcp']);
@@ -76,6 +76,35 @@ describe('mergeDefaultBuiltIns provider awareness', () => {
     ]);
     // Unknown providers (config not loadable yet) restrict nothing.
     expect(names(mergeDefaultBuiltIns(carried, []))).toContain('service_code');
+  });
+});
+
+describe('mergeDefaultBuiltIns: Description', () => {
+  const description = (d: DimensionsConfig): BuiltInDimension | undefined => d.builtIn.find(b => b.name === 'description');
+
+  it('gives a GCP-only workspace the dimension, off so the rollup does not carry it', () => {
+    expect(description(mergeDefaultBuiltIns(GCP_WIZARD_DIMS, ['gcp']))).toMatchObject({ label: 'Description', field: 'description', enabled: false });
+  });
+
+  it('leaves it out of an AWS-only workspace, and drops one a config carries', () => {
+    expect(description(mergeDefaultBuiltIns(GCP_WIZARD_DIMS, ['aws']))).toBeUndefined();
+    const carried: DimensionsConfig = {
+      ...GCP_WIZARD_DIMS,
+      builtIn: [...GCP_WIZARD_DIMS.builtIn, { name: asDimensionId('description'), label: 'Description', field: 'description' }],
+    };
+    expect(description(mergeDefaultBuiltIns(carried, ['aws']))).toBeUndefined();
+  });
+
+  it('keeps it on a mixed workspace, whose GCP services need it', () => {
+    expect(description(mergeDefaultBuiltIns(GCP_WIZARD_DIMS, ['aws', 'gcp']))).toBeDefined();
+  });
+
+  it('keeps it on, once the user has turned it on', () => {
+    const on: DimensionsConfig = {
+      ...GCP_WIZARD_DIMS,
+      builtIn: [...GCP_WIZARD_DIMS.builtIn, { name: asDimensionId('description'), label: 'Description', field: 'description' }],
+    };
+    expect(description(mergeDefaultBuiltIns(on, ['gcp']))?.enabled).toBeUndefined();
   });
 });
 

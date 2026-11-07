@@ -41,7 +41,7 @@ export function TreemapWidget({
   const fk = filtersKey(globalFilters);
 
   const origin = `widget:treemap:${String(effectiveGroupBy ?? '')}`;
-  const { query, activeGroupBy, costResult } = useCostWidgetQuery({
+  const { query, activeGroupBy, fallbackLabel, costResult } = useCostWidgetQuery({
     specGroupBy: effectiveGroupBy,
     dateRange,
     granularity,
@@ -69,7 +69,7 @@ export function TreemapWidget({
 
   if (spec.type !== 'treemap' || effectiveGroupBy === undefined || activeGroupBy === undefined) return null;
 
-  const label = dimensionLabelFor(dimensions, activeGroupBy);
+  const label = fallbackLabel ?? dimensionLabelFor(dimensions, activeGroupBy);
 
   if (query.status === 'loading') return (
     <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-4">
