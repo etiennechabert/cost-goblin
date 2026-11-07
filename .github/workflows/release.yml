@@ -36,13 +36,19 @@ jobs:
       # platform from clobbering each other's latest*.yml — the race that left a
       # manifest whose sha512/size didn't match the surviving binaries and broke
       # every macOS auto-update (v0.2.6).
+      #
+      # Both mac jobs run macOS 15, so the two arches are signed, notarized and
+      # stapled by the same macOS release's tools. GitHub retired macos-14 on
+      # 2026-11-02 and cancels jobs that ask for it before they start ("The
+      # configuration 'macos-14-arm64-us-default' is not supported"), which
+      # skipped the v0.9.5 release.
       fail-fast: false
       matrix:
         include:
           - os: macos-15-intel    # Intel (x64)
             platform: mac
             arch: x64
-          - os: macos-14          # Apple Silicon (arm64)
+          - os: macos-15          # Apple Silicon (arm64)
             platform: mac
             arch: arm64
           - os: windows-latest    # x64
