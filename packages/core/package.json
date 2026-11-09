@@ -22,8 +22,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1152.0",
-    "@duckdb/node-api": "^1.5.6-r.1",
+    "@aws-sdk/client-s3": "^3.1161.0",
+    "@duckdb/node-api": "^2.0.0-r.1",
     "@google-cloud/storage": "^8.4.0",
     "@smithy/shared-ini-file-loader": "^4.7.2",
     "google-auth-library": "^11.3.0",
