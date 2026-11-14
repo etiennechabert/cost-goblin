@@ -110,6 +110,9 @@ describe('SyncStatusButton — the header indicator', () => {
     expect(copy?.getAttribute('aria-hidden')).toBe('true');
     expect(copy?.classList.contains('text-accent')).toBe(true);
     expect(copy?.classList.contains('motion-reduce:animate-none')).toBe(true);
+    // The icon under the copy is the blink's other color: it stays grey
+    // whatever the button's own color is (hovered, or its popover open).
+    expect(trigger().querySelector('svg')?.classList.contains('text-text-secondary')).toBe(true);
   });
 
   it.each([
@@ -119,6 +122,7 @@ describe('SyncStatusButton — the header indicator', () => {
     renderButton(props);
     expect(blinker()).toBeNull();
     expect(trigger().querySelectorAll('svg')).toHaveLength(1);
+    expect(trigger().querySelector('svg')?.classList.contains('text-text-secondary')).toBe(false);
   });
 
   it('blinks through opacity alone, which needs no main-thread frame', () => {

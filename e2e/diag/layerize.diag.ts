@@ -40,7 +40,7 @@
  *                              moving, which is what a CSS animation costs
  *                              by itself, e.g.
  *                              '[data-widget-id] * { opacity: 1 !important }'
- *                              'button[aria-label="Data sync"] { animation: sync-blink 2s infinite }'
+ *                              'button[aria-label="Data sync"] svg { animation: sync-blink 2s ease-in-out infinite }'
  *   COSTGOBLIN_DIAG_SCREENSHOT a directory: writes dashboard.png there, and
  *                              histogram-focused.png with one series focused
  *   COSTGOBLIN_DIAG_BISECT=0   skip the per-widget variants

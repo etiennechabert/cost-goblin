@@ -195,7 +195,9 @@ export function SyncStatusButton({
               showError ? 'ring-1 ring-negative/60' : '',
             ].join(' ')}
           >
-            <CloudDownload size={16} />
+            {/* While a sync runs, the icon is the grey the copy blinks against,
+                whatever the button's own color (hovered, or its popover open). */}
+            <CloudDownload size={16} className={showActive ? 'text-text-secondary' : undefined} />
             {showActive && (
               <CloudDownload
                 size={16}
