@@ -1,9 +1,40 @@
-import { describe, expect, it, vi } from 'vitest';
+import type { FunctionComponent } from 'react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { StackedBarChart, bucketBars } from '../components/stacked-bar-chart.js';
 import type { BarDay, HistogramTab } from '../components/stacked-bar-chart.js';
 import { PaletteProvider } from '../hooks/use-palette.js';
+
+// Every render of a `memo` component, by component name and in order: a memo
+// that bails out leaves no entry. The DOM can't tell a bail-out from a render
+// that produced the same output.
+const memoRenders = vi.hoisted((): string[] => []);
+
+vi.mock('react', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react')>();
+  function memo<P extends object>(component: FunctionComponent<P>, propsAreEqual?: (prev: Readonly<P>, next: Readonly<P>) => boolean) {
+    const spied: FunctionComponent<P> = (props) => {
+      memoRenders.push(component.name);
+      return component(props);
+    };
+    return actual.memo(spied, propsAreEqual);
+  }
+  return { ...actual, memo };
+});
+
+beforeEach(() => {
+  memoRenders.length = 0;
+});
+
+/** How many times each bar column and bar segment rendered since the last
+ *  call (or the start of the test). */
+function takeRenders(): { readonly columns: number; readonly segments: number } {
+  const count = (name: string): number => memoRenders.filter(rendered => rendered === name).length;
+  const taken = { columns: count('BarColumn'), segments: count('BarSegment') };
+  memoRenders.length = 0;
+  return taken;
+}
 
 // Four days. Day 2 is the peak and adds RDS (absent the day before); day 3
 // drops EC2 to zero and S3 by 40%; day 4 has no spend at all.
@@ -411,6 +442,103 @@ describe('StackedBarChart — series focus', () => {
     const { container } = renderChart(<StackedBarChart days={DAYS} />);
     expect(segment(column(container, 0), 0).tagName).toBe('DIV');
     expect(screen.queryByRole('button')).toBeNull();
+  });
+});
+
+// A month of daily bars with a few hundred series is thousands of segments:
+// rendering them all on every pointer move over the chart was about 3 ms of a
+// frame. A hover re-renders what it changes.
+describe('StackedBarChart — renders on hover', () => {
+  // 3 bars with something to draw (2 + 3 + 2 segments), 1 without.
+  const ALL = { columns: 4, segments: 7 };
+  const NONE = { columns: 0, segments: 0 };
+
+  it('renders no bar when the hovered day changes', () => {
+    const { container } = renderChart(<StackedBarChart days={DAYS} />);
+    expect(takeRenders()).toEqual(ALL);
+
+    fireEvent.mouseEnter(column(container, 1));
+    expect(within(openTooltip()).getByText('2026-03-02')).toBeDefined();
+    expect(takeRenders()).toEqual(NONE);
+
+    fireEvent.mouseEnter(column(container, 2));
+    expect(within(openTooltip()).getByText('2026-03-03')).toBeDefined();
+    expect(takeRenders()).toEqual(NONE);
+
+    const chartArea = container.querySelector('.relative.flex-1');
+    if (chartArea === null) throw new Error('no chart area');
+    fireEvent.mouseLeave(chartArea);
+    expect(tooltip()).toBeNull();
+    expect(takeRenders()).toEqual(NONE);
+  });
+
+  it('renders only the segments whose focus changed when the focused series changes', () => {
+    const { container } = renderChart(<StackedBarChart days={DAYS} />);
+    takeRenders();
+
+    // RDS is on days 2 and 3.
+    fireEvent.mouseEnter(segment(column(container, 1), 2));
+    expect(looksFocused(segment(column(container, 1), 2))).toBe(true);
+    expect(looksFocused(segment(column(container, 2), 1))).toBe(true);
+    expect(takeRenders()).toEqual({ columns: 4, segments: 2 });
+
+    // To S3, on days 1 to 3: RDS loses the focus, S3 takes it.
+    fireEvent.mouseEnter(segment(column(container, 1), 1));
+    expect(looksFocused(segment(column(container, 1), 2))).toBe(false);
+    expect(looksFocused(segment(column(container, 0), 1))).toBe(true);
+    expect(takeRenders()).toEqual({ columns: 4, segments: 5 });
+
+    // Entering another bar clears the focus, and S3 with it.
+    fireEvent.mouseEnter(column(container, 0));
+    expect(seriesAlpha(container)).toBe('0.85');
+    expect(takeRenders()).toEqual({ columns: 4, segments: 3 });
+  });
+
+  it('renders only the segments of a series focused in another chart', () => {
+    const { container, rerender } = renderChart(<StackedBarChart days={DAYS} />);
+    takeRenders();
+
+    rerender(<PaletteProvider><StackedBarChart days={DAYS} highlightedGroup="EC2" /></PaletteProvider>);
+    // EC2 is drawn on days 1 and 2 (it costs nothing on day 3).
+    expect(looksFocused(segment(column(container, 0), 0))).toBe(true);
+    expect(takeRenders()).toEqual({ columns: 4, segments: 2 });
+  });
+
+  // The widget hands the chart new `onSegmentClick` and `onSegmentHover`
+  // closures on each of its renders, and it renders on every cross-chart
+  // hover: the chart reporting its own focus, for one.
+  it('renders no bar when only its handlers are new, and calls the latest one', () => {
+    const first = vi.fn<(name: string) => void>();
+    const latest = vi.fn<(name: string) => void>();
+    const { container, rerender } = renderChart(
+      <StackedBarChart days={DAYS} onSegmentClick={(name) => { first(name); }} onSegmentHover={() => { /* a new closure */ }} />,
+    );
+    expect(takeRenders()).toEqual(ALL);
+
+    rerender(
+      <PaletteProvider>
+        <StackedBarChart days={DAYS} onSegmentClick={(name) => { latest(name); }} onSegmentHover={() => { /* another */ }} />
+      </PaletteProvider>,
+    );
+    expect(takeRenders()).toEqual(NONE);
+
+    fireEvent.click(segment(column(container, 1), 0));
+    fireEvent.keyDown(segment(column(container, 1), 1), { key: 'Enter' });
+    expect(first).not.toHaveBeenCalled();
+    expect(latest.mock.calls).toEqual([['EC2'], ['S3']]);
+  });
+
+  it('draws buttons or plain segments again when the click handler comes or goes', () => {
+    const { container, rerender } = renderChart(<StackedBarChart days={DAYS} />);
+    takeRenders();
+
+    rerender(<PaletteProvider><StackedBarChart days={DAYS} onSegmentClick={vi.fn()} /></PaletteProvider>);
+    expect(segment(column(container, 0), 0).tagName).toBe('BUTTON');
+    expect(takeRenders()).toEqual(ALL);
+
+    rerender(<PaletteProvider><StackedBarChart days={DAYS} /></PaletteProvider>);
+    expect(segment(column(container, 0), 0).tagName).toBe('DIV');
+    expect(takeRenders()).toEqual(ALL);
   });
 });
 
