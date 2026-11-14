@@ -71,7 +71,7 @@ function resolveWorkerMode(data: unknown): WorkerMode {
 const mode: WorkerMode = resolveWorkerMode(workerData);
 
 type WorkerResponse =
-  | { kind: 'ready' }
+  | { kind: 'ready'; settled: SharedArrayBuffer }
   | { kind: 'started'; id: number }
   | { kind: 'rows'; id: number; rows: Readonly<Record<string, unknown>>[] }
   | { kind: 'error'; id: number; message: string };
@@ -96,6 +96,10 @@ function isCancelRequest(msg: unknown): msg is { kind: 'cancel-pending' } {
   return msg['kind'] === 'cancel-pending';
 }
 
+function isDrainRequest(msg: unknown): msg is { kind: 'drain' } {
+  return hasProps(msg) && msg['kind'] === 'drain';
+}
+
 function isConfigureRequest(msg: unknown): msg is { kind: 'configure'; tempDir?: string; memoryGB?: number; threads?: number } {
   if (!hasProps(msg)) return false;
   if (msg['kind'] !== 'configure') return false;
@@ -112,6 +116,57 @@ const cancelledIds = new Set<number>();
 const queuedIds = new Set<number>();  // waiting for pool.acquire()
 const runningIds = new Set<number>(); // executing in DuckDB
 const runningConns = new Map<number, DuckDBConnection>(); // id → connection for interrupt()
+
+// ---------------------------------------------------------------------------
+// Drain — letting the thread be torn down safely
+// ---------------------------------------------------------------------------
+// A DuckDB call still in flight when this thread is torn down (the app quits,
+// or the client terminates the worker) aborts the whole process: its
+// completion runs in an environment that can no longer take it, throws, and
+// nothing catches the throw. The owner therefore asks for a drain first and
+// waits until every request it posted has settled.
+
+/** How many requests have settled, for the owner to compare with how many it
+ *  posted. Shared memory, because an owner that is exiting waits on it with
+ *  its event loop stopped: it can read this, it cannot receive a message. */
+const settledBuffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
+const settledCount = new Int32Array(settledBuffer);
+
+function requestSettled(): void {
+  Atomics.add(settledCount, 0, 1);
+  Atomics.notify(settledCount, 0);
+}
+
+/** The message kinds the owner counts as requests. */
+const COUNTED_KINDS: ReadonlySet<unknown> = new Set(['query', 'prepared-query', 'configure']);
+
+function isCountedRequest(msg: unknown): boolean {
+  return hasProps(msg) && COUNTED_KINDS.has(msg['kind']);
+}
+
+/** How often a drain interrupts the running queries again. DuckDB forgets an
+ *  interrupt that arrives before the query has begun, and a query can hold a
+ *  connection for a while before it begins (it waits for a libuv thread). */
+const DRAIN_INTERRUPT_MS = 20;
+
+function interruptRunning(): void {
+  for (const conn of runningConns.values()) {
+    try { conn.interrupt(); } catch { /* connection may already be closed */ }
+  }
+}
+
+let drainTimer: ReturnType<typeof setInterval> | undefined;
+
+/** Cancels everything, builds included, and keeps interrupting until the
+ *  thread goes: nothing is meant to run after a drain. */
+function handleDrain(): void {
+  for (const id of queuedIds) cancelledIds.add(id);
+  for (const id of runningIds) cancelledIds.add(id);
+  interruptRunning();
+  drainTimer ??= setInterval(interruptRunning, DRAIN_INTERRUPT_MS);
+  // Not a reason to keep the thread alive.
+  drainTimer.unref();
+}
 
 async function fetchAllRows(
   conn: DuckDBConnection,
@@ -254,7 +309,7 @@ function send(msg: WorkerResponse): void {
 async function initWorker(): Promise<void> {
   try {
     await getPool();
-    send({ kind: 'ready' });
+    send({ kind: 'ready', settled: settledBuffer });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     send({ kind: 'error', id: -1, message: `DuckDB worker init failed: ${message}` });
@@ -417,16 +472,22 @@ function reportUnexpectedFailure(id: number, err: unknown): void {
 }
 
 port.on('message', (msg: unknown) => {
-  if (isQueryRequest(msg)) {
+  if (isDrainRequest(msg)) {
+    handleDrain();
+  } else if (isQueryRequest(msg)) {
     const { id } = msg;
-    handleRequest(msg).catch((err: unknown) => { reportUnexpectedFailure(id, err); });
+    handleRequest(msg).catch((err: unknown) => { reportUnexpectedFailure(id, err); }).finally(requestSettled);
   } else if (isPreparedQueryRequest(msg)) {
     const { id } = msg;
-    handlePreparedRequest(msg).catch((err: unknown) => { reportUnexpectedFailure(id, err); });
+    handlePreparedRequest(msg).catch((err: unknown) => { reportUnexpectedFailure(id, err); }).finally(requestSettled);
   } else if (isCancelRequest(msg)) {
     handleCancelPending();
   } else if (isConfigureRequest(msg)) {
-    handleConfigure(msg).catch(() => undefined);
+    handleConfigure(msg).catch(() => undefined).finally(requestSettled);
+  } else if (isCountedRequest(msg)) {
+    // The owner counted it as posted and it is refused here as malformed: it
+    // settles all the same, or a drain would wait for it until its deadline.
+    requestSettled();
   }
 });
 

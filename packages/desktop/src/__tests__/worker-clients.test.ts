@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SyncLogLevel, SyncProgress } from '@costgoblin/core';
-import { createDuckDBClient } from '../main/duckdb-client.js';
+import { QUERY_CANCELLED_MESSAGE } from '@costgoblin/core';
+import { createDuckDBClient, drainDuckDBClientsSync } from '../main/duckdb-client.js';
 import { createSyncClient } from '../main/sync-client.js';
 import type { SyncOptions } from '../main/sync-client.js';
 import { initWorkerLifecycle } from '../main/worker-lifecycle.js';
@@ -241,6 +242,116 @@ describe('createDuckDBClient', () => {
     lastWorker().emit('message', { kind: 'error', id: 7, message: 'late answer' });
     lastWorker().emit('message', READY);
     await expect(recovering).resolves.toBeDefined();
+  });
+});
+
+// The drain's bookkeeping, against a stand-in worker whose settled counter the
+// test moves itself. duckdb-drain.test.ts runs the same against real queries.
+describe('createDuckDBClient drain', () => {
+  interface Counted {
+    readonly client: Awaited<ReturnType<typeof createDuckDBClient>>;
+    readonly worker: FakeWorker;
+    /** The worker's side of the counter: how many requests it has settled. */
+    readonly settle: (count: number) => void;
+  }
+
+  async function counted(): Promise<Counted> {
+    const settled = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
+    const cells = new Int32Array(settled);
+    const creating = createDuckDBClient('/w/duckdb-worker.cjs');
+    const worker = lastWorker();
+    worker.emit('message', { kind: 'ready', settled });
+    return { client: await creating, worker, settle: (count) => { Atomics.store(cells, 0, count); } };
+  }
+
+  /** A stand-in worker never exits by itself, and a live client is waited on. */
+  function gone(worker: FakeWorker): void {
+    worker.emit('exit', 0);
+  }
+
+  const DRAIN = { kind: 'drain' };
+
+  it('waits until the worker has settled as many requests as were posted', async () => {
+    const { client, worker, settle } = await counted();
+    const queries = [client.runQuery('SELECT 1'), client.runBuildQuery('COPY x TO y'), client.runPreparedQuery('SELECT $1', ['a'])];
+    for (const query of queries) query.catch(() => undefined);
+    client.configure({ memoryGB: 4 });
+
+    // Four posted, three settled: still one in flight at the deadline.
+    settle(3);
+    expect(drainDuckDBClientsSync(20)).toBe(false);
+    settle(4);
+    expect(drainDuckDBClientsSync(20)).toBe(true);
+
+    // Asked to drain once, however often it is waited on.
+    expect(worker.posted.filter(msg => JSON.stringify(msg) === JSON.stringify(DRAIN))).toHaveLength(1);
+    expect(worker.posted.at(-1)).toEqual(DRAIN);
+    gone(worker);
+  });
+
+  it('is settled from the start when nothing was posted', async () => {
+    const { worker } = await counted();
+
+    expect(drainDuckDBClientsSync(0)).toBe(true);
+    expect(worker.posted).toEqual([DRAIN]);
+    gone(worker);
+  });
+
+  it('posts nothing more once it is draining', async () => {
+    const { client, worker } = await counted();
+    drainDuckDBClientsSync(0);
+
+    await expect(client.runQuery('SELECT 1')).rejects.toThrow(QUERY_CANCELLED_MESSAGE);
+    await expect(client.runBuildQuery('COPY x TO y')).rejects.toThrow(QUERY_CANCELLED_MESSAGE);
+    await expect(client.runPreparedQuery('SELECT $1', ['a'])).rejects.toThrow(QUERY_CANCELLED_MESSAGE);
+    client.configure({ memoryGB: 4 });
+
+    expect(worker.posted).toEqual([DRAIN]);
+    gone(worker);
+  });
+
+  it('no longer waits on a worker that exited', async () => {
+    const { client, worker } = await counted();
+    client.runQuery('SELECT 1').catch(() => undefined);
+    expect(drainDuckDBClientsSync(0)).toBe(false);
+
+    worker.emit('exit', 1);
+
+    expect(drainDuckDBClientsSync(0)).toBe(true);
+  });
+
+  it('terminates once the queries in flight have settled', async () => {
+    const { client, worker, settle } = await counted();
+    client.runQuery('SELECT 1').catch(() => undefined);
+
+    const terminating = client.terminate();
+    await new Promise((resolve) => { setTimeout(resolve, 30); });
+    expect(worker.terminateCalls).toBe(0);
+
+    settle(1);
+    await terminating;
+    expect(worker.posted.at(-1)).toEqual(DRAIN);
+    expect(worker.terminateCalls).toBe(1);
+    gone(worker);
+  });
+
+  it('terminates at its deadline when a query never settles', async () => {
+    vi.useFakeTimers();
+    try {
+      const { client, worker } = await counted();
+      client.runQuery('SELECT 1').catch(() => undefined);
+
+      const terminating = client.terminate();
+      await vi.advanceTimersByTimeAsync(2_900);
+      expect(worker.terminateCalls).toBe(0);
+      await vi.advanceTimersByTimeAsync(200);
+      await terminating;
+
+      expect(worker.terminateCalls).toBe(1);
+      gone(worker);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

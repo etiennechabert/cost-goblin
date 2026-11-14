@@ -15,7 +15,7 @@ const __dirname = dirname(__filename);
 // dedicated sandboxed instance are both spawned from this bundle.
 const DUCKDB_WORKER_PATH = join(__dirname, '..', 'worker', 'duckdb-worker.cjs');
 import type { LogEntry } from '@costgoblin/core';
-import { createDuckDBClient } from './duckdb-client.js';
+import { createDuckDBClient, drainDuckDBClientsSync } from './duckdb-client.js';
 import type { DuckDBClient } from './duckdb-client.js';
 import { resolveMemoryGB, resolveRollupConcurrency, resolveThreads } from './duckdb-tuning.js';
 import { createSyncClient } from './sync-client.js';
@@ -424,6 +424,15 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
   void stopMcpServer();
+});
+
+// Quitting with a DuckDB query in flight (the rollup build at launch, a slow
+// table) aborted the process as its worker threads were torn down, and sent a
+// crash report for what the user saw as a normal quit. 'exit' is the last
+// point where the workers still run: Electron emits it from app 'quit', and
+// Node from process.exit().
+process.on('exit', () => {
+  drainDuckDBClientsSync();
 });
 
 // Electron's ESM main entry does not support top-level await at launch, so the

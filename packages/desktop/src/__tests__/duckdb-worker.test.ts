@@ -116,7 +116,8 @@ describe('DuckDB Worker', () => {
       const timeout = setTimeout(() => { reject(new Error('Worker ready timeout')); }, 10000);
       worker.once('message', (msg) => {
         clearTimeout(timeout);
-        expect(msg).toEqual({ kind: 'ready' });
+        // The ready message carries the worker's settled counter (see duckdb-drain.test.ts).
+        expect(msg).toEqual({ kind: 'ready', settled: expect.any(SharedArrayBuffer) });
         resolve();
       });
       worker.once('error', (e: unknown) => {
@@ -375,7 +376,7 @@ describe('DuckDB Worker (sandboxed)', () => {
     beforeAll(async () => {
       const spawned = await spawnWithData({ sandbox });
       worker = spawned.worker;
-      expect(spawned.first).toEqual({ kind: 'ready' });
+      expect(spawned.first).toEqual({ kind: 'ready', settled: expect.any(SharedArrayBuffer) });
     });
 
     afterAll(async () => {
