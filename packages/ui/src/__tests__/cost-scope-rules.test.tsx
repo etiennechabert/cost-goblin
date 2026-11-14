@@ -519,19 +519,18 @@ describe('CostScopeView — editing rules', () => {
       { name: asDimensionId('account'), label: 'Account', field: 'account_id', displayField: 'account_name' },
     ];
 
-    function scopeApi(): { api: ScopeApi; askedFor: () => string[] } {
+    function scopeApi(values: readonly string[] = ['eu-central-1', 'us-east-1']) {
       const api = new ScopeApi();
       api.dimensions = DIMENSIONS;
-      api.filterValues = ['eu-central-1', 'us-east-1'];
+      api.filterValues = values;
       const getValues = vi.spyOn(api, 'getFilterValues');
       // What the spy records: the override itself declares no parameters.
       const askedFor = (): string[] => getValues.mock.calls.map((call: readonly unknown[]) => String(call[0]));
-      return { api, askedFor };
+      return { api, getValues, askedFor };
     }
 
     it('asks only for the dimensions its rules have a condition on', async () => {
-      const { api, askedFor } = scopeApi();
-      const getValues = vi.spyOn(api, 'getFilterValues');
+      const { api, getValues, askedFor } = scopeApi();
       renderView(api);
       const tax = await ruleCard('Tax');
       await waitFor(() => { expect(tax.querySelectorAll('datalist option')).toHaveLength(2); });
@@ -560,6 +559,24 @@ describe('CostScopeView — editing rules', () => {
       await user.selectOptions(select, 'region');
       await waitFor(() => { expect(tax.querySelectorAll('datalist option')).toHaveLength(2); });
       expect(askedFor()).toHaveLength(3);
+    });
+
+    it('asks again through another API, and drops what the first one listed', async () => {
+      const first = scopeApi();
+      const view = renderView(first.api);
+      const tax = await ruleCard('Tax');
+      await waitFor(() => { expect(tax.querySelectorAll('datalist option')).toHaveLength(2); });
+
+      const second = scopeApi(['Tax', 'Usage', 'Credit']);
+      view.rerender(
+        <CostApiProvider value={second.api}>
+          <CostScopeView />
+        </CostApiProvider>,
+      );
+      await waitFor(() => { expect(second.askedFor().sort((a, b) => a.localeCompare(b))).toEqual(['charge_category', 'service_code']); });
+      const taxAgain = await ruleCard('Tax');
+      await waitFor(() => { expect(taxAgain.querySelectorAll('datalist option')).toHaveLength(3); });
+      expect(first.askedFor()).toHaveLength(2);
     });
 
     it('asks for nothing a hidden dimension would list, as before', async () => {
