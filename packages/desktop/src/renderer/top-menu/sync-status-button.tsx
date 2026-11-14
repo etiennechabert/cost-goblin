@@ -193,10 +193,18 @@ export function SyncStatusButton({
                 ? 'bg-bg-tertiary text-text-primary'
                 : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary',
               showError ? 'ring-1 ring-negative/60' : '',
-              showActive ? 'animate-sync-blink' : '',
             ].join(' ')}
           >
-            <CloudDownload size={16} />
+            {/* While a sync runs, the icon is the grey the copy blinks against,
+                whatever the button's own color (hovered, or its popover open). */}
+            <CloudDownload size={16} className={showActive ? 'text-text-secondary' : undefined} />
+            {showActive && (
+              <CloudDownload
+                size={16}
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 m-auto text-accent animate-sync-blink motion-reduce:animate-none"
+              />
+            )}
             {showError && (
               <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-negative px-1 text-[10px] font-bold text-white">!</span>
             )}

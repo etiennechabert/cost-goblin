@@ -1,6 +1,6 @@
 import { expect, _electron, type ElectronApplication, type Locator, type Page } from '@playwright/test';
 import { join } from 'node:path';
-import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import {
   cloudSandboxCredentialStores,
@@ -40,6 +40,21 @@ export const FIXTURE_CONFIG_DIR = join(ROOT, 'packages', 'core', 'src', '__fixtu
  *  baseline config above names only `aws-main`, so the `gcp-main/` directory in
  *  the tree is invisible to every other suite's totals. */
 export const FIXTURE_MULTI_CONFIG_DIR = join(ROOT, 'packages', 'core', 'src', '__fixtures__', 'config-multi');
+
+/** A throwaway copy of the active config dir, without the files in `skip`.
+ *  Dimensions + data come from the active config, so widgets still populate.
+ *  Leaving out `views.yaml` makes the launch seed the built-in dashboards.
+ *  The caller removes the directory. */
+export function copyOfConfigDir(skip: readonly string[] = []): string {
+  const srcConfig = process.env['COSTGOBLIN_CONFIG_DIR'] ?? FIXTURE_CONFIG_DIR;
+  const tmpConfig = mkdtempSync(join(tmpdir(), 'cg-seed-config-'));
+  for (const entry of readdirSync(srcConfig)) {
+    if (skip.includes(entry)) continue;
+    const p = join(srcConfig, entry);
+    if (statSync(p).isFile()) copyFileSync(p, join(tmpConfig, entry));
+  }
+  return tmpConfig;
+}
 
 /** Launch the Electron window hidden (`show: false`, see main.ts) unless the
  *  caller opts out with `COSTGOBLIN_HEADLESS=0`. A visible window steals focus
