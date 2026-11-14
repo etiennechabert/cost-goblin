@@ -114,6 +114,13 @@ interface Loaded<T> {
   readonly value: T;
 }
 
+/** What the header says of rows that came without their count: they have
+ *  more behind them whether the count is on its way or failed, so it must
+ *  not read as the whole table. */
+function uncountedState(countFailed: boolean): 'counting' | 'unknown' {
+  return countFailed ? 'unknown' : 'counting';
+}
+
 /** The last value loaded, as long as it was loaded for `inputs`: it stays
  *  through a reload for the same inputs, and goes once they change.
  *  `loaded` must keep its identity between renders (memoize it): a new
@@ -401,11 +408,7 @@ export function TableWidget({
   // The rows' own count, else the one asked for on its own once it is in.
   const countedGroups = countQuery.status === 'success' ? countQuery.data : null;
   const aggregatedTotal = dataQuery.status === 'success' ? (dataQuery.data.result.totalRows ?? countedGroups ?? undefined) : totalRows;
-  // Rows that came without a count have more behind them, whether the count
-  // is still on its way or failed: the header must not read as the whole table.
-  const uncountedRows = !countDeferred || countedGroups !== null
-    ? undefined
-    : countQuery.status === 'error' ? 'unknown' : 'counting';
+  const uncountedRows = countDeferred && countedGroups === null ? uncountedState(countQuery.status === 'error') : undefined;
   const loading = dataQuery.status === 'loading' || overviewQuery.status === 'loading';
   const error = dataQuery.status === 'error' ? dataQuery.error.message : null;
 
