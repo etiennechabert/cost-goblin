@@ -75,6 +75,21 @@ function barsArea(container: HTMLElement): HTMLElement {
   return area;
 }
 
+/** How much of their color the plot has the unfocused segments show. */
+function seriesAlpha(container: HTMLElement): string {
+  return barsArea(container).style.getPropertyValue('--series-alpha');
+}
+
+/** Whether a segment draws the focused look: an opaque color of its own,
+ *  outlined. The others read the plot's alpha. */
+function looksFocused(seg: HTMLElement): boolean {
+  const ownColor = /^rgb\(\d+, \d+, \d+\)$/.test(seg.style.backgroundColor);
+  const readsPlotAlpha = seg.style.backgroundColor.endsWith('/ var(--series-alpha))');
+  if (ownColor === readsPlotAlpha) throw new Error(`unexpected segment color ${seg.style.backgroundColor}`);
+  expect(seg.style.boxShadow.includes('inset')).toBe(ownColor);
+  return ownColor;
+}
+
 describe('bucketBars', () => {
   it('returns short series untouched', () => {
     expect(bucketBars(DAYS, 10)).toBe(DAYS);
@@ -314,9 +329,9 @@ describe('StackedBarChart — series focus', () => {
     const s3Row = within(openTooltip()).getByText('S3').closest('.pointer-events-auto');
     expect(s3Row?.className).toContain('bg-white/10');
     // The other series fade, the focused one is outlined.
-    expect(segment(day2, 0).style.opacity).toBe('0.25');
-    expect(segment(day2, 1).style.opacity).toBe('1');
-    expect(segment(day2, 1).style.boxShadow).toContain('inset');
+    expect(seriesAlpha(container)).toBe('0.25');
+    expect(looksFocused(segment(day2, 0))).toBe(false);
+    expect(looksFocused(segment(day2, 1))).toBe(true);
 
     // Pointing at a tooltip row moves the focus too.
     const ec2Row = within(openTooltip()).getByText('EC2').closest('.pointer-events-auto');
@@ -325,20 +340,57 @@ describe('StackedBarChart — series focus', () => {
     expect(onSegmentHover).toHaveBeenLastCalledWith('EC2');
     fireEvent.mouseLeave(ec2Row);
     expect(onSegmentHover).toHaveBeenLastCalledWith(null);
-    expect(segment(day2, 0).style.opacity).toBe('0.85');
+    expect(seriesAlpha(container)).toBe('0.85');
+    expect(segments(day2).map(looksFocused)).toEqual([false, false, false]);
   });
 
   it('dims everything but the series focused in another chart', () => {
     const { container } = renderChart(<StackedBarChart days={DAYS} highlightedGroup="EC2" />);
     const day1 = column(container, 0);
 
-    expect(segment(day1, 0).style.opacity).toBe('1');
-    expect(segment(day1, 0).style.filter).toBe('brightness(1.2)');
-    expect(segment(day1, 1).style.opacity).toBe('0.25');
+    expect(seriesAlpha(container)).toBe('0.25');
+    expect(looksFocused(segment(day1, 0))).toBe(true);
+    expect(looksFocused(segment(day1, 1))).toBe(false);
 
     fireEvent.mouseEnter(day1);
     const ec2Row = within(openTooltip()).getByText('EC2').closest('.pointer-events-auto');
     expect(ec2Row?.className).toContain('bg-white/10');
+  });
+
+  // An element with its own opacity or filter is a compositing group of its
+  // own, and Chromium regroups every one of them on each frame in which
+  // anything on the page moves: with thousands of segments that was most of
+  // a frame. The looks are colors (and a shadow), whatever is focused.
+  it('gives no segment an opacity or a filter of its own', () => {
+    const { container, rerender } = renderChart(<StackedBarChart days={DAYS} />);
+    const effects = (): string[] => columns(container).flatMap(segments).flatMap(seg => [seg.style.opacity, seg.style.filter]);
+
+    expect(new Set(effects())).toEqual(new Set(['']));
+    rerender(<PaletteProvider><StackedBarChart days={DAYS} highlightedGroup="EC2" /></PaletteProvider>);
+    expect(new Set(effects())).toEqual(new Set(['']));
+  });
+
+  it('fades between the looks only while the chart has few segments', () => {
+    const transitions = (root: HTMLElement): Set<string> => new Set(columns(root).flatMap(segments).map(seg => seg.style.transition));
+    const few = renderChart(<StackedBarChart days={DAYS} />);
+    expect(transitions(few.container)).toEqual(new Set(['background-color 0.15s, box-shadow 0.15s']));
+    few.unmount();
+
+    // Days of 100 series each: 15 of them are the 1,500 segments a chart
+    // still fades, one more segment is past it.
+    const breakdown = Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`series-${String(i)}`, i + 1]));
+    const hundreds = (count: number): BarDay[] => Array.from({ length: count }, (_, i) => ({ date: `2026-03-${String(i + 1).padStart(2, '0')}`, total: 5050, breakdown }));
+    const atLimit = renderChart(<StackedBarChart days={hundreds(15)} />);
+    expect(transitions(atLimit.container)).toEqual(new Set(['background-color 0.15s, box-shadow 0.15s']));
+    atLimit.unmount();
+
+    const many: BarDay[] = [...hundreds(15), { date: '2026-03-16', total: 1, breakdown: { 'series-99': 1 } }];
+    const { container } = renderChart(<StackedBarChart days={many} highlightedGroup="series-99" />);
+    expect(columns(container).flatMap(segments)).toHaveLength(1501);
+    expect(transitions(container)).toEqual(new Set(['none']));
+    // The looks themselves don't depend on it.
+    expect(seriesAlpha(container)).toBe('0.25');
+    expect(looksFocused(segment(column(container, 0), 0))).toBe(true);
   });
 
   it('filters on a segment click, Enter or Space', () => {

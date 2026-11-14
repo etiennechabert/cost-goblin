@@ -9,6 +9,7 @@ import {
   PALETTE_VIVID,
   PALETTE_VIVID_LIGHT,
   assignSeriesColors,
+  brighten,
   getActivePalette,
   hashSeriesName,
 } from '../lib/palette.js';
@@ -270,6 +271,32 @@ describe('chart palettes', () => {
     expect(getActivePalette('colorblind', 'light')).toBe(PALETTE_COLORBLIND_LIGHT);
     expect(getActivePalette('vivid')).toBe(PALETTE_VIVID);
     expect(getActivePalette('vivid', 'light')).toBe(PALETTE_VIVID_LIGHT);
+  });
+});
+
+describe('brighten', () => {
+  it('multiplies each channel, as filter: brightness() does', () => {
+    expect(brighten('#195fd9', 1.2)).toBe('rgb(30 114 255)');
+    expect(brighten('#6B7280', 1.2)).toBe('rgb(128 137 154)');
+    expect(brighten('#195fd9', 1)).toBe('rgb(25 95 217)');
+  });
+
+  it('caps a channel at white rather than wrapping', () => {
+    expect(brighten('#ffffff', 1.2)).toBe('rgb(255 255 255)');
+    expect(brighten('#d6ff00', 1.2)).toBe('rgb(255 255 0)');
+  });
+
+  it('handles every palette color', () => {
+    const palettes = [PALETTE_STANDARD, PALETTE_STANDARD_LIGHT, PALETTE_VIVID, PALETTE_VIVID_LIGHT, PALETTE_COLORBLIND, PALETTE_COLORBLIND_LIGHT];
+    for (const hex of [...palettes.flat(), OTHER_COLOR, MINOR_COLOR]) {
+      expect(brighten(hex, 1.2)).toMatch(/^rgb\(\d+ \d+ \d+\)$/);
+    }
+  });
+
+  it('leaves a color it cannot read as it is', () => {
+    expect(brighten('rebeccapurple', 1.2)).toBe('rebeccapurple');
+    expect(brighten('#fff', 1.2)).toBe('#fff');
+    expect(brighten('var(--color-accent)', 1.2)).toBe('var(--color-accent)');
   });
 });
 

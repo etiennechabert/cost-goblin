@@ -130,6 +130,13 @@ async function bars(container: HTMLElement, count: number): Promise<HTMLElement[
   return columns(container);
 }
 
+/** How much of their color the plot has the unfocused segments show. */
+function seriesAlpha(container: HTMLElement): string {
+  const plot = container.querySelector('.items-end.z-10');
+  if (!(plot instanceof HTMLElement)) throw new Error('no bars area');
+  return plot.style.getPropertyValue('--series-alpha');
+}
+
 /** The stacked segments of a bar, largest first. */
 function segments(col: HTMLElement | undefined): HTMLElement[] {
   const stack = col?.firstElementChild;
@@ -283,14 +290,16 @@ describe('StackedBarWidget — cross-chart focus and filtering', () => {
   it('honours an external hover only from a chart grouped the same way', async () => {
     const sameDim = renderWidget({ focus: { ...initialFocusState, hoveredDimension: SERVICE, hoveredEntity: 'data' } });
     let cols = await bars(sameDim.container, 5);
-    const [platform, data] = segments(cols[0]);
-    expect(platform?.style.opacity).toBe('0.25');
-    expect(data?.style.opacity).toBe('1');
+    // The plot fades every series but the focused one, which is outlined.
+    const outlined = (): boolean[] => segments(cols[0]).map(seg => seg.style.boxShadow.includes('inset'));
+    expect(seriesAlpha(sameDim.container)).toBe('0.25');
+    expect(outlined()).toEqual([false, true]);
     sameDim.unmount();
 
     const otherDim = renderWidget({ focus: { ...initialFocusState, hoveredDimension: REGION, hoveredEntity: 'data' } });
     cols = await bars(otherDim.container, 5);
-    for (const seg of segments(cols[0])) expect(seg.style.opacity).toBe('0.85');
+    expect(seriesAlpha(otherDim.container)).toBe('0.85');
+    expect(outlined()).toEqual([false, false]);
   });
 });
 

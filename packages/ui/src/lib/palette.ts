@@ -64,6 +64,15 @@ export const OTHER_COLOR = '#374151';
  *  a minor series never passes for a top one. */
 export const MINOR_COLOR = '#6b7280';
 
+/** A `#rrggbb` color with each channel multiplied by `factor` and capped at
+ *  white: what `filter: brightness(factor)` paints, as a plain color. A color
+ *  written any other way comes back unchanged. */
+export function brighten(color: string, factor: number): string {
+  if (!/^#[0-9a-f]{6}$/i.test(color)) return color;
+  const [r = 0, g = 0, b = 0] = [1, 3, 5].map(i => Math.min(255, Math.round(Number.parseInt(color.slice(i, i + 2), 16) * factor)));
+  return `rgb(${String(r)} ${String(g)} ${String(b)})`;
+}
+
 /** The user's palette choice and the app theme, as UIPreferences stores them. */
 export type PaletteType = UIPreferences['palette'];
 export type PaletteTheme = UIPreferences['theme'];
