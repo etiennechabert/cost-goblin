@@ -6,7 +6,7 @@ import { QUERY_CANCELLED_MESSAGE, buildDuckDbSandboxStatements, isDuckDbSandboxO
 import type { DuckDBConnection, DuckDBInstance } from './duckdb-loader.js';
 import { createResourcePool } from './connection-pool.js';
 import type { ResourcePool } from './connection-pool.js';
-import { computeDefaultMemoryGB, computeDefaultThreads, computeQueryPoolSize } from './duckdb-tuning.js';
+import { DUCKDB_SETTINGS_ENV, computeDefaultMemoryGB, computeDefaultThreads, computeQueryPoolSize } from './duckdb-tuning.js';
 
 interface DuckDBModule {
   DuckDBInstance: { create: () => Promise<DuckDBInstance> };
@@ -23,6 +23,24 @@ interface DuckDBSettings {
   readonly threads?: number | undefined;
 }
 
+/** The settings whoever spawned this process passed in its environment: for
+ *  a process that replaces a dead one, everything `configure` was told so
+ *  far. They are applied before 'ready', which a 'configure' message cannot
+ *  promise: the queries held for the new process are sent right behind it,
+ *  and one that spilled before `temp_directory` was set would pin DuckDB's
+ *  default directory for good. Nothing is passed to a worker thread. */
+function spawnSettings(): DuckDBSettings {
+  const raw = process.env[DUCKDB_SETTINGS_ENV];
+  if (raw === undefined) return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!isSettings(parsed)) return {};
+    return { tempDir: parsed.tempDir, memoryGB: parsed.memoryGB, threads: parsed.threads };
+  } catch {
+    return {};
+  }
+}
+
 async function configureDuckDB(conn: DuckDBConnection, settings: DuckDBSettings): Promise<void> {
   // memory_limit and threads are instance-global in DuckDB, so applying them on
   // any connection affects the whole instance. Callers pass the resolved
@@ -37,17 +55,85 @@ async function configureDuckDB(conn: DuckDBConnection, settings: DuckDBSettings)
   }
 }
 
-if (parentPort === null) {
-  throw new Error('duckdb-worker.ts must be run as a Node.js Worker thread');
+// ---------------------------------------------------------------------------
+// Who started this bundle
+// ---------------------------------------------------------------------------
+
+function hasProps(msg: unknown): msg is Record<string, unknown> {
+  return typeof msg === 'object' && msg !== null;
 }
-const port = parentPort;
+
+function isSettings(value: unknown): value is Record<string, unknown> & { tempDir?: string; memoryGB?: number; threads?: number } {
+  if (!hasProps(value)) return false;
+  if (value['tempDir'] !== undefined && typeof value['tempDir'] !== 'string') return false;
+  if (value['memoryGB'] !== undefined && typeof value['memoryGB'] !== 'number') return false;
+  if (value['threads'] !== undefined && typeof value['threads'] !== 'number') return false;
+  return true;
+}
+
+/** The channel to whoever started this bundle. */
+interface ParentLink {
+  post(message: WorkerResponse): void;
+  onMessage(listener: (message: unknown) => void): void;
+}
+
+/** `process.parentPort` as an Electron utility process has it. */
+interface UtilityParentPort {
+  postMessage(message: unknown): void;
+  on(event: 'message', listener: (event: { readonly data: unknown }) => void): unknown;
+}
+
+function isUtilityParentPort(value: unknown): value is UtilityParentPort {
+  return hasProps(value) && typeof value['postMessage'] === 'function' && typeof value['on'] === 'function';
+}
+
+/** The same bundle runs under three hosts, told apart by the channel each
+ *  one gives it:
+ *  - a worker thread of the main process: the MCP server's sandboxed instance;
+ *  - an Electron utility process: the app's shared instance, in a process of
+ *    its own so that a native failure in DuckDB ends this process and not the
+ *    app (`duckdb-supervisor.ts` starts the next one);
+ *  - a child process forked by Node: how the integration tests run that same
+ *    shared instance without Electron. */
+function connectToParent(): ParentLink {
+  if (parentPort !== null) {
+    const port = parentPort;
+    return {
+      post: (message) => { port.postMessage(message); },
+      onMessage: (listener) => { port.on('message', listener); },
+    };
+  }
+  const utilityPort: unknown = Reflect.get(process, 'parentPort');
+  if (isUtilityParentPort(utilityPort)) {
+    return {
+      post: (message) => { utilityPort.postMessage(message); },
+      onMessage: (listener) => { utilityPort.on('message', (event) => { listener(event.data); }); },
+    };
+  }
+  if (typeof process.send === 'function') {
+    const send = process.send.bind(process);
+    // The parent is gone: nobody is left to answer. Killed, not exited: an
+    // exit that tears Node down while a query runs aborts in DuckDB's
+    // binding ("uncaught exception of type Napi::Error"), and this must not
+    // leave a crash report for a process nobody was using.
+    process.on('disconnect', () => { process.kill(process.pid, 'SIGKILL'); });
+    return {
+      post: (message) => { send(message); },
+      onMessage: (listener) => { process.on('message', listener); },
+    };
+  }
+  throw new Error('duckdb-worker must be started as a worker thread, an Electron utility process or a forked child process');
+}
+
+const parent = connectToParent();
 
 // ---------------------------------------------------------------------------
 // Worker mode — decided once from workerData at spawn
 // ---------------------------------------------------------------------------
 
 /** `shared`: the app's unrestricted instance (dashboards, Explorer, rollups),
- *  tuned by later 'configure' messages. `sandboxed`: a dedicated instance for
+ *  tuned by later 'configure' messages; the only mode outside a worker thread,
+ *  where there is no workerData. `sandboxed`: a dedicated instance for
  *  untrusted (MCP) SQL — the ordered sandbox SETs run on the init connection
  *  before 'ready', the configuration is then locked, and 'configure' is
  *  ignored. `invalid`: workerData was present but malformed; init fails. */
@@ -76,10 +162,6 @@ type WorkerResponse =
   | { kind: 'rows'; id: number; rows: Readonly<Record<string, unknown>>[] }
   | { kind: 'error'; id: number; message: string };
 
-function hasProps(msg: unknown): msg is Record<string, unknown> {
-  return typeof msg === 'object' && msg !== null;
-}
-
 function isQueryRequest(msg: unknown): msg is { kind: 'query'; id: number; sql: string; fresh?: boolean } {
   if (!hasProps(msg)) return false;
   if (msg['fresh'] !== undefined && typeof msg['fresh'] !== 'boolean') return false;
@@ -98,12 +180,7 @@ function isCancelRequest(msg: unknown): msg is { kind: 'cancel-pending'; builds?
 }
 
 function isConfigureRequest(msg: unknown): msg is { kind: 'configure'; tempDir?: string; memoryGB?: number; threads?: number } {
-  if (!hasProps(msg)) return false;
-  if (msg['kind'] !== 'configure') return false;
-  if (msg['tempDir'] !== undefined && typeof msg['tempDir'] !== 'string') return false;
-  if (msg['memoryGB'] !== undefined && typeof msg['memoryGB'] !== 'number') return false;
-  if (msg['threads'] !== undefined && typeof msg['threads'] !== 'number') return false;
-  return true;
+  return isSettings(msg) && msg['kind'] === 'configure';
 }
 
 // ---------------------------------------------------------------------------
@@ -226,10 +303,11 @@ function getPool(): Promise<ResourcePool<DuckDBConnection>> {
     if (mode.kind === 'sandboxed') {
       await applySandbox(db, initConn, mode.statements);
     } else {
-      // Apply memory limit and thread count immediately using a temporary
-      // connection. The temp_directory is set later via the 'configure'
-      // message once the main thread knows the userData path.
-      await configureDuckDB(initConn, {});
+      // Before 'ready', so no query ever runs under other settings: a process
+      // host hands over the settings at spawn (see spawnSettings). Without
+      // any, the computed defaults apply and a 'configure' message sets the
+      // rest later.
+      await configureDuckDB(initConn, spawnSettings());
     }
     initConn.disconnectSync();
     dbInstance = db;
@@ -248,7 +326,7 @@ async function getInstance(): Promise<DuckDBInstance> {
 }
 
 function send(msg: WorkerResponse): void {
-  port.postMessage(msg);
+  parent.post(msg);
 }
 
 // Workers run under Electron's ESM loader too, so kick off init from a named
@@ -457,7 +535,7 @@ function reportUnexpectedFailure(id: number, err: unknown): void {
   send({ kind: 'error', id, message: `DuckDB worker error: ${message}` });
 }
 
-port.on('message', (msg: unknown) => {
+parent.onMessage((msg: unknown) => {
   if (isQueryRequest(msg)) {
     const { id } = msg;
     handleRequest(msg).catch((err: unknown) => { reportUnexpectedFailure(id, err); });

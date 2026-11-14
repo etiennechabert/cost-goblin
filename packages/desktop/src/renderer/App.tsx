@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useId, useLayoutEffect, useMemo, useRef, Profiler } from 'react';
-import { CostTrends, MissingTags, Savings, Baselines, DataManagement, DimensionsView, CostScopeView, CostScopeLoadError, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, ViewsLoadError, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, SharingActiveBanner, SettingsShell, SETTINGS_TABS, isSettingsTabId, WorkspacesView, WorkspaceChip, ConfirmModal, ReleaseNotes, useModalLayerCount, ButtonTooltip } from '@costgoblin/ui';
+import { CostTrends, MissingTags, Savings, Baselines, DataManagement, DimensionsView, CostScopeView, CostScopeLoadError, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, ViewsLoadError, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, SharingActiveBanner, QueryEngineNotice, SettingsShell, SETTINGS_TABS, isSettingsTabId, WorkspacesView, WorkspaceChip, ConfirmModal, ReleaseNotes, useModalLayerCount, ButtonTooltip } from '@costgoblin/ui';
 import type { NavItem, SettingsTabId } from '@costgoblin/ui';
-import type { ChartPalette, CostApi, DataSharingStatus, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus, RollupStatus, BaselineRecomputeStatus, WorkspacesInfo } from '@costgoblin/core/browser';
+import type { ChartPalette, CostApi, DataSharingStatus, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus, RollupStatus, QueryEngineStatus, BaselineRecomputeStatus, WorkspacesInfo } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagDimColumn } from '@costgoblin/core/browser';
 import { Download, RefreshCw, TrendingUp, Lightbulb, Tag, Search, Gauge, Terminal, RotateCw, Settings, ArrowLeft, GitBranch, GitPullRequest } from 'lucide-react';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
@@ -567,6 +567,7 @@ function AppShell(): React.JSX.Element {
   // saved value loads.
   const [checkOnStartup, setCheckOnStartup] = useState(true);
   const [rollupStatus, setRollupStatus] = useState<RollupStatus>({ state: 'idle' });
+  const [engineStatus, setEngineStatus] = useState<QueryEngineStatus>({ state: 'running', restartedAt: null, rollupBuildsPaused: false });
   const [baselineStatus, setBaselineStatus] = useState<BaselineRecomputeStatus>({ state: 'idle', lastRun: null });
   const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
   const [appVersion, setAppVersion] = useState('');
@@ -643,6 +644,16 @@ function AppShell(): React.JSX.Element {
     };
     globalThis.costgoblinRollup.getStatus().then(apply).catch(() => undefined);
     return globalThis.costgoblinRollup.onStatusChanged(apply);
+  }, []);
+
+  useEffect(() => {
+    // Subscribe before pulling, as for the update status: IPC is ordered, so
+    // a push that lands before the pull resolves is no older than it. The
+    // pull recovers a stop from before this window subscribed: one at launch,
+    // while the rollup was building.
+    const unsubscribe = globalThis.costgoblinEngine.onStatusChanged(setEngineStatus);
+    globalThis.costgoblinEngine.getStatus().then(setEngineStatus).catch(() => undefined);
+    return unsubscribe;
   }, []);
 
   useEffect(() => {
@@ -905,6 +916,13 @@ function AppShell(): React.JSX.Element {
       api.cancelPendingQueries().catch(() => undefined);
       setSettingsTab(tab);
     });
+  }
+
+  /** Run the current page's queries again, after the query engine dropped
+   *  them: a remount, without the cache clear (and rollup rebuild) of a full
+   *  reload. Asks first when the page holds unsaved edits. */
+  function handleReloadView() {
+    confirmLeave(() => { setRefreshNonce(n => n + 1); });
   }
 
   function exitSettings() {
@@ -1172,6 +1190,13 @@ function AppShell(): React.JSX.Element {
         {sharingStatus?.enabled === true && (
           <SharingActiveBanner status={sharingStatus} onStop={handleStopSharing} stopping={stoppingSharing} />
         )}
+        <QueryEngineNotice
+          status={engineStatus}
+          onRestart={() => { globalThis.costgoblinEngine.restart().catch(() => undefined); }}
+          onResumeRollupBuilds={() => { globalThis.costgoblinEngine.resumeRollupBuilds().catch(() => undefined); }}
+          onReload={handleReloadView}
+          onOpenPerformance={() => { enterSettings('performance'); }}
+        />
         {/* The side columns never shrink below their content, the centre takes
             what is left and truncates. With a plain `1fr auto 1fr` a wide
             centre (a dev build's PR title, a long workspace name) squeezed the

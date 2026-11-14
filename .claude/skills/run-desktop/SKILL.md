@@ -79,7 +79,7 @@ on it. Success looks like:
 dev server running for the electron renderer process at:
   ➜  Local:   http://localhost:5173/
 starting electron app...
-INFO DuckDB worker ready
+INFO DuckDB process ready
 INFO Sync worker ready
 INFO Window created
 INFO query:costs ... materialized=true

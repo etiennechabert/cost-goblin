@@ -34,6 +34,7 @@ export { EntityPopup } from './components/entity-popup.js';
 export { ConfirmModal } from './components/confirm-modal.js';
 export { BundleSummaryCard, ImportConfigDialog, ShareConfigDialog, ImportConfigPanel, ShareConfigPanel } from './components/config-sharing.js';
 export { SharingActiveBanner } from './components/sharing-active-banner.js';
+export { QueryEngineNotice } from './components/query-engine-notice.js';
 export { WorkspaceChip } from './components/workspace-chip.js';
 export type { WorkspaceChipProps } from './components/workspace-chip.js';
 export { ProfilePicker, filterProfiles } from './components/profile-picker.js';

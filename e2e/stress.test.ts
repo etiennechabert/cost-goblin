@@ -9,8 +9,11 @@ import {
   FIXTURE_CONFIG_DIR,
   assertNoReactCrash,
   clickNavButton,
+  expectVisibleData,
   launchAppWithCoverage,
   finishCoverage,
+  navigateToText,
+  waitForQuerySettle,
 } from './helpers.js';
 
 // ---------------------------------------------------------------------------
@@ -380,3 +383,122 @@ function buildWidgetMatrixYaml(): string {
     ],
   });
 }
+
+// ---------------------------------------------------------------------------
+// Query engine death — DuckDB's process is killed, the app carries on
+// ---------------------------------------------------------------------------
+//
+// DuckDB runs in a utility process of its own. These tests end it with
+// SIGKILL, the way the OS ends a process that ran out of memory, and check
+// what the user is left with: an app that still runs, a notice saying what
+// happened, and queries that work again.
+
+/** The name main gives the DuckDB process (QUERY_ENGINE_PROCESS_NAME). */
+const ENGINE_PROCESS_NAME = 'CostGoblin query engine';
+
+test.describe('Query engine death', () => {
+  let engineApp: ElectronApplication;
+  let enginePage: Page;
+
+  /** The DuckDB process's pid, or null while there is none. */
+  const enginePid = (): Promise<number | null> =>
+    engineApp.evaluate(({ app }, name) => app.getAppMetrics().find(metric => metric.name === name)?.pid ?? null, ENGINE_PROCESS_NAME);
+
+  /** Wait for a DuckDB process that is not `previous`, and return its pid. */
+  async function nextEnginePid(previous: number): Promise<number> {
+    let pid: number | null = null;
+    await expect.poll(async () => {
+      pid = await enginePid();
+      return pid !== null && pid !== previous;
+    }, { message: 'a new query engine process started', timeout: 20_000 }).toBe(true);
+    if (pid === null) throw new Error('no query engine process');
+    return pid;
+  }
+
+  async function runningEnginePid(): Promise<number> {
+    const pid = await enginePid();
+    if (pid === null) throw new Error('no query engine process is running');
+    return pid;
+  }
+
+  test.beforeAll(async () => {
+    ({ app: engineApp, page: enginePage } = await launchAppWithCoverage());
+    await enginePage.setViewportSize({ width: 1400, height: 900 });
+    await waitForQuerySettle(enginePage);
+  });
+
+  test.afterAll(async () => {
+    await finishCoverage(engineApp, enginePage, 'stress-engine');
+  });
+
+  test('killed in the middle of a query, it is replaced and the view loads again', async () => {
+    test.setTimeout(90_000);
+    const page = enginePage;
+    const first = await runningEnginePid();
+
+    // Freeze it, so the queries the next view sends are surely still running
+    // when it dies.
+    process.kill(first, 'SIGSTOP');
+    await clickNavButton(page, 'Trends');
+    await expect.poll(() => page.evaluate(() => globalThis.costgoblinDebug.getInFlightCount()), {
+      message: 'the view has queries in flight',
+    }).toBeGreaterThan(0);
+    process.kill(first, 'SIGKILL');
+
+    // The app is still there, and says what happened.
+    const notice = page.getByText('The query engine restarted.', { exact: true });
+    await expect(notice).toBeVisible({ timeout: 20_000 });
+    const second = await nextEnginePid(first);
+    // The queries it was running failed with the reason, not with a timeout.
+    const log = await page.evaluate(() => globalThis.costgoblinDebug.getQueryLog());
+    expect(log.filter(entry => entry.error?.includes('The query engine stopped unexpectedly') === true).length).toBeGreaterThan(0);
+
+    // Reloading the view runs its queries on the new process.
+    await page.getByRole('button', { name: 'Reload view', exact: true }).click();
+    await expect(notice).toBeHidden();
+    await expect(page.getByText('Period-over-period comparison', { exact: false }).first()).toBeVisible();
+    await waitForQuerySettle(page);
+    await expectVisibleData(page);
+    expect(await enginePid()).toBe(second);
+    await assertNoReactCrash(page);
+  });
+
+  test('killed again and again, it is not restarted until the user asks', async () => {
+    test.setTimeout(120_000);
+    const page = enginePage;
+    const stopped = page.getByRole('alert').filter({ hasText: /The query engine stopped 3 times in 10 minutes\./ });
+
+    // Three deaths inside ten minutes trip the breaker; the test above may
+    // have used one of them, so kill until the app says it gave up.
+    for (let kills = 0; kills < 3 && await stopped.count() === 0; kills += 1) {
+      const pid = await runningEnginePid();
+      process.kill(pid, 'SIGKILL');
+      await expect.poll(async () => await stopped.count() > 0 || await enginePid().then(now => now !== null && now !== pid), {
+        message: 'the engine was replaced, or the app gave up on it',
+        timeout: 20_000,
+      }).toBe(true);
+    }
+    await expect(stopped).toBeVisible();
+    await expect(stopped).toContainText('no query can run, and the automatic rollup build is paused');
+    expect(await enginePid()).toBeNull();
+
+    // A view opened now fails to load, and the app still stands.
+    await clickNavButton(page, 'Tags');
+    await assertNoReactCrash(page);
+
+    // The user starts it again: queries run, and the rollup stays paused
+    // until they ask for it.
+    await page.getByRole('button', { name: 'Restart the query engine', exact: true }).click();
+    await expect(stopped).toBeHidden({ timeout: 20_000 });
+    expect(await enginePid()).not.toBeNull();
+    const paused = page.getByText('The rollup build is paused.', { exact: true });
+    await expect(paused).toBeVisible();
+    await navigateToText(page, 'Trends', 'Period-over-period comparison');
+    await expectVisibleData(page);
+
+    await page.getByRole('button', { name: 'Rebuild the rollup', exact: true }).click();
+    await expect(paused).toBeHidden();
+    await waitForQuerySettle(page);
+    await assertNoReactCrash(page);
+  });
+});

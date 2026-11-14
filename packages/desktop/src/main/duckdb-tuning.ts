@@ -1,30 +1,50 @@
 import { cpus, totalmem } from 'node:os';
 
-/** DuckDB resource tuning — shared by the worker (to apply SET memory_limit /
- *  SET threads) and the main process (to compute the defaults shown in the UI
- *  and to resolve user overrides). Kept framework-free and side-effect-free so
- *  it bundles cleanly into the worker. */
+/** DuckDB resource tuning — shared by the DuckDB bundle (to apply SET
+ *  memory_limit / SET threads) and the main process (to compute the defaults
+ *  shown in the UI and to resolve user overrides). Kept framework-free and
+ *  side-effect-free so it bundles cleanly into the worker. */
+
+/** Environment variable a process host sets on the DuckDB process it spawns:
+ *  the settings to start with, as JSON (`{ tempDir?, memoryGB?, threads? }`).
+ *  The bundle applies them before it reports ready (`duckdb-worker.ts`). */
+export const DUCKDB_SETTINGS_ENV = 'COSTGOBLIN_DUCKDB_SETTINGS';
+
+/** libuv's variable for the size of a process's thread pool. Read once, at
+ *  the pool's first use, so it has to be in the process's environment. */
+const UV_THREADPOOL_SIZE_ENV = 'UV_THREADPOOL_SIZE';
+
+/** Threads left in the DuckDB process's libuv pool once every query it may
+ *  run at a time holds one: for opening connections, fetching result chunks
+ *  and the process's own file reads. */
+const UV_POOL_HEADROOM = 4;
 
 export const MIN_MEMORY_GB = 1;
 /** The most memory DuckDB may be told to use, whatever the machine has.
  *
- *  DuckDB runs inside the app's main process, where `malloc` is Chromium's
- *  allocator, not the system's. That allocator serves the whole process from
- *  one 16 GiB reservation of address space, never returns what a size class
- *  has used to the others, and ends the process (the app, not the query) when
- *  the reservation runs out. A limit DuckDB cannot reach is therefore not a
- *  limit: it never spills to disk, it takes the app down.
+ *  DuckDB runs in an Electron utility process (`duckdb-utility-process.ts`),
+ *  and in every process Electron hosts `malloc` is Chromium's allocator, not
+ *  the system's. That allocator serves the whole process from one 16 GiB
+ *  reservation of address space, never returns what a size class has used to
+ *  the others, and ends the process when the reservation runs out. A limit
+ *  DuckDB cannot reach is therefore not a limit: it never spills to disk, it
+ *  kills the process. The supervisor starts another, so the app stays up,
+ *  but every query in flight fails and a rollup build starts over.
  *
- *  Measured on a 46 GB workspace (242M daily rows; macOS arm64, Electron 44):
- *  with the limit at 12 GB or more, the rollup build at launch killed the app
- *  at about 9 GB resident, on every launch; at 10 GB and below it finished.
- *  A session then keeps using up the reservation as it runs queries of other
- *  shapes, so the ceiling sits well under the largest limit that survived a
- *  build. It costs the build nothing: the full 12-month rebuild took the same
- *  minute at 4, 6 and 10 GB.
+ *  Measured on a 46 GB workspace (242M daily rows; macOS arm64, Electron 44),
+ *  when DuckDB still ran inside the main process: with the limit at 12 GB or
+ *  more, the rollup build at launch killed the app at about 9 GB resident, on
+ *  every launch; at 10 GB and below it finished. A session then keeps using
+ *  up the reservation as it runs queries of other shapes, so the ceiling sits
+ *  well under the largest limit that survived a build. It costs the build
+ *  nothing: the full 12-month rebuild took the same minute at 4, 6 and 10 GB.
+ *  A process of its own did not move the wall: an allocation probe in a
+ *  utility process died at about 12 GB, as it does in the main process.
  *
- *  The MCP instance (2 GB) and the GCP canonicalizer (2 GB) allocate from the
- *  same reservation. Raise this only with DuckDB in a process of its own. */
+ *  The MCP instance (2 GB) and the GCP canonicalizer (2 GB) are worker
+ *  threads of the main process and allocate from its reservation, not this
+ *  one. Raise this only once DuckDB no longer allocates from Chromium's
+ *  allocator. */
 export const MAX_MEMORY_GB = 4;
 
 export function totalMemoryGB(): number {
@@ -78,6 +98,40 @@ export function computeDefaultPoolSize(): number {
  *  COSTGOBLIN_DUCKDB_POOL_SIZE. */
 export function computeQueryPoolSize(): number {
   return poolSizeOverride() ?? Math.max(2, Math.min(4, Math.ceil(maxThreads() / 4)));
+}
+
+/** Size of the libuv thread pool the DuckDB process is started with.
+ *
+ *  A query holds one pool thread from the moment DuckDB starts it until it
+ *  returns, and libuv's default pool has four. The app runs up to
+ *  {@link computeQueryPoolSize} queries and {@link computeDefaultPoolSize}
+ *  rollup builds at a time, so with four threads the fifth query did not
+ *  start, a cancel sent to it was lost (DuckDB clears its interrupt flag when
+ *  a query starts), and every file read in the same process waited behind the
+ *  running queries: 9.9 s for one `fs.stat`, measured in the main process
+ *  when DuckDB still ran there. One thread per query the process may run,
+ *  plus headroom; idle threads cost nothing. */
+export function computeUvThreadPoolSize(): number {
+  return computeQueryPoolSize() + computeDefaultPoolSize() + UV_POOL_HEADROOM;
+}
+
+/** The environment a host starts the DuckDB process with: `env` (the host's
+ *  own), the settings the bundle applies before it reports ready, and a libuv
+ *  thread pool sized for the queries it runs. A pool the user asked to be
+ *  larger still is kept. */
+export function duckdbProcessEnv(
+  env: Readonly<Record<string, string | undefined>>,
+  settings: { readonly tempDir?: string | undefined; readonly memoryGB?: number | undefined; readonly threads?: number | undefined },
+): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [name, value] of Object.entries(env)) {
+    if (value !== undefined) result[name] = value;
+  }
+  result[DUCKDB_SETTINGS_ENV] = JSON.stringify(settings);
+  const asked = Number.parseInt(env[UV_THREADPOOL_SIZE_ENV] ?? '', 10);
+  const size = Math.max(computeUvThreadPoolSize(), Number.isFinite(asked) ? asked : 0);
+  result[UV_THREADPOOL_SIZE_ENV] = String(size);
+  return result;
 }
 
 /** Default number of monthly rollup partitions built in parallel. Deliberately

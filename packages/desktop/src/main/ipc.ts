@@ -16,6 +16,7 @@ import { registerExplorerHandlers } from './handlers/explorer.js';
 import { registerDebugHandlers } from './handlers/debug.js';
 import { registerMcpHandlers } from './handlers/mcp-handler.js';
 import { registerRollupHandlers } from './handlers/rollup.js';
+import { registerQueryEngineHandlers } from './handlers/query-engine.js';
 import { registerBaselinesHandlers } from './handlers/baselines.js';
 import { registerTelemetryHandlers } from './handlers/telemetry.js';
 import { registerSyncLogHandlers } from './handlers/sync-log.js';
@@ -42,6 +43,7 @@ export function registerIpcHandlers(ctx: IpcContext): AppContext {
   registerDebugHandlers(app);
   registerMcpHandlers(app);
   registerRollupHandlers(app);
+  registerQueryEngineHandlers(app);
   registerBaselinesHandlers(app);
   registerTelemetryHandlers(app);
   registerSyncLogHandlers();

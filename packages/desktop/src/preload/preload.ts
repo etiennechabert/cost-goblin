@@ -591,6 +591,23 @@ exposeInMainWorld('costgoblinRollup', {
   },
 });
 
+exposeInMainWorld('costgoblinEngine', {
+  getStatus(): Promise<unknown> {
+    return invoke<unknown>('engine:get-status');
+  },
+  onStatusChanged(callback: (status: unknown) => void): () => void {
+    const handler = (_event: unknown, status: unknown): void => { callback(status); };
+    ipcRenderer.on('engine:status-changed', handler);
+    return () => { ipcRenderer.removeListener('engine:status-changed', handler); };
+  },
+  restart(): Promise<void> {
+    return invoke<undefined>('engine:restart').then(() => undefined);
+  },
+  resumeRollupBuilds(): Promise<void> {
+    return invoke<undefined>('engine:resume-rollup-builds').then(() => undefined);
+  },
+});
+
 exposeInMainWorld('costgoblinDebug', {
   isDev(): boolean { return process.env['NODE_ENV'] === 'development'; },
   isE2E(): boolean { return process.env['COSTGOBLIN_E2E'] === '1'; },

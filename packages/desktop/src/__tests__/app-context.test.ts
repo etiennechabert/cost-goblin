@@ -556,6 +556,56 @@ describe('createAppContext: rollup lifecycle', () => {
     await vi.waitFor(() => { expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^rollup-maintain: /)); });
   });
 
+  it('builds nothing on its own while rollup builds are paused, and serves what is built', async () => {
+    const h = await harness({ data: 'synthetic', rollupBuilds: true });
+    expect(h.app.rollupBuildsPaused()).toBe(false);
+    h.app.pauseRollupBuilds();
+    expect(h.app.rollupBuildsPaused()).toBe(true);
+    const maintain = vi.spyOn(h.app.rollupStore, 'maintainPeriods');
+
+    h.app.warmupBase();
+    expect(await h.app.awaitWarmup(10_000)).toBe(false);
+    // Settled, not left "computing" and not "failed": there is nothing to wait for.
+    expect(h.app.rollupStore.getStatus()).toEqual({ state: 'idle' });
+    expect(maintain).not.toHaveBeenCalled();
+
+    // Asked for again: the build that was held back starts now.
+    h.app.resumeRollupBuilds();
+    expect(h.app.rollupBuildsPaused()).toBe(false);
+    await vi.waitFor(() => { expect(h.app.rollupStore.getStatus()).toEqual({ state: 'ready', periods: 2 }); }, { timeout: 15_000 });
+
+    // Paused with a rollup built: it keeps serving every month it holds.
+    h.app.pauseRollupBuilds();
+    maintain.mockClear();
+    h.app.warmupBase();
+    expect(await h.app.awaitWarmup(10_000)).toBe(true);
+    expect(h.app.rollupStore.getStatus()).toEqual({ state: 'ready', periods: 2 });
+    expect(maintain).not.toHaveBeenCalled();
+  });
+
+  it('drops the months a sync changed instead of re-rolling them while builds are paused', async () => {
+    const h = await built();
+    const sql = 'SELECT 1 AS n';
+    await h.app.runQuery(sql);
+    h.app.pauseRollupBuilds();
+    const maintain = vi.spyOn(h.app.rollupStore, 'maintainPeriods');
+
+    h.app.maintainRollup(['2026-02', '2025-06']);
+
+    // February's partition was built from files that are gone: it must not
+    // be served, and nothing rebuilds it until builds resume.
+    await vi.waitFor(() => { expect([...h.app.rollupStore.getValidPeriods()]).toEqual(['2026-01']); });
+    await vi.waitFor(async () => { expect(await exists(join(h.ws.dataDir, AWS, 'rollup', 'daily-2026-02'))).toBe(false); });
+    expect(maintain).not.toHaveBeenCalled();
+    // Results cached from the replaced files went with it.
+    const before = h.db.statements.length;
+    await h.app.runQuery(sql);
+    expect(h.db.statements).toHaveLength(before + 1);
+
+    h.app.resumeRollupBuilds();
+    await vi.waitFor(() => { expect(h.app.rollupStore.getStatus()).toEqual({ state: 'ready', periods: 2 }); }, { timeout: 15_000 });
+  });
+
   it('drops the rollup and re-warms when the cost scope changes', async () => {
     const h = await built();
     const invalidate = vi.spyOn(h.app.rollupStore, 'invalidate');
