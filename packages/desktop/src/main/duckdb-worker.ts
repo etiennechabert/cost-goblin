@@ -120,11 +120,11 @@ const runningConns = new Map<number, DuckDBConnection>(); // id → connection f
 // ---------------------------------------------------------------------------
 // Drain — letting the thread be torn down safely
 // ---------------------------------------------------------------------------
-// A DuckDB call still in flight when this thread is torn down (the app quits,
-// or the client terminates the worker) aborts the whole process: its
-// completion runs in an environment that can no longer take it, throws, and
-// nothing catches the throw. The owner therefore asks for a drain first and
-// waits until every request it posted has settled.
+// A DuckDB call still in flight when this thread is torn down aborts the whole
+// process: its completion runs in an environment that can no longer take it,
+// throws, and nothing catches the throw. A process that is exiting therefore
+// asks for a drain first and waits until every request it posted has settled.
+// (terminate() waits for the requests' answers instead, see duckdb-client.ts.)
 
 /** How many requests have settled, for the owner to compare with how many it
  *  posted. Shared memory, because an owner that is exiting waits on it with
@@ -144,28 +144,13 @@ function isCountedRequest(msg: unknown): boolean {
   return hasProps(msg) && COUNTED_KINDS.has(msg['kind']);
 }
 
-/** How often a drain interrupts the running queries again. DuckDB forgets an
- *  interrupt that arrives before the query has begun, and a query can hold a
- *  connection for a while before it begins (it waits for a libuv thread). */
-const DRAIN_INTERRUPT_MS = 20;
-
-function interruptRunning(): void {
-  for (const conn of runningConns.values()) {
-    try { conn.interrupt(); } catch { /* connection may already be closed */ }
-  }
-}
-
-let drainTimer: ReturnType<typeof setInterval> | undefined;
-
-/** Cancels everything, builds included, and keeps interrupting until the
- *  thread goes: nothing is meant to run after a drain. */
+/** Cancels everything, builds included: nothing is meant to run after a
+ *  drain. The queries in flight are interrupted until each has settled, as for
+ *  any cancel (see keepInterruptingCancelled). */
 function handleDrain(): void {
   for (const id of queuedIds) cancelledIds.add(id);
   for (const id of runningIds) cancelledIds.add(id);
-  interruptRunning();
-  drainTimer ??= setInterval(interruptRunning, DRAIN_INTERRUPT_MS);
-  // Not a reason to keep the thread alive.
-  drainTimer.unref();
+  keepInterruptingCancelled();
 }
 
 async function fetchAllRows(
@@ -441,9 +426,38 @@ function handleCancelPending(): void {
   }
   // Actively interrupt running DuckDB queries so they release pool
   // connections immediately instead of running to completion.
-  for (const conn of runningConns.values()) {
+  keepInterruptingCancelled();
+}
+
+const REINTERRUPT_INTERVAL_MS = 25;
+let reinterruptTimer: NodeJS.Timeout | null = null;
+
+/** Interrupt the connection of every cancelled query that has not settled.
+ *  Returns whether there was one. */
+function interruptCancelled(): boolean {
+  let pending = false;
+  for (const [id, conn] of runningConns) {
+    if (!cancelledIds.has(id)) continue;
+    pending = true;
     try { conn.interrupt(); } catch { /* connection may already be closed */ }
   }
+  return pending;
+}
+
+/** Interrupt the cancelled queries now, then again every few milliseconds
+ *  until each has settled. One interrupt is not enough: DuckDB clears a
+ *  connection's interrupted flag when a query begins on it, and a query in
+ *  `runningConns` may not have begun. Its task waits for a free thread of
+ *  libuv's pool (four by default, shared by the whole process), and a
+ *  prepared query takes two tasks. An interrupt made in that gap was dropped,
+ *  and the query ran to its end before it was reported cancelled. */
+function keepInterruptingCancelled(): void {
+  if (!interruptCancelled() || reinterruptTimer !== null) return;
+  reinterruptTimer = setInterval(() => {
+    if (interruptCancelled() || reinterruptTimer === null) return;
+    clearInterval(reinterruptTimer);
+    reinterruptTimer = null;
+  }, REINTERRUPT_INTERVAL_MS);
 }
 
 async function handleConfigure(req: { kind: 'configure'; tempDir?: string; memoryGB?: number; threads?: number }): Promise<void> {

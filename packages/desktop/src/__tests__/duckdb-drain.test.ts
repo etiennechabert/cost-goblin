@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
+import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { QUERY_CANCELLED_MESSAGE } from '@costgoblin/core';
-import { createDuckDBClient, drainDuckDBClientsSync } from '../main/duckdb-client.js';
+import { CLIENT_TERMINATED_MESSAGE, createDuckDBClient, drainDuckDBClientsSync } from '../main/duckdb-client.js';
 import type { DuckDBClient } from '../main/duckdb-client.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -49,11 +50,10 @@ async function withClient(run: (client: DuckDBClient) => Promise<void>): Promise
   }
 }
 
-// Tearing a worker down (worker.terminate(), or the process exiting) while a
-// DuckDB call is in flight aborts the whole process: the call's completion
-// runs in an environment that can no longer take it, throws, and nothing
-// catches it. These tests would not fail an assertion without the drain,
-// they would take the test process down with them.
+// The process exiting ends every worker thread, under a running query as under
+// none, and a DuckDB call still in flight then aborts the process: its
+// completion runs in an environment that can no longer take it, throws, and
+// nothing catches it. The exit handler drains the workers first.
 describe('DuckDB client drain', () => {
   it('settles a pooled query and a build that are in flight', async () => {
     await withClient(async (client) => {
@@ -96,9 +96,9 @@ describe('DuckDB client drain', () => {
     await withClient(async (client) => {
       drainDuckDBClientsSync(DRAIN_BUDGET_MS);
 
-      await expect(client.runQuery('SELECT 1')).rejects.toThrow(QUERY_CANCELLED_MESSAGE);
-      await expect(client.runBuildQuery('SELECT 1')).rejects.toThrow(QUERY_CANCELLED_MESSAGE);
-      await expect(client.runPreparedQuery('SELECT 1', [])).rejects.toThrow(QUERY_CANCELLED_MESSAGE);
+      await expect(client.runQuery('SELECT 1')).rejects.toThrow(CLIENT_TERMINATED_MESSAGE);
+      await expect(client.runBuildQuery('SELECT 1')).rejects.toThrow(CLIENT_TERMINATED_MESSAGE);
+      await expect(client.runPreparedQuery('SELECT 1', [])).rejects.toThrow(CLIENT_TERMINATED_MESSAGE);
     });
   });
 
@@ -151,24 +151,46 @@ describe('DuckDB worker settled counter', () => {
   });
 });
 
-describe('DuckDB client terminate', () => {
-  it('lets the queries in flight settle before it stops the worker', async () => {
-    const client = await createDuckDBClient(workerPath);
-    const pooled = inFlight(onStarted => client.runQuery(ENDLESS_SQL, onStarted));
-    const build = inFlight(onStarted => client.runBuildQuery(ENDLESS_SQL, onStarted));
-    await Promise.all([pooled.started, build.started]);
+// An abort cannot be asserted from inside the process it kills: the exit
+// itself runs in a process of its own (helpers/duckdb-exit-child.ts), with
+// the same exit handler as the app's main process.
+describe('a process exiting with queries in flight', () => {
+  const childPath = join(__dirname, 'helpers', 'duckdb-exit-child.ts');
 
-    await client.terminate();
+  interface ChildExit {
+    readonly code: number | null;
+    readonly signal: NodeJS.Signals | null;
+    readonly stderr: string;
+  }
 
-    // Cancelled by the worker itself: a worker stopped under them would have
-    // answered "Worker exited unexpectedly".
-    expect(await pooled.outcome).toBe(QUERY_CANCELLED_MESSAGE);
-    expect(await build.outcome).toBe(QUERY_CANCELLED_MESSAGE);
+  function exitChild(mode: 'running' | 'just-sent'): Promise<ChildExit> {
+    return new Promise<ChildExit>((resolve, reject) => {
+      const child = spawn(process.execPath, ['--import', 'tsx', childPath, workerPath, mode], {
+        cwd: __dirname,
+        stdio: ['ignore', 'ignore', 'pipe'],
+      });
+      let stderr = '';
+      child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf-8'); });
+      // The queries run for minutes: a child still alive by then did not exit.
+      const killer = setTimeout(() => { child.kill('SIGKILL'); }, 45_000);
+      child.once('error', (err) => {
+        clearTimeout(killer);
+        reject(err);
+      });
+      child.once('close', (code, signal) => {
+        clearTimeout(killer);
+        resolve({ code, signal, stderr });
+      });
+    });
+  }
+
+  it.each([
+    ['queries DuckDB is executing', 'running'],
+    ['queries that were only just sent', 'just-sent'],
+  ] as const)('exits cleanly, with %s', async (_label, mode) => {
+    const exit = await exitChild(mode);
+
+    expect(exit.stderr).not.toContain('Napi::Error');
+    expect({ code: exit.code, signal: exit.signal }).toEqual({ code: 0, signal: null });
   }, 60_000);
-
-  it('can be called twice', async () => {
-    const client = await createDuckDBClient(workerPath);
-    await client.terminate();
-    await expect(client.terminate()).resolves.toBeUndefined();
-  });
 });

@@ -1,4 +1,4 @@
-import { QUERY_CANCELLED_MESSAGE } from '@costgoblin/core';
+import { logger } from '@costgoblin/core';
 import type { DuckDbSandboxOptions } from '@costgoblin/core';
 import { initWorkerLifecycle } from './worker-lifecycle.js';
 
@@ -13,10 +13,28 @@ export interface DuckDBClient {
   runBuildQuery(sql: string, onStarted?: () => void): Promise<RawRow[]>;
   cancelPendingQueries(): void;
   configure(settings: { tempDir?: string; memoryGB?: number; threads?: number }): void;
-  /** Cancels everything, waits (briefly) until the worker has settled every
-   *  request, then stops it. The client runs nothing afterwards. */
+  /** Stop the worker. Queries still in flight are cancelled first and the
+   *  thread is ended only once they have answered: tearing it down under a
+   *  running query aborts the whole process hosting it. Queries sent afterwards
+   *  are rejected with {@link CLIENT_TERMINATED_MESSAGE}. Resolves when the
+   *  worker has ended, or after {@link TERMINATE_GRACE_MS} if a query is still
+   *  running by then (the worker is then ended as soon as it settles). */
   terminate(): Promise<void>;
 }
+
+/** What a query sent after `terminate()` is rejected with. */
+export const CLIENT_TERMINATED_MESSAGE = 'DuckDB client terminated';
+
+/** How long `terminate()` keeps its caller waiting for the queries in flight to
+ *  answer their cancel. A cancelled query answers within milliseconds, so this
+ *  only runs out when DuckDB is somewhere an interrupt doesn't reach. The
+ *  worker is NOT terminated at that point: that would abort the process. It is
+ *  left to finish and is terminated once nothing runs in it. */
+export const TERMINATE_GRACE_MS = 5_000;
+
+/** A cancel that reaches DuckDB before the query starts executing is lost, so
+ *  `terminate()` repeats it at this interval while a query is in flight. */
+export const CANCEL_RESEND_MS = 100;
 
 type WorkerResponse =
   | { kind: 'ready'; settled?: unknown }
@@ -42,17 +60,24 @@ interface PendingQuery {
   onStarted?: (() => void) | undefined;
 }
 
-// ---------------------------------------------------------------------------
-// Drain — tearing a worker down without taking the process with it
-// ---------------------------------------------------------------------------
-// A DuckDB call still in flight when its worker thread is torn down aborts the
-// whole process: the call's completion runs in an environment that can no
-// longer take it, throws, and nothing catches the throw ("terminating due to
-// uncaught exception of type Napi::Error"). Both ways a thread goes are
-// covered: the process exiting (drainDuckDBClientsSync, from its exit
-// handler) and the client stopping its worker (terminate).
+/** Data handed to the DuckDB worker at spawn. `sandbox` switches the worker to
+ *  a dedicated, locked-down instance (see `buildDuckDbSandboxStatements`); the
+ *  worker applies it before reporting ready and fails init if it can't. */
+export interface DuckDBWorkerData {
+  readonly sandbox: DuckDbSandboxOptions;
+}
 
-/** One client's part in a drain. */
+// ---------------------------------------------------------------------------
+// Quit — the process exiting with queries in flight
+// ---------------------------------------------------------------------------
+// The process exiting tears every worker thread down, under a running query
+// as under none, and that aborts it just as an early terminate() would. The
+// process's exit handler therefore drains the workers first. It cannot do what
+// terminate() does: at exit the event loop no longer turns, so the workers'
+// answers are never received. What an exiting process can still do is read
+// shared memory, so each worker counts the requests it has settled there.
+
+/** One client's part in the drain at exit. */
 interface Drainable {
   /** Tells the worker to cancel everything. The client runs nothing afterwards. */
   beginDrain(): void;
@@ -61,39 +86,23 @@ interface Drainable {
   waitSettledSync(deadline: number): boolean;
 }
 
-/** The clients whose worker is alive. */
+/** The clients whose worker thread is alive. */
 const liveClients = new Set<Drainable>();
 
-/** The longest a drain waits for the queries in flight to settle, at exit and
- *  in terminate(). They are all cancelled first and settle in milliseconds;
- *  this bounds the worst case, a query DuckDB is slow to interrupt. */
-export const DUCKDB_DRAIN_MS = 3_000;
+/** The longest the exit waits for the queries in flight to settle. They are
+ *  all cancelled first and settle in milliseconds; this bounds the worst case,
+ *  a query DuckDB is slow to interrupt. */
+export const QUIT_DRAIN_MS = 3_000;
 
-/** For the process's exit handler: cancels every query of every DuckDB worker
- *  and blocks until they have all settled, or `timeoutMs` passed. False when
- *  some were still in flight at the deadline.
- *
- *  Synchronous on purpose: at exit the event loop no longer turns, so the
- *  workers' answers cannot be received, only their shared counter read. */
-export function drainDuckDBClientsSync(timeoutMs: number = DUCKDB_DRAIN_MS): boolean {
+/** For the process's exit handler: cancels every query of every DuckDB worker,
+ *  builds included, and blocks until they have all settled or `timeoutMs`
+ *  passed. False when some were still in flight at the deadline. */
+export function drainDuckDBClientsSync(timeoutMs: number = QUIT_DRAIN_MS): boolean {
   const deadline = Date.now() + timeoutMs;
   for (const client of liveClients) client.beginDrain();
   let settled = true;
   for (const client of liveClients) settled = client.waitSettledSync(deadline) && settled;
   return settled;
-}
-
-const TERMINATE_POLL_MS = 5;
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => { setTimeout(resolve, ms); });
-}
-
-/** Data handed to the DuckDB worker at spawn. `sandbox` switches the worker to
- *  a dedicated, locked-down instance (see `buildDuckDbSandboxStatements`); the
- *  worker applies it before reporting ready and fails init if it can't. */
-export interface DuckDBWorkerData {
-  readonly sandbox: DuckDbSandboxOptions;
 }
 
 /** Spawn a DuckDB worker. Without `workerData` it is the app's shared,
@@ -120,37 +129,6 @@ export async function createDuckDBClient(workerPath: string, workerData?: DuckDB
   );
   const { worker, pending } = lifecycle;
 
-  /** Requests posted to the worker: the worker's settled count catches up
-   *  with this once nothing is in flight. */
-  let posted = 0;
-  let draining = false;
-  let exited = false;
-
-  const drainable: Drainable = {
-    beginDrain(): void {
-      if (draining || exited) return;
-      draining = true;
-      // A worker that shares no counter cannot be waited on: nothing to ask of it.
-      if (settledCount !== undefined) worker.postMessage({ kind: 'drain' });
-    },
-    waitSettledSync(deadline: number): boolean {
-      for (;;) {
-        // Nothing to wait on: the worker is gone, has failed, or shares no counter.
-        if (exited || lifecycle.fatalError !== null || settledCount === undefined) return true;
-        const seen = Atomics.load(settledCount, 0);
-        if (seen >= posted) return true;
-        const left = deadline - Date.now();
-        if (left <= 0) return false;
-        Atomics.wait(settledCount, 0, seen, left);
-      }
-    },
-  };
-  liveClients.add(drainable);
-  worker.once('exit', () => {
-    exited = true;
-    liveClients.delete(drainable);
-  });
-
   worker.on('message', (msg: unknown) => {
     if (!isWorkerResponse(msg)) return;
     if (msg.kind === 'ready') return;
@@ -164,7 +142,93 @@ export async function createDuckDBClient(workerPath: string, workerData?: DuckDB
     pending.delete(msg.id);
     if (msg.kind === 'rows') entry.resolve(msg.rows);
     else entry.reject(new Error(msg.message));
+    notifyIfDrained();
   });
+
+  // terminate() waits here for the worker to have nothing in flight: every
+  // request answered, or no thread left to protect. (The lifecycle's own
+  // 'error'/'exit' listeners, registered first, have emptied `pending` by the
+  // time these run.)
+  let exited = false;
+  let onDrained: (() => void) | null = null;
+  function notifyIfDrained(): void {
+    if (onDrained === null || (pending.size > 0 && !exited)) return;
+    const notify = onDrained;
+    onDrained = null;
+    notify();
+  }
+  worker.on('error', notifyIfDrained);
+  worker.on('exit', () => {
+    exited = true;
+    liveClients.delete(drainable);
+    notifyIfDrained();
+  });
+
+  /** Requests posted to the worker: its settled count catches up with this
+   *  once nothing is in flight. */
+  let posted = 0;
+  let drainRequested = false;
+  const drainable: Drainable = {
+    beginDrain(): void {
+      // Nothing may start in a worker that is on its way out.
+      lifecycle.fatalError ??= new Error(CLIENT_TERMINATED_MESSAGE);
+      // A worker that shares no counter cannot be waited on: nothing to ask of it.
+      if (drainRequested || exited || settledCount === undefined) return;
+      drainRequested = true;
+      worker.postMessage({ kind: 'drain' });
+    },
+    waitSettledSync(deadline: number): boolean {
+      for (;;) {
+        if (exited || settledCount === undefined) return true;
+        const seen = Atomics.load(settledCount, 0);
+        if (seen >= posted) return true;
+        const left = deadline - Date.now();
+        if (left <= 0) return false;
+        Atomics.wait(settledCount, 0, seen, left);
+      }
+    },
+  };
+  liveClients.add(drainable);
+
+  async function shutDown(): Promise<void> {
+    // Nothing may start in a worker that is on its way out.
+    lifecycle.fatalError ??= new Error(CLIENT_TERMINATED_MESSAGE);
+    if (pending.size === 0 || exited) {
+      await worker.terminate();
+      return;
+    }
+
+    const cancel = (): void => { worker.postMessage({ kind: 'cancel-pending' }); };
+    cancel();
+    const resend = setInterval(cancel, CANCEL_RESEND_MS);
+    const ended = new Promise<void>((resolve) => { onDrained = resolve; }).then(async (): Promise<'ended'> => {
+      clearInterval(resend);
+      await worker.terminate();
+      return 'ended';
+    });
+
+    let graceTimer: NodeJS.Timeout | undefined;
+    const graceOver = new Promise<'grace-over'>((resolve) => {
+      graceTimer = setTimeout(() => { resolve('grace-over'); }, TERMINATE_GRACE_MS);
+    });
+    try {
+      if (await Promise.race([ended, graceOver]) === 'ended') return;
+    } finally {
+      clearTimeout(graceTimer);
+    }
+    // The caller stops waiting; the thread does not get torn down under its
+    // query. `ended` still terminates it once the query settles.
+    logger.warn('duckdb: a query is still running after terminate; the worker ends once it settles', {
+      inFlight: pending.size,
+      graceMs: TERMINATE_GRACE_MS,
+    });
+    ended.catch((err: unknown) => {
+      logger.warn('duckdb: ending the worker after its last query failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  }
+  let termination: Promise<void> | null = null;
 
   function submitQuery(
     kind: string,
@@ -173,7 +237,6 @@ export async function createDuckDBClient(workerPath: string, workerData?: DuckDB
     onStarted?: () => void,
   ): Promise<RawRow[]> {
     if (lifecycle.fatalError !== null) return Promise.reject(lifecycle.fatalError);
-    if (draining) return Promise.reject(new Error(QUERY_CANCELLED_MESSAGE));
     const id = lifecycle.nextId++;
     return new Promise<RawRow[]>((resolve, reject) => {
       pending.set(id, { onStarted, resolve, reject });
@@ -196,18 +259,12 @@ export async function createDuckDBClient(workerPath: string, workerData?: DuckDB
       worker.postMessage({ kind: 'cancel-pending' });
     },
     configure(settings: { tempDir?: string; memoryGB?: number; threads?: number }): void {
-      if (draining) return;
       posted += 1;
       worker.postMessage({ kind: 'configure', ...settings });
     },
-    async terminate(): Promise<void> {
-      drainable.beginDrain();
-      const deadline = Date.now() + DUCKDB_DRAIN_MS;
-      // Polled, not blocked on: the worker's answers to the cancelled queries
-      // have to be received meanwhile, or their callers would hear that the
-      // worker exited instead.
-      while (!drainable.waitSettledSync(0) && Date.now() < deadline) await delay(TERMINATE_POLL_MS);
-      await worker.terminate();
+    terminate(): Promise<void> {
+      termination ??= shutDown();
+      return termination;
     },
   };
 }
