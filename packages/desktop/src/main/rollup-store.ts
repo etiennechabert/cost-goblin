@@ -6,6 +6,7 @@ import {
   UNVERIFIED_ETAG_HASH,
   logger,
   ROLLUP_SCHEMA_VERSION,
+  sqlEscapeString,
   validateManifest,
   type ProviderName,
   type RollupManifest,
@@ -70,6 +71,8 @@ interface RollupStoreDeps {
 }
 
 const MANIFEST_FILE = 'manifest.json';
+/** The column a query names its provider by: constant across one store's partitions. */
+const PROVIDER_COLUMN = 'provider';
 
 /**
  * Persistent per-period pre-aggregated rollup, stored as Hive-style Parquet
@@ -167,12 +170,17 @@ export class RollupStore {
    *  short window over a year of partitions — mirroring the raw path's
    *  `buildParquetSource`. Every period is guaranteed to exist on disk because
    *  `resolveSource` only routes here once all are valid. Forward slashes for
-   *  cross-platform globbing. */
+   *  cross-platform globbing.
+   *
+   *  `provider` is added back as the constant it is here: partitions don't
+   *  store it (`rollupGrainColumns`), and this store holds one provider's
+   *  tree, so every row has the same one — the name the raw path's branch
+   *  gives it (`buildSource`). */
   private rollupGlob(periods: readonly string[]): string {
     const paths = periods
       .map(p => `'${this.partitionPath(p).replaceAll('\\', '/').replaceAll("'", "''")}'`)
       .join(', ');
-    return `read_parquet([${paths}])`;
+    return `(SELECT *, '${sqlEscapeString(String(this.providerName()))}' AS ${PROVIDER_COLUMN} FROM read_parquet([${paths}]))`;
   }
 
   isReady(): boolean { return this.manifest !== null && this.validPeriods.size > 0; }
@@ -261,7 +269,7 @@ export class RollupStore {
     if (args.tier !== 'daily') return undefined;
     if (this.manifest === null || this.shape === null) return undefined;
     if (args.requiredPeriods.length === 0) return undefined;
-    const grain = new Set<string>([...this.shape.grainDimensions, 'cost', 'line_items']);
+    const grain = new Set<string>([...this.shape.grainDimensions, 'cost', 'line_items', PROVIDER_COLUMN]);
     for (const c of args.neededColumns) if (!grain.has(c)) return undefined;
     for (const p of args.requiredPeriods) if (!this.validPeriods.has(p)) return undefined;
     return this.rollupGlob(args.requiredPeriods);
