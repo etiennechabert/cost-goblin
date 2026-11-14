@@ -154,24 +154,51 @@ export function groupByValues(row: RawRow, groupBy: readonly GroupByColumn[]): R
   return values;
 }
 
-const AGG_SORT_COLUMNS: Readonly<Record<string, (dir: string) => string>> = {
-  cost: (dir) => `SUM(cost) ${dir}`,
+/** The grouped result's measure columns. `cost`, `list_cost` and
+ *  `usage_amount` are columns a table can group by too, so their sums are
+ *  named apart: under a shared name the sort would read the group's text for
+ *  the measure, and a row its measure for the group's value. */
+export const MEASURE_COLUMNS = {
+  cost: 'sum_cost',
+  listCost: 'sum_list_cost',
+  usageAmount: 'sum_usage_amount',
+  rowCount: 'row_count',
+} satisfies Record<string, string>;
+
+/** The measures' SELECT list, over the line items of one group (or of all). */
+export function measuresSelectList(): string {
+  return [
+    `CAST(SUM(cost) AS DOUBLE) AS ${MEASURE_COLUMNS.cost}`,
+    `CAST(SUM(list_cost) AS DOUBLE) AS ${MEASURE_COLUMNS.listCost}`,
+    `CAST(SUM(usage_amount) AS DOUBLE) AS ${MEASURE_COLUMNS.usageAmount}`,
+    `CAST(COUNT(*) AS DOUBLE) AS ${MEASURE_COLUMNS.rowCount}`,
+  ].join(', ');
+}
+
+/** The grouped result's measures, by sort column. */
+const AGG_SORT_COLUMNS: Readonly<Record<string, string>> = {
+  cost: MEASURE_COLUMNS.cost,
   // By size, so a credit ranks with spend.
-  abs_cost: (dir) => `ABS(SUM(cost)) ${dir}`,
-  list_cost: (dir) => `SUM(list_cost) ${dir}`,
-  usage_amount: (dir) => `SUM(usage_amount) ${dir}`,
-  row_count: (dir) => `COUNT(*) ${dir}`,
+  abs_cost: `ABS(${MEASURE_COLUMNS.cost})`,
+  list_cost: MEASURE_COLUMNS.listCost,
+  usage_amount: MEASURE_COLUMNS.usageAmount,
+  row_count: MEASURE_COLUMNS.rowCount,
 };
 
-/** ORDER BY for the aggregated table: a measure or a grouped column, else SUM(cost). */
+const DEFAULT_AGG_ORDER = `${MEASURE_COLUMNS.cost} DESC`;
+
+/** ORDER BY for the aggregated table, over its grouped result (the columns
+ *  `groupBySelectList` and `measuresSelectList` name): a measure or a grouped column,
+ *  else the cost. A grouped column sorts as the text its rows show, which for
+ *  a date, an hour or a date's bucket is also their order in time. */
 export function aggregatedOrderBy(sort: ExplorerSort | undefined, groupBy: readonly GroupByColumn[]): string {
-  if (sort === undefined) return 'SUM(cost) DESC';
+  if (sort === undefined) return DEFAULT_AGG_ORDER;
   const dir = sortDirection(sort);
   // Own-property read: the sort column comes from the renderer, so a key like
   // `constructor` must not surface prototype members.
-  const fn = Object.hasOwn(AGG_SORT_COLUMNS, sort.column) ? AGG_SORT_COLUMNS[sort.column] : undefined;
-  if (fn !== undefined) return fn(dir);
+  const measure = Object.hasOwn(AGG_SORT_COLUMNS, sort.column) ? AGG_SORT_COLUMNS[sort.column] : undefined;
+  if (measure !== undefined) return `${measure} ${dir}`;
   const grouped = groupBy.find(g => g.id === sort.column);
-  if (grouped !== undefined) return `${groupKeyExpr(grouped)} ${dir}`;
-  return 'SUM(cost) DESC';
+  if (grouped !== undefined) return `${grouped.column} ${dir}`;
+  return DEFAULT_AGG_ORDER;
 }
