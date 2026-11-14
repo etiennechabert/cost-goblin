@@ -6,7 +6,7 @@ import type { Dimension } from '@costgoblin/core/browser';
 import { PieChart } from '../components/pie-chart.js';
 import type { PieSlice } from '../components/pie-chart.js';
 import { PaletteProvider } from '../hooks/use-palette.js';
-import { PALETTE_STANDARD, assignSeriesColors } from '../lib/palette.js';
+import { PALETTE_STANDARD, assignSeriesColors, getActivePalette } from '../lib/palette.js';
 import { takeMemoRenders } from './memo-renders.js';
 
 vi.mock('react', async (importOriginal) =>
@@ -404,6 +404,42 @@ describe('PieChart — what a hover renders', () => {
     expect(slice(groups, 0).getAttribute('role')).toBeNull();
     fireEvent.click(slice(groups, 0));
     expect(onSliceClick).toHaveBeenCalledTimes(1);
+  });
+
+  // What a slice or a row shows comes from its props alone: these are the
+  // inputs, other than the focus, that have to reach them.
+  it('draws again what the palette, the previous costs and the data change', async () => {
+    const tree = (props: Partial<PieProps>, palette: 'standard' | 'colorblind'): React.ReactElement => (
+      <PaletteProvider palette={palette}><PieChart data={SLICES} title="t" {...props} /></PaletteProvider>
+    );
+    const { container, rerender } = render(tree({}, 'standard'));
+    const groups = await slices(container, 4);
+    const fills = (): (string | null)[] => groups.map(g => slicePath(g).getAttribute('fill'));
+    const swatches = (): string[] => [...container.querySelectorAll<HTMLElement>('span.inline-block')].map(el => el.style.backgroundColor);
+    const standardFills = fills();
+    const standardSwatches = swatches();
+    takeRenders();
+
+    rerender(tree({}, 'colorblind'));
+    const colorblind = assignSeriesColors(SLICES, getActivePalette('colorblind', 'dark'), { colorblind: true });
+    expect(fills()).toEqual(SLICES.map(s => colorblind(s.name)));
+    expect(fills()).not.toEqual(standardFills);
+    expect(swatches()).toHaveLength(4);
+    expect(swatches()).not.toEqual(standardSwatches);
+    expect(takeRenders()).toEqual({ PieSliceMark: 4, PieLegendRow: 4 });
+
+    // EC2, S3 and RDS get a previous cost, Lambda has none: its row stays.
+    rerender(tree({ previousCosts: PREVIOUS }, 'colorblind'));
+    expect(screen.getByText('↑25.0%').className).toContain('text-negative');
+    expect(screen.getByText('↓25.0%').className).toContain('text-positive');
+    expect(takeRenders()).toEqual({ PieSliceMark: 0, PieLegendRow: 3 });
+
+    const halved = SLICES.map(s => ({ ...s, cost: s.cost / 2 }));
+    rerender(tree({ data: halved, previousCosts: PREVIOUS }, 'colorblind'));
+    expect(screen.getByText('$250.00 (50.0%)')).not.toBeNull();
+    expect(screen.queryByText('$500.00 (50.0%)')).toBeNull();
+    expect(screen.getByText('↓37.5%').className).toContain('text-positive');
+    expect(takeRenders()).toEqual({ PieSliceMark: 4, PieLegendRow: 4 });
   });
 
   it('scrolls the legend to the row that takes the focus, each time it moves', async () => {

@@ -1,5 +1,5 @@
 // One formatter for the module. `toLocaleString` with options builds a new one
-// on every call, and a chart formats a cost per legend row on each render.
+// on every call, and a chart or a table formats a cost for each row it renders.
 const CENTS = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export function formatDollars(amount: number): string {
