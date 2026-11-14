@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { asDimensionId } from '@costgoblin/core/browser';
@@ -7,6 +7,20 @@ import { PieChart } from '../components/pie-chart.js';
 import type { PieSlice } from '../components/pie-chart.js';
 import { PaletteProvider } from '../hooks/use-palette.js';
 import { PALETTE_STANDARD, assignSeriesColors } from '../lib/palette.js';
+import { takeMemoRenders } from './memo-renders.js';
+
+vi.mock('react', async (importOriginal) =>
+  (await import('./memo-renders.js')).withMemoSpy(await importOriginal<typeof import('react')>()));
+
+beforeEach(() => {
+  takeMemoRenders();
+});
+
+/** How many times the slices and the legend rows rendered since the last call
+ *  (or the start of the test). */
+function takeRenders(): Readonly<Record<string, number>> {
+  return takeMemoRenders('PieSliceMark', 'PieLegendRow');
+}
 
 const SLICES: readonly PieSlice[] = [
   { name: 'EC2', cost: 500, percentage: 50 },
@@ -296,5 +310,115 @@ describe('PieChart — without a legend', () => {
     for (const path of container.querySelectorAll('svg path')) {
       expect(path.getAttribute('opacity')).toBe('0.3');
     }
+  });
+});
+
+// A dashboard renders its pies on every cross-chart hover: the widget reads
+// the focus and hands the chart new handler closures. A pie of 50 slices has
+// 50 legend rows, each formatting a cost.
+describe('PieChart — what a hover renders', () => {
+  type PieProps = React.ComponentProps<typeof PieChart>;
+
+  function pie(props: Partial<PieProps>): React.ReactElement {
+    return <PaletteProvider><PieChart data={SLICES} title="t" {...props} /></PaletteProvider>;
+  }
+
+  it('renders only the slice and the legend row that take or lose the focus when it moves', async () => {
+    const { container, rerender } = render(pie({ externalHoveredName: 'EC2', previousCosts: PREVIOUS, onSliceClick: vi.fn() }));
+    const groups = await slices(container, 4);
+    takeRenders();
+
+    rerender(pie({ externalHoveredName: 'RDS', previousCosts: PREVIOUS, onSliceClick: vi.fn() }));
+
+    expect(slicePath(slice(groups, 2)).getAttribute('stroke')).toBe('#ffffff');
+    expect(slicePath(slice(groups, 0)).getAttribute('stroke')).toBe('transparent');
+    expect(screen.getByText('RDS').className).toContain('font-semibold');
+    expect(screen.getByText('EC2').className).toContain('text-text-muted');
+    expect(takeRenders()).toEqual({ PieSliceMark: 2, PieLegendRow: 2 });
+  });
+
+  it('renders them all when a focus appears or goes: every other slice dims or lights up again', async () => {
+    const { container, rerender } = render(pie({}));
+    const groups = await slices(container, 4);
+    takeRenders();
+
+    rerender(pie({ externalHoveredName: 'S3' }));
+    expect(slicePath(slice(groups, 0)).getAttribute('opacity')).toBe('0.3');
+    expect(takeRenders()).toEqual({ PieSliceMark: 4, PieLegendRow: 4 });
+
+    rerender(pie({ externalHoveredName: null }));
+    expect(slicePath(slice(groups, 0)).getAttribute('opacity')).toBe('1');
+    expect(takeRenders()).toEqual({ PieSliceMark: 4, PieLegendRow: 4 });
+  });
+
+  it('renders the two slices its own hover moves between', async () => {
+    const { container } = render(pie({ maxSlices: 3 }));
+    const groups = await slices(container, 4);
+    fireEvent.mouseEnter(slice(groups, 0));
+    takeRenders();
+
+    fireEvent.mouseEnter(slice(groups, 1));
+    expect(takeRenders()).toEqual({ PieSliceMark: 2, PieLegendRow: 2 });
+
+    // Onto the folded remainder, from the legend.
+    fireEvent.mouseEnter(screen.getByText('Other'));
+    expect(slicePath(slice(groups, 3)).getAttribute('stroke')).toBe('#ffffff');
+    expect(takeRenders()).toEqual({ PieSliceMark: 2, PieLegendRow: 2 });
+  });
+
+  it('renders no slice or row when its host renders it again, and calls the handlers of that render', async () => {
+    const first = { onSliceClick: vi.fn<(name: string) => void>(), onSliceHover: vi.fn<(name: string | null) => void>() };
+    const second = { onSliceClick: vi.fn<(name: string) => void>(), onSliceHover: vi.fn<(name: string | null) => void>() };
+    const { container, rerender } = render(pie({ ...first, title: <span>By service</span>, previousCosts: PREVIOUS }));
+    const groups = await slices(container, 4);
+    takeRenders();
+
+    rerender(pie({ ...second, title: <span>By service</span>, previousCosts: PREVIOUS }));
+    expect(takeRenders()).toEqual({ PieSliceMark: 0, PieLegendRow: 0 });
+
+    fireEvent.click(slice(groups, 1));
+    fireEvent.keyDown(slice(groups, 2), { key: 'Enter' });
+    fireEvent.click(screen.getByRole('button', { name: /Lambda/ }));
+    expect(second.onSliceClick.mock.calls).toEqual([['S3'], ['RDS'], ['Lambda']]);
+    fireEvent.mouseEnter(slice(groups, 0));
+    expect(second.onSliceHover.mock.calls).toEqual([['EC2']]);
+    fireEvent.mouseLeave(slice(groups, 0));
+    expect(second.onSliceHover).toHaveBeenLastCalledWith(null);
+    expect(first.onSliceClick).not.toHaveBeenCalled();
+    expect(first.onSliceHover).not.toHaveBeenCalled();
+  });
+
+  it('makes its slices clickable, or inert again, when the host adds or drops the click handler', async () => {
+    const onSliceClick = vi.fn<(name: string) => void>();
+    const { container, rerender } = render(pie({}));
+    const groups = await slices(container, 4);
+    expect(slice(groups, 0).getAttribute('role')).toBeNull();
+    expect(screen.queryByRole('button', { name: /EC2/ })).toBeNull();
+
+    rerender(pie({ onSliceClick }));
+    expect(slice(groups, 0).getAttribute('role')).toBe('button');
+    fireEvent.click(screen.getByRole('button', { name: /EC2/ }));
+    expect(onSliceClick.mock.calls).toEqual([['EC2']]);
+
+    rerender(pie({}));
+    expect(slice(groups, 0).getAttribute('role')).toBeNull();
+    fireEvent.click(slice(groups, 0));
+    expect(onSliceClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('scrolls the legend to the row that takes the focus, each time it moves', async () => {
+    const scroll = vi.spyOn(Element.prototype, 'scrollIntoView');
+    const { container, rerender } = render(pie({ externalHoveredName: 'EC2' }));
+    await slices(container, 4);
+    scroll.mockClear();
+
+    rerender(pie({ externalHoveredName: 'Lambda' }));
+    expect(scroll.mock.contexts).toHaveLength(1);
+    const scrolled = scroll.mock.contexts[0];
+    expect(scrolled instanceof HTMLElement && scrolled.textContent.startsWith('Lambda')).toBe(true);
+
+    // The same focus again scrolls nothing.
+    rerender(pie({ externalHoveredName: 'Lambda' }));
+    expect(scroll).toHaveBeenCalledTimes(1);
   });
 });
