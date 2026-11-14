@@ -71,6 +71,16 @@
   @keyframes modal-in {
     from { opacity: 0; }
   }
+
+  /* The sync button's blink: an accent copy of its icon fading out and back
+     in over the icon. Opacity only, which the compositor animates by itself.
+     Animating the icon's `color` took a main-thread frame on every screen
+     refresh for as long as a sync ran. */
+  --animate-sync-blink: sync-blink 2s ease-in-out infinite;
+
+  @keyframes sync-blink {
+    50% { opacity: 0; }
+  }
 }
 
 body {
@@ -107,13 +117,4 @@ body {
   :where(button, [role='button']):not(:disabled, [aria-disabled='true'], [data-disabled]:not([data-disabled='false']), [data-feedback='none']):active {
     background-image: linear-gradient(color-mix(in oklab, currentColor 16%, transparent), color-mix(in oklab, currentColor 16%, transparent));
   }
-}
-
-@keyframes sync-blink {
-  0%, 100% { color: var(--color-accent); }
-  50% { color: var(--color-text-secondary); }
-}
-
-.animate-sync-blink {
-  animation: sync-blink 2s ease-in-out infinite;
 }
