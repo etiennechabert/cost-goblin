@@ -403,6 +403,9 @@ export class ResourceRollupStore {
       partitions,
     };
     await this.writeManifestAtomic(manifest);
+    // Dropped while the manifest was being written: the removal queued behind
+    // this build takes the files, so nothing here may point at them.
+    if (this.epoch !== startEpoch) return;
     this.manifest = manifest;
     // Not the months marked stale since this build started on them.
     this.validPeriods = new Set(Object.keys(partitions).filter(period => !this.pendingStale.has(period)));
@@ -450,18 +453,15 @@ export class ResourceRollupStore {
    *  left. Best-effort. */
   private async removeSupersededFiles(served: number | null): Promise<void> {
     const dir = this.rollupDir();
-    const keepHeavy = served === null ? null : this.heavyFile(served);
-    const keepRows = served === null ? null : this.rowsFile(served);
+    const keep = served === null ? new Set<string>() : new Set([this.heavyFile(served), this.rowsFile(served)]);
+    const superseded = (name: string, prefix: string): boolean => name.startsWith(prefix) && !keep.has(name);
     try {
-      for (const entry of await readdir(dir, { withFileTypes: true })) {
-        if (entry.isFile() && entry.name.startsWith('heavy-') && entry.name !== keepHeavy) {
-          await rm(join(dir, entry.name), { force: true });
-        } else if (entry.isDirectory() && entry.name.startsWith('daily-')) {
-          for (const file of await readdir(join(dir, entry.name))) {
-            if (file.startsWith('rows-') && file !== keepRows) await rm(join(dir, entry.name, file), { force: true });
-          }
-        }
-      }
+      const entries = await readdir(dir, { withFileTypes: true });
+      const heavy = entries.filter(e => e.isFile() && superseded(e.name, 'heavy-')).map(e => join(dir, e.name));
+      const months = entries.filter(e => e.isDirectory() && e.name.startsWith('daily-')).map(e => join(dir, e.name));
+      const rows = await Promise.all(months.map(async month =>
+        (await readdir(month)).filter(file => superseded(file, 'rows-')).map(file => join(month, file))));
+      await Promise.all([...heavy, ...rows.flat()].map(file => rm(file, { force: true })));
     } catch (err: unknown) {
       if (!(err instanceof Error && 'code' in err && err.code === 'ENOENT')) {
         logger.warn(`resource-rollup: could not remove superseded files — ${errorMessage(err)}`);
@@ -479,6 +479,8 @@ export class ResourceRollupStore {
       this.validPeriods.delete(period);
       this.pendingStale.delete(period);
       const manifest = this.manifest ?? await this.readManifest();
+      // Dropped meanwhile: the queued removal takes the whole tree.
+      if (this.epoch !== startEpoch) return;
       if (manifest !== null && period in manifest.partitions) {
         const partitions = Object.fromEntries(Object.entries(manifest.partitions).filter(([k]) => k !== period));
         const next = { ...manifest, partitions };

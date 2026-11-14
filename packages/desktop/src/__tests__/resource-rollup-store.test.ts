@@ -3,7 +3,7 @@ import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import {
   asDimensionId,
   asProviderName,
@@ -20,6 +20,13 @@ import {
 import { ResourceRollupStore, type ResourceBuildSql, type ResourceRollupShape } from '../main/resource-rollup-store.js';
 import type { RawRow } from '../main/duckdb-client.js';
 import { fetchRows } from './helpers/duckdb-rows.js';
+
+// `rename` commits a manifest: wrapped so a test can act between a build's
+// last check and its commit.
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, rename: vi.fn(actual.rename) };
+});
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SYNTHETIC_RAW = join(HERE, '..', '..', '..', 'core', 'src', '__fixtures__', 'synthetic', 'aws-main', 'raw');
@@ -132,7 +139,8 @@ describe('ResourceRollupStore', () => {
     conn.closeSync();
     await rm(root, { recursive: true, force: true });
   });
-  afterEach(() => { vi.restoreAllMocks(); });
+  // restoreAllMocks leaves a vi.mock factory's vi.fn alone: reset the rename wrapper by hand.
+  afterEach(() => { vi.restoreAllMocks(); vi.mocked(rename).mockReset(); });
 
   it('builds every month as one generation and serves the range from it', async () => {
     const dataDir = await newDataDir();
@@ -474,6 +482,24 @@ describe('ResourceRollupStore', () => {
 
     await store.maintain({ periods: MONTHS, etagsByPeriod: etags, shape, sql, epoch: store.currentEpoch() });
     expect(store.isReady()).toBe(true);
+  });
+
+  it('does not serve a generation dropped while its manifest was being written', async () => {
+    const dataDir = await newDataDir();
+    const store = newStore(dataDir);
+    const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    let dropped: Promise<void> | undefined;
+    // The drop lands after the build's last check, as the manifest is renamed into place.
+    vi.mocked(rename).mockImplementationOnce(async (from, to) => {
+      dropped = store.invalidate();
+      await actual.rename(from, to);
+    });
+    await store.maintain({ periods: MONTHS, etagsByPeriod: etags, shape, sql });
+    expect(dropped).toBeDefined();
+    await dropped;
+    expect(store.isReady()).toBe(false);
+    expect(store.resolveSource({ requiredPeriods: MONTHS, neededColumns: ['cost'] })).toBeUndefined();
+    await expect(readdir(rollupDir(dataDir))).rejects.toThrow(/ENOENT/);
   });
 
   it('stops building once dropped, and never names a generation twice', async () => {

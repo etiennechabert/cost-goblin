@@ -30,9 +30,9 @@ Covers `packages/core/src/query/`, `packages/core/src/normalize/`, `packages/cor
 
 ## Dates
 
-- `usage_date` and `usage_hour` come from `CHARGE_PERIOD_START_UTC_SQL` (`packages/core/src/query/builder.ts`). AWS writes `ChargePeriodStart` as TIMESTAMPTZ and DuckDB's session time zone is the machine's, so a raw `::DATE`, `::TIMESTAMP` or date-literal comparison on it shifts rows across days. Day math in JS is UTC-only.
+- `usage_date` and `usage_hour` come from `CHARGE_PERIOD_START_UTC_SQL` (CLAUDE.md, "UTC"): a raw `::DATE`, `::TIMESTAMP` or date-literal comparison on `ChargePeriodStart` shifts rows across days. Day math in JS is UTC-only.
 - Ranges are inclusive (`BETWEEN`). Compare DATE with DATE: an hourly timestamp compared with a date drops most of the last day.
-- A handler or MCP tool caps its range at the cost scope's `lagDays` (`capToFreshnessLag`, `resolveToolDateRange`) before building SQL, and returns empty when nothing is left; the SQL builders never apply it. The Explorer with "Apply cost scope" off is the one exception. Main-process "now" comes from `IpcContext` or `McpContext`, never `Date`.
+- A handler or MCP tool caps its range at `lagDays` before building SQL (CLAUDE.md, "freshness lag"); the SQL builders never apply it. Main-process "now" comes from `IpcContext` or `McpContext`, never `Date`.
 - The trends previous-period window exists three times, in JS and SQL in `packages/core/src/query/builder.ts` and in `packages/desktop/src/main/handlers/query-trends.ts`. Keep them aligned.
 
 ## Rollups
@@ -40,6 +40,7 @@ Covers `packages/core/src/query/`, `packages/core/src/normalize/`, `packages/cor
 - A rollup bakes in the metric, enabled exclusions, the marketplace rewrite and the tag projection, while aliases apply at query time. Queries over it add no exclusions, but the date filter must appear on both paths.
 - Route a query to the rollup only for a single provider, the daily tier, no hour bounds, valid periods and the global cost scope, and only when every column the SQL touches is in `neededColumns`. A request with its own cost basis compares `computeShapeSignature` or stays on raw.
 - Anything that changes stored bytes goes into `packages/core/src/rollup/shape-signature.ts` or bumps `ROLLUP_SCHEMA_VERSION`. A change to how one provider type is read bumps its `SOURCE_PROJECTION_REVISION` (`packages/core/src/query/provider-projection.ts`).
+- A rollup store's build re-checks its epoch after each await before it sets in-memory state, and its commit leaves out a month marked stale while it ran (`packages/desktop/src/main/resource-rollup-store.ts`).
 - The result cache is keyed on SQL text and parameters. An input that changes results but not the SQL (newly synced files, org accounts, account or region maps) must clear it.
 
 ## Normalization
