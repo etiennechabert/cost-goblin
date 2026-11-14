@@ -376,10 +376,17 @@ describe('StackedBarChart — series focus', () => {
     expect(transitions(few.container)).toEqual(new Set(['background-color 0.15s, box-shadow 0.15s']));
     few.unmount();
 
-    // 16 days of 100 series: 1,600 segments, past the 1,500 the chart fades.
+    // Days of 100 series each: 15 of them are the 1,500 segments a chart
+    // still fades, one more segment is past it.
     const breakdown = Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`series-${String(i)}`, i + 1]));
-    const many: BarDay[] = Array.from({ length: 16 }, (_, i) => ({ date: `2026-03-${String(i + 1).padStart(2, '0')}`, total: 5050, breakdown }));
+    const hundreds = (count: number): BarDay[] => Array.from({ length: count }, (_, i) => ({ date: `2026-03-${String(i + 1).padStart(2, '0')}`, total: 5050, breakdown }));
+    const atLimit = renderChart(<StackedBarChart days={hundreds(15)} />);
+    expect(transitions(atLimit.container)).toEqual(new Set(['background-color 0.15s, box-shadow 0.15s']));
+    atLimit.unmount();
+
+    const many: BarDay[] = [...hundreds(15), { date: '2026-03-16', total: 1, breakdown: { 'series-99': 1 } }];
     const { container } = renderChart(<StackedBarChart days={many} highlightedGroup="series-99" />);
+    expect(columns(container).flatMap(segments)).toHaveLength(1501);
     expect(transitions(container)).toEqual(new Set(['none']));
     // The looks themselves don't depend on it.
     expect(seriesAlpha(container)).toBe('0.25');

@@ -19,7 +19,7 @@
  * the way a real bill tails off.
  *
  * It then repeats the measurement with the pointer moving over the histogram
- * (what a user does), and with parts of the page taken out (each widget hidden
+ * for as long (what a user does), and with parts of the page taken out (each widget hidden
  * in turn), which is how to find what a regression came from. The census it
  * prints first counts, per widget, the elements that are a compositing group
  * of their own (opacity, filter, transform…): layerization's cost follows
@@ -45,16 +45,28 @@
 import { test, expect, type CDPSession, type ElectronApplication, type Page } from '@playwright/test';
 import { DuckDBInstance } from '@duckdb/node-api';
 import { join } from 'node:path';
-import { copyFileSync, cpSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { FIXTURE_PROVIDER_NAME } from '../../packages/core/src/__fixtures__/layout.js';
 import { setup } from '../../packages/core/src/__fixtures__/setup.js';
-import { closeApp, FIXTURE_CONFIG_DIR, FIXTURE_DATA_DIR, launchApp, selectDatePreset, waitForQuerySettle } from '../helpers.js';
+import { sqlStringLiteral } from '../../packages/core/src/query/sql-escape.js';
+import { closeApp, copyOfConfigDir, FIXTURE_DATA_DIR, launchApp, selectDatePreset, waitForQuerySettle } from '../helpers.js';
 
-const SERVICES = Number(process.env['COSTGOBLIN_DIAG_SERVICES'] ?? '17');
-const TAIL = Number(process.env['COSTGOBLIN_DIAG_TAIL'] ?? '1');
+/** A numeric knob: `fallback` when unset, and an error naming the variable
+ *  when set to anything but a number of at least `min`. Two of them end up in
+ *  SQL text. */
+function numberKnob(name: string, fallback: number, min: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < min) throw new Error(`${name} must be a number of at least ${String(min)}, got "${raw}"`);
+  return value;
+}
+
+const SERVICES = Math.floor(numberKnob('COSTGOBLIN_DIAG_SERVICES', 17, 1));
+const TAIL = numberKnob('COSTGOBLIN_DIAG_TAIL', 1, 0);
 const PRESET = process.env['COSTGOBLIN_DIAG_PRESET'];
-const SECONDS = Number(process.env['COSTGOBLIN_DIAG_SECONDS'] ?? '3');
+const SECONDS = numberKnob('COSTGOBLIN_DIAG_SECONDS', 3, 0.5);
 const EXTRA_CSS = (process.env['COSTGOBLIN_DIAG_CSS'] ?? '').split(';;').map(css => css.trim()).filter(css => css.length > 0);
 const SCREENSHOT_DIR = process.env['COSTGOBLIN_DIAG_SCREENSHOT'];
 const BISECT = process.env['COSTGOBLIN_DIAG_BISECT'] !== '0';
@@ -69,31 +81,36 @@ const HISTOGRAM = '[data-widget-id="overview-histogram"]';
 // Fixture data of a real size
 // ---------------------------------------------------------------------------
 
-function sqlLiteral(value: string): string {
-  return `'${value.replaceAll("'", "''")}'`;
-}
-
 /** A copy of the synthetic tree whose AWS daily months bill `factor` names per
  *  service, account and region: the original rows plus `factor - 1` copies of
  *  them named "<service> <n>" in account "<account> <n>" and region
  *  "<region>-<n>", copy n costing 1/n^tail of the original. */
 async function dataDirWithServices(factor: number, tail: number): Promise<string> {
   const dir = mkdtempSync(join(tmpdir(), 'cg-layerize-data-'));
-  cpSync(FIXTURE_DATA_DIR, dir, { recursive: true });
-  const providerDir = join(dir, FIXTURE_PROVIDER_NAME);
-  // A rollup left in the fixture tree (by `npm run dev:fixtures`) describes
-  // the data as it was.
-  rmSync(join(providerDir, 'rollup'), { recursive: true, force: true });
-  if (factor <= 1) return dir;
+  try {
+    cpSync(FIXTURE_DATA_DIR, dir, { recursive: true });
+    const providerDir = join(dir, FIXTURE_PROVIDER_NAME);
+    // A rollup left in the fixture tree (by `npm run dev:fixtures`) describes
+    // the data as it was.
+    rmSync(join(providerDir, 'rollup'), { recursive: true, force: true });
+    if (factor > 1) await repeatRows(join(providerDir, 'raw'), factor, tail);
+    return dir;
+  } catch (err) {
+    // Nothing else knows the directory yet.
+    rmSync(dir, { recursive: true, force: true });
+    throw err;
+  }
+}
+
+async function repeatRows(rawDir: string, factor: number, tail: number): Promise<void> {
   const db = await DuckDBInstance.create();
   const conn = await db.connect();
   try {
-    const rawDir = join(providerDir, 'raw');
+    const weight = `pow(i + 1, ${String(tail)})`;
     for (const entry of readdirSync(rawDir)) {
       if (!entry.startsWith('daily-')) continue;
       const file = join(rawDir, entry, 'data.parquet');
       const out = `${file}.tmp`;
-      const weight = `pow(i + 1, ${String(tail)})`;
       await conn.run(`
         COPY (
           SELECT f.* REPLACE (
@@ -107,26 +124,14 @@ async function dataDirWithServices(factor: number, tail: number): Promise<string
             ListCost / ${weight} AS ListCost,
             ContractedCost / ${weight} AS ContractedCost
           )
-          FROM read_parquet(${sqlLiteral(file)}) f, range(${String(factor)}) t(i)
-        ) TO ${sqlLiteral(out)} (FORMAT PARQUET)`);
+          FROM read_parquet(${sqlStringLiteral(file)}) f, range(${String(factor)}) t(i)
+        ) TO ${sqlStringLiteral(out)} (FORMAT PARQUET)`);
       renameSync(out, file);
     }
   } finally {
-    conn.closeSync();
+    conn.disconnectSync();
+    db.closeSync();
   }
-  return dir;
-}
-
-/** The fixture config without views.yaml, so the launch seeds the built-in
- *  dashboards: the Cost Overview a new workspace opens on. */
-function configDirWithoutViews(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'cg-layerize-config-'));
-  for (const entry of readdirSync(FIXTURE_CONFIG_DIR)) {
-    if (entry === 'views.yaml') continue;
-    const path = join(FIXTURE_CONFIG_DIR, entry);
-    if (statSync(path).isFile()) copyFileSync(path, join(dir, entry));
-  }
-  return dir;
 }
 
 // ---------------------------------------------------------------------------
@@ -292,14 +297,16 @@ function runMover(seconds: number): Promise<number> {
   });
 }
 
-/** A pointer move every POINTER_INTERVAL_MS: the pace of a 60 Hz mouse. */
+/** At most one pointer move every POINTER_INTERVAL_MS: the pace of a mouse. */
 const POINTER_INTERVAL_MS = 16;
 
 /** Move the pointer over an element for `seconds`: across and back, while
  *  going up and down its lower half, so it keeps entering other bars and
- *  other series. The path depends on the clock alone, so a page that keeps up
- *  and one that doesn't are asked for the same work. */
-async function sweepPointer(page: Page, selector: string, seconds: number): Promise<void> {
+ *  other series. Where the pointer is depends on the clock alone, and each
+ *  move waits for the page to take the one before, as a real mouse's moves
+ *  are coalesced: a page that lags gets fewer moves in the same time, never a
+ *  longer sweep. Resolves with the number of moves. */
+async function sweepPointer(page: Page, selector: string, seconds: number): Promise<number> {
   const box = await page.locator(selector).first().boundingBox();
   if (box === null) throw new Error(`sweepPointer: ${selector} has no box`);
   const wave = (t: number, periodMs: number): number => {
@@ -307,18 +314,20 @@ async function sweepPointer(page: Page, selector: string, seconds: number): Prom
     return phase < 0.5 ? phase * 2 : 2 - phase * 2;
   };
   const started = Date.now();
-  for (let step = 0; ; step++) {
-    const due = step * POINTER_INTERVAL_MS;
-    if (due >= seconds * 1000) break;
-    const wait = started + due - Date.now();
+  let moves = 0;
+  for (;;) {
+    const wait = started + moves * POINTER_INTERVAL_MS - Date.now();
     if (wait > 0) await page.waitForTimeout(wait);
     const t = Date.now() - started;
+    if (t >= seconds * 1000) break;
     const x = box.x + 4 + wave(t, 4_000) * (box.width - 8);
     const y = box.y + box.height * (0.5 + 0.48 * wave(t, 550));
     await page.mouse.move(x, y);
+    moves += 1;
   }
   // Leave the page as it was: no hover, no tooltip.
   await page.mouse.move(2, 2);
+  return moves;
 }
 
 interface Census {
@@ -358,18 +367,23 @@ function census(): Census {
 /** cc layers the compositor holds for the page, from the LayerTree domain.
  *  -1 when the tree doesn't arrive. */
 async function layerCount(page: Page, cdp: CDPSession): Promise<number> {
-  const changed = new Promise<number>(resolve => {
-    cdp.once('LayerTree.layerTreeDidChange', (payload: { layers?: unknown[] }) => { resolve(payload.layers?.length ?? 0); });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onChange: ((payload: { layers?: unknown[] }) => void) | undefined;
+  const count = new Promise<number>(resolve => {
+    onChange = payload => { resolve(payload.layers?.length ?? 0); };
+    cdp.once('LayerTree.layerTreeDidChange', onChange);
+    timer = setTimeout(() => { resolve(-1); }, 3_000);
   });
-  await cdp.send('LayerTree.enable');
-  // The tree is sent with a frame: ask for one.
-  await page.evaluate(() => new Promise(resolve => { requestAnimationFrame(() => { requestAnimationFrame(resolve); }); }));
-  const count = await Promise.race([
-    changed,
-    new Promise<number>(resolve => { setTimeout(() => { resolve(-1); }, 3_000); }),
-  ]);
-  await cdp.send('LayerTree.disable');
-  return count;
+  try {
+    await cdp.send('LayerTree.enable');
+    // The tree is sent with a frame: ask for one.
+    await page.evaluate(() => new Promise(resolve => { requestAnimationFrame(() => { requestAnimationFrame(resolve); }); }));
+    return await count;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    if (onChange !== undefined) cdp.off('LayerTree.layerTreeDidChange', onChange);
+    await cdp.send('LayerTree.disable');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -386,13 +400,20 @@ interface Measurement {
   readonly fullUpdate: PhaseSummary;
   /** The main thread's tasks: how busy it was, and its longest stall. */
   readonly tasks: PhaseSummary;
+  /** Pointer moves the page took, for a stimulus that moves the pointer. */
+  readonly moves: number | undefined;
   readonly stats: MainThreadStats;
 }
 
-async function measure(page: Page, cdp: CDPSession, label: string, stimulus: () => Promise<void>): Promise<Measurement> {
+/** What a measurement drives the page with. It may resolve with the number
+ *  of pointer moves it got through. */
+type Stimulus = () => Promise<number | undefined>;
+
+async function measure(page: Page, cdp: CDPSession, label: string, stimulus: Stimulus): Promise<Measurement> {
   // Let the previous variant's style change paint before the trace starts.
   await page.waitForTimeout(300);
-  const events = await recordTrace(cdp, stimulus);
+  let moves: number | undefined;
+  const events = await recordTrace(cdp, async () => { moves = await stimulus(); });
   const stats = mainThreadStats(events);
   const nodes = await page.evaluate(() => document.querySelectorAll('*').length);
   const layers = await layerCount(page, cdp);
@@ -403,6 +424,7 @@ async function measure(page: Page, cdp: CDPSession, label: string, stimulus: () 
     layerize: summarize(stats, 'Layerize'),
     fullUpdate: summarize(stats, 'PaintArtifactCompositor::Update'),
     tasks: summarize(stats, 'RunTask'),
+    moves,
     stats,
   };
 }
@@ -419,10 +441,11 @@ function printTopEvents(m: Measurement, top: number): void {
 
 function printSummary(title: string, measurements: readonly Measurement[]): void {
   console.log(`\n[layerize] ${title}`);
-  console.log('  Layerize ms per frame          full  main thread ms');
-  console.log('     mean  median     p95  frames  updates     busy  longest   nodes  layers  variant');
+  console.log('  Layerize ms per frame          full  main thread ms   pointer');
+  console.log('     mean  median     p95  frames  updates     busy  longest    moves   nodes  layers  variant');
   for (const m of measurements) {
-    console.log(`  ${fmt(m.layerize.meanMs)} ${fmt(m.layerize.medianMs)} ${fmt(m.layerize.p95Ms)}  ${String(m.layerize.count).padStart(6)}  ${String(m.fullUpdate.count).padStart(7)}  ${fmt(m.tasks.totalMs)}  ${fmt(m.tasks.maxMs)}  ${String(m.nodes).padStart(6)}  ${String(m.layers).padStart(6)}  ${m.label}`);
+    const moves = m.moves === undefined ? '-' : String(m.moves);
+    console.log(`  ${fmt(m.layerize.meanMs)} ${fmt(m.layerize.medianMs)} ${fmt(m.layerize.p95Ms)}  ${String(m.layerize.count).padStart(6)}  ${String(m.fullUpdate.count).padStart(7)}  ${fmt(m.tasks.totalMs)}  ${fmt(m.tasks.maxMs)}  ${moves.padStart(7)}  ${String(m.nodes).padStart(6)}  ${String(m.layers).padStart(6)}  ${m.label}`);
   }
 }
 
@@ -445,7 +468,9 @@ let dataDir = '';
 test.beforeAll(async () => {
   // The diag config has no globalSetup: build the synthetic tree if missing.
   await setup();
-  configDir = configDirWithoutViews();
+  // Without views.yaml the launch seeds the built-in dashboards: the Cost
+  // Overview a new workspace opens on.
+  configDir = copyOfConfigDir(['views.yaml']);
   dataDir = await dataDirWithServices(SERVICES, TAIL);
   app = await launchApp({ configDir, dataDir });
 });
@@ -496,17 +521,20 @@ test('Layerize cost per frame on the default dashboard', async () => {
     await page.waitForTimeout(400);
   }
 
-  const mover = async (): Promise<void> => { await page.evaluate(runMover, SECONDS); };
+  const mover: Stimulus = async () => {
+    await page.evaluate(runMover, SECONDS);
+    return undefined;
+  };
 
   const baseline = await measure(page, cdp, 'one element moved on every frame', mover);
   printTopEvents(baseline, 20);
-  const sweep = async (): Promise<void> => { await sweepPointer(page, `${HISTOGRAM} [data-feedback="none"]`, SECONDS); };
+  const sweep: Stimulus = () => sweepPointer(page, `${HISTOGRAM} [data-feedback="none"]`, SECONDS);
   const pointer = await measure(page, cdp, 'pointer moving over the histogram', sweep);
   printTopEvents(pointer, 12);
   const user: Measurement[] = [baseline, pointer];
 
   // Each variant is the page with one more stylesheet, under the same stimulus.
-  const withCss = async (css: string, label: string, stimulus: () => Promise<void>): Promise<Measurement> => {
+  const withCss = async (css: string, label: string, stimulus: Stimulus): Promise<Measurement> => {
     const style = await page.addStyleTag({ content: css });
     try {
       return await measure(page, cdp, label, stimulus);
