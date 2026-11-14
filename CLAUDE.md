@@ -68,7 +68,7 @@ Follow this sequence for EVERY feature:
 7. Run: vitest run <test-file> → see tests pass (green)
 8. Run: npm run check → full verification (MUST pass before moving on)
 9. If working on UI: npm run dev in desktop/ to visually verify
-10. Push and open the PR as a draft, then close the review loop (see "After pushing"):
+10. After pushing & opening the PR (as a draft) — close the review loop (see "After pushing"):
     - Run `/code-review xhigh --fix` yourself (via the `Skill` tool), review the fixes it applies, re-run npm run check, and push them
     - Comment on the PR that the review ran, then mark the PR ready for review (never before)
     - Address every sentry[bot] review comment on the PR
@@ -241,13 +241,15 @@ So the lifecycle is: tag `v0.2.6` released → first PR bumps both to `0.2.7` �
 
 ## After pushing — close the review loop
 
-A development cycle isn't done when the code is pushed. Open the PR **as a draft** (`gh pr create --draft`), then do ALL of the following before considering the work finished. The PR stays a draft until step 1 has run: nothing else turns it ready for review. Re-check the bots after every push: each one reviews the new head again.
+A development cycle isn't done when the code is pushed. Once the changes are pushed and the PR is open, do ALL of the following before considering the work finished. Re-check the bots after every push: each one reviews the new head again, Sentry and Gitar only once the PR is ready.
 
-A draft gets no review from `sentry[bot]` or `gitar-bot[bot]` (Sentry skips drafts, and Gitar's "Skip drafts" setting is on), so the first code they read has already been through the local review. CI, the CLA check and SonarCloud run on a draft as on any PR.
+**The PR is opened as a draft** (`gh pr create --draft`) and turns ready for review only at the end of step 1. `sentry[bot]` and `gitar-bot[bot]` review no draft (Sentry skips them, and Gitar's "Skip drafts" setting is on), so the first code they read has already been through the local review. CI, the CLA check and SonarCloud run on a draft as on any PR.
+
+Sentry and Gitar start when the PR turns ready, as its `Seer Code Review` and `Gitar` checks. Until both have finished on the current head, an empty comment list means they haven't run yet, not that they found nothing.
 
 ### 1. `/code-review xhigh --fix`, then ready for review
 
-At the end of a dev cycle (changes just pushed, the PR open as a draft), run `/code-review xhigh --fix` — a deep, multi-agent review that applies its findings to the working tree.
+At the end of a dev cycle (changes just pushed), run `/code-review xhigh --fix` — a deep, multi-agent review that applies its findings to the working tree.
 
 - **Run it yourself via the `Skill` tool** when a cycle wraps; you don't need to wait for the user to trigger it.
 - `xhigh` reviews the current branch; `/code-review xhigh <PR#>` reviews a specific GitHub PR. `--fix` applies the review's findings to the working tree after it completes (use `--comment` instead to post them as inline PR comments).
@@ -257,13 +259,15 @@ At the end of a dev cycle (changes just pushed, the PR open as a draft), run `/c
 Once the review's fixes are pushed, or it found nothing to fix, finish the step in this order:
 
 1. **Comment on the PR** that `/code-review xhigh --fix` ran. Open with the command and the commit it reviewed, then say what came of it: the findings and the commit that fixes them, any finding left unfixed and why, or that there were none.
-2. **Mark the PR ready for review.** This is the only way a PR leaves draft. A draft without that comment hasn't been reviewed, whatever else was run on it: a lighter `/code-review` pass doesn't count.
+2. **Mark the PR ready for review**, and not before: a draft without that comment hasn't been through the review, whatever else was run on it. A lighter `/code-review` pass doesn't count.
 
 ```bash
-gh pr create --draft --title "…" --body "…"                              # every PR starts as a draft
-gh pr comment <pr> --body '`/code-review xhigh --fix` ran on <sha>: …'   # single quotes: the body has backticks
-gh pr ready <pr>                                                         # only after the comment
+gh pr create --draft --title "…" --body-file <file>
+gh pr comment <pr> --body-file <file>
+gh pr ready <pr>
 ```
+
+Both bodies go in a file: as a shell string, a double-quoted one runs its backtick spans as commands, and a single-quoted one ends at the first apostrophe.
 
 If a later cycle on the same PR runs the review again, that run gets its own comment. The PR stays ready.
 
@@ -368,7 +372,7 @@ curl -s "https://sonarcloud.io/api/hotspots/search?projectKey=etiennechabert_cos
 ## What NOT To Do
 
 - Do NOT skip `npm run check`. Every change must pass before moving on.
-- Do NOT open a PR as ready for review, or mark one ready before `/code-review xhigh --fix` has run on it and the PR has the comment saying so.
+- Do NOT open a PR ready for review. It starts as a draft and turns ready only at the end of step 1 of "After pushing": `/code-review xhigh --fix` has run on it and the PR has the comment saying so.
 - Do NOT consider a pushed change "done" until `/code-review xhigh --fix` has been run on it, every `sentry[bot]` and `gitar-bot[bot]` comment is answered, and SonarCloud's new issues are triaged.
 - Do NOT add `any`, `@ts-ignore`, or `eslint-disable` to make code compile.
 - Do NOT write tests after implementation. Write them before or alongside.

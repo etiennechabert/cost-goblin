@@ -1,6 +1,6 @@
 # Gitar configuration
 
-[Gitar](https://docs.gitar.ai) reviews every pull request (`gitar-bot[bot]`), analyzes failing CI and can push fixes. It reads this directory on each run, alongside `CLAUDE.md` and the skills in `.claude/skills/`. Gitar's docs list only the subdirectories below as configuration; this README is for maintainers.
+[Gitar](https://docs.gitar.ai) reviews every pull request once it is ready for review (`gitar-bot[bot]`), analyzes failing CI and can push fixes. It reads this directory on each run, alongside `CLAUDE.md` and the skills in `.claude/skills/`. Gitar's docs list only the subdirectories below as configuration; this README is for maintainers.
 
 | Path | Loaded | What it does |
 | - | - | - |

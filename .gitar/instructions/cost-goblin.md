@@ -7,7 +7,7 @@ Review guidance lives in `.gitar/review/`; this file is what every run needs, in
 You also load `CLAUDE.md`. It is written for the maintainer's local Claude Code sessions, so it mixes two kinds of content:
 
 - **Repository rules.** Enforce these in reviews and follow them in anything you commit: "TypeScript Rules", "Linting Rules", "Testing Approach", "Fixture Data", "Git Safety", "Dependency supply chain", "Versioning & releases", "Key Architecture Decisions", "SQL Security", "Frontend Stack" and "What NOT To Do". Of "Linting Rules", the import-sorting and Biome lines aren't enforced by any tool yet.
-- **The maintainer's local workflow.** Not addressed to you, and nothing to ask of a PR author: the "Development Workflow" steps, "After pushing — close the review loop" (draft PRs, `/code-review`, answering `sentry[bot]`, `gitar-bot[bot]` and SonarCloud), and the pre-commit note under "Versioning & releases".
+- **The maintainer's local workflow.** Not addressed to you, and nothing to ask of a PR author: "Development Workflow", "After pushing — close the review loop" (draft PRs, `/code-review`, answering `sentry[bot]`, `gitar-bot[bot]` and SonarCloud) and the pre-commit note under "Versioning & releases".
 
 ## Where things live
 
