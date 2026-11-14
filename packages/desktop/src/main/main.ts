@@ -1,3 +1,4 @@
+import './uv-threadpool-init.js';
 import { app, BrowserWindow, dialog, ipcMain, session } from 'electron';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { Session } from 'node:inspector';

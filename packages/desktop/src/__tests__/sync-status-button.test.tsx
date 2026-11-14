@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -39,6 +42,11 @@ function trigger(): HTMLElement {
 function badge(): string | null {
   const spans = trigger().querySelectorAll('span');
   return spans.length === 0 ? null : (spans[0]?.textContent ?? null);
+}
+
+/** The icon copy that blinks over the trigger's own icon, or null when none does. */
+function blinker(): Element | null {
+  return trigger().querySelector('.animate-sync-blink');
 }
 
 async function openPopover(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
@@ -88,6 +96,42 @@ describe('SyncStatusButton — the header indicator', () => {
     const dot = trigger().querySelector('span');
     expect(dot?.getAttribute('aria-hidden')).toBe('true');
     expect(dot?.textContent).toBe('');
+  });
+
+  it.each([
+    { name: 'downloading', props: { activity: 'downloading' as const, filesRemaining: 4 } },
+    { name: 'checking', props: { activity: 'syncing' as const } },
+  ])('blinks an accent copy of its icon while $name, and stays still itself', ({ props }) => {
+    renderButton(props);
+    expect(trigger().classList.contains('animate-sync-blink')).toBe(false);
+    expect(trigger().querySelectorAll('svg')).toHaveLength(2);
+    const copy = blinker();
+    expect(copy?.tagName.toLowerCase()).toBe('svg');
+    expect(copy?.getAttribute('aria-hidden')).toBe('true');
+    expect(copy?.classList.contains('text-accent')).toBe(true);
+    expect(copy?.classList.contains('motion-reduce:animate-none')).toBe(true);
+    // The icon under the copy is the blink's other color: it stays grey
+    // whatever the button's own color is (hovered, or its popover open).
+    expect(trigger().querySelector('svg')?.classList.contains('text-text-secondary')).toBe(true);
+  });
+
+  it.each([
+    { name: 'nothing runs', props: {} },
+    { name: 'a sync has failed', props: { error: 'Network down', activity: 'downloading' as const, filesRemaining: 4 } },
+  ])('blinks nothing while $name', ({ props }) => {
+    renderButton(props);
+    expect(blinker()).toBeNull();
+    expect(trigger().querySelectorAll('svg')).toHaveLength(1);
+    expect(trigger().querySelector('svg')?.classList.contains('text-text-secondary')).toBe(false);
+  });
+
+  it('blinks through opacity alone, which needs no main-thread frame', () => {
+    const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'renderer', 'app.css'), 'utf8');
+    const keyframes = /@keyframes sync-blink\s*\{((?:[^{}]*\{[^{}]*\})+)\s*\}/.exec(css)?.[1] ?? '';
+    const properties = [...keyframes.matchAll(/([a-z-]+)\s*:/g)].map(match => match[1]);
+    expect(properties.length).toBeGreaterThan(0);
+    expect(properties.filter(property => property !== 'opacity')).toEqual([]);
+    expect(css).toMatch(/--animate-sync-blink:\s*sync-blink\b[^;]*\binfinite;/);
   });
 
   it.each([

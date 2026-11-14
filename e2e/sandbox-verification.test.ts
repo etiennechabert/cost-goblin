@@ -34,7 +34,7 @@ async function waitForMcp(tokenFile: string): Promise<string> {
   throw new Error('MCP server did not come up');
 }
 
-async function openSession(token: string): Promise<(name: string, args: Record<string, unknown>) => Promise<ToolText>> {
+async function openSession(base: string, token: string): Promise<(name: string, args: Record<string, unknown>) => Promise<ToolText>> {
   let sessionId = '';
   let nextId = 1;
   const headers = (): Record<string, string> => ({
@@ -44,7 +44,7 @@ async function openSession(token: string): Promise<(name: string, args: Record<s
     ...(sessionId.length > 0 ? { 'Mcp-Session-Id': sessionId, 'Mcp-Protocol-Version': '2025-03-26' } : {}),
   });
   async function rpc(method: string, params: Record<string, unknown>): Promise<unknown> {
-    const res = await fetch(`${MCP_BASE}/mcp`, {
+    const res = await fetch(`${base}/mcp`, {
       method: 'POST',
       headers: headers(),
       body: JSON.stringify({ jsonrpc: '2.0', id: nextId++, method, params }),
@@ -58,7 +58,7 @@ async function openSession(token: string): Promise<(name: string, args: Record<s
     return parsed['result'];
   }
   await rpc('initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'e2e', version: '0.0.0' } });
-  await fetch(`${MCP_BASE}/mcp`, { method: 'POST', headers: headers(), body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) });
+  await fetch(`${base}/mcp`, { method: 'POST', headers: headers(), body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) });
   return async (name, args) => {
     const result = await rpc('tools/call', { name, arguments: args });
     if (!isRecord(result) || !Array.isArray(result['content'])) throw new Error('bad tool result');
@@ -86,7 +86,7 @@ test.describe('MCP queries run on a sandboxed DuckDB instance', () => {
     });
     await mcpApp.firstWindow();
     const token = await waitForMcp(join(userDataDir, 'mcp-auth-token'));
-    callTool = await openSession(token);
+    callTool = await openSession(MCP_BASE, token);
   });
 
   test.afterAll(async () => {
@@ -195,6 +195,36 @@ test.describe('the MCP server is opt-in', () => {
     expect(sandboxed).toBe(true);
   });
 
+  // libuv has one thread pool per process, 4 threads unless told otherwise,
+  // and every DuckDB call in flight holds one. With them all held, the main
+  // process's own file reads waited behind multi-second queries and a cancel
+  // sent to a call that had not started was lost. The app sizes the pool as
+  // its first import (uv-threadpool-init.ts), which only works while nothing
+  // uses the pool before that: this fails if a later import ever does. Named
+  // pipes stand in for the calls: opening one holds a thread and no CPU.
+  test('a file read still gets a libuv thread while six are held', async () => {
+    test.skip(process.platform === 'win32', 'needs mkfifo');
+    if (optApp === undefined) throw new Error('the app was not launched');
+    const read = await optApp.evaluate(async (_modules, dir) => {
+      const fs = process.getBuiltinModule('node:fs');
+      const { execFileSync } = process.getBuiltinModule('node:child_process');
+      const pipes = Array.from({ length: 6 }, (_, i) => `${dir}/held-${String(i)}`);
+      for (const pipe of pipes) execFileSync('mkfifo', [pipe]);
+      // Each open blocks one pool thread until its pipe has a writer.
+      const held = pipes.map(pipe => fs.promises.open(pipe, 'r'));
+      const outcome = await Promise.race([
+        fs.promises.stat(dir).then(() => 'served'),
+        new Promise<string>((resolve) => { setTimeout(() => { resolve('starved'); }, 3_000); }),
+      ]);
+      // A read-write open never blocks, and gives every pipe its writer.
+      const writers = pipes.map(pipe => fs.openSync(pipe, fs.constants.O_RDWR));
+      for (const reader of await Promise.all(held)) await reader.close();
+      for (const writer of writers) fs.closeSync(writer);
+      return outcome;
+    }, scratch);
+    expect(read).toBe('served');
+  });
+
   test('nothing listens until Enable; Disable closes the port again', async () => {
     test.setTimeout(60_000);
     // main() runs its launch-time check right after the window loads, long
@@ -224,5 +254,41 @@ test.describe('the MCP server is opt-in', () => {
     await optPage.getByRole('button', { name: 'Disable', exact: true }).click();
     await expect(optPage.getByText('MCP server stopped')).toBeVisible({ timeout: 15_000 });
     expect(await probeHealth()).toBe('refused');
+  });
+
+  // Stopping the server ends its DuckDB worker thread. Ending that thread under
+  // a running query used to abort the main process ("libc++abi: terminating due
+  // to uncaught exception of type Napi::Error"): the whole app, gone.
+  test('Disable while an MCP query is running leaves the app up', async () => {
+    test.setTimeout(90_000);
+    await optPage.getByRole('button', { name: 'Enable', exact: true }).click();
+    await expect(optPage.getByText('MCP server running')).toBeVisible({ timeout: 25_000 });
+    const callTool = await openSession(OPT_IN_BASE, readFileSync(tokenFile, 'utf-8').trim());
+
+    // Tens of seconds of work for DuckDB, so it is still running at Disable.
+    const slow = callTool('run_sql', {
+      sql: 'SELECT count(*) AS n FROM range(200000) a, range(200000) b',
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+    }).then(
+      (result) => (result.isError ? `failed: ${result.text}` : `answered: ${result.text}`),
+      (err: unknown) => `dropped: ${String(err)}`,
+    );
+    // Long enough for the tool call to reach DuckDB and start executing.
+    await new Promise(r => setTimeout(r, 1500));
+
+    await optPage.getByRole('button', { name: 'Disable', exact: true }).click();
+    await expect(optPage.getByText('MCP server stopped')).toBeVisible({ timeout: 15_000 });
+    expect(await probeHealth()).toBe('refused');
+
+    // The query was cut short rather than left to finish: its caller got an
+    // error or a closed connection, never rows.
+    expect(await slow).not.toMatch(/^answered/);
+
+    // The main process is still there, and still serving the window.
+    expect(optApp?.process().exitCode).toBeNull();
+    expect(await optApp?.evaluate(({ app }) => app.isReady())).toBe(true);
+    await optPage.getByRole('button', { name: 'Enable', exact: true }).click();
+    await expect(optPage.getByText('MCP server running')).toBeVisible({ timeout: 25_000 });
+    expect(await probeHealth()).toBe('listening');
   });
 });

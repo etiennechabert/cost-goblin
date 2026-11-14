@@ -386,9 +386,38 @@ function handleCancelPending(): void {
   }
   // Actively interrupt running DuckDB queries so they release pool
   // connections immediately instead of running to completion.
-  for (const conn of runningConns.values()) {
+  keepInterruptingCancelled();
+}
+
+const REINTERRUPT_INTERVAL_MS = 25;
+let reinterruptTimer: NodeJS.Timeout | null = null;
+
+/** Interrupt the connection of every cancelled query that has not settled.
+ *  Returns whether there was one. */
+function interruptCancelled(): boolean {
+  let pending = false;
+  for (const [id, conn] of runningConns) {
+    if (!cancelledIds.has(id)) continue;
+    pending = true;
     try { conn.interrupt(); } catch { /* connection may already be closed */ }
   }
+  return pending;
+}
+
+/** Interrupt the cancelled queries now, then again every few milliseconds
+ *  until each has settled. One interrupt is not enough: DuckDB clears a
+ *  connection's interrupted flag when a query begins on it, and a query in
+ *  `runningConns` may not have begun. Its task waits for a free thread of
+ *  libuv's pool (four by default, shared by the whole process), and a
+ *  prepared query takes two tasks. An interrupt made in that gap was dropped,
+ *  and the query ran to its end before it was reported cancelled. */
+function keepInterruptingCancelled(): void {
+  if (!interruptCancelled() || reinterruptTimer !== null) return;
+  reinterruptTimer = setInterval(() => {
+    if (interruptCancelled() || reinterruptTimer === null) return;
+    clearInterval(reinterruptTimer);
+    reinterruptTimer = null;
+  }, REINTERRUPT_INTERVAL_MS);
 }
 
 async function handleConfigure(req: { kind: 'configure'; tempDir?: string; memoryGB?: number; threads?: number }): Promise<void> {
