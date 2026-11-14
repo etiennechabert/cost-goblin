@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { formatDollars } from './format.js';
 import { CoinRainLoader } from './coin-rain-loader.js';
 import { useSeriesColors } from '../hooks/use-palette.js';
@@ -268,9 +268,11 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
   // The host hands over a new click closure on each of its renders, and it
   // renders on every cross-chart hover (this chart reporting its own focus,
   // for one). The bars get one callback for the chart's life, which calls the
-  // latest closure.
+  // closure of the render on screen: the ref is set at commit, so a render
+  // React has started and not committed (a transition) can't change what a
+  // click on the bars it hasn't replaced yet does.
   const onSegmentClickRef = useRef(onSegmentClick);
-  onSegmentClickRef.current = onSegmentClick;
+  useLayoutEffect(() => { onSegmentClickRef.current = onSegmentClick; });
   const clickSegment = useCallback((name: string) => { onSegmentClickRef.current?.(name); }, []);
   const segmentClick = onSegmentClick === undefined ? undefined : clickSegment;
 
