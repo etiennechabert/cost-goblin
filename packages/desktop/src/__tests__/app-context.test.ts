@@ -416,7 +416,8 @@ describe('createAppContext: query result cache', () => {
     const invalidate = vi.spyOn(h.app.rollupStore, 'invalidate');
 
     await h.app.clearAllCaches();
-    expect(h.db.cancelPendingQueries).toHaveBeenCalledTimes(1);
+    // Builds included: the rollup they write is invalidated next.
+    expect(h.db.cancelAllQueries).toHaveBeenCalledTimes(1);
     expect(invalidate).toHaveBeenCalledTimes(1);
     expect(h.app.state).toMatchObject({ config: null, dimensions: null, views: null, costScope: null, accountMap: null, regionMap: null, orgAccountsPath: null });
     await h.app.runQuery(sql);

@@ -11,7 +11,13 @@ export interface DuckDBClient {
    *  Used for rollup partition builds so per-build time stays flat — a reused
    *  connection's buffer/cache accumulates and later builds slow down. */
   runBuildQuery(sql: string, onStarted?: () => void): Promise<RawRow[]>;
+  /** Cancel the queries a view is waiting on, queued or running. Rollup
+   *  partition builds (`runBuildQuery`) keep running: a click must not cost the
+   *  rollup a month. */
   cancelPendingQueries(): void;
+  /** Cancel everything, builds included. For a caller about to drop or replace
+   *  what the builds read and write: a cache clear, a provider's removal. */
+  cancelAllQueries(): void;
   configure(settings: { tempDir?: string; memoryGB?: number; threads?: number }): void;
   /** Stop the worker. Queries still in flight are cancelled first and the
    *  thread is ended only once they have answered: tearing it down under a
@@ -184,6 +190,9 @@ export async function createDuckDBClient(workerPath: string, workerData?: DuckDB
     },
     cancelPendingQueries(): void {
       worker.postMessage({ kind: 'cancel-pending' });
+    },
+    cancelAllQueries(): void {
+      worker.postMessage({ kind: 'cancel-pending', builds: true });
     },
     configure(settings: { tempDir?: string; memoryGB?: number; threads?: number }): void {
       worker.postMessage({ kind: 'configure', ...settings });
