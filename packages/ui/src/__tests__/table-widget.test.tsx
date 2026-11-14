@@ -243,7 +243,6 @@ describe('TableWidget previous-period rows', () => {
  *  `answerCount()` and failed by `failCount()`. */
 class DeferredCountApi extends MockCostApi {
   readonly rowRequests: AggregatedTableParams[] = [];
-  readonly countRequests: AggregatedGroupCountParams[] = [];
   private readonly rows: readonly AggregatedTableRow[];
   private readonly totalRows: number | null;
   private pending: { resolve: (n: number) => void; reject: (err: Error) => void }[] = [];
@@ -261,9 +260,8 @@ class DeferredCountApi extends MockCostApi {
     return Promise.resolve({ rows, totalRows: this.totalRows, tagColumns: [] });
   }
 
-  override countAggregatedGroups(params?: AggregatedGroupCountParams): Promise<number> {
-    if (params === undefined) return super.countAggregatedGroups();
-    this.countRequests.push(params);
+  override countAggregatedGroups(params: AggregatedGroupCountParams): Promise<number> {
+    this.groupCountRequests.push(params);
     return new Promise((resolve, reject) => { this.pending.push({ resolve, reject }); });
   }
 
@@ -307,7 +305,7 @@ describe('TableWidget row count', () => {
     await screen.findByText('Usage');
     expect(showing()).toBe(`Showing 3 of ${(1_234).toLocaleString()} rows`);
     expect(api.rowRequests.map(r => r.deferTotalRows)).toEqual([true]);
-    expect(api.countRequests).toEqual([]);
+    expect(api.groupCountRequests).toEqual([]);
   });
 
   it('shows the rows before their count, then the count once it is in', async () => {
@@ -316,7 +314,7 @@ describe('TableWidget row count', () => {
 
     await screen.findByText('Usage');
     await waitFor(() => { expect(showing()).toBe('Showing 3 of … rows'); });
-    expect(api.countRequests).toEqual([{
+    expect(api.groupCountRequests).toEqual([{
       filters: {},
       dateRange: CURRENT,
       granularity: 'daily',
@@ -333,7 +331,7 @@ describe('TableWidget row count', () => {
     const api = new DeferredCountApi(ROWS, null);
     renderCount(api);
     await screen.findByText('Usage');
-    await waitFor(() => { expect(api.countRequests).toHaveLength(1); });
+    await waitFor(() => { expect(api.groupCountRequests).toHaveLength(1); });
     act(() => { api.answerCount(1_234); });
     await waitFor(() => { expect(showing()).toBe(`Showing 3 of ${(1_234).toLocaleString()} rows`); });
 
@@ -342,14 +340,14 @@ describe('TableWidget row count', () => {
     await waitFor(() => { expect(api.rowRequests).toHaveLength(2); });
     await waitFor(() => { expect(shownCategories()).toEqual(['Purchase', 'Tax', 'Usage']); });
     expect(showing()).toBe(`Showing 3 of ${(1_234).toLocaleString()} rows`);
-    expect(api.countRequests).toHaveLength(1);
+    expect(api.groupCountRequests).toHaveLength(1);
   });
 
   it('shows the rows it has when the count fails', async () => {
     const api = new DeferredCountApi(ROWS, null);
     renderCount(api);
     await screen.findByText('Usage');
-    await waitFor(() => { expect(api.countRequests).toHaveLength(1); });
+    await waitFor(() => { expect(api.groupCountRequests).toHaveLength(1); });
 
     act(() => { api.failCount(); });
 

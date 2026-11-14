@@ -658,7 +658,10 @@ export class MockCostApi implements CostApi {
       tagColumns: [{ id: 'tag_team', label: 'Team' }, { id: 'tag_env', label: 'Environment' }],
     });
   }
-  countAggregatedGroups(): Promise<number> {
+  /** Every group count asked for, as asked. */
+  readonly groupCountRequests: import('@costgoblin/core/browser').AggregatedGroupCountParams[] = [];
+  countAggregatedGroups(params: import('@costgoblin/core/browser').AggregatedGroupCountParams): Promise<number> {
+    this.groupCountRequests.push(params);
     return Promise.resolve(2);
   }
   getExplorerFilterValues(): Promise<ExplorerFilterValue[]> {
