@@ -245,7 +245,7 @@ A development cycle isn't done when the code is pushed. Once the changes are pus
 
 **The PR is opened as a draft** (`gh pr create --draft`) and turns ready for review only at the end of step 1. `sentry[bot]` and `gitar-bot[bot]` review no draft (Sentry skips them, and Gitar's "Skip drafts" setting is on), so the first code they read has already been through the local review. CI, the CLA check and SonarCloud run on a draft as on any PR.
 
-Sentry and Gitar start when the PR turns ready, as its `Seer Code Review` and `Gitar` checks. Until both have finished on the current head, an empty comment list means they haven't run yet, not that they found nothing.
+Sentry and Gitar start when the PR turns ready: Sentry as the `Seer Code Review` check, Gitar with its summary comment about a minute later. Until that check has finished and that comment is there, an empty comment list means they haven't run yet, not that they found nothing.
 
 ### 1. `/code-review xhigh --fix`, then ready for review
 
@@ -318,7 +318,7 @@ gh api -X POST repos/etiennechabert/cost-goblin/issues/comments/<id>/reactions -
 
 **Gitar can commit to the branch:** when someone ticks a suggestion's "Apply fix" box, replies `gitar fix`, turns on auto-apply, or adds the `gitar-managed` label. It also pushes a repair when one of its own commits breaks CI. If the remote branch moved, `git pull --ff-only` before pushing.
 
-**Editing `.gitar/`.** Gitar filters these files before each review, so put every instruction under a heading that matches it. On #716 a "flag this" note inside the "Don't comment on" list was dropped and never reached the reviewer. `npm run check` (`scripts/ci/gitar-config.test.mjs`) fails when a `.gitar/` file names a path or identifier that no longer exists, or when `review/` plus `instructions/` grow past 32 KB. See `.gitar/README.md` for what each file does.
+**Editing `.gitar/`.** Gitar filters these files before each review, so put every instruction under a heading that matches it. On #716 a "flag this" note inside the "Don't comment on" list was dropped and never reached the reviewer. A workflow rule added to a section of this file that `.gitar/instructions/cost-goblin.md` lists as repository rules, such as "What NOT To Do", says it is the maintainer's local workflow, or Gitar asks it of every PR author (#834). `npm run check` (`scripts/ci/gitar-config.test.mjs`) fails when a `.gitar/` file names a path or identifier that no longer exists, or when `review/` plus `instructions/` grow past 32 KB. See `.gitar/README.md` for what each file does.
 
 ### 4. SonarCloud findings
 
@@ -372,8 +372,8 @@ curl -s "https://sonarcloud.io/api/hotspots/search?projectKey=etiennechabert_cos
 ## What NOT To Do
 
 - Do NOT skip `npm run check`. Every change must pass before moving on.
-- Do NOT open a PR ready for review. It starts as a draft and turns ready only at the end of step 1 of "After pushing": `/code-review xhigh --fix` has run on it and the PR has the comment saying so.
-- Do NOT consider a pushed change "done" until `/code-review xhigh --fix` has been run on it, every `sentry[bot]` and `gitar-bot[bot]` comment is answered, and SonarCloud's new issues are triaged.
+- Do NOT open a PR ready for review (maintainer's local workflow, not a repository rule). It starts as a draft and turns ready only at the end of step 1 of "After pushing": `/code-review xhigh --fix` has run on it and the PR has the comment saying so.
+- Do NOT consider a pushed change "done" (same local workflow) until `/code-review xhigh --fix` has been run on it, every `sentry[bot]` and `gitar-bot[bot]` comment is answered, and SonarCloud's new issues are triaged.
 - Do NOT add `any`, `@ts-ignore`, or `eslint-disable` to make code compile.
 - Do NOT write tests after implementation. Write them before or alongside.
 - Do NOT import from `core` into `ui` for anything except types.
