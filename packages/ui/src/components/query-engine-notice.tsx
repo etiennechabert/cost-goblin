@@ -29,7 +29,8 @@ const SECONDARY = `${ACTION} text-text-secondary hover:text-text-primary`;
  *  - rollup build paused: what follows a restart from `stopped`. Stays until
  *    the user asks for the rollup, since nothing else brings it back short of
  *    a relaunch.
- *  Purely presentational: the parent owns the status and the actions. */
+ *  Purely presentational: the parent owns the status and the actions. The
+ *  status notices are `<output>` elements: an implicit status live region. */
 export function QueryEngineNotice({ status, onRestart, onResumeRollupBuilds, onReload, onOpenPerformance }: Readonly<QueryEngineNoticeProps>): React.JSX.Element | null {
   // The restart (its time) the user has answered, by reloading or dismissing.
   const [answered, setAnswered] = useState<number | null>(null);
@@ -56,9 +57,9 @@ export function QueryEngineNotice({ status, onRestart, onResumeRollupBuilds, onR
 
   if (status.state === 'restarting') {
     return (
-      <div role="status" className="border-b border-warning/40 bg-warning-muted px-4 py-1.5 text-xs text-text-secondary [-webkit-app-region:no-drag]">
+      <output className="block border-b border-warning/40 bg-warning-muted px-4 py-1.5 text-xs text-text-secondary [-webkit-app-region:no-drag]">
         The query engine stopped unexpectedly. Restarting it…
-      </div>
+      </output>
     );
   }
 
@@ -70,7 +71,7 @@ export function QueryEngineNotice({ status, onRestart, onResumeRollupBuilds, onR
       onResumeRollupBuilds();
     };
     return (
-      <div role="status" className="flex items-center justify-between gap-4 border-b border-warning/40 bg-warning-muted px-4 py-2 [-webkit-app-region:no-drag]">
+      <output className="flex items-center justify-between gap-4 border-b border-warning/40 bg-warning-muted px-4 py-2 [-webkit-app-region:no-drag]">
         <p className="min-w-0 text-xs text-text-secondary">
           <span className="font-medium text-text-primary">The rollup build is paused.</span>
           {' '}Dashboards read your exports directly until it is rebuilt, which is slower. If the query engine stops again, lower the memory limit or the rollup build parallelism first.
@@ -79,14 +80,14 @@ export function QueryEngineNotice({ status, onRestart, onResumeRollupBuilds, onR
           <button type="button" className={SECONDARY} onClick={onOpenPerformance}>Performance settings</button>
           <button type="button" className={PRIMARY} onClick={resume}>Rebuild the rollup</button>
         </div>
-      </div>
+      </output>
     );
   }
 
   const { restartedAt } = status;
   if (restartedAt === null || restartedAt === answered) return null;
   return (
-    <div role="status" className="flex items-center justify-between gap-4 border-b border-warning/40 bg-warning-muted px-4 py-1.5 [-webkit-app-region:no-drag]">
+    <output className="flex items-center justify-between gap-4 border-b border-warning/40 bg-warning-muted px-4 py-1.5 [-webkit-app-region:no-drag]">
       <p className="min-w-0 text-xs text-text-secondary">
         <span className="font-medium text-text-primary">The query engine restarted.</span>
         {' '}It stopped unexpectedly, so the queries that were running failed.
@@ -103,6 +104,6 @@ export function QueryEngineNotice({ status, onRestart, onResumeRollupBuilds, onR
           <X size={14} aria-hidden="true" />
         </button>
       </div>
-    </div>
+    </output>
   );
 }
