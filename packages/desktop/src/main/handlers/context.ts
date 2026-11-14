@@ -706,7 +706,8 @@ export function createAppContext(ctx: IpcContext): AppContext {
       return rollupStore.isReady();
     },
     clearAllCaches: async (): Promise<void> => {
-      ctx.db.cancelPendingQueries();
+      // Builds too: the rollup they write is invalidated below.
+      ctx.db.cancelAllQueries();
       inflightQueries.clear();
       // Invalidate the rollup FIRST, while the provider config the store's
       // providerName closure reads is still populated. Nulling state.config

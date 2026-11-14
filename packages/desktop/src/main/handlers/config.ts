@@ -101,7 +101,7 @@ export function registerConfigHandlers(app: AppContext): void {
     // configured — no half-state where the config forgot a provider whose data
     // survives for a same-name re-add to adopt. rm's force only swallows ENOENT,
     // so a real failure still throws and rejects the IPC.
-    ctx.db.cancelPendingQueries();
+    ctx.db.cancelAllQueries();
     await fs.rm(path.join(ctx.dataDir, String(safeName)), { recursive: true, force: true });
     await fs.writeFile(ctx.configPath, stringify(updated), 'utf-8');
     // Removal can change which provider is FIRST — and the RollupStore's

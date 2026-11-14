@@ -210,11 +210,14 @@ describe('createDuckDBClient', () => {
     const { client, worker } = await connected();
 
     client.cancelPendingQueries();
+    client.cancelAllQueries();
     client.configure({ tempDir: '/tmp/duck', memoryGB: 4, threads: 2 });
     await client.terminate();
 
     expect(worker.posted).toEqual([
+      // A view's cancel names no builds: the worker spares them.
       { kind: 'cancel-pending' },
+      { kind: 'cancel-pending', builds: true },
       { kind: 'configure', tempDir: '/tmp/duck', memoryGB: 4, threads: 2 },
     ]);
     expect(worker.terminateCalls).toBe(1);

@@ -323,6 +323,7 @@ curl -s "https://sonarcloud.io/api/hotspots/search?projectKey=etiennechabert_cos
 - **FOCUS 1.2 is the core schema** — the AWS source is the FOCUS 1.2 Data Export (Parquet); providers are receivers that deliver FOCUS Parquet into per-month `raw/{tier}-{YYYY-MM}/` dirs. Queries read the downloaded Parquet as-is (no repartitioning); per-month dirs give file-level date filter pushdown.
 - **No SQLite** — all state is YAML (user config) or JSON (app state). DuckDB is the only database.
 - **Only a missing config file is "absent"** — a YAML config that exists but doesn't load (a YAML or validation error, EACCES) is reported, never written over with defaults, and nothing runs as if it were absent: queries fail rather than run without cost-scope.yaml, and config bundles fail naming the file, except the LAN data share, which leaves out (and logs) a views.yaml that doesn't load (`buildCurrentBundle`'s `brokenViews: 'skip'`). Never `.catch(() => undefined)` a config load.
+- **A view's cancel never stops a rollup build** — `cancelPendingQueries()` (sent on every navigation and date change) spares `runBuildQuery`, because a cancelled partition build is not retried and its month then reads raw. `cancelAllQueries()` is for a caller about to drop what the builds read or write.
 - **CostApi interface is the boundary** — UI codes against the interface, never calls DuckDB directly. Enables mock testing and future web mode.
 - **Dark mode default, light mode available** — two chart color palettes (standard + Okabe-Ito colorblind-safe), togglable.
 
