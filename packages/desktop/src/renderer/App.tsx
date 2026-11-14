@@ -921,8 +921,11 @@ function AppShell(): React.JSX.Element {
   /** Run the current page's queries again, after the query engine dropped
    *  them: a remount, without the cache clear (and rollup rebuild) of a full
    *  reload. Asks first when the page holds unsaved edits. */
-  function handleReloadView() {
-    confirmLeave(() => { setRefreshNonce(n => n + 1); });
+  function handleReloadView(done: () => void) {
+    confirmLeave(() => {
+      setRefreshNonce(n => n + 1);
+      done();
+    });
   }
 
   function exitSettings() {

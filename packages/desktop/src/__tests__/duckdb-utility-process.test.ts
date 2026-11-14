@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { logger } from '@costgoblin/core';
 import { QUERY_ENGINE_PROCESS_NAME, utilityProcessSpawner } from '../main/duckdb-utility-process.js';
 import type { DuckDBProcessExit } from '../main/duckdb-supervisor.js';
 import { DUCKDB_SETTINGS_ENV, computeUvThreadPoolSize } from '../main/duckdb-tuning.js';
@@ -143,6 +144,21 @@ describe('utilityProcessSpawner', () => {
     lastChild().emit('exit', 9);
 
     expect(exits).toEqual([{ code: 9, stderrTail: '' }]);
+  });
+
+  it('logs a fatal error the process reports, instead of letting the event throw in this one', () => {
+    const error = vi.spyOn(logger, 'error').mockImplementation(() => undefined);
+    try {
+      utilityProcessSpawner('/w.cjs')({});
+      // An 'error' event nobody listens to throws from emit().
+      expect(() => lastChild().emit('error', 'FatalError', 'v8::internal::Heap::FatalProcessOutOfMemory', '{"header":{}}')).not.toThrow();
+      expect(error).toHaveBeenCalledWith(
+        'duckdb: the query engine process reported a fatal error',
+        { type: 'FatalError', location: 'v8::internal::Heap::FatalProcessOutOfMemory' },
+      );
+    } finally {
+      error.mockRestore();
+    }
   });
 
   it('kills the process when asked', () => {

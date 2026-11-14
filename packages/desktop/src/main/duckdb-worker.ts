@@ -7,6 +7,7 @@ import type { DuckDBConnection, DuckDBInstance } from './duckdb-loader.js';
 import { createResourcePool } from './connection-pool.js';
 import type { ResourcePool } from './connection-pool.js';
 import { DUCKDB_SETTINGS_ENV, computeDefaultMemoryGB, computeDefaultThreads, computeQueryPoolSize } from './duckdb-tuning.js';
+import type { DuckDBSettings } from './duckdb-tuning.js';
 
 interface DuckDBModule {
   DuckDBInstance: { create: () => Promise<DuckDBInstance> };
@@ -15,12 +16,6 @@ interface DuckDBModule {
 async function createDuckDB(): Promise<DuckDBInstance> {
   const duckdb = (await import('@duckdb/node-api')) as unknown as DuckDBModule;
   return duckdb.DuckDBInstance.create();
-}
-
-interface DuckDBSettings {
-  readonly tempDir?: string | undefined;
-  readonly memoryGB?: number | undefined;
-  readonly threads?: number | undefined;
 }
 
 /** The settings whoever spawned this process passed in its environment: for
@@ -63,7 +58,7 @@ function hasProps(msg: unknown): msg is Record<string, unknown> {
   return typeof msg === 'object' && msg !== null;
 }
 
-function isSettings(value: unknown): value is Record<string, unknown> & { tempDir?: string; memoryGB?: number; threads?: number } {
+function isSettings(value: unknown): value is Record<string, unknown> & DuckDBSettings {
   if (!hasProps(value)) return false;
   if (value['tempDir'] !== undefined && typeof value['tempDir'] !== 'string') return false;
   if (value['memoryGB'] !== undefined && typeof value['memoryGB'] !== 'number') return false;

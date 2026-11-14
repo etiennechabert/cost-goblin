@@ -377,6 +377,31 @@ describe('when the process exits unexpectedly', () => {
     expect(restarts).toEqual([running]);
   });
 
+  it('carries on when a listener throws: the others are told and the restart completes', async () => {
+    const r = rig();
+    const error = vi.spyOn(logger, 'error').mockImplementation(() => undefined);
+    try {
+      const client = await started(r);
+      const seen: string[] = [];
+      client.onStateChanged(() => { throw new Error('window is gone'); });
+      client.onStateChanged((state) => { seen.push(state.state); });
+      client.onRestarted(() => { throw new Error('warmup failed to start'); });
+      client.onRestarted(() => { seen.push('restarted'); });
+
+      r.current().die();
+      const held = client.runQuery('SELECT 1');
+      r.current().ready();
+
+      expect(seen).toEqual(['restarting', 'running', 'restarted']);
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('window is gone'));
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('warmup failed to start'));
+      r.current().say({ kind: 'rows', id: 0, rows: [] });
+      await expect(held).resolves.toEqual([]);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
   it('stops telling a listener that unsubscribed', async () => {
     const r = rig();
     const client = await started(r);
@@ -472,18 +497,42 @@ describe('when the process exits unexpectedly', () => {
     r.current().die();
     const stuck = r.current();
 
+    const held = client.runQuery('SELECT 1');
     await vi.advanceTimersByTimeAsync(START_TIMEOUT_MS);
     expect(stuck.kills).toBe(1);
-    // Its exit is what counts it as dead and starts the next one.
-    expect(r.spawned).toHaveLength(2);
+    // Given up on there and then: a process stuck this badly may never
+    // report its exit, and the queries held for it would wait for ever.
+    expect(r.spawned).toHaveLength(3);
+    // The exit it does report later is not a second death.
     stuck.die({ code: 0 });
     expect(r.spawned).toHaveLength(3);
+    stuck.ready();
+    expect(client.getState()).toEqual({ state: 'restarting' });
 
-    // A process that got ready in time is left alone.
+    // A process that got ready in time is left alone, and runs what was held.
     r.current().ready();
     await vi.advanceTimersByTimeAsync(START_TIMEOUT_MS * 2);
     expect(r.current().kills).toBe(0);
     expect(client.getState().state).toBe('running');
+    r.current().say({ kind: 'rows', id: 0, rows: [] });
+    await expect(held).resolves.toEqual([]);
+  });
+
+  it('stops at the breaker when no replacement ever gets ready, though none reports its exit', async () => {
+    vi.useFakeTimers();
+    const r = rig();
+    const client = await started(r);
+    const held = (() => {
+      r.current().die();
+      return client.runQuery('SELECT 1');
+    })();
+    held.catch(() => undefined);
+
+    // One death so far; two replacements that hang take it to three.
+    await vi.advanceTimersByTimeAsync(START_TIMEOUT_MS * 2);
+
+    expect(client.getState()).toMatchObject({ state: 'stopped', deaths: 3 });
+    await expect(held).rejects.toThrow(/was not restarted/);
   });
 
   it('kills a new process that says it cannot start, and replaces it', async () => {
@@ -494,6 +543,7 @@ describe('when the process exits unexpectedly', () => {
 
     failing.say({ kind: 'error', id: -1, message: 'DuckDB worker init failed: out of memory' });
     expect(failing.kills).toBe(1);
+    expect(r.spawned).toHaveLength(3);
     failing.die({ code: 0 });
     expect(r.spawned).toHaveLength(3);
   });

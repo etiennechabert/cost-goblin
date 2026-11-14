@@ -114,6 +114,17 @@ describe('query engine channels', () => {
     expect(win.webContents.send).toHaveBeenCalledWith('engine:status-changed', { ...STOPPED, rollupBuildsPaused: true });
   });
 
+  it('pauses the build for an engine that was given up on before anything listened', async () => {
+    // At launch: three deaths before the handlers were registered.
+    const engine = new FakeEngine();
+    engine.state = STOPPED;
+
+    const h = await engineApp(engine);
+
+    expect(h.app.rollupBuildsPaused()).toBe(true);
+    expect(await h.ipc.invoke('engine:get-status')).toEqual({ ...STOPPED, rollupBuildsPaused: true });
+  });
+
   it('restarts a stopped engine on request, leaving the rollup build paused', async () => {
     const engine = new FakeEngine();
     const h = await engineApp(engine);

@@ -8,8 +8,10 @@ interface QueryEngineNoticeProps {
   readonly onRestart: () => void;
   /** Let the app build the rollup on its own again, starting now. */
   readonly onResumeRollupBuilds: () => void;
-  /** Run the current view's queries again. */
-  readonly onReload: () => void;
+  /** Run the current view's queries again, then call `done`. Not calling it
+   *  (the user chose to stay on a page with unsaved edits) leaves the notice
+   *  up, for another try. */
+  readonly onReload: (done: () => void) => void;
   readonly onOpenPerformance: () => void;
 }
 
@@ -93,10 +95,7 @@ export function QueryEngineNotice({ status, onRestart, onResumeRollupBuilds, onR
         <button
           type="button"
           className={PRIMARY}
-          onClick={() => {
-            setAnswered(restartedAt);
-            onReload();
-          }}
+          onClick={() => { onReload(() => { setAnswered(restartedAt); }); }}
         >
           Reload view
         </button>

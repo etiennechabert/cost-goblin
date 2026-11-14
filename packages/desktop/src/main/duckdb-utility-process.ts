@@ -1,4 +1,5 @@
 import { utilityProcess } from 'electron';
+import { logger } from '@costgoblin/core';
 import type { DuckDBProcess, DuckDBProcessExit, DuckDBSettings, SpawnDuckDBProcess } from './duckdb-supervisor.js';
 import { duckdbProcessEnv } from './duckdb-tuning.js';
 
@@ -32,6 +33,12 @@ export function utilityProcessSpawner(bundlePath: string): SpawnDuckDBProcess {
       // stderr is piped to keep its end: that is where a native abort says
       // why ("terminating due to uncaught exception of type ...").
       stdio: ['ignore', 'inherit', 'pipe'],
+    });
+    // A fatal V8 error in the child. Its exit follows and is what the
+    // supervisor acts on; without a listener, the 'error' event would throw
+    // in this process, the one the child's failures must not reach.
+    child.on('error', (type, location) => {
+      logger.error('duckdb: the query engine process reported a fatal error', { type, location });
     });
     let stderrTail = '';
     child.stderr?.on('data', (chunk: Buffer | string) => {

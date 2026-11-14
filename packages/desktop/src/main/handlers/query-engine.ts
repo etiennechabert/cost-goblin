@@ -46,6 +46,9 @@ export function registerQueryEngineHandlers(app: AppContext): void {
     broadcast();
   });
 
+  // An engine given up on before this ran (at launch, before any window)
+  // told no listener: its build is paused all the same.
+  if (engine?.getState().state === 'stopped') app.pauseRollupBuilds();
   engine?.onStateChanged((state) => {
     if (state.state === 'stopped') app.pauseRollupBuilds();
     broadcast();

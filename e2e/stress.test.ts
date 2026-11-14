@@ -439,11 +439,16 @@ test.describe('Query engine death', () => {
     // Freeze it, so the queries the next view sends are surely still running
     // when it dies.
     process.kill(first, 'SIGSTOP');
-    await clickNavButton(page, 'Trends');
-    await expect.poll(() => page.evaluate(() => globalThis.costgoblinDebug.getInFlightCount()), {
-      message: 'the view has queries in flight',
-    }).toBeGreaterThan(0);
-    process.kill(first, 'SIGKILL');
+    try {
+      await clickNavButton(page, 'Trends');
+      await expect.poll(() => page.evaluate(() => globalThis.costgoblinDebug.getInFlightCount()), {
+        message: 'the view has queries in flight',
+      }).toBeGreaterThan(0);
+    } finally {
+      // Whatever happened above: a stopped process does not act on the
+      // SIGTERM the app's quit sends it, and would outlive the run.
+      process.kill(first, 'SIGKILL');
+    }
 
     // The app is still there, and says what happened.
     const notice = page.getByText('The query engine restarted.', { exact: true });

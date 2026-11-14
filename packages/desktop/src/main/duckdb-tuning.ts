@@ -10,6 +10,15 @@ import { cpus, totalmem } from 'node:os';
  *  The bundle applies them before it reports ready (`duckdb-worker.ts`). */
 export const DUCKDB_SETTINGS_ENV = 'COSTGOBLIN_DUCKDB_SETTINGS';
 
+/** What a DuckDB instance is configured with: at spawn through
+ *  {@link DUCKDB_SETTINGS_ENV}, later through a `configure` message. A
+ *  setting left out keeps its computed default (or, for `tempDir`, DuckDB's). */
+export interface DuckDBSettings {
+  readonly tempDir?: string | undefined;
+  readonly memoryGB?: number | undefined;
+  readonly threads?: number | undefined;
+}
+
 /** libuv's variable for the size of a process's thread pool. Read once, at
  *  the pool's first use, so it has to be in the process's environment. */
 const UV_THREADPOOL_SIZE_ENV = 'UV_THREADPOOL_SIZE';
@@ -121,7 +130,7 @@ export function computeUvThreadPoolSize(): number {
  *  larger still is kept. */
 export function duckdbProcessEnv(
   env: Readonly<Record<string, string | undefined>>,
-  settings: { readonly tempDir?: string | undefined; readonly memoryGB?: number | undefined; readonly threads?: number | undefined },
+  settings: DuckDBSettings,
 ): Record<string, string> {
   const result: Record<string, string> = {};
   for (const [name, value] of Object.entries(env)) {

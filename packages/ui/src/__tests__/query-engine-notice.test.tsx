@@ -15,7 +15,8 @@ function setup(status: QueryEngineStatus) {
   const handlers = {
     onRestart: vi.fn<() => void>(),
     onResumeRollupBuilds: vi.fn<() => void>(),
-    onReload: vi.fn<() => void>(),
+    // Reloads at once, as the app does when the page holds no unsaved edit.
+    onReload: vi.fn<(done: () => void) => void>((done) => { done(); }),
     onOpenPerformance: vi.fn<() => void>(),
   };
   const view = render(<QueryEngineNotice status={status} {...handlers} />);
@@ -48,6 +49,18 @@ describe('QueryEngineNotice', () => {
     expect(onReload).toHaveBeenCalledTimes(1);
     // Reloading is the answer to the notice: nothing is left to say.
     expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('stays up when the reload was called off, for another try', () => {
+    // The page held unsaved edits and the user chose to stay on it.
+    const { onReload } = setup(RESTARTED);
+    onReload.mockImplementation(() => undefined);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reload view' }));
+
+    expect(onReload).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('status').textContent).toContain('The query engine restarted');
+    expect(screen.getByRole('button', { name: 'Reload view' })).toBeDefined();
   });
 
   it('stays dismissed for that restart, and comes back for the next one', () => {

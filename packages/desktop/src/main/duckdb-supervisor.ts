@@ -315,7 +315,18 @@ class DuckDBSupervisor implements SupervisedDuckDBClient {
 
   private setState(state: QueryEngineState): void {
     this.state = state;
-    for (const listener of this.stateListeners) listener(state);
+    for (const listener of this.stateListeners) this.tell(() => { listener(state); });
+  }
+
+  /** Call a listener that is not this class's own. One that throws must not
+   *  stop the transition it is told about: the other listeners, the restart
+   *  waiters and the held queries all come after it. */
+  private tell(call: () => void): void {
+    try {
+      call();
+    } catch (err: unknown) {
+      logger.error(`duckdb: a listener of the query engine failed (${errorMessage(err)})`);
+    }
   }
 
   private settleRestartWaiters(err: Error | null): void {
@@ -403,7 +414,7 @@ class DuckDBSupervisor implements SupervisedDuckDBClient {
     }
     logger.info('duckdb: the query engine is running again', { pid: inc.pid });
     this.setState({ state: 'running', restartedAt: this.now() });
-    for (const listener of this.restartListeners) listener();
+    for (const listener of this.restartListeners) this.tell(listener);
     this.settleRestartWaiters(null);
   }
 
@@ -411,9 +422,20 @@ class DuckDBSupervisor implements SupervisedDuckDBClient {
   private onStartFailure(inc: Incarnation, reason: string): void {
     this.clearStartTimer(inc);
     inc.failure = reason;
-    if (this.phase === 'starting') this.failFirstStart(reason);
-    // A replacement: its exit counts it as a death, like any other.
+    if (this.phase === 'starting') {
+      this.failFirstStart(reason);
+      this.kill(inc);
+      return;
+    }
+    // A replacement: given up on now, a death like any other. Not once it
+    // exits: a process stuck this badly may never report that, and the
+    // queries held for it would wait for ever. Whatever it still says, its
+    // exit included, is ignored from here on.
+    inc.ended = true;
+    this.current = null;
     this.kill(inc);
+    logger.error('duckdb: the new query engine process did not start', { pid: inc.proc.pid ?? inc.pid, reason });
+    this.onDeath();
   }
 
   private failFirstStart(reason: string): void {
