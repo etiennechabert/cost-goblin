@@ -36,8 +36,11 @@
  *                              default is the range the app opens on (30 days)
  *   COSTGOBLIN_DIAG_SECONDS    seconds each measurement runs, default 3
  *   COSTGOBLIN_DIAG_CSS        extra CSS variants, separated by ";;", each
- *                              measured both ways, e.g.
+ *                              measured both ways and with nothing else
+ *                              moving, which is what a CSS animation costs
+ *                              by itself, e.g.
  *                              '[data-widget-id] * { opacity: 1 !important }'
+ *                              'button[aria-label="Data sync"] svg { animation: sync-blink 2s ease-in-out infinite }'
  *   COSTGOBLIN_DIAG_SCREENSHOT a directory: writes dashboard.png there, and
  *                              histogram-focused.png with one series focused
  *   COSTGOBLIN_DIAG_BISECT=0   skip the per-widget variants
@@ -529,6 +532,10 @@ test('Layerize cost per frame on the default dashboard', async () => {
   const baseline = await measure(page, cdp, 'one element moved on every frame', mover);
   printTopEvents(baseline, 20);
   const sweep: Stimulus = () => sweepPointer(page, `${HISTOGRAM} [data-feedback="none"]`, SECONDS);
+  const idle: Stimulus = async () => {
+    await page.waitForTimeout(SECONDS * 1000);
+    return undefined;
+  };
   const pointer = await measure(page, cdp, 'pointer moving over the histogram', sweep);
   printTopEvents(pointer, 12);
   const user: Measurement[] = [baseline, pointer];
@@ -556,7 +563,9 @@ test('Layerize cost per frame on the default dashboard', async () => {
     variants.push(await withCss(css, css, mover));
     const underPointer = await withCss(css, `pointer, ${css}`, sweep);
     printTopEvents(underPointer, 12);
-    user.push(underPointer);
+    const alone = await withCss(css, `nothing else moving, ${css}`, idle);
+    printTopEvents(alone, 12);
+    user.push(underPointer, alone);
   }
   printSummary('What a user does', user);
   printSummary('One element moved on every frame, with parts of the page taken out', variants);
