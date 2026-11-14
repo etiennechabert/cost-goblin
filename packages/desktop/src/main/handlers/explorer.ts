@@ -7,8 +7,10 @@ import {
   buildSource,
   computePeriodsInRange,
   freshnessCutoff,
+  isStringRecord,
   logger,
   resolveField,
+  SecurityError,
   tagDimColumn,
   tagSqlColumnsById,
   usageDateBucketExpr,
@@ -189,6 +191,19 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
     tier, periods, providers, dimensions, filterPredicate, accountReverseMap,
   });
   return { empty: false, source, whereStr, ...shared };
+}
+
+/** A group-count request with the fields its SQL is built from in the shape
+ *  the builders expect. The date range, the row filters and the options are
+ *  checked where they are read (`resolveExplorerDateRange`, `parseRowFilters`). */
+function isGroupCountParams(raw: unknown): raw is AggregatedGroupCountParams {
+  if (!isStringRecord(raw)) return false;
+  const { filters, groupByColumns, origin } = raw;
+  const isStrings = (value: unknown): boolean => Array.isArray(value) && value.every(item => typeof item === 'string');
+  return isStringRecord(filters)
+    && Object.values(filters).every(isStrings)
+    && isStrings(groupByColumns)
+    && (origin === undefined || typeof origin === 'string');
 }
 
 /** True when a request applies the saved cost scope with its own metric, as
@@ -449,18 +464,21 @@ export function registerExplorerHandlers(app: AppContext): void {
 
   // How many groups an aggregated table has: asked on its own when the page
   // came without it (`deferTotalRows`), so the rows never wait for it.
-  ipcMain.handle('explorer:count-aggregated-groups', (_event, payload: unknown): Promise<number> => originStore.run((payload as AggregatedGroupCountParams).origin ?? null, async () => {
-    const params = payload as AggregatedGroupCountParams;
-    const rowFilters = parseRowFilters(params.rowFilters);
-    const qc = await prepareQueryContext(app, params);
-    if (qc.empty) return 0;
-    return countAggregatedGroups(runAggregatedSql, {
-      source: qc.source,
-      where: qc.whereStr,
-      groupBy: explorerGroupBy(params.groupByColumns, qc.tagSqlColumns, params.granularity),
-      rowFilters: explorerRowFilters(rowFilters, qc.tagSqlColumns, params.granularity),
+  ipcMain.handle('explorer:count-aggregated-groups', (_event, payload: unknown): Promise<number> => {
+    if (!isGroupCountParams(payload)) return Promise.reject(new SecurityError('explorer:count-aggregated-groups: malformed request'));
+    const params = payload;
+    return originStore.run(params.origin ?? null, async () => {
+      const rowFilters = parseRowFilters(params.rowFilters);
+      const qc = await prepareQueryContext(app, params);
+      if (qc.empty) return 0;
+      return countAggregatedGroups(runAggregatedSql, {
+        source: qc.source,
+        where: qc.whereStr,
+        groupBy: explorerGroupBy(params.groupByColumns, qc.tagSqlColumns, params.granularity),
+        rowFilters: explorerRowFilters(rowFilters, qc.tagSqlColumns, params.granularity),
+      });
     });
-  }));
+  });
 
   ipcMain.handle('explorer:filter-values', (_event, payload: unknown): Promise<ExplorerFilterValue[]> => originStore.run((payload as ExplorerFilterValuesParams).origin ?? null, async () => {
     const params = payload as ExplorerFilterValuesParams;

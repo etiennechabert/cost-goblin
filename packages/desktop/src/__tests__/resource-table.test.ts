@@ -214,6 +214,10 @@ describe('the breakdown table over a resource rollup that holds every pair', () 
     expect(await h.ipc.invoke('explorer:count-aggregated-groups', { filters: {}, groupByColumns: [], dateRange: FEBRUARY })).toBe(1);
     expect(await h.ipc.invoke('explorer:count-aggregated-groups', { filters: {}, groupByColumns: PAIR, dateRange: { start: '2025-03-01', end: '2025-03-31' } })).toBe(0);
     await expect(h.ipc.invoke('explorer:count-aggregated-groups', { filters: {}, groupByColumns: PAIR, dateRange: FEBRUARY, rowFilters: 'x' })).rejects.toThrow('rowFilters must be an object');
+    // A payload that is not a count request is refused before any query work.
+    for (const payload of [undefined, 'x', { groupByColumns: PAIR }, { filters: { service: 'EC2' }, groupByColumns: PAIR }, { filters: {}, groupByColumns: 'resource_id' }, { filters: {}, groupByColumns: PAIR, origin: 7 }]) {
+      await expect(h.ipc.invoke('explorer:count-aggregated-groups', payload)).rejects.toThrow('malformed request');
+    }
   });
 });
 

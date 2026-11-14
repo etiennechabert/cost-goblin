@@ -2,7 +2,6 @@ import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/p
 import { join } from 'node:path';
 import {
   computePartitionEtagHash,
-  ifExists,
   isQueryCancelled,
   isStringRecord,
   logger,
@@ -41,6 +40,10 @@ export interface ResourceMaintainArgs {
   readonly etagsByPeriod: Readonly<Record<string, Readonly<Record<string, string>>>> | null;
   readonly shape: ResourceRollupShape;
   readonly sql: ResourceBuildSql;
+  /** `currentEpoch()` from before `shape` and `sql` were worked out. A drop
+   *  since then means they may describe the rollup that was dropped: the
+   *  call then builds nothing. */
+  readonly epoch?: number;
 }
 
 /** One built month. */
@@ -160,7 +163,11 @@ function errorMessage(err: unknown): string {
  *    replaces stay until the next build: a query planned a moment earlier
  *    still finds them.
  *  - `resolveSource` routes here only when every month asked for is in the
- *    committed generation under its current raw files.
+ *    committed generation under its current raw files. A month marked stale
+ *    stays out until a build that started after the mark has rebuilt it.
+ *  - A generation number is never used twice by one process, so the SQL text
+ *    of a query over one generation never reads another: the result cache is
+ *    keyed on that text.
  */
 export class ResourceRollupStore {
   private readonly dataDir: string;
@@ -172,6 +179,10 @@ export class ResourceRollupStore {
 
   private manifest: ResourceRollupManifest | null = null;
   private validPeriods = new Set<string>();
+  /** Months marked stale that no build has started on since. */
+  private pendingStale = new Set<string>();
+  /** The highest generation this process has written. */
+  private lastGeneration = 0;
   private epoch = 0;
   private queue: Promise<unknown> = Promise.resolve();
 
@@ -189,6 +200,8 @@ export class ResourceRollupStore {
   }
 
   isReady(): boolean { return this.manifest !== null && this.validPeriods.size > 0; }
+  /** Changes with every `invalidate()`: see `ResourceMaintainArgs.epoch`. */
+  currentEpoch(): number { return this.epoch; }
   getValidPeriods(): ReadonlySet<string> { return this.validPeriods; }
 
   /** Settles once every mutation queued so far has run. */
@@ -237,10 +250,14 @@ export class ResourceRollupStore {
     return matches ? manifest : null;
   }
 
-  /** Stop serving `periods` now: their raw files just changed. The next
-   *  `maintain` builds them again. */
+  /** Stop serving `periods` now: their raw files just changed. They stay
+   *  out, whatever a build already running commits, until a `maintain` that
+   *  starts after this call has rebuilt them. */
   markStale(periods: readonly string[]): void {
-    for (const period of periods) this.validPeriods.delete(period);
+    for (const period of periods) {
+      this.validPeriods.delete(period);
+      this.pendingStale.add(period);
+    }
   }
 
   /** Per-query routing gate: where to read `requiredPeriods` from, or
@@ -281,6 +298,7 @@ export class ResourceRollupStore {
    *  ranges touching it read raw until the next call; the rest still serve.
    *  Never rejects. */
   maintain(args: ResourceMaintainArgs): Promise<void> {
+    if (args.epoch !== undefined && args.epoch !== this.epoch) return Promise.resolve();
     return this.enqueue(async (startEpoch) => {
       // An invalidate() since this was queued dropped the tree; the warmup
       // that follows it rebuilds.
@@ -295,7 +313,8 @@ export class ResourceRollupStore {
 
   private async rebuild(args: ResourceMaintainArgs, startEpoch: number): Promise<void> {
     const { periods, etagsByPeriod, shape, sql } = args;
-    const changed = new Set(args.changed ?? []);
+    // A month marked stale is rebuilt whoever asked for this build.
+    const changed = new Set([...(args.changed ?? []), ...this.pendingStale]);
     // After a restart, or a drop, the manifest on disk is the last word.
     const previous = this.usable(this.manifest ?? await this.readManifest(), shape);
     this.manifest = previous;
@@ -312,9 +331,13 @@ export class ResourceRollupStore {
     const current = (period: string): boolean => !changed.has(period) && previous?.partitions[period]?.rawEtagHash === stampFor(period);
     this.validPeriods = new Set(Object.keys(previous?.partitions ?? {}).filter(current));
     const stale = periods.filter(p => !current(p));
+    // From here this build reads their current raw files: a mark made later
+    // is for a later build.
+    for (const period of changed) this.pendingStale.delete(period);
     if (stale.length === 0) return;
 
-    const generation = (previous?.generation ?? 0) + 1;
+    const generation = Math.max(previous?.generation ?? 0, this.lastGeneration) + 1;
+    this.lastGeneration = generation;
     await this.removeSupersededFiles(previous?.generation ?? null);
 
     // 1. Rank the months whose raw files changed. The others keep their list.
@@ -324,10 +347,12 @@ export class ResourceRollupStore {
       if (kept !== undefined) ranked.set(period, kept);
     }
     await this.runBounded(stale, async (period) => {
+      // Dropped meanwhile: nothing built from here on could be committed.
+      if (this.epoch !== startEpoch) return;
       try {
         await mkdir(this.partitionDir(period), { recursive: true });
-        await this.build(sql.top(period, this.topPath(period), this.pairsPerMonth), startEpoch);
-        ranked.set(period, await this.readTailOf(period));
+        await this.retrying(() => this.runBuild(sql.top(period, this.topPath(period), this.pairsPerMonth)), startEpoch);
+        ranked.set(period, await this.retrying(() => this.readTailOf(period), startEpoch));
       } catch (err: unknown) {
         logger.warn(`resource-rollup: ranking ${period} failed — ${errorMessage(err)}`);
       }
@@ -339,20 +364,23 @@ export class ResourceRollupStore {
     const tops = builtPeriods.map(p => sqlStringLiteral(this.topPath(p).replaceAll('\\', '/'))).join(', ');
     const key = RESOURCE_ROLLUP_KEY_COLUMNS.join(', ');
     const heavyPath = this.heavyPath(generation);
-    await this.runQuery(
+    await this.retrying(() => this.runQuery(
       `COPY (SELECT DISTINCT ${key} FROM read_parquet([${tops}]) WHERE rank <= ${String(this.pairsPerMonth)}) ` +
       `TO ${sqlStringLiteral(heavyPath)} (FORMAT PARQUET)`,
-    );
+    ), startEpoch);
 
     // 3. Every month's rows of the heavy set.
     const partitions: Record<string, ResourcePartitionMeta> = {};
     await this.runBounded(builtPeriods, async (period) => {
       const tail = ranked.get(period);
-      if (tail === undefined) return;
+      if (tail === undefined || this.epoch !== startEpoch) return;
       try {
         const outPath = this.rowsPath(period, generation);
-        await this.build(sql.rows(period, outPath, heavyPath), startEpoch);
-        const counted = await this.runQuery(`SELECT COUNT(*)::BIGINT AS n FROM read_parquet(${sqlStringLiteral(outPath.replaceAll('\\', '/'))})`);
+        await this.retrying(() => this.runBuild(sql.rows(period, outPath, heavyPath)), startEpoch);
+        const counted = await this.retrying(
+          () => this.runQuery(`SELECT COUNT(*)::BIGINT AS n FROM read_parquet(${sqlStringLiteral(outPath.replaceAll('\\', '/'))})`),
+          startEpoch,
+        );
         partitions[period] = {
           rawEtagHash: stampFor(period),
           tailBound: tail.tailBound,
@@ -376,7 +404,8 @@ export class ResourceRollupStore {
     };
     await this.writeManifestAtomic(manifest);
     this.manifest = manifest;
-    this.validPeriods = new Set(Object.keys(partitions));
+    // Not the months marked stale since this build started on them.
+    this.validPeriods = new Set(Object.keys(partitions).filter(period => !this.pendingStale.has(period)));
   }
 
   /** The tail bound the month's ranked list holds: the weight of the row
@@ -393,12 +422,12 @@ export class ResourceRollupStore {
     return { tailBound: typeof bound === 'number' && Number.isFinite(bound) ? bound : Number.POSITIVE_INFINITY, complete: false };
   }
 
-  /** Run a build query, again when a view's navigation cancelled it. */
-  private async build(sql: string, startEpoch: number): Promise<void> {
+  /** Run one of a build's queries, again when a view's navigation cancelled
+   *  it: the cancel reaches every query the app has running. */
+  private async retrying<T>(query: () => Promise<T>, startEpoch: number): Promise<T> {
     for (let attempt = 1; ; attempt += 1) {
       try {
-        await this.runBuild(sql);
-        return;
+        return await query();
       } catch (err: unknown) {
         if (!isQueryCancelled(err) || attempt >= BUILD_ATTEMPTS || this.epoch !== startEpoch) throw err;
       }
@@ -448,7 +477,8 @@ export class ResourceRollupStore {
       if (this.epoch !== startEpoch) return;
       await rm(this.partitionDir(period), { recursive: true, force: true });
       this.validPeriods.delete(period);
-      const manifest = this.manifest ?? await ifExists(() => readFile(this.manifestPath(), 'utf-8')).then(raw => (raw === null ? null : parseManifest(raw)));
+      this.pendingStale.delete(period);
+      const manifest = this.manifest ?? await this.readManifest();
       if (manifest !== null && period in manifest.partitions) {
         const partitions = Object.fromEntries(Object.entries(manifest.partitions).filter(([k]) => k !== period));
         const next = { ...manifest, partitions };
@@ -465,6 +495,7 @@ export class ResourceRollupStore {
     this.epoch += 1;
     this.manifest = null;
     this.validPeriods = new Set();
+    this.pendingStale = new Set();
     let dir: string | null = null;
     try {
       dir = this.rollupDir();

@@ -401,7 +401,11 @@ export function TableWidget({
   // The rows' own count, else the one asked for on its own once it is in.
   const countedGroups = countQuery.status === 'success' ? countQuery.data : null;
   const aggregatedTotal = dataQuery.status === 'success' ? (dataQuery.data.result.totalRows ?? countedGroups ?? undefined) : totalRows;
-  const countPending = countDeferred && countQuery.status === 'loading';
+  // Rows that came without a count have more behind them, whether the count
+  // is still on its way or failed: the header must not read as the whole table.
+  const uncountedRows = !countDeferred || countedGroups !== null
+    ? undefined
+    : countQuery.status === 'error' ? 'unknown' : 'counting';
   const loading = dataQuery.status === 'loading' || overviewQuery.status === 'loading';
   const error = dataQuery.status === 'error' ? dataQuery.error.message : null;
 
@@ -422,7 +426,7 @@ export function TableWidget({
         onSortingChange={handleSortingChange}
         onCellClick={handleCellClick}
         totalRows={aggregatedTotal}
-        totalRowsPending={countPending}
+        uncountedRows={uncountedRows}
         loading={loading}
         error={error}
         height={400}

@@ -604,6 +604,9 @@ export function createAppContext(ctx: IpcContext): AppContext {
   // Bring the resource rollup in line with the raw files: a no-op when it is
   // already built from them. `changed` months are rebuilt whatever their stamp.
   async function maintainResourceRollup(changed: readonly string[]): Promise<void> {
+    // What follows reads the dimensions and the cost scope: a drop while it
+    // does means they may be the ones just replaced.
+    const epoch = resourceRollupStore.currentEpoch();
     try {
       const provider = await getFirstProvider();
       if (provider === null) return;
@@ -620,7 +623,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
         logger.warn(`resource-rollup: ${err instanceof Error ? err.message : String(err)}`);
         return null;
       });
-      await resourceRollupStore.maintain({ periods, changed, etagsByPeriod, shape, sql });
+      await resourceRollupStore.maintain({ periods, changed, etagsByPeriod, shape, sql, epoch });
     } catch (err: unknown) {
       logRollupFailure('resource-rollup', err);
     }

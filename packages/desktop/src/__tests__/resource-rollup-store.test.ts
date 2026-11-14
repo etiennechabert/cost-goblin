@@ -70,8 +70,15 @@ describe('ResourceRollupStore', () => {
   const raw = (periods: readonly string[] = MONTHS): string =>
     buildSource({ dataDir: rawDir(), tier: 'daily', dimensions, providers: [{ name: PROVIDER, type: 'aws', periods }], costMetric: 'effective' });
 
-  function newStore(dataDir: string, deps: { pairsPerMonth?: number; runBuild?: (sql: string) => Promise<RawRow[]> } = {}): ResourceRollupStore {
-    return new ResourceRollupStore({ dataDir, providerName: () => PROVIDER, runQuery, pairsPerMonth: deps.pairsPerMonth ?? PAIRS, ...(deps.runBuild === undefined ? {} : { runBuild: deps.runBuild }) });
+  type Run = (sql: string) => Promise<RawRow[]>;
+  function newStore(dataDir: string, deps: { pairsPerMonth?: number; runBuild?: Run; runQuery?: Run } = {}): ResourceRollupStore {
+    return new ResourceRollupStore({
+      dataDir,
+      providerName: () => PROVIDER,
+      runQuery: deps.runQuery ?? runQuery,
+      pairsPerMonth: deps.pairsPerMonth ?? PAIRS,
+      ...(deps.runBuild === undefined ? {} : { runBuild: deps.runBuild }),
+    });
   }
 
   const rollupDir = (dataDir: string): string => join(dataDir, 'aws', 'resource-rollup');
@@ -411,5 +418,95 @@ describe('ResourceRollupStore', () => {
     expect(store.resolveSource({ requiredPeriods: ['2026-01'], neededColumns: ['cost'] })).toBeDefined();
     await store.maintain({ periods: MONTHS, changed: ['2026-02'], etagsByPeriod: etags, shape, sql });
     expect(store.resolveSource({ requiredPeriods: MONTHS, neededColumns: ['cost'] })?.source).toContain('rows-2.parquet');
+  });
+
+  it('keeps a month marked stale during a build out of what that build serves', async () => {
+    const dataDir = await newDataDir();
+    // The sync finishes while February's rows are being extracted: the build
+    // read files that were being replaced.
+    let store: ResourceRollupStore | null = null;
+    let marked = false;
+    const building = newStore(dataDir, {
+      runBuild: async (statement) => {
+        const rows = await runQuery(statement);
+        if (!marked && statement.includes('daily-2026-02/rows-')) { marked = true; store?.markStale(['2026-02']); }
+        return rows;
+      },
+    });
+    store = building;
+    await building.maintain({ periods: MONTHS, etagsByPeriod: etags, shape, sql });
+    expect(marked).toBe(true);
+    expect([...building.getValidPeriods()]).toEqual(['2026-01']);
+    expect(building.resolveSource({ requiredPeriods: MONTHS, neededColumns: ['cost'] })).toBeUndefined();
+
+    // Any later build takes the month up again, named or not.
+    await building.maintain({ periods: MONTHS, etagsByPeriod: etags, shape, sql });
+    expect([...building.getValidPeriods()].sort((a, b) => a.localeCompare(b))).toEqual(MONTHS);
+    expect(building.resolveSource({ requiredPeriods: MONTHS, neededColumns: ['cost'] })?.source).toContain('rows-2.parquet');
+  });
+
+  it("runs the build's small queries again too when a view cancelled them", async () => {
+    const dataDir = await newDataDir();
+    // One cancel each for the heavy set, a tail read and a row count.
+    const cancelOnce = new Set(['heavy-1.parquet', 'tail_bound', 'COUNT(*)::BIGINT AS n FROM']);
+    const store = newStore(dataDir, {
+      runQuery: (statement) => {
+        const hit = [...cancelOnce].find(marker => statement.includes(marker));
+        if (hit !== undefined) { cancelOnce.delete(hit); return Promise.reject(new Error(QUERY_CANCELLED_MESSAGE)); }
+        return runQuery(statement);
+      },
+    });
+    await store.maintain({ periods: MONTHS, etagsByPeriod: etags, shape, sql });
+    expect(cancelOnce.size).toBe(0);
+    expect([...store.getValidPeriods()].sort((a, b) => a.localeCompare(b))).toEqual(MONTHS);
+  });
+
+  it('builds nothing for a request worked out before the rollup was dropped', async () => {
+    const dataDir = await newDataDir();
+    const builds: string[] = [];
+    const store = newStore(dataDir, { runBuild: (statement) => { builds.push(statement); return runQuery(statement); } });
+    const epoch = store.currentEpoch();
+    await store.invalidate();
+    // `shape` and `sql` may describe the cost scope the drop was for.
+    await store.maintain({ periods: MONTHS, etagsByPeriod: etags, shape, sql, epoch });
+    expect(builds).toEqual([]);
+    expect(store.isReady()).toBe(false);
+
+    await store.maintain({ periods: MONTHS, etagsByPeriod: etags, shape, sql, epoch: store.currentEpoch() });
+    expect(store.isReady()).toBe(true);
+  });
+
+  it('stops building once dropped, and never names a generation twice', async () => {
+    const dataDir = await newDataDir();
+    const builds: string[] = [];
+    let store: ResourceRollupStore | null = null;
+    let dropOnFirstBuild = false;
+    const building = newStore(dataDir, {
+      runBuild: async (statement) => {
+        builds.push(statement);
+        const rows = await runQuery(statement);
+        if (dropOnFirstBuild) { dropOnFirstBuild = false; void store?.invalidate(); }
+        return rows;
+      },
+    });
+    store = building;
+    await building.maintain({ periods: MONTHS, etagsByPeriod: etags, shape, sql });
+    expect(building.resolveSource({ requiredPeriods: MONTHS, neededColumns: ['cost'] })?.source).toContain('rows-1.parquet');
+
+    // Dropped while the first of two months is ranked: the second is never read.
+    builds.length = 0;
+    dropOnFirstBuild = true;
+    await building.maintain({ periods: MONTHS, changed: MONTHS, etagsByPeriod: etags, shape, sql });
+    await building.whenIdle();
+    expect(builds).toHaveLength(1);
+    expect(building.isReady()).toBe(false);
+
+    // The rebuild after the drop is not generation 1 again: a query over it
+    // must not read like one over the rollup that was dropped.
+    await building.maintain({ periods: MONTHS, etagsByPeriod: etags, shape, sql });
+    const served = building.resolveSource({ requiredPeriods: MONTHS, neededColumns: ['cost'] })?.source ?? '';
+    expect(served).not.toContain('rows-1.parquet');
+    expect(served).not.toContain('rows-2.parquet');
+    expect(served).toContain('rows-3.parquet');
   });
 });

@@ -314,6 +314,7 @@ describe('TableWidget row count', () => {
 
     await screen.findByText('Usage');
     await waitFor(() => { expect(showing()).toBe('Showing 3 of … rows'); });
+    expect(screen.getByTitle('Counting the rows').textContent).toBe('…');
     expect(api.groupCountRequests).toEqual([{
       filters: {},
       dateRange: CURRENT,
@@ -343,7 +344,7 @@ describe('TableWidget row count', () => {
     expect(api.groupCountRequests).toHaveLength(1);
   });
 
-  it('shows the rows it has when the count fails', async () => {
+  it('keeps saying there are more rows when the count fails', async () => {
     const api = new DeferredCountApi(ROWS, null);
     renderCount(api);
     await screen.findByText('Usage');
@@ -351,7 +352,8 @@ describe('TableWidget row count', () => {
 
     act(() => { api.failCount(); });
 
-    await waitFor(() => { expect(showing()).toBe('Showing 3 rows'); });
+    await waitFor(() => { expect(screen.getByTitle('The rows could not be counted').textContent).toBe('…'); });
+    expect(showing()).toBe('Showing 3 of … rows');
     expect(screen.getByText('Usage')).toBeDefined();
   });
 });
