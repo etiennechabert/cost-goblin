@@ -327,6 +327,8 @@ describe('query:filter-values', () => {
     h.app.warmupBase();
     await h.app.awaitWarmup(10_000);
     await vi.waitFor(() => { expect(h.app.rollupStore.getStatus().state).toBe('ready'); }, { timeout: 15_000 });
+    // The resource rollup builds after it: its statements would be the last ones.
+    await h.app.awaitResourceRollup();
     const values = list(await h.ipc.invoke('query:filter-values', 'service', { region: ['eu-central-1'] }, FEBRUARY));
     expect(values.length).toBeGreaterThan(0);
     const last = h.app.queryLog.getEntries().at(-1);

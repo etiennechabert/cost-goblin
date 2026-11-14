@@ -658,6 +658,9 @@ export class MockCostApi implements CostApi {
       tagColumns: [{ id: 'tag_team', label: 'Team' }, { id: 'tag_env', label: 'Environment' }],
     });
   }
+  countAggregatedGroups(): Promise<number> {
+    return Promise.resolve(2);
+  }
   getExplorerFilterValues(): Promise<ExplorerFilterValue[]> {
     return Promise.resolve([
       { value: 'Amazon EC2', label: 'Amazon EC2', cost: 18_000, rows: 8_400 },

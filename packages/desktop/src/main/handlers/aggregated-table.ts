@@ -1,7 +1,7 @@
 import { isStringRecord, QueryBuilder, SecurityError } from '@costgoblin/core';
 import type { AggregatedTableRow, ExplorerSort } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
-import { aggregatedOrderBy, andWhere, groupByList, groupBySelectList, groupByValues, groupValueExpr, rowFilterConditions } from './explorer-columns.js';
+import { aggregatedOrderBy, andWhere, groupByList, groupBySelectList, groupByValues, groupValueExpr, RAW_ROW_COUNT, rowFilterConditions } from './explorer-columns.js';
 import type { GroupByColumn, RowFilter } from './explorer-columns.js';
 import { toNum } from './query-utils.js';
 
@@ -71,6 +71,9 @@ export interface AggregatedRowsQuery {
   readonly sort: ExplorerSort | undefined;
   readonly rowLimit: number;
   readonly rowKeys: readonly RowKey[] | undefined;
+  /** How `source` counts the line items behind a row. Defaults to COUNT(*),
+   *  for a source with one row per line item. */
+  readonly rowCount?: string;
 }
 
 function toAggregatedRow(r: RawRow, groupBy: readonly GroupByColumn[]): AggregatedTableRow {
@@ -86,6 +89,7 @@ function toAggregatedRow(r: RawRow, groupBy: readonly GroupByColumn[]): Aggregat
 /** The aggregated table's rows (the first `rowLimit` groups in `sort` order,
  *  or the one total row without a group-by) and how many groups pass. */
 export async function queryAggregatedRows(run: RunSql, q: AggregatedRowsQuery): Promise<{ rows: AggregatedTableRow[]; totalRows: number }> {
+  const rowCount = q.rowCount ?? RAW_ROW_COUNT;
   // One builder numbers every bound value, in WHERE order: the row filters', then the keys'.
   const qb = new QueryBuilder();
   const filters = rowFilterConditions(q.rowFilters, qb);
@@ -101,7 +105,7 @@ export async function queryAggregatedRows(run: RunSql, q: AggregatedRowsQuery): 
         CAST(SUM(cost) AS DOUBLE) AS cost,
         CAST(SUM(list_cost) AS DOUBLE) AS list_cost,
         CAST(SUM(usage_amount) AS DOUBLE) AS usage_amount,
-        CAST(COUNT(*) AS DOUBLE) AS row_count
+        CAST(${rowCount} AS DOUBLE) AS row_count
       FROM ${q.source}
       ${where}
     `.trim();
@@ -123,11 +127,11 @@ export async function queryAggregatedRows(run: RunSql, q: AggregatedRowsQuery): 
       CAST(SUM(cost) AS DOUBLE) AS cost,
       CAST(SUM(list_cost) AS DOUBLE) AS list_cost,
       CAST(SUM(usage_amount) AS DOUBLE) AS usage_amount,
-      CAST(COUNT(*) AS DOUBLE) AS row_count
+      CAST(${rowCount} AS DOUBLE) AS row_count
     FROM ${q.source}
     ${where}
     GROUP BY ${groupKeys}
-    ORDER BY ${aggregatedOrderBy(q.sort, q.groupBy)}
+    ORDER BY ${aggregatedOrderBy(q.sort, q.groupBy, rowCount)}
     LIMIT ${String(q.rowLimit)}
   `.trim();
 
@@ -146,4 +150,26 @@ export async function queryAggregatedRows(run: RunSql, q: AggregatedRowsQuery): 
   }
   const [dataResult, totalRows] = await Promise.all([run(dataSql, params), countGroups()]);
   return toResult(dataResult, totalRows);
+}
+
+/** How many groups the aggregated table has over every line item that passes:
+ *  `queryAggregatedRows`' count, for a caller that left it out of the page. */
+export async function countAggregatedGroups(
+  run: RunSql,
+  q: Pick<AggregatedRowsQuery, 'source' | 'where' | 'groupBy' | 'rowFilters'>,
+): Promise<number> {
+  const qb = new QueryBuilder();
+  const filters = rowFilterConditions(q.rowFilters, qb);
+  const where = filters.length === 0 ? q.where : andWhere(q.where, filters.join(' AND '));
+  const { params } = qb.build();
+  // Without a group-by the table is its one total row.
+  if (q.groupBy.length === 0) return 1;
+  const sql = `
+    SELECT CAST(COUNT(*) AS DOUBLE) AS n FROM (
+      SELECT 1 FROM ${q.source} ${where}
+      GROUP BY ${groupByList(q.groupBy)}
+    ) AS _cnt
+  `.trim();
+  const r = (await run(sql, params))[0];
+  return r === undefined ? 0 : toNum(r['n']);
 }

@@ -220,6 +220,9 @@ interface DataTableProps<TData> {
   readonly rowHeight?: number | undefined;
   readonly overscan?: number | undefined;
   readonly totalRows?: number | undefined;
+  /** True while `totalRows` is still being counted: the header says there
+   *  are more rows than shown without saying how many. */
+  readonly totalRowsPending?: boolean | undefined;
   readonly csvFilename?: string | undefined;
   /** Column id to the header its CSV column gets instead of the on-screen one. */
   readonly csvHeaderLabels?: Readonly<Record<string, string>> | undefined;
@@ -247,6 +250,7 @@ export function DataTable<TData extends RowData>({
   rowHeight = 32,
   overscan = 10,
   totalRows,
+  totalRowsPending = false,
   csvFilename,
   csvHeaderLabels,
   allColumns,
@@ -303,6 +307,9 @@ export function DataTable<TData extends RowData>({
               Showing <span className="text-text-secondary tabular-nums">{rowCount.toLocaleString()}</span>
               {displayTotal > rowCount && (
                 <> of <span className="text-text-secondary tabular-nums">{displayTotal.toLocaleString()}</span></>
+              )}
+              {totalRowsPending && displayTotal <= rowCount && (
+                <> of <span className="text-text-secondary" title="Counting the rows" aria-label="a number still being counted">…</span></>
               )}
               {' '}rows
             </>}

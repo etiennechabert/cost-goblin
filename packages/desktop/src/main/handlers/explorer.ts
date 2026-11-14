@@ -29,17 +29,19 @@ import type {
   ExplorerTagColumn,
   DimensionsConfig,
   ProviderSourceSpec,
+  AggregatedGroupCountParams,
   AggregatedTableParams,
   AggregatedTableResult,
 } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
 import { type AppContext, prefsPath } from './context.js';
 import { buildAccountReverseMap, columnForDimension, resolveRollupSource, tagSelectItems, tagValuesById, toNum, toStr } from './query-utils.js';
-import { parseRowFilters, parseRowKeys, queryAggregatedRows } from './aggregated-table.js';
+import { countAggregatedGroups, parseRowFilters, parseRowKeys, queryAggregatedRows } from './aggregated-table.js';
 import type { RunSql } from './aggregated-table.js';
 import { explorerGroupBy, explorerOrderBy, explorerRowFilters } from './explorer-columns.js';
 import { buildExplorerFilterPredicate } from './explorer-filters.js';
 import { readExplorerPreferences, writeExplorerPreferences } from './explorer-prefs.js';
+import { queryResourceRollupTable } from './resource-table.js';
 import { resolveScopeMetric } from './explorer-scope.js';
 import { capResolvedRange, resolveExplorerDateRange } from './query-windows.js';
 
@@ -189,16 +191,21 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
   return { empty: false, source, whereStr, ...shared };
 }
 
+/** True when a request applies the saved cost scope with its own metric, as
+ *  every dashboard widget does: the only numbers a rollup holds, since it
+ *  bakes that metric in and drops the excluded rows at build time. */
+function usesSavedScope(params: ExplorerBaseParams): boolean {
+  return params.applyCostScope === true && params.costMetric === undefined;
+}
+
 /** The dashboard Table widget hits the overview with the GLOBAL cost scope and
  *  no metric override — only then does the pre-aggregated daily rollup
  *  reproduce the raw totals, so gate the rollup route on exactly that. */
 function overviewUsesRollup(params: ExplorerOverviewParams, tier: 'daily' | 'hourly'): boolean {
-  return tier === 'daily'
-    && params.applyCostScope === true
-    && params.costMetric === undefined;
+  return tier === 'daily' && usesSavedScope(params);
 }
 
-function overviewFilterColumns(params: ExplorerOverviewParams, dimensions: DimensionsConfig): string[] {
+function overviewFilterColumns(params: ExplorerBaseParams, dimensions: DimensionsConfig): string[] {
   return Object.entries(params.filters)
     .filter(([, values]) => values.length > 0)
     .map(([dimId]) => columnForDimension(dimensions, dimId));
@@ -228,7 +235,7 @@ function readOverviewDaily(result: PromiseSettledResult<RawRow[]>): readonly Exp
 }
 
 export function registerExplorerHandlers(app: AppContext): void {
-  const { ctx, runQuery, runPreparedQuery, rollupStore, getAccountReverseMap, getQueryDimensions } = app;
+  const { ctx, runQuery, runPreparedQuery, rollupStore, resourceRollupStore, getAccountReverseMap, getQueryDimensions } = app;
 
   const explorerPrefsPath = () => prefsPath(ctx.stateDir, 'explorer-preferences');
 
@@ -412,16 +419,47 @@ export function registerExplorerHandlers(app: AppContext): void {
 
     if (qc.empty) return { rows: [], totalRows: 0, tagColumns: qc.tagColumns };
 
-    const { rows, totalRows } = await queryAggregatedRows(runAggregatedSql, {
-      source: qc.source,
-      where: qc.whereStr,
-      groupBy: explorerGroupBy(params.groupByColumns, qc.tagSqlColumns, params.granularity),
+    const groupBy = explorerGroupBy(params.groupByColumns, qc.tagSqlColumns, params.granularity);
+    const query = {
+      groupBy,
       rowFilters: explorerRowFilters(rowFilters, qc.tagSqlColumns, params.granularity),
       sort: params.sort,
       rowLimit: clampRowLimit(params.rowLimit),
       rowKeys,
+    };
+    // A table grouped by resource and description reads the resource rollup
+    // when that gives the rows raw Parquet would: grouping every line item
+    // of a large bill by them takes a minute or more.
+    const rolled = await queryResourceRollupTable(runAggregatedSql, {
+      ...query,
+      store: resourceRollupStore,
+      providers: qc.providers,
+      dateRange: { start: qc.startStr, end: qc.endStr },
+      tier: qc.tier,
+      usesSavedScope: usesSavedScope(params),
+      filterPredicate: buildExplorerFilterPredicate(params.filters, qc.dimensions, await getAccountReverseMap()),
+      filterColumns: overviewFilterColumns(params, qc.dimensions),
+      deferTotalRows: params.deferTotalRows === true,
     });
+    if (rolled !== null) return { ...rolled, tagColumns: qc.tagColumns };
+
+    const { rows, totalRows } = await queryAggregatedRows(runAggregatedSql, { ...query, source: qc.source, where: qc.whereStr });
     return { rows, totalRows, tagColumns: qc.tagColumns };
+  }));
+
+  // How many groups an aggregated table has: asked on its own when the page
+  // came without it (`deferTotalRows`), so the rows never wait for it.
+  ipcMain.handle('explorer:count-aggregated-groups', (_event, payload: unknown): Promise<number> => originStore.run((payload as AggregatedGroupCountParams).origin ?? null, async () => {
+    const params = payload as AggregatedGroupCountParams;
+    const rowFilters = parseRowFilters(params.rowFilters);
+    const qc = await prepareQueryContext(app, params);
+    if (qc.empty) return 0;
+    return countAggregatedGroups(runAggregatedSql, {
+      source: qc.source,
+      where: qc.whereStr,
+      groupBy: explorerGroupBy(params.groupByColumns, qc.tagSqlColumns, params.granularity),
+      rowFilters: explorerRowFilters(rowFilters, qc.tagSqlColumns, params.granularity),
+    });
   }));
 
   ipcMain.handle('explorer:filter-values', (_event, payload: unknown): Promise<ExplorerFilterValue[]> => originStore.run((payload as ExplorerFilterValuesParams).origin ?? null, async () => {

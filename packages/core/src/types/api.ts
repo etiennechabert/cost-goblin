@@ -46,6 +46,7 @@ import type {
   ExplorerPreferencesUpdate,
   ExplorerRowsParams,
   ExplorerRowsResult,
+  AggregatedGroupCountParams,
   AggregatedTableParams,
   AggregatedTableResult,
 } from './explorer.js';
@@ -453,6 +454,9 @@ export interface CostApi {
    *  query handles the histogram independently. */
   queryExplorerRows(params: ExplorerRowsParams): Promise<ExplorerRowsResult>;
   queryAggregatedTable(params: AggregatedTableParams): Promise<AggregatedTableResult>;
+  /** How many groups an aggregated table has: the `totalRows` a
+   *  `queryAggregatedTable` asked with `deferTotalRows` left out. */
+  countAggregatedGroups(params: AggregatedGroupCountParams): Promise<number>;
   /** Facet values for a single dim under the explorer's other filters.
    *  Rolls the current dim out of the filter set so the dropdown shows
    *  every value remaining under the other filters. */

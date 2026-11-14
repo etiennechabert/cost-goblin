@@ -154,23 +154,28 @@ export function groupByValues(row: RawRow, groupBy: readonly GroupByColumn[]): R
   return values;
 }
 
-const AGG_SORT_COLUMNS: Readonly<Record<string, (dir: string) => string>> = {
+/** The line items a row of the raw source stands for: itself. A rollup row
+ *  stands for `line_items` of them. */
+export const RAW_ROW_COUNT = 'COUNT(*)';
+
+const AGG_SORT_COLUMNS: Readonly<Record<string, (dir: string, rowCount: string) => string>> = {
   cost: (dir) => `SUM(cost) ${dir}`,
   // By size, so a credit ranks with spend.
   abs_cost: (dir) => `ABS(SUM(cost)) ${dir}`,
   list_cost: (dir) => `SUM(list_cost) ${dir}`,
   usage_amount: (dir) => `SUM(usage_amount) ${dir}`,
-  row_count: (dir) => `COUNT(*) ${dir}`,
+  row_count: (dir, rowCount) => `${rowCount} ${dir}`,
 };
 
-/** ORDER BY for the aggregated table: a measure or a grouped column, else SUM(cost). */
-export function aggregatedOrderBy(sort: ExplorerSort | undefined, groupBy: readonly GroupByColumn[]): string {
+/** ORDER BY for the aggregated table: a measure or a grouped column, else
+ *  SUM(cost). `rowCount` is how the source counts line items. */
+export function aggregatedOrderBy(sort: ExplorerSort | undefined, groupBy: readonly GroupByColumn[], rowCount: string = RAW_ROW_COUNT): string {
   if (sort === undefined) return 'SUM(cost) DESC';
   const dir = sortDirection(sort);
   // Own-property read: the sort column comes from the renderer, so a key like
   // `constructor` must not surface prototype members.
   const fn = Object.hasOwn(AGG_SORT_COLUMNS, sort.column) ? AGG_SORT_COLUMNS[sort.column] : undefined;
-  if (fn !== undefined) return fn(dir);
+  if (fn !== undefined) return fn(dir, rowCount);
   const grouped = groupBy.find(g => g.id === sort.column);
   if (grouped !== undefined) return `${groupKeyExpr(grouped)} ${dir}`;
   return 'SUM(cost) DESC';

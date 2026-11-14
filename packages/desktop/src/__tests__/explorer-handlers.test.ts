@@ -81,6 +81,8 @@ describe('explorer:query-overview', () => {
     h.app.warmupBase();
     await h.app.awaitWarmup(10_000);
     await vi.waitFor(() => { expect(h.app.rollupStore.getStatus().state).toBe('ready'); }, { timeout: 15_000 });
+    // The resource rollup builds after it: its statements would be the last ones.
+    await h.app.awaitResourceRollup();
     const rolled = await h.ipc.invoke('explorer:query-overview', { filters: { service: [EC2] }, dateRange: FEBRUARY, applyCostScope: true });
     expect(h.db.statements.at(-1)).toContain('rollup.parquet');
     expect(num(at(rolled, 'totalCost'))).toBeCloseTo(num(at(raw, 'totalCost')), 4);
@@ -114,6 +116,8 @@ describe('explorer:query-overview', () => {
     h.app.warmupBase();
     await h.app.awaitWarmup(10_000);
     await vi.waitFor(() => { expect(h.app.rollupStore.getStatus().state).toBe('ready'); }, { timeout: 15_000 });
+    // The resource rollup builds after it: its statements would be the last ones.
+    await h.app.awaitResourceRollup();
     const rolled = await h.ipc.invoke('explorer:query-overview', { filters: {}, dateRange: FEBRUARY, applyCostScope: true, granularity: 'monthly' });
     expect(h.db.statements.at(-1)).toContain('rollup.parquet');
     expect(list(at(rolled, 'dailyTotals')).map(d => at(d, 'date'))).toEqual(['2026-02-01']);

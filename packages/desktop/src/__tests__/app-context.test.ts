@@ -431,6 +431,7 @@ describe('createAppContext: rollup lifecycle', () => {
     h.app.warmupBase();
     expect(await h.app.awaitWarmup(10_000)).toBe(false);
     await vi.waitFor(() => { expect(h.app.rollupStore.getStatus().state).toBe('ready'); }, { timeout: 15_000 });
+    await h.app.awaitResourceRollup();
     await flush();
     return h;
   }

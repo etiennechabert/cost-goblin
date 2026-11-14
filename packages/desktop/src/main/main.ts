@@ -210,6 +210,7 @@ async function createWindow(db: DuckDBClient, syncClient: SyncClient, rollupConc
   // a saved override before the first warmup builds anything. The value is read
   // once in main() alongside the memory/threads overrides and passed in.
   appContext.rollupStore.setBuildConcurrency(rollupConcurrency);
+  appContext.resourceRollupStore.setBuildConcurrency(rollupConcurrency);
 
   const headless = process.env['COSTGOBLIN_HEADLESS'] === '1';
 
