@@ -94,13 +94,28 @@ interface Clone {
   readonly providerDir: string | null;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** A JSON or YAML file's content when it is an object. Null when the file is
+ *  missing, does not parse, or holds anything else. */
+function readRecord(path: string, parseText: (text: string) => unknown): Record<string, unknown> | null {
+  try {
+    const doc = parseText(readFileSync(path, 'utf-8'));
+    return isRecord(doc) ? doc : null;
+  } catch {
+    return null;
+  }
+}
+
 function writePreferences(workspaceDir: string, memoryGB: string | undefined): void {
   const path = join(workspaceDir, 'state', 'ui-preferences.json');
-  let saved: Record<string, unknown> = {};
-  try { saved = JSON.parse(readFileSync(path, 'utf-8')) as Record<string, unknown>; } catch { /* none saved */ }
+  const saved = readRecord(path, text => JSON.parse(text)) ?? {};
+  const savedPerformance = isRecord(saved['performance']) ? saved['performance'] : undefined;
   const performance = memoryGB === undefined
-    ? saved['performance']
-    : { ...(saved['performance'] as Record<string, unknown> | undefined), memoryLimitGB: Number(memoryGB) };
+    ? savedPerformance
+    : { ...savedPerformance, memoryLimitGB: Number(memoryGB) };
   const prefs: Record<string, unknown> = {
     ...(TELEMETRY && saved['telemetry'] !== undefined ? { telemetry: saved['telemetry'] } : {}),
     ...(performance === undefined ? {} : { performance }),
@@ -141,21 +156,19 @@ function rollupProgress(providerDir: string | null): { built: number; months: nu
   if (providerDir === null) return null;
   let months = 0;
   try { months = readdirSync(join(providerDir, 'raw')).filter(d => d.startsWith('daily-')).length; } catch { return null; }
-  try {
-    const manifest = JSON.parse(readFileSync(join(providerDir, 'rollup', 'manifest.json'), 'utf-8')) as { partitions?: Record<string, unknown> };
-    return { built: Object.keys(manifest.partitions ?? {}).length, months };
-  } catch {
-    return { built: 0, months };
-  }
+  const manifest = readRecord(join(providerDir, 'rollup', 'manifest.json'), text => JSON.parse(text));
+  const partitions = manifest !== null && isRecord(manifest['partitions']) ? manifest['partitions'] : {};
+  return { built: Object.keys(partitions).length, months };
 }
 
+/** The dashboards views.yaml names. None when the file is missing (the app
+ *  seeds its defaults, reached through Home) or is not a list of views. */
 function dashboardNames(workspaceDir: string): string[] {
-  try {
-    const doc = parse(readFileSync(join(workspaceDir, 'config', 'views.yaml'), 'utf-8')) as { views?: { name?: unknown }[] };
-    return (doc.views ?? []).map(view => view.name).filter((name): name is string => typeof name === 'string');
-  } catch {
-    return []; // no views.yaml: the app seeds its defaults, reached through Home
-  }
+  const doc = readRecord(join(workspaceDir, 'config', 'views.yaml'), text => parse(text));
+  const views: readonly unknown[] = doc !== null && Array.isArray(doc['views']) ? doc['views'] : [];
+  return views
+    .map(view => (isRecord(view) ? view['name'] : undefined))
+    .filter((name): name is string => typeof name === 'string');
 }
 
 // ---------------------------------------------------------------------------
@@ -176,9 +189,22 @@ interface Observed {
   warnings(): readonly string[];
 }
 
+/** The runner's env without the variables that pin the app to a data or a
+ *  config directory. With one exported in the shell the app would open that
+ *  directory, whatever it is, instead of the clone. */
+function envWithoutPinnedDirs(): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (key === 'COSTGOBLIN_DATA_DIR' || key === 'COSTGOBLIN_CONFIG_DIR') continue;
+    env[key] = value;
+  }
+  return env;
+}
+
 async function launchOnClone(clone: Clone, outDir: string, logName: string): Promise<Observed> {
   const startedAt = Date.now();
   const app = await launchElectron({
+    inherited: envWithoutPinnedDirs(),
     env: {
       NODE_ENV: 'production',
       COSTGOBLIN_HEADLESS: process.env['COSTGOBLIN_HEADLESS'] === '0' ? '0' : '1',
@@ -347,6 +373,11 @@ interface LogEntry {
 
 interface DebugBridge { getQueryLog(): Promise<LogEntry[]>; clearLog(): Promise<void> }
 
+declare global {
+  /** The preload's debug bridge, as the page.evaluate callbacks below read it. */
+  var costgoblinDebug: DebugBridge;
+}
+
 /** A query that reads the provider's raw export rather than rollup partitions.
  *  Told from the SQL: the log's own `materialized` flag is not set by every handler. */
 function readsRaw(sql: string): boolean {
@@ -478,7 +509,7 @@ test('walk every view on a clone of a real workspace', async () => {
       if (app.exit() !== null) return;
       monitor.enter(name);
       const errorsBefore = app.handlerErrors().length;
-      if (results.length > 0) await window.evaluate(() => (globalThis as unknown as { costgoblinDebug: DebugBridge }).costgoblinDebug.clearLog()).catch(() => undefined);
+      if (results.length > 0) await window.evaluate(() => globalThis.costgoblinDebug.clearLog()).catch(() => undefined);
       let outcome = 'ok';
       try {
         await Promise.race([action(window), sleep(60_000).then(() => { throw new Error('the action took over 60s'); })]);
@@ -487,7 +518,7 @@ test('walk every view on a clone of a real workspace', async () => {
       }
       const settled = await settle(window, SETTLE_MS);
       if (settled.blockers.length > 0 && outcome === 'ok') outcome = 'did not settle';
-      const entries = await window.evaluate(() => (globalThis as unknown as { costgoblinDebug: DebugBridge }).costgoblinDebug.getQueryLog()).catch((): LogEntry[] => []);
+      const entries = await window.evaluate(() => globalThis.costgoblinDebug.getQueryLog()).catch((): LogEntry[] => []);
       writeFileSync(join(queryDir, `${String(results.length + 1).padStart(2, '0')}-${slug(name)}.json`), JSON.stringify(entries, null, 1));
       const stats = monitor.of(name);
       const queries = summarize(entries);
