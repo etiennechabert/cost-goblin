@@ -509,6 +509,69 @@ describe('CostScopeView — editing rules', () => {
     expect(card.querySelector('datalist')).toBeNull();
   });
 
+  // Each list of values reads every line item on disk: on a large bill, one
+  // for every dimension took over a minute before the page settled.
+  describe('which dimensions it asks values for', () => {
+    const DIMENSIONS: Dimension[] = [
+      { name: asDimensionId('charge_category'), label: 'Charge category', field: 'charge_category' },
+      { name: asDimensionId('service_code'), label: 'Service code', field: 'service_code' },
+      { name: asDimensionId('region'), label: 'Region', field: 'region' },
+      { name: asDimensionId('account'), label: 'Account', field: 'account_id', displayField: 'account_name' },
+    ];
+
+    function scopeApi(): { api: ScopeApi; askedFor: () => string[] } {
+      const api = new ScopeApi();
+      api.dimensions = DIMENSIONS;
+      api.filterValues = ['eu-central-1', 'us-east-1'];
+      const getValues = vi.spyOn(api, 'getFilterValues');
+      // What the spy records: the override itself declares no parameters.
+      const askedFor = (): string[] => getValues.mock.calls.map((call: readonly unknown[]) => String(call[0]));
+      return { api, askedFor };
+    }
+
+    it('asks only for the dimensions its rules have a condition on', async () => {
+      const { api, askedFor } = scopeApi();
+      const getValues = vi.spyOn(api, 'getFilterValues');
+      renderView(api);
+      const tax = await ruleCard('Tax');
+      await waitFor(() => { expect(tax.querySelectorAll('datalist option')).toHaveLength(2); });
+
+      // The default rules name the charge category and the service code,
+      // never the region or the account.
+      expect(askedFor().sort((a, b) => a.localeCompare(b))).toEqual(['charge_category', 'service_code']);
+      // Every row, whatever the saved scope excludes, over all the data.
+      expect(getValues).toHaveBeenCalledWith('charge_category', {}, undefined, { bypassCostScope: true }, 'cost-scope:charge_category');
+    });
+
+    it('asks for a dimension when a condition first names it, and only then', async () => {
+      const { api, askedFor } = scopeApi();
+      const { user } = renderView(api);
+      const tax = await ruleCard('Tax');
+      await waitFor(() => { expect(askedFor()).toHaveLength(2); });
+      const [select] = dimensionSelects(tax);
+      if (select === undefined) throw new Error('condition picker missing');
+
+      await user.selectOptions(select, 'region');
+      await waitFor(() => { expect(askedFor().filter(id => id === 'region')).toHaveLength(1); });
+      await waitFor(() => { expect(tax.querySelectorAll('datalist option')).toHaveLength(2); });
+
+      // Back and forth: the values it has are kept, and not asked for again.
+      await user.selectOptions(select, 'charge_category');
+      await user.selectOptions(select, 'region');
+      await waitFor(() => { expect(tax.querySelectorAll('datalist option')).toHaveLength(2); });
+      expect(askedFor()).toHaveLength(3);
+    });
+
+    it('asks for nothing a hidden dimension would list, as before', async () => {
+      const { api, askedFor } = scopeApi();
+      api.dimensions = DIMENSIONS.map(d => ('field' in d && d.field === 'service_code' ? { ...d, enabled: false } : d));
+      renderView(api);
+      const tax = await ruleCard('Tax');
+      await waitFor(() => { expect(tax.querySelectorAll('datalist option')).toHaveLength(2); });
+      expect(askedFor()).toEqual(['charge_category']);
+    });
+  });
+
   // A condition added to a rule is blank until its values are typed. The
   // preview carries on meanwhile, and a disabled rule saves with it.
   it('keeps previewing and saves a disabled rule whose added condition is still blank', async () => {
