@@ -159,6 +159,27 @@ describe('PieChart — slices', () => {
     expect(onSliceClick.mock.calls).toEqual([['EC2'], ['S3'], ['RDS']]);
   });
 
+  // A slice is a focusable <g>, not a <button>: Space on it is the page's
+  // "scroll down a screen" unless the slice takes it.
+  it('keeps Space on a slice from scrolling the page, and leaves the other keys alone', async () => {
+    const { container } = renderPie(<PieChart data={SLICES} title="t" maxSlices={3} onSliceClick={vi.fn()} />);
+    const groups = await slices(container, 4);
+
+    // fireEvent answers false when a handler prevented the default action.
+    expect(fireEvent.keyDown(slice(groups, 0), { key: ' ' })).toBe(false);
+    expect(fireEvent.keyDown(slice(groups, 0), { key: 'Enter' })).toBe(true);
+    expect(fireEvent.keyDown(slice(groups, 0), { key: 'Tab' })).toBe(true);
+    // The folded remainder does nothing with Space, so the page keeps it.
+    expect(fireEvent.keyDown(slice(groups, 3), { key: ' ' })).toBe(true);
+  });
+
+  it('leaves Space to the page on a slice without a click handler', async () => {
+    const { container } = renderPie(<PieChart data={SLICES} title="t" />);
+    const groups = await slices(container, 4);
+
+    expect(fireEvent.keyDown(slice(groups, 0), { key: ' ' })).toBe(true);
+  });
+
   it('keeps the folded Other slice inert', async () => {
     const onSliceClick = vi.fn<(name: string) => void>();
     const { container } = renderPie(<PieChart data={SLICES} title="t" maxSlices={2} onSliceClick={onSliceClick} />);
@@ -219,6 +240,36 @@ describe('PieChart — slices', () => {
 });
 
 describe('PieChart — legend', () => {
+  // The folded remainder is named "Other" and is no entity: a previous cost
+  // filed under that name belongs to a real "Other" (FOCUS has such a service
+  // category), drawn or not.
+  it('shows no delta on the folded remainder, whatever cost a real Other had before', async () => {
+    const user = userEvent.setup();
+    const { rerender } = renderPie(<PieChart data={SLICES} title="t" maxSlices={2} previousCosts={new Map([['Other', 100]])} />);
+
+    // EC2, S3 and the remainder ($200): nothing to compare any of them with.
+    expect(await screen.findByText('$200.00 (20.0%)')).not.toBeNull();
+    expect(screen.queryByText(/[↑↓]\d/)).toBeNull();
+    // Nor once the row is hovered and shows its detail.
+    await user.hover(screen.getByText('Other'));
+    expect(screen.getByText('Other').className).toContain('font-semibold');
+    expect(screen.queryByText(/[↑↓]\d/)).toBeNull();
+    await user.unhover(screen.getByText('Other'));
+
+    // A real Other among the slices keeps its own delta; the remainder below
+    // it still has none.
+    const data = [{ name: 'Other', cost: 500, percentage: 50 }, ...SLICES.slice(1)];
+    rerender(
+      <PaletteProvider>
+        <PieChart data={data} title="t" maxSlices={2} previousCosts={new Map([['Other', 400], ['S3', 400]])} />
+      </PaletteProvider>,
+    );
+    expect(await screen.findByText('↑25.0%')).not.toBeNull();
+    expect(screen.getByText('↓25.0%')).not.toBeNull();
+    expect(screen.getAllByText('Other')).toHaveLength(2);
+    expect(screen.getAllByText(/[↑↓]\d/)).toHaveLength(2);
+  });
+
   it('shows period-over-period deltas only where a previous cost exists', async () => {
     renderPie(<PieChart data={SLICES} title="t" previousCosts={PREVIOUS} />);
 
@@ -290,6 +341,22 @@ describe('PieChart — without a legend', () => {
 
     fireEvent.mouseLeave(slice(groups, 3));
     expect(screen.queryByText('Lambda')).toBeNull();
+  });
+
+  it('shows no delta in the label of the folded remainder', async () => {
+    const data = [{ name: 'Other', cost: 500, percentage: 50 }, ...SLICES.slice(1)];
+    const previousCosts = new Map([['Other', 400]]);
+    const { container } = renderPie(<PieChart data={data} title="t" showLegend={false} maxSlices={2} previousCosts={previousCosts} />);
+    const groups = await slices(container, 3);
+
+    fireEvent.mouseEnter(slice(groups, 2));
+    expect(screen.getByText('$200.00 (20.0%)')).not.toBeNull();
+    expect(screen.queryByText(/[↑↓]\d/)).toBeNull();
+
+    // The real Other, first slice, still shows its own.
+    fireEvent.mouseEnter(slice(groups, 0));
+    expect(screen.getByText('$500.00 (50.0%)')).not.toBeNull();
+    expect(screen.getByText('↑25.0%').className).toContain('text-negative');
   });
 
   it('shows no delta without previous costs', async () => {
