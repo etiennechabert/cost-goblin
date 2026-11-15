@@ -234,7 +234,19 @@ class DuckDBSupervisor implements SupervisedDuckDBClient {
     const set = definedSettings(settings);
     // A new object each time: a process remembers the one it was spawned with.
     this.settings = { ...this.settings, ...set };
-    if (this.phase === 'running') this.post({ kind: 'configure', ...set });
+    if (this.phase !== 'running') return;
+    // Both limits each time, the one this call left alone as it is remembered:
+    // the process takes a limit the message leaves out back to its default,
+    // and would then run under other settings than the process that replaces
+    // it. The spill directory only when this call names it: DuckDB refuses to
+    // set it again once it has spilled there.
+    const { memoryGB, threads } = this.settings;
+    this.post({
+      kind: 'configure',
+      ...(memoryGB === undefined ? {} : { memoryGB }),
+      ...(threads === undefined ? {} : { threads }),
+      ...set,
+    });
   }
 
   terminate(): Promise<void> {

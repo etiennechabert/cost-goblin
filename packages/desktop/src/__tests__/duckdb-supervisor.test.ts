@@ -310,6 +310,21 @@ describe('when the process exits unexpectedly', () => {
     await expect(held).resolves.toEqual([]);
   });
 
+  it('sends the limit a configure leaves alone beside the one it changes', async () => {
+    const r = rig();
+    const client = await started(r, { tempDir: '/ws/tmp', memoryGB: 2, threads: 8 });
+
+    // The process takes a limit the message leaves out back to its default:
+    // 2 GB would become the default again, until the next process started.
+    client.configure({ threads: 4 });
+    client.configure({ memoryGB: 3 });
+
+    expect(r.current().posted).toEqual([
+      { kind: 'configure', memoryGB: 2, threads: 4 },
+      { kind: 'configure', memoryGB: 3, threads: 4 },
+    ]);
+  });
+
   it('starts a process that was never configured with no settings', async () => {
     const r = rig();
     await started(r);

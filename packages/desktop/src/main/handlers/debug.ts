@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { app as electronApp, ipcMain } from 'electron';
 import { findGhCli, findGitCli, parseJsonObject } from '@costgoblin/core';
+import { QUERY_ENGINE_PROCESS_NAME } from '../duckdb-utility-process.js';
 import type { AppContext } from './context.js';
 
 const execFileAsync = promisify(execFile);
@@ -37,7 +38,11 @@ export function registerDebugHandlers(app: AppContext): void {
   });
 
   ipcMain.handle('debug:get-memory-mb', () => {
-    return Math.round(process.memoryUsage().rss / 1024 / 1024);
+    // This process and the query engine's: DuckDB, the largest user of memory
+    // in the app, runs in a process of its own. Both in KB.
+    const mainKB = process.memoryUsage().rss / 1024;
+    const engine = electronApp.getAppMetrics().find(metric => metric.name === QUERY_ENGINE_PROCESS_NAME);
+    return Math.round((mainKB + (engine?.memory.workingSetSize ?? 0)) / 1024);
   });
 
   // Current git branch — only meaningful in dev (a source checkout/worktree).
