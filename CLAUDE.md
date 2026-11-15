@@ -22,6 +22,7 @@ costgoblin/
   scripts/                  # ci/ policy tests, build/ packaging, aws-exports/ template, gcp-focus-exporter/ (own lockfile)
   docs/                     # costgoblin.com website (incl. the GDPR privacy.html) and design docs
   .gitar/                   # Gitar AI-review config: review guidance, rules, risk and auto-apply policy
+  .claude/                  # Claude Code project config: shared skills, settings.json and the hooks it runs
 ```
 
 **Package dependency rules:**
@@ -68,8 +69,9 @@ Follow this sequence for EVERY feature:
 7. Run: vitest run <test-file> → see tests pass (green)
 8. Run: npm run check → full verification (MUST pass before moving on)
 9. If working on UI: npm run dev in desktop/ to visually verify
-10. After pushing & opening the PR — close the review loop (see "After pushing"):
-    - Run `/code-review xhigh --fix` yourself (via the `Skill` tool), review the fixes it applies, and re-run npm run check
+10. After pushing & opening the PR (as a draft) — close the review loop (see "After pushing"):
+    - Run `/code-review xhigh --fix` yourself (via the `Skill` tool), review the fixes it applies, re-run npm run check, and push them
+    - Comment on the PR that the review ran, then mark the PR ready for review (never before)
     - Address every sentry[bot] review comment on the PR
     - Reply to every gitar-bot[bot] finding, whether you agree with it or not
     - Read SonarCloud's new issues on the PR (even when its gate passes) and fix the valid ones
@@ -129,6 +131,8 @@ type QueryState<T> =
 ## Testing Approach
 
 In Vitest, a `vi.fn(impl)` from a `vi.mock` factory is reset with `mockReset()` in `afterEach`: since Vitest 3, `vi.restoreAllMocks()` only restores `vi.spyOn` spies, so an override or an unused `…Once` leaks into the next test.
+
+A test never runs a `git` command that writes (`git init`, `git config`, `git commit`), even on a temp directory. The pre-commit hook runs the whole suite with `GIT_DIR` exported, so the command lands on this clone: a `git init <tmpdir>` there set `core.bare = true` in the shared config and broke every worktree. Build a throwaway repository by hand (`.git/HEAD`, `objects/`, `refs/`), and give a `git` that has to look at another directory an environment without the variables `git rev-parse --local-env-vars` lists.
 
 A main-process rejection reaches the renderer prefixed by Electron (`Error invoking remote method 'query:costs': Error: …`), so nothing compares an IPC error's whole message: a cancelled query goes through `isQueryCancelled`, and a UI test's mock rejects with the prefixed text. A bare message in a mock is how `useQuery`'s retry stayed dead in the app with its tests green.
 
@@ -240,9 +244,13 @@ So the lifecycle is: tag `v0.2.6` released → first PR bumps both to `0.2.7` �
 
 ## After pushing — close the review loop
 
-A development cycle isn't done when the code is pushed. Once the changes are pushed and the PR is open, do ALL of the following before considering the work finished. Re-check the bots after every push: each one reviews the new head again.
+A development cycle isn't done when the code is pushed. Once the changes are pushed and the PR is open, do ALL of the following before considering the work finished. Re-check the bots after every push: each one reviews the new head again, Sentry and Gitar only once the PR is ready.
 
-### 1. `/code-review xhigh --fix`
+**The PR is opened as a draft** (`gh pr create --draft`) and turns ready for review only at the end of step 1. `sentry[bot]` and `gitar-bot[bot]` review no draft (Sentry skips them, and Gitar's "Skip drafts" setting is on), so the first code they read has already been through the local review. CI, the CLA check and SonarCloud run on a draft as on any PR.
+
+Sentry and Gitar start when the PR turns ready: Sentry as the `Seer Code Review` check, Gitar with its summary comment about a minute later. Until that check has finished and that comment is there, an empty comment list means they haven't run yet, not that they found nothing.
+
+### 1. `/code-review xhigh --fix`, then ready for review
 
 At the end of a dev cycle (changes just pushed), run `/code-review xhigh --fix` — a deep, multi-agent review that applies its findings to the working tree.
 
@@ -250,6 +258,23 @@ At the end of a dev cycle (changes just pushed), run `/code-review xhigh --fix` 
 - `xhigh` reviews the current branch; `/code-review xhigh <PR#>` reviews a specific GitHub PR. `--fix` applies the review's findings to the working tree after it completes (use `--comment` instead to post them as inline PR comments).
 - After it applies fixes: review the resulting diff, run `npm run check` (build the worker first — see the versioning note above), then commit and push. Treat anything it changed as a normal change that must pass verification.
 - The lighter effort levels (`/code-review` at low…high, optionally `--fix` / `--comment`) run faster for a quick pass mid-development; `xhigh` is the end-of-cycle pass. Run `max` only when the user explicitly asks for it.
+
+Once the review's fixes are pushed, or it found nothing to fix, finish the step in this order:
+
+1. **Comment on the PR** that `/code-review xhigh --fix` ran. Open with "`/code-review xhigh --fix` ran on <commit>", the commit being the one it reviewed, then say what came of it: the findings and the commit that fixes them, any finding left unfixed and why, or that there were none.
+2. **Mark the PR ready for review**, and not before: a draft without that comment hasn't been through the review, whatever else was run on it. A lighter `/code-review` pass doesn't count.
+
+```bash
+gh pr create --draft --title "…" --body-file <file>
+gh pr comment <pr> --body-file <file>
+gh pr ready <pr>
+```
+
+Both bodies go in a file: as a shell string, a double-quoted one runs its backtick spans as commands, and a single-quoted one ends at the first apostrophe.
+
+If a later cycle on the same PR runs the review again, that run gets its own comment. The PR stays ready.
+
+**A hook holds a Claude Code session to this order.** For this repository's PRs, `.claude/hooks/pr-guard.mjs`, which `.claude/settings.json` runs before each Bash command, refuses a `gh pr create` without `--draft`, and a `gh pr ready` while the PR has no comment opening with "`/code-review xhigh --fix` ran". It reads GitHub before the command starts, so `gh pr ready` goes in a command of its own: after the one that posts the comment, and never in the one that opens the PR. It is no check on the PR itself: it sees only the `gh pr` commands a session runs.
 
 ### 2. Sentry comments
 
@@ -271,7 +296,7 @@ Keep replies professional and free of any AI attribution (see global git rules).
 
 ### 3. Gitar review
 
-Gitar (`gitar-bot[bot]`) also reviews every PR: one summary comment on the PR, plus an inline comment per finding. **Reply to every Gitar finding, whether you agree with it or not**: an unanswered finding can't be told apart from an ignored one.
+Gitar (`gitar-bot[bot]`) also reviews every PR once it is ready for review: one summary comment on the PR, plus an inline comment per finding. **Reply to every Gitar finding, whether you agree with it or not**: an unanswered finding can't be told apart from an ignored one.
 
 For each inline `gitar-bot[bot]` finding:
 1. **Verify it against the actual code**, as for Sentry.
@@ -298,7 +323,7 @@ gh api -X POST repos/etiennechabert/cost-goblin/issues/comments/<id>/reactions -
 
 **Gitar can commit to the branch:** when someone ticks a suggestion's "Apply fix" box, replies `gitar fix`, turns on auto-apply, or adds the `gitar-managed` label. It also pushes a repair when one of its own commits breaks CI. If the remote branch moved, `git pull --ff-only` before pushing.
 
-**Editing `.gitar/`.** Gitar filters these files before each review, so put every instruction under a heading that matches it. On #716 a "flag this" note inside the "Don't comment on" list was dropped and never reached the reviewer. `npm run check` (`scripts/ci/gitar-config.test.mjs`) fails when a `.gitar/` file names a path or identifier that no longer exists, or when `review/` plus `instructions/` grow past 32 KB. See `.gitar/README.md` for what each file does.
+**Editing `.gitar/`.** Gitar filters these files before each review, so put every instruction under a heading that matches it. On #716 a "flag this" note inside the "Don't comment on" list was dropped and never reached the reviewer. A workflow rule added to a section of this file that `.gitar/instructions/cost-goblin.md` lists as repository rules, such as "What NOT To Do", says it is the maintainer's local workflow, or Gitar asks it of every PR author (#834). `npm run check` (`scripts/ci/gitar-config.test.mjs`) fails when a `.gitar/` file names a path or identifier that no longer exists, or when `review/` plus `instructions/` grow past 32 KB. See `.gitar/README.md` for what each file does.
 
 ### 4. SonarCloud findings
 
@@ -358,7 +383,8 @@ curl -s "https://sonarcloud.io/api/hotspots/search?projectKey=etiennechabert_cos
 ## What NOT To Do
 
 - Do NOT skip `npm run check`. Every change must pass before moving on.
-- Do NOT consider a pushed change "done" until `/code-review xhigh --fix` has been run on it, every `sentry[bot]` and `gitar-bot[bot]` comment is answered, and SonarCloud's new issues are triaged.
+- Do NOT open a PR ready for review (maintainer's local workflow, not a repository rule). It starts as a draft and turns ready only at the end of step 1 of "After pushing": `/code-review xhigh --fix` has run on it and the PR has the comment saying so.
+- Do NOT consider a pushed change "done" (same local workflow) until `/code-review xhigh --fix` has been run on it, every `sentry[bot]` and `gitar-bot[bot]` comment is answered, and SonarCloud's new issues are triaged.
 - Do NOT add `any`, `@ts-ignore`, or `eslint-disable` to make code compile.
 - Do NOT write tests after implementation. Write them before or alongside.
 - Do NOT import from `core` into `ui` for anything except types.
