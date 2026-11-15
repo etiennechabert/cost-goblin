@@ -28,6 +28,20 @@ export async function queryAll(conn: DuckDBConnection, sql: string): Promise<Row
   return rows;
 }
 
+/** `sql` with each `$n` replaced by its parameter written as a literal, for a
+ *  test that runs a builder's `{ sql, params }` through `queryAll`. A string
+ *  is quoted as it is, with no escaping: for fixture values only.
+ *  `runPrepared` binds the parameters instead, as the app does. */
+export function substituteParams(sql: string, params: readonly unknown[]): string {
+  let result = sql;
+  for (let i = params.length; i >= 1; i--) {
+    const param = params[i - 1];
+    const value = typeof param === 'string' ? `'${param}'` : String(param);
+    result = result.replaceAll('$' + String(i), value);
+  }
+  return result;
+}
+
 /** Positional `$1..$n` binding for the parameter types the query builders
  *  emit. Anything else is a test bug, so it throws instead of guessing. */
 function bindParams(stmt: DuckDBPreparedStatement, params: readonly unknown[]): void {

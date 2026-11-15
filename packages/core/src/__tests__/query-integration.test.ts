@@ -8,7 +8,7 @@ import { buildSource as rebuildSource } from '../query/builder.js';
 import { FIXTURE_PROVIDER_NAME } from '../__fixtures__/layout.js';
 import type { DimensionsConfig } from '../types/config.js';
 import { asDimensionId, asDateString, asDollars, asEntityRef, asProviderName, asTagValue } from '../types/branded.js';
-import { queryAll } from './helpers/duckdb-rows.js';
+import { queryAll, substituteParams } from './helpers/duckdb-rows.js';
 import type { Row } from './helpers/duckdb-rows.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -42,21 +42,6 @@ const dimensions: DimensionsConfig = {
     },
   ],
 };
-
-/**
- * For integration testing only: substitutes parameters into SQL.
- * In production, the worker thread uses real prepared statements.
- */
-function substituteParams(sql: string, params: readonly unknown[]): string {
-  let result = sql;
-  for (let i = params.length; i >= 1; i--) {
-    const param = params[i - 1];
-    const placeholder = '$' + String(i);
-    const value = typeof param === 'string' ? `'${param}'` : String(param);
-    result = result.replaceAll(placeholder, value);
-  }
-  return result;
-}
 
 async function queryAllPrepared(conn: DuckDBConnection, sql: string, params: readonly unknown[]): Promise<Row[]> {
   // For integration tests, substitute params back into SQL
