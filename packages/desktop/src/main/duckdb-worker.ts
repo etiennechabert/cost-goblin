@@ -6,7 +6,7 @@ import { QUERY_CANCELLED_MESSAGE, buildDuckDbSandboxStatements, isDuckDbSandboxO
 import type { DuckDBConnection, DuckDBInstance } from './duckdb-loader.js';
 import { createResourcePool } from './connection-pool.js';
 import type { ResourcePool } from './connection-pool.js';
-import { computeDefaultMemoryGB, computeDefaultThreads, computeQueryPoolSize } from './duckdb-tuning.js';
+import { computeDefaultThreads, computeQueryPoolSize, resolveMemoryGB } from './duckdb-tuning.js';
 
 interface DuckDBModule {
   DuckDBInstance: { create: () => Promise<DuckDBInstance> };
@@ -28,7 +28,9 @@ async function configureDuckDB(conn: DuckDBConnection, settings: DuckDBSettings)
   // any connection affects the whole instance. Callers pass the resolved
   // effective values (user override or computed default); absent fields fall
   // back to the computed defaults so a partial message never under-provisions.
-  const memGB = settings.memoryGB ?? computeDefaultMemoryGB();
+  // The memory value is held to the ceiling again here, where the limit is
+  // set: one above it ends the app (see MAX_MEMORY_GB), whoever sent it.
+  const memGB = resolveMemoryGB(settings.memoryGB);
   const threads = settings.threads ?? computeDefaultThreads();
   await conn.run(`SET memory_limit = '${String(memGB)}GB'`);
   await conn.run(`SET threads = ${String(threads)}`);
@@ -71,7 +73,7 @@ function resolveWorkerMode(data: unknown): WorkerMode {
 const mode: WorkerMode = resolveWorkerMode(workerData);
 
 type WorkerResponse =
-  | { kind: 'ready' }
+  | { kind: 'ready'; settled: SharedArrayBuffer }
   | { kind: 'started'; id: number }
   | { kind: 'rows'; id: number; rows: Readonly<Record<string, unknown>>[] }
   | { kind: 'error'; id: number; message: string };
@@ -91,9 +93,14 @@ function isPreparedQueryRequest(msg: unknown): msg is { kind: 'prepared-query'; 
   return msg['kind'] === 'prepared-query' && typeof msg['id'] === 'number' && typeof msg['sql'] === 'string' && Array.isArray(msg['params']);
 }
 
-function isCancelRequest(msg: unknown): msg is { kind: 'cancel-pending' } {
+function isCancelRequest(msg: unknown): msg is { kind: 'cancel-pending'; builds?: boolean } {
   if (!hasProps(msg)) return false;
+  if (msg['builds'] !== undefined && typeof msg['builds'] !== 'boolean') return false;
   return msg['kind'] === 'cancel-pending';
+}
+
+function isDrainRequest(msg: unknown): msg is { kind: 'drain' } {
+  return hasProps(msg) && msg['kind'] === 'drain';
 }
 
 function isConfigureRequest(msg: unknown): msg is { kind: 'configure'; tempDir?: string; memoryGB?: number; threads?: number } {
@@ -112,6 +119,41 @@ const cancelledIds = new Set<number>();
 const queuedIds = new Set<number>();  // waiting for pool.acquire()
 const runningIds = new Set<number>(); // executing in DuckDB
 const runningConns = new Map<number, DuckDBConnection>(); // id → connection for interrupt()
+const buildIds = new Set<number>();   // `fresh` queries: rollup partition builds
+
+// ---------------------------------------------------------------------------
+// Drain — letting the thread be torn down safely
+// ---------------------------------------------------------------------------
+// A DuckDB call still in flight when this thread is torn down aborts the whole
+// process: its completion runs in an environment that can no longer take it,
+// throws, and nothing catches the throw. A process that is exiting therefore
+// asks for a drain first and waits until every request it posted has settled.
+// (terminate() waits for the requests' answers instead, see duckdb-client.ts.)
+
+/** How many requests have settled, for the owner to compare with how many it
+ *  posted. Shared memory, because an owner that is exiting waits on it with
+ *  its event loop stopped: it can read this, it cannot receive a message. */
+const settledBuffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
+const settledCount = new Int32Array(settledBuffer);
+
+function requestSettled(): void {
+  Atomics.add(settledCount, 0, 1);
+  Atomics.notify(settledCount, 0);
+}
+
+/** The message kinds the owner counts as requests. */
+const COUNTED_KINDS: ReadonlySet<unknown> = new Set(['query', 'prepared-query', 'configure']);
+
+function isCountedRequest(msg: unknown): boolean {
+  return hasProps(msg) && COUNTED_KINDS.has(msg['kind']);
+}
+
+/** Cancels everything, builds included: nothing is meant to run after a
+ *  drain. The queries in flight are interrupted until each has settled, as for
+ *  any cancel (see keepInterruptingCancelled). */
+function handleDrain(): void {
+  handleCancelPending(true);
+}
 
 async function fetchAllRows(
   conn: DuckDBConnection,
@@ -254,7 +296,7 @@ function send(msg: WorkerResponse): void {
 async function initWorker(): Promise<void> {
   try {
     await getPool();
-    send({ kind: 'ready' });
+    send({ kind: 'ready', settled: settledBuffer });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     send({ kind: 'error', id: -1, message: `DuckDB worker init failed: ${message}` });
@@ -285,6 +327,7 @@ async function handleRequest(req: { kind: 'query'; id: number; sql: string; fres
   try {
     queuedIds.add(req.id);
     if (fresh) {
+      buildIds.add(req.id);
       conn = await (await getInstance()).connect();
     } else {
       pool = await getPool();
@@ -320,6 +363,7 @@ async function handleRequest(req: { kind: 'query'; id: number; sql: string; fres
     queuedIds.delete(req.id);
     runningIds.delete(req.id);
     runningConns.delete(req.id);
+    buildIds.delete(req.id);
     if (conn !== undefined) {
       if (fresh) conn.disconnectSync();
       else if (pool !== undefined) pool.release(conn);
@@ -377,12 +421,19 @@ async function handlePreparedRequest(req: { kind: 'prepared-query'; id: number; 
   }
 }
 
-function handleCancelPending(): void {
+/** Cancel what is queued or running. A view's cancel (`includeBuilds` false:
+ *  sent on every navigation and date change) spares the rollup partition
+ *  builds. They are not that view's queries, and a cancelled build is not
+ *  retried: its month stays out of the rollup, so every query over it reads
+ *  the raw export until the next warmup. Clicking around during the build at
+ *  launch used to lose most of a year that way. */
+function handleCancelPending(includeBuilds: boolean): void {
+  const spared = (id: number): boolean => !includeBuilds && buildIds.has(id);
   for (const id of queuedIds) {
-    cancelledIds.add(id);
+    if (!spared(id)) cancelledIds.add(id);
   }
   for (const id of runningIds) {
-    cancelledIds.add(id);
+    if (!spared(id)) cancelledIds.add(id);
   }
   // Actively interrupt running DuckDB queries so they release pool
   // connections immediately instead of running to completion.
@@ -442,20 +493,27 @@ function reportUnexpectedFailure(id: number, err: unknown): void {
   queuedIds.delete(id);
   runningIds.delete(id);
   runningConns.delete(id);
+  buildIds.delete(id);
   send({ kind: 'error', id, message: `DuckDB worker error: ${message}` });
 }
 
 port.on('message', (msg: unknown) => {
-  if (isQueryRequest(msg)) {
+  if (isDrainRequest(msg)) {
+    handleDrain();
+  } else if (isQueryRequest(msg)) {
     const { id } = msg;
-    handleRequest(msg).catch((err: unknown) => { reportUnexpectedFailure(id, err); });
+    handleRequest(msg).catch((err: unknown) => { reportUnexpectedFailure(id, err); }).finally(requestSettled);
   } else if (isPreparedQueryRequest(msg)) {
     const { id } = msg;
-    handlePreparedRequest(msg).catch((err: unknown) => { reportUnexpectedFailure(id, err); });
+    handlePreparedRequest(msg).catch((err: unknown) => { reportUnexpectedFailure(id, err); }).finally(requestSettled);
   } else if (isCancelRequest(msg)) {
-    handleCancelPending();
+    handleCancelPending(msg.builds === true);
   } else if (isConfigureRequest(msg)) {
-    handleConfigure(msg).catch(() => undefined);
+    handleConfigure(msg).catch(() => undefined).finally(requestSettled);
+  } else if (isCountedRequest(msg)) {
+    // The owner counted it as posted and it is refused here as malformed: it
+    // settles all the same, or a drain would wait for it until its deadline.
+    requestSettled();
   }
 });
 

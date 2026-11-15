@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { Worker } from 'node:worker_threads';
 import { pbkdf2 } from 'node:crypto';
 import { existsSync } from 'node:fs';
@@ -11,6 +11,7 @@ import { CHARGE_PERIOD_START_UTC_SQL } from '@costgoblin/core';
 import type { DuckDbSandboxOptions } from '@costgoblin/core';
 import { createDuckDBClient } from '../main/duckdb-client.js';
 import type { DuckDBClient } from '../main/duckdb-client.js';
+import { MAX_MEMORY_GB, clampMemoryGB, resolveMemoryGB } from '../main/duckdb-tuning.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const workerPath = join(__dirname, '..', '..', 'out', 'worker', 'duckdb-worker.cjs');
@@ -117,7 +118,8 @@ describe('DuckDB Worker', () => {
       const timeout = setTimeout(() => { reject(new Error('Worker ready timeout')); }, 10000);
       worker.once('message', (msg) => {
         clearTimeout(timeout);
-        expect(msg).toEqual({ kind: 'ready' });
+        // The ready message carries the worker's settled counter (see duckdb-drain.test.ts).
+        expect(msg).toEqual({ kind: 'ready', settled: expect.any(SharedArrayBuffer) });
         resolve();
       });
       worker.once('error', (e: unknown) => {
@@ -233,6 +235,44 @@ describe('DuckDB Worker', () => {
     expect((await waitForResult(afterId)).kind).toBe('rows');
   });
 
+  // Cross joins the worker cannot finish before a cancel sent on `started`
+  // reaches it: under a second for the first, several for the second. No more
+  // than that: an interrupt that reaches DuckDB before the query has begun is
+  // lost, and the query then runs to its end before it is reported cancelled.
+  const SLOW_SQL = 'SELECT sum(a.range + b.range) AS total FROM range(20000) a, range(20000) b';
+  const VERY_SLOW_SQL = 'SELECT sum(a.range + b.range) AS total FROM range(60000) a, range(60000) b';
+
+  it('leaves a rollup build running when the pending queries are cancelled', async () => {
+    const buildId = nextId++;
+    const queryId = nextId++;
+    const started = Promise.all([waitForStarted(buildId), waitForStarted(queryId)]);
+    const build = waitForResult(buildId);
+    const query = waitForResult(queryId);
+    worker.postMessage({ kind: 'query', id: buildId, sql: SLOW_SQL, fresh: true });
+    sendQuery(queryId, VERY_SLOW_SQL);
+    await started;
+
+    // What a view sends on every navigation and date change.
+    worker.postMessage({ kind: 'cancel-pending' });
+
+    expect(await query).toMatchObject({ kind: 'error', message: 'Query cancelled' });
+    // The build was running too, and is not a view's to cancel: cancelled, its
+    // month would stay out of the rollup and every query over it read raw data.
+    expect(expectRows(await build).rows).toHaveLength(1);
+  }, 60_000);
+
+  it('cancels a rollup build too when asked to cancel everything', async () => {
+    const buildId = nextId++;
+    const started = waitForStarted(buildId);
+    const build = waitForResult(buildId);
+    worker.postMessage({ kind: 'query', id: buildId, sql: VERY_SLOW_SQL, fresh: true });
+    await started;
+
+    worker.postMessage({ kind: 'cancel-pending', builds: true });
+
+    expect(await build).toMatchObject({ kind: 'error', message: 'Query cancelled' });
+  }, 60_000);
+
   it('handles sequential queries with correct IDs', async () => {
     const ids = [nextId++, nextId++, nextId++];
     for (const id of ids) {
@@ -283,6 +323,31 @@ describe('DuckDB Worker', () => {
     expect(rows[0]).toHaveProperty('a');
     expect(rows[0]).toHaveProperty('b');
     expect(rows[0]).toHaveProperty('c');
+  });
+
+  it('holds a configure above the memory ceiling to the ceiling', async () => {
+    async function memoryLimit(): Promise<unknown> {
+      const id = nextId++;
+      sendQuery(id, "SELECT current_setting('memory_limit') AS m");
+      return expectRows(await waitForResult(id)).rows[0]?.['m'];
+    }
+    // A configure is not acknowledged and runs beside the queries, so each
+    // step waits for the limit to move away from the one before it.
+    async function configureFrom(previous: unknown, memoryGB: number): Promise<unknown> {
+      worker.postMessage({ kind: 'configure', memoryGB });
+      await vi.waitFor(async () => { expect(await memoryLimit()).not.toBe(previous); }, { timeout: 5000 });
+      return memoryLimit();
+    }
+    const ceilingGB = clampMemoryGB(MAX_MEMORY_GB);
+    // The steps below tell 1 GB from the default and from the ceiling.
+    expect(resolveMemoryGB(null)).toBeGreaterThan(1);
+    expect(ceilingGB).toBeGreaterThan(1);
+
+    const atOne = await configureFrom(await memoryLimit(), 1);
+    const atCeiling = await configureFrom(atOne, ceilingGB);
+    expect(await configureFrom(atCeiling, 1)).toBe(atOne);
+    // What an override saved under the old 24 GB ceiling would ask for.
+    expect(await configureFrom(atOne, 24)).toBe(atCeiling);
   });
 
   // A cross join that takes the worker far longer than CANCEL_DEADLINE_MS.
@@ -427,7 +492,7 @@ describe('DuckDB Worker (sandboxed)', () => {
     beforeAll(async () => {
       const spawned = await spawnWithData({ sandbox });
       worker = spawned.worker;
-      expect(spawned.first).toEqual({ kind: 'ready' });
+      expect(spawned.first).toEqual({ kind: 'ready', settled: expect.any(SharedArrayBuffer) });
     });
 
     afterAll(async () => {

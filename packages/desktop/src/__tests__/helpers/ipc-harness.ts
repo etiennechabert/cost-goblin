@@ -102,6 +102,7 @@ export async function createTestWorkspace(options: TestWorkspaceOptions = {}): P
 
 export interface HarnessDb extends DuckDBClient {
   readonly cancelPendingQueries: Mock<() => void>;
+  readonly cancelAllQueries: Mock<() => void>;
   readonly configure: Mock<(settings: { tempDir?: string; memoryGB?: number; threads?: number }) => void>;
   /** SQL text of every query and build, in submission order. */
   readonly statements: string[];
@@ -163,6 +164,7 @@ export function createHarnessDb(options: { readonly rollupBuilds?: boolean } = {
       });
     },
     cancelPendingQueries: vi.fn<() => void>(),
+    cancelAllQueries: vi.fn<() => void>(),
     configure: vi.fn<(settings: { tempDir?: string; memoryGB?: number; threads?: number }) => void>(),
     async terminate(): Promise<void> {
       await chain;

@@ -1,3 +1,7 @@
+// One formatter for the module. `toLocaleString` with options builds a new one
+// on every call, and a chart or a table formats a cost for each row it renders.
+const CENTS = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
 export function formatDollars(amount: number): string {
   if (Math.abs(amount) >= 1_000_000) {
     return `$${(amount / 1_000_000).toFixed(1)}M`;
@@ -5,7 +9,7 @@ export function formatDollars(amount: number): string {
   if (Math.abs(amount) >= 1_000) {
     return `$${(amount / 1_000).toFixed(1)}k`;
   }
-  return `$${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `$${CENTS.format(amount)}`;
 }
 
 /** Currency with an explicit leading sign, e.g. "+$1.2k". */
