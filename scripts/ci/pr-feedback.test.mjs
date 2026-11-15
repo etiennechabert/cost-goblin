@@ -564,6 +564,14 @@ describe('stopDecision', () => {
       expect(sleeps).toEqual([]);
     });
 
+    it('does not take a commit somebody pushed on top of its own for GitHub lagging', async () => {
+      // this clone pushed 20 s ago; the head GitHub shows reached it 5 s ago, and its review is done
+      const ahead = pullRequest({ checks: [checkRun('Seer Code Review'), checkRun('Gitar')], headRefOid: OLDER, pushedAt: ago(5_000), comments: [comment(GITAR, SUMMARY, { mine: ['THUMBS_UP'] })] });
+      const { options, sleeps } = waiting(ahead);
+      expect(await stopDecision(stop(), { ...options, git: fakeGit({ lastMove: { ago: 20_000, by: 'push' } }) })).toEqual({});
+      expect(sleeps).toEqual([]);
+    });
+
     it('stops waiting for a push GitHub never shows', async () => {
       const { options, sleeps } = waiting(stale());
       expect(await stopDecision(stop(), { ...options, git: fakeGit({ lastMove: { ago: 2_000, by: 'push' } }) })).toEqual({});

@@ -26,9 +26,10 @@
 //
 // Sentry and Gitar start when a pull request turns ready, and again on each
 // push, which is often when the session stops. So before it reads the list,
-// the hook waits for them while they are at work or about to be (`reviewing`):
-// at most WAIT_MS, and once per commit and session. It does not wait for
-// SonarCloud, whose analysis comes after CI.
+// the hook waits for them while they are at work or about to be (`reviewing`),
+// or while GitHub does not show yet the commit this clone has just pushed
+// (`behind`): at most WAIT_MS, and once per commit and session. It does not
+// wait for SonarCloud, whose analysis comes after CI.
 //
 // It stays silent for a draft (the bots do not review one), for a branch
 // with no pull request, in a directory of another repository, for a session
@@ -163,7 +164,11 @@ export function reviewing(pr, now, pushed = null) {
  * just pushed: its head follows a push by a second or two, and a hook that
  * runs in between reads the reviews of the commit before.
  */
-const behind = (pr, pushed, now) => pushed !== null && pushed.sha !== pr.headRefOid && now - pushed.at < EXPECT_MS;
+function behind(pr, pushed, now) {
+  if (pushed === null || pushed.sha === pr.headRefOid || now - pushed.at >= EXPECT_MS) return false;
+  // a head that reached GitHub after this clone's push is somebody's commit on top of it: GitHub is ahead
+  return !(pushTime(pr.commits?.nodes?.[0]?.commit) > pushed.at);
+}
 
 /**
  * When a commit reached GitHub, in ms, for a commit this clone did not push
@@ -308,7 +313,8 @@ function checkoutOf(cwd, git) {
 
 /**
  * The checkout, when its branch can have a pull request in this repository:
- * `{ slug, branch, pushed }`. No network is used to tell.
+ * `{ slug, branch, remote, sha }`, the last two being the branch as this
+ * clone last saw it on GitHub. No network is used to tell.
  */
 function branchForPr(cwd, git, here) {
   const ours = git(here, GIT_DIR);
@@ -320,8 +326,7 @@ function branchForPr(cwd, git, here) {
   const sha = git(cwd, ['rev-parse', '--verify', '--quiet', remote]);
   if (sha === null) return null;
   const main = git(cwd, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'])?.replace(/^origin\//, '') ?? 'main';
-  if (at.branch === main || at.branch === 'main' || at.branch === 'master') return null;
-  return { ...at, pushed: lastPush(cwd, git, remote, sha) };
+  return at.branch === main || at.branch === 'main' || at.branch === 'master' ? null : { ...at, remote, sha };
 }
 
 /**
@@ -329,7 +334,7 @@ function branchForPr(cwd, git, here) {
  * in ms on this machine's clock. Null when the branch's last move was not a
  * push from here (a fetch of somebody else's commits), or left no trace.
  */
-function lastPush(cwd, git, remote, sha) {
+function lastPush(cwd, git, { remote, sha }) {
   // the reflog dates each move of the remote-tracking branch, and says what moved it
   const entry = git(cwd, ['reflog', 'show', '-1', '--format=%gd %gs', '--date=unix', remote]);
   const seconds = /@\{(\d+)\} update by push$/.exec(entry ?? '')?.[1];
@@ -503,7 +508,7 @@ export async function stopDecision(
   }
   if (pr === null || pr.isDraft) return {};
   const memory = memoryOf(stateDir, input.session_id);
-  pr = await reviewed(pr, read, memory, at.pushed, now, sleep);
+  pr = await reviewed(pr, read, memory, lastPush(cwd, git, at), now, sleep);
   if (pr === null) return {};
   const sonar = await readSonar(git(cwd, ['rev-parse', '--show-toplevel']) ?? cwd, pr, curl);
   const onSonar = owedOnSonar(sonar, pr.headRefOid).filter((item) => memory?.has(item.id) !== true);
