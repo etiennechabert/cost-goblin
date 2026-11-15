@@ -250,6 +250,10 @@ A development cycle isn't done when the code is pushed. Once the changes are pus
 
 Sentry and Gitar start when the PR turns ready: Sentry as the `Seer Code Review` check, Gitar with its summary comment about a minute later. Until that check has finished and that comment is there, an empty comment list means they haven't run yet, not that they found nothing.
 
+**One command lists what a PR still owes the bots:** `node .claude/hooks/pr-feedback.mjs` for the PR of the current branch, or followed by a PR number. It reads GitHub and SonarCloud and says, for each of the three, whether it has reviewed the last commit, then what is left to answer: each Sentry or Gitar finding with no reply or without your 👍 or 👎, Gitar's summary without that reaction, and SonarCloud's open issues, hotspots and failed gate. Start steps 2 to 4 with it. The `gh api` commands below are still how you reply and react.
+
+**A hook runs it when a Claude Code session ends its turn.** `.claude/settings.json` wires the same file as a Stop hook. When the session's branch has a PR that is ready for review and something on that list is unanswered, the session is sent back to it, once per turn. A finding on GitHub is asked again each turn until it has its reply and its reaction, or its thread is resolved. A SonarCloud item is asked once per session, because a false positive can only be closed in SonarCloud's UI. The hook says nothing for a draft, on `main`, or when GitHub doesn't answer. It reads what is there when the turn ends: a review still running then is picked up at the end of a later turn, so it replaces no wait for the bots.
+
 ### 1. `/code-review xhigh --fix`, then ready for review
 
 At the end of a dev cycle (changes just pushed), run `/code-review xhigh --fix` — a deep, multi-agent review that applies its findings to the working tree.
