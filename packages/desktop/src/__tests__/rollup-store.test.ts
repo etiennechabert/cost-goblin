@@ -126,6 +126,31 @@ describe('RollupStore', () => {
     expect(dir.some(f => f.endsWith('.tmp'))).toBe(false);
   });
 
+  it('serves the provider column, which no partition stores, as this store\'s provider', async () => {
+    const store = new RollupStore({ dataDir, providerName, runQuery });
+    await store.maintainPeriods(['2026-01'], buildSql, etags, shape);
+
+    // A filter or group-by on the provider must not send a query to raw Parquet.
+    const src = store.resolveSource({ requiredPeriods: ['2026-01'], tier: 'daily', neededColumns: ['provider', 'cost'] });
+    expect(src).toBeDefined();
+    const byProvider = await runQuery(`SELECT provider AS val, COUNT(*)::INTEGER AS n FROM ${String(src)} GROUP BY val`);
+    expect(byProvider).toHaveLength(1);
+    expect(byProvider[0]?.['val']).toBe('aws');
+    // The same rows as the partition itself: the constant adds a column, nothing else.
+    const stored = await runQuery(`SELECT COUNT(*)::INTEGER AS n, SUM(cost) AS cost FROM read_parquet('${join(dataDir, 'aws', 'rollup', 'daily-2026-01', 'rollup.parquet')}')`);
+    const served = await runQuery(`SELECT COUNT(*)::INTEGER AS n, SUM(cost) AS cost FROM ${String(src)} WHERE provider = 'aws'`);
+    expect(served).toEqual(stored);
+    expect(byProvider[0]?.['n']).toBe(stored[0]?.['n']);
+  });
+
+  it('quotes a provider name as a literal', async () => {
+    const quoted = new RollupStore({ dataDir, providerName: () => asProviderName("o'brien"), runQuery });
+    await quoted.maintainPeriods(['2026-01'], buildSql, etags, shape);
+    const src = quoted.resolveSource({ requiredPeriods: ['2026-01'], tier: 'daily', neededColumns: ['provider'] });
+    const rows = await runQuery(`SELECT DISTINCT provider AS val FROM ${String(src)}`);
+    expect(rows.map(r => r['val'])).toEqual(["o'brien"]);
+  });
+
   it('resolveSource falls back to raw (undefined) on hour bounds, out-of-grain column, or an unbuilt period', async () => {
     const store = new RollupStore({ dataDir, providerName, runQuery });
     await store.maintainPeriods(['2026-01'], buildSql, etags, shape);

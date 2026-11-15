@@ -1,3 +1,4 @@
+import { logger } from '@costgoblin/core';
 import type { DuckDbSandboxOptions } from '@costgoblin/core';
 import { initWorkerLifecycle } from './worker-lifecycle.js';
 
@@ -12,8 +13,28 @@ export interface DuckDBClient {
   runBuildQuery(sql: string, onStarted?: () => void): Promise<RawRow[]>;
   cancelPendingQueries(): void;
   configure(settings: { tempDir?: string; memoryGB?: number; threads?: number }): void;
+  /** Stop the worker. Queries still in flight are cancelled first and the
+   *  thread is ended only once they have answered: tearing it down under a
+   *  running query aborts the whole process hosting it. Queries sent afterwards
+   *  are rejected with {@link CLIENT_TERMINATED_MESSAGE}. Resolves when the
+   *  worker has ended, or after {@link TERMINATE_GRACE_MS} if a query is still
+   *  running by then (the worker is then ended as soon as it settles). */
   terminate(): Promise<void>;
 }
+
+/** What a query sent after `terminate()` is rejected with. */
+export const CLIENT_TERMINATED_MESSAGE = 'DuckDB client terminated';
+
+/** How long `terminate()` keeps its caller waiting for the queries in flight to
+ *  answer their cancel. A cancelled query answers within milliseconds, so this
+ *  only runs out when DuckDB is somewhere an interrupt doesn't reach. The
+ *  worker is NOT terminated at that point: that would abort the process. It is
+ *  left to finish and is terminated once nothing runs in it. */
+export const TERMINATE_GRACE_MS = 5_000;
+
+/** A cancel that reaches DuckDB before the query starts executing is lost, so
+ *  `terminate()` repeats it at this interval while a query is in flight. */
+export const CANCEL_RESEND_MS = 100;
 
 type WorkerResponse =
   | { kind: 'ready' }
@@ -76,7 +97,66 @@ export async function createDuckDBClient(workerPath: string, workerData?: DuckDB
     pending.delete(msg.id);
     if (msg.kind === 'rows') entry.resolve(msg.rows);
     else entry.reject(new Error(msg.message));
+    notifyIfDrained();
   });
+
+  // terminate() waits here for the worker to have nothing in flight: every
+  // request answered, or no thread left to protect. (The lifecycle's own
+  // 'error'/'exit' listeners, registered first, have emptied `pending` by the
+  // time these run.)
+  let exited = false;
+  let onDrained: (() => void) | null = null;
+  function notifyIfDrained(): void {
+    if (onDrained === null || (pending.size > 0 && !exited)) return;
+    const notify = onDrained;
+    onDrained = null;
+    notify();
+  }
+  worker.on('error', notifyIfDrained);
+  worker.on('exit', () => {
+    exited = true;
+    notifyIfDrained();
+  });
+
+  async function shutDown(): Promise<void> {
+    // Nothing may start in a worker that is on its way out.
+    lifecycle.fatalError ??= new Error(CLIENT_TERMINATED_MESSAGE);
+    if (pending.size === 0 || exited) {
+      await worker.terminate();
+      return;
+    }
+
+    const cancel = (): void => { worker.postMessage({ kind: 'cancel-pending' }); };
+    cancel();
+    const resend = setInterval(cancel, CANCEL_RESEND_MS);
+    const ended = new Promise<void>((resolve) => { onDrained = resolve; }).then(async (): Promise<'ended'> => {
+      clearInterval(resend);
+      await worker.terminate();
+      return 'ended';
+    });
+
+    let graceTimer: NodeJS.Timeout | undefined;
+    const graceOver = new Promise<'grace-over'>((resolve) => {
+      graceTimer = setTimeout(() => { resolve('grace-over'); }, TERMINATE_GRACE_MS);
+    });
+    try {
+      if (await Promise.race([ended, graceOver]) === 'ended') return;
+    } finally {
+      clearTimeout(graceTimer);
+    }
+    // The caller stops waiting; the thread does not get torn down under its
+    // query. `ended` still terminates it once the query settles.
+    logger.warn('duckdb: a query is still running after terminate; the worker ends once it settles', {
+      inFlight: pending.size,
+      graceMs: TERMINATE_GRACE_MS,
+    });
+    ended.catch((err: unknown) => {
+      logger.warn('duckdb: ending the worker after its last query failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  }
+  let termination: Promise<void> | null = null;
 
   function submitQuery(
     kind: string,
@@ -108,8 +188,9 @@ export async function createDuckDBClient(workerPath: string, workerData?: DuckDB
     configure(settings: { tempDir?: string; memoryGB?: number; threads?: number }): void {
       worker.postMessage({ kind: 'configure', ...settings });
     },
-    async terminate(): Promise<void> {
-      await worker.terminate();
+    terminate(): Promise<void> {
+      termination ??= shutDown();
+      return termination;
     },
   };
 }

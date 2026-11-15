@@ -807,6 +807,26 @@ describe('BaselineStore', () => {
       expect(expectedDaily.length).toBeGreaterThan(0);
       expectDailyHistoryMatches(detail?.dailyHistory, expectedDaily);
     });
+
+    it('asks the rollup only for the months the provider has on disk', async () => {
+      const stateDir = await newStateDir();
+      const store = new BaselineStore(stateDir, wallClock);
+      const { deps, resolveCalls, prepared } = makeCapturingDeps(stateDir);
+      // January is in the lookback but was never synced: it has no partition to
+      // build, and requiring one would send the whole recompute back to raw.
+      const gapDeps: BaselineEngineDeps = {
+        ...deps,
+        getQueryProviders: () => Promise.resolve([{ name: FIXTURE_PROVIDER, type: 'aws', availablePeriods: ['2026-02'] }]),
+      };
+      await store.setConfig({ ...DISCOVERY_CONFIG, lookbackDays: MAT_LOOKBACK });
+
+      await store.create(gapDeps, { scope: svcScope(EC2), name: 'EC2 (gap month)' });
+
+      expect(resolveCalls).toHaveLength(1);
+      expect([...(resolveCalls[0]?.requiredPeriods ?? [])]).toEqual(['2026-02']);
+      expect(prepared).toHaveLength(1);
+      expect(prepared[0]?.materialized).toBe(true);
+    });
   });
 
   describe('injected clock', () => {

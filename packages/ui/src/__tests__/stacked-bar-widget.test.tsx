@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { asDateString, asDimensionId, asDollars, asTagValue } from '@costgoblin/core/browser';
@@ -20,6 +20,14 @@ import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { StackedBarWidget } from '../widgets/stacked-bar-widget.js';
 import { costsTitle } from '../lib/dates.js';
 import { deferred, settle } from './deferred.js';
+import { takeMemoRenders } from './memo-renders.js';
+
+vi.mock('react', async (importOriginal) =>
+  (await import('./memo-renders.js')).withMemoSpy(await importOriginal<typeof import('react')>()));
+
+beforeEach(() => {
+  takeMemoRenders();
+});
 
 const SERVICE = asDimensionId('service');
 const REGION = asDimensionId('region');
@@ -97,10 +105,10 @@ function renderWidget(opts: RenderOptions = {}) {
   const onSetFilter = vi.fn<(dim: DimensionId, value: TagValue) => void>();
   const dispatch = vi.fn<(action: CostFocusAction) => void>();
   const user = userEvent.setup();
-  const utils = render(
+  const tree = (focus: CostFocusState): React.ReactElement => (
     <PaletteProvider>
       <CostApiProvider value={api}>
-        <CostFocusProvider value={opts.focus ?? initialFocusState}>
+        <CostFocusProvider value={focus}>
           <CostFocusDispatchProvider value={dispatch}>
             <StackedBarWidget
               spec={opts.spec ?? SPEC}
@@ -116,9 +124,13 @@ function renderWidget(opts: RenderOptions = {}) {
           </CostFocusDispatchProvider>
         </CostFocusProvider>
       </CostApiProvider>
-    </PaletteProvider>,
+    </PaletteProvider>
   );
-  return { api, onSetFilter, dispatch, user, ...utils };
+  const utils = render(tree(opts.focus ?? initialFocusState));
+  /** The same widget under another cross-chart focus: what a HOVER dispatched
+   *  by any chart on the dashboard does to it. */
+  const refocus = (focus: CostFocusState): void => { utils.rerender(tree(focus)); };
+  return { api, onSetFilter, dispatch, user, refocus, ...utils };
 }
 
 function columns(container: HTMLElement): HTMLElement[] {
@@ -128,6 +140,13 @@ function columns(container: HTMLElement): HTMLElement[] {
 async function bars(container: HTMLElement, count: number): Promise<HTMLElement[]> {
   await waitFor(() => { expect(columns(container)).toHaveLength(count); });
   return columns(container);
+}
+
+/** How much of their color the plot has the unfocused segments show. */
+function seriesAlpha(container: HTMLElement): string {
+  const plot = container.querySelector('.items-end.z-10');
+  if (!(plot instanceof HTMLElement)) throw new Error('no bars area');
+  return plot.style.getPropertyValue('--series-alpha');
 }
 
 /** The stacked segments of a bar, largest first. */
@@ -283,14 +302,37 @@ describe('StackedBarWidget — cross-chart focus and filtering', () => {
   it('honours an external hover only from a chart grouped the same way', async () => {
     const sameDim = renderWidget({ focus: { ...initialFocusState, hoveredDimension: SERVICE, hoveredEntity: 'data' } });
     let cols = await bars(sameDim.container, 5);
-    const [platform, data] = segments(cols[0]);
-    expect(platform?.style.opacity).toBe('0.25');
-    expect(data?.style.opacity).toBe('1');
+    // The plot fades every series but the focused one, which is outlined.
+    const outlined = (): boolean[] => segments(cols[0]).map(seg => seg.style.boxShadow.includes('inset'));
+    expect(seriesAlpha(sameDim.container)).toBe('0.25');
+    expect(outlined()).toEqual([false, true]);
     sameDim.unmount();
 
     const otherDim = renderWidget({ focus: { ...initialFocusState, hoveredDimension: REGION, hoveredEntity: 'data' } });
     cols = await bars(otherDim.container, 5);
-    for (const seg of segments(cols[0])) expect(seg.style.opacity).toBe('0.85');
+    expect(seriesAlpha(otherDim.container)).toBe('0.85');
+    expect(outlined()).toEqual([false, false]);
+  });
+
+  // Every HOVER a chart dispatches renders this widget, which reads the focus
+  // and hands the chart new handler closures. With a month of a few hundred
+  // series that was thousands of bar segments rendered per pointer move.
+  it('renders no bar on a hover in a chart grouped another way, and only the focused series on one grouped the same way', async () => {
+    const { container, refocus } = renderWidget();
+    const cols = await bars(container, 5);
+    await waitFor(() => { expect(segments(cols[0])).toHaveLength(2); });
+    const takeRenders = (): Readonly<Record<string, number>> => takeMemoRenders('BarColumn', 'BarSegment');
+    // Forget the renders that drew the chart.
+    takeRenders();
+
+    refocus({ ...initialFocusState, hoveredDimension: REGION, hoveredEntity: 'eu-west-1' });
+    refocus({ ...initialFocusState, hoveredDimension: REGION, hoveredEntity: 'us-east-1' });
+    expect(takeRenders()).toEqual({ BarColumn: 0, BarSegment: 0 });
+
+    refocus({ ...initialFocusState, hoveredDimension: SERVICE, hoveredEntity: 'data' });
+    expect(seriesAlpha(container)).toBe('0.25');
+    // 'data' is on 4 of the 5 days.
+    expect(takeRenders()).toEqual({ BarColumn: 5, BarSegment: 4 });
   });
 });
 
