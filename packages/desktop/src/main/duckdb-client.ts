@@ -134,7 +134,9 @@ export async function createDuckDBClient(workerPath: string, workerData?: DuckDB
       return;
     }
 
-    const cancel = (): void => { worker.postMessage({ kind: 'cancel-pending' }); };
+    // Builds included: a worker on its way out finishes nothing, and a build
+    // left running would hold terminate() for its whole grace period.
+    const cancel = (): void => { worker.postMessage({ kind: 'cancel-pending', builds: true }); };
     cancel();
     const resend = setInterval(cancel, CANCEL_RESEND_MS);
     const ended = new Promise<void>((resolve) => { onDrained = resolve; }).then(async (): Promise<'ended'> => {
