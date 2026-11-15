@@ -6,8 +6,9 @@ describe('uvThreadpoolSize', () => {
   afterEach(() => { vi.unstubAllEnvs(); });
 
   it('leaves threads free beyond every DuckDB call the app allows at once', () => {
-    // The shared instance's pooled queries and builds, and the sandboxed instance's queries.
-    const duckdbCalls = computeQueryPoolSize() + maxRollupConcurrency() + computeQueryPoolSize();
+    // The shared instance's pooled queries, its rollup builds and its resource
+    // rollup builds (the two overlap after a sync), and the sandboxed instance's queries.
+    const duckdbCalls = computeQueryPoolSize() + 2 * maxRollupConcurrency() + computeQueryPoolSize();
     expect(uvThreadpoolSize()).toBeGreaterThanOrEqual(duckdbCalls + 4);
     // libuv's default, which the app's own limits exceed.
     expect(uvThreadpoolSize()).toBeGreaterThan(4);
@@ -19,7 +20,7 @@ describe('uvThreadpoolSize', () => {
     vi.stubEnv('COSTGOBLIN_DUCKDB_POOL_SIZE', '1');
     const small = uvThreadpoolSize();
     vi.stubEnv('COSTGOBLIN_DUCKDB_POOL_SIZE', '32');
-    expect(uvThreadpoolSize()).toBe(small + 3 * 31);
+    expect(uvThreadpoolSize()).toBe(small + 4 * 31);
   });
 });
 

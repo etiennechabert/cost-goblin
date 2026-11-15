@@ -2,7 +2,6 @@ import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/p
 import { join } from 'node:path';
 import {
   computePartitionEtagHash,
-  isQueryCancelled,
   isStringRecord,
   logger,
   RESOURCE_ROLLUP_KEY_COLUMNS,
@@ -86,6 +85,9 @@ interface ResourceRollupStoreDeps {
   /** Which provider's tree (`{dataDir}/{name}/resource-rollup`) this store
    *  owns. Throws with no provider configured, as RollupStore's does. */
   readonly providerName: () => ProviderName;
+  /** Runs the store's own small queries: the heavy set, a tail read, a row
+   *  count. They are steps of a build, so whatever runs them must be out of
+   *  reach of a view's cancel, as `runBuild` is. */
   readonly runQuery: (sql: string) => Promise<RawRow[]>;
   /** Runs a build query on a fresh connection. Defaults to `runQuery`. */
   readonly runBuild?: (sql: string) => Promise<RawRow[]>;
@@ -97,10 +99,6 @@ interface ResourceRollupStoreDeps {
 
 const MANIFEST_FILE = 'manifest.json';
 const PROVIDER_COLUMN = 'provider';
-/** A view's navigation cancels every running query, builds included. A build
- *  is restarted rather than left out until the next sync. */
-const BUILD_ATTEMPTS = 3;
-
 function partitionMetaOf(raw: unknown): ResourcePartitionMeta | null {
   if (!isStringRecord(raw)) return null;
   const { rawEtagHash, tailBound, complete, rows, bytes } = raw;
@@ -168,6 +166,11 @@ function errorMessage(err: unknown): string {
  *  - A generation number is never used twice by one process, so the SQL text
  *    of a query over one generation never reads another: the result cache is
  *    keyed on that text.
+ *  - A cancelled query is a failed one and is not run again. A view's cancel
+ *    spares builds, so a cancel that reaches one is the cancel-everything of
+ *    a caller about to drop what the build reads (a cache clear, a provider's
+ *    removal): running it again would reopen those files. The warmup that
+ *    follows such a drop rebuilds.
  */
 export class ResourceRollupStore {
   private readonly dataDir: string;
@@ -351,8 +354,8 @@ export class ResourceRollupStore {
       if (this.epoch !== startEpoch) return;
       try {
         await mkdir(this.partitionDir(period), { recursive: true });
-        await this.retrying(() => this.runBuild(sql.top(period, this.topPath(period), this.pairsPerMonth)), startEpoch);
-        ranked.set(period, await this.retrying(() => this.readTailOf(period), startEpoch));
+        await this.runBuild(sql.top(period, this.topPath(period), this.pairsPerMonth));
+        ranked.set(period, await this.readTailOf(period));
       } catch (err: unknown) {
         logger.warn(`resource-rollup: ranking ${period} failed — ${errorMessage(err)}`);
       }
@@ -364,10 +367,10 @@ export class ResourceRollupStore {
     const tops = builtPeriods.map(p => sqlStringLiteral(this.topPath(p).replaceAll('\\', '/'))).join(', ');
     const key = RESOURCE_ROLLUP_KEY_COLUMNS.join(', ');
     const heavyPath = this.heavyPath(generation);
-    await this.retrying(() => this.runQuery(
+    await this.runQuery(
       `COPY (SELECT DISTINCT ${key} FROM read_parquet([${tops}]) WHERE rank <= ${String(this.pairsPerMonth)}) ` +
       `TO ${sqlStringLiteral(heavyPath)} (FORMAT PARQUET)`,
-    ), startEpoch);
+    );
 
     // 3. Every month's rows of the heavy set.
     const partitions: Record<string, ResourcePartitionMeta> = {};
@@ -376,11 +379,8 @@ export class ResourceRollupStore {
       if (tail === undefined || this.epoch !== startEpoch) return;
       try {
         const outPath = this.rowsPath(period, generation);
-        await this.retrying(() => this.runBuild(sql.rows(period, outPath, heavyPath)), startEpoch);
-        const counted = await this.retrying(
-          () => this.runQuery(`SELECT COUNT(*)::BIGINT AS n FROM read_parquet(${sqlStringLiteral(outPath.replaceAll('\\', '/'))})`),
-          startEpoch,
-        );
+        await this.runBuild(sql.rows(period, outPath, heavyPath));
+        const counted = await this.runQuery(`SELECT COUNT(*)::BIGINT AS n FROM read_parquet(${sqlStringLiteral(outPath.replaceAll('\\', '/'))})`);
         partitions[period] = {
           rawEtagHash: stampFor(period),
           tailBound: tail.tailBound,
@@ -423,18 +423,6 @@ export class ResourceRollupStore {
     const bound = rows[0]?.['tail_bound'];
     // A weight that isn't a finite number bounds nothing.
     return { tailBound: typeof bound === 'number' && Number.isFinite(bound) ? bound : Number.POSITIVE_INFINITY, complete: false };
-  }
-
-  /** Run one of a build's queries, again when a view's navigation cancelled
-   *  it: the cancel reaches every query the app has running. */
-  private async retrying<T>(query: () => Promise<T>, startEpoch: number): Promise<T> {
-    for (let attempt = 1; ; attempt += 1) {
-      try {
-        return await query();
-      } catch (err: unknown) {
-        if (!isQueryCancelled(err) || attempt >= BUILD_ATTEMPTS || this.epoch !== startEpoch) throw err;
-      }
-    }
   }
 
   private async runBounded(items: readonly string[], worker: (item: string) => Promise<void>): Promise<void> {

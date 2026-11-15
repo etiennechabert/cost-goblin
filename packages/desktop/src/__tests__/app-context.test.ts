@@ -456,6 +456,22 @@ describe('createAppContext: rollup lifecycle', () => {
     expect(pooled.mock.calls.filter(([sql]) => isRowCount(sql))).toEqual([]);
   });
 
+  it("runs the resource rollup's own queries as steps of its build too", async () => {
+    const h = await harness({ data: 'synthetic', rollupBuilds: true });
+    const pooled = vi.spyOn(h.db, 'runQuery');
+    const builds = vi.spyOn(h.db, 'runBuildQuery');
+    h.app.warmupBase();
+    await vi.waitFor(() => { expect(h.app.rollupStore.getStatus().state).toBe('ready'); }, { timeout: 15_000 });
+    await h.app.awaitResourceRollup();
+    expect(h.app.resourceRollupStore.isReady()).toBe(true);
+
+    // The heavy set, the tail reads and the row counts: on the pool, each
+    // queues behind a view's queries and is cancelled by the next navigation.
+    const readsResourceRollup = (sql: string): boolean => sql.includes('resource-rollup');
+    expect(builds.mock.calls.filter(([sql]) => readsResourceRollup(sql)).length).toBeGreaterThan(0);
+    expect(pooled.mock.calls.filter(([sql]) => readsResourceRollup(sql))).toEqual([]);
+  });
+
   it('settles without building when nothing is configured', async () => {
     const h = await harness({ config: 'none' });
     h.app.warmupBase();

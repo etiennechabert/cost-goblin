@@ -493,7 +493,10 @@ export function createAppContext(ctx: IpcContext): AppContext {
       if (name === undefined) throw new Error('No provider configured');
       return name;
     },
-    runQuery: (sql) => ctx.db.runQuery(sql),
+    // Its own small queries (the heavy set, a tail read, a row count) are
+    // steps of a build, as the rollup store's are: on the pool they queue
+    // behind a view's slow queries, where the next navigation cancels them.
+    runQuery: (sql) => ctx.db.runBuildQuery(sql),
     runBuild: (sql) => traceSpan(ROLLUP_BUILD_SPAN, () => ctx.db.runBuildQuery(sql)),
     buildConcurrency: DEFAULT_ROLLUP_CONCURRENCY,
     ...(ctx.resourceRollupPairsPerMonth === undefined ? {} : { pairsPerMonth: ctx.resourceRollupPairsPerMonth }),
@@ -812,8 +815,12 @@ export function createAppContext(ctx: IpcContext): AppContext {
       // before this made the enqueued rollup-dir deletion throw 'No provider
       // configured', rejecting remove-provider, bundle import and snapshot pull
       // after they had already applied their changes.
+      // Both before the first await: invalidate() bumps a store's epoch at
+      // once, and until then the builds cancelled above would go on to their
+      // next month, reading what this caller is about to drop.
+      const resourceRollupDropped = resourceRollupStore.invalidate();
       await rollupStore.invalidate();
-      await resourceRollupStore.invalidate();
+      await resourceRollupDropped;
       state.config = null;
       state.dimensions = null;
       state.accountMap = null;

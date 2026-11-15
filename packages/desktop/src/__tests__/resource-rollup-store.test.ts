@@ -329,19 +329,20 @@ describe('ResourceRollupStore', () => {
     expect([...store.getValidPeriods()].sort((a, b) => a.localeCompare(b))).toEqual(MONTHS);
   });
 
-  it('runs a build again when a view cancelled it, and gives up on any other error', async () => {
-    const dataDir = await newDataDir();
-    let cancelNext = 2;
-    const store = newStore(dataDir, {
-      runBuild: (statement) => {
-        if (cancelNext > 0) { cancelNext -= 1; return Promise.reject(new Error(QUERY_CANCELLED_MESSAGE)); }
-        return runQuery(statement);
-      },
-    });
-    await store.maintain({ periods: MONTHS, etagsByPeriod: etags, shape, sql });
-    expect([...store.getValidPeriods()].sort((a, b) => a.localeCompare(b))).toEqual(MONTHS);
-
+  // A view's cancel spares builds, so a cancel that reaches one is the
+  // cancel-everything of a caller about to drop what the build reads: running
+  // the query again would reopen those files.
+  it('does not run a cancelled build again, and gives up on any other error too', async () => {
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    const attempts: string[] = [];
+    const cancelled = newStore(await newDataDir(), {
+      runBuild: (statement) => { attempts.push(statement); return Promise.reject(new Error(QUERY_CANCELLED_MESSAGE)); },
+    });
+    await cancelled.maintain({ periods: MONTHS, etagsByPeriod: etags, shape, sql });
+    expect(cancelled.isReady()).toBe(false);
+    // One ranking per month, each tried once.
+    expect(attempts).toHaveLength(MONTHS.length);
+
     const failing = newStore(await newDataDir(), { runBuild: () => Promise.reject(new Error('Binder Error: no such column')) });
     await failing.maintain({ periods: MONTHS, etagsByPeriod: etags, shape, sql });
     expect(failing.isReady()).toBe(false);
@@ -453,20 +454,20 @@ describe('ResourceRollupStore', () => {
     expect(building.resolveSource({ requiredPeriods: MONTHS, neededColumns: ['cost'] })?.source).toContain('rows-2.parquet');
   });
 
-  it("runs the build's small queries again too when a view cancelled them", async () => {
-    const dataDir = await newDataDir();
-    // One cancel each for the heavy set, a tail read and a row count.
-    const cancelOnce = new Set(['heavy-1.parquet', 'tail_bound', 'COUNT(*)::BIGINT AS n FROM']);
-    const store = newStore(dataDir, {
+  it("does not run the build's small queries again either", async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    let heavySets = 0;
+    const store = newStore(await newDataDir(), {
       runQuery: (statement) => {
-        const hit = [...cancelOnce].find(marker => statement.includes(marker));
-        if (hit !== undefined) { cancelOnce.delete(hit); return Promise.reject(new Error(QUERY_CANCELLED_MESSAGE)); }
-        return runQuery(statement);
+        if (!statement.includes('SELECT DISTINCT')) return runQuery(statement);
+        heavySets += 1;
+        return Promise.reject(new Error(QUERY_CANCELLED_MESSAGE));
       },
     });
     await store.maintain({ periods: MONTHS, etagsByPeriod: etags, shape, sql });
-    expect(cancelOnce.size).toBe(0);
-    expect([...store.getValidPeriods()].sort((a, b) => a.localeCompare(b))).toEqual(MONTHS);
+    expect(heavySets).toBe(1);
+    expect(store.isReady()).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('resource-rollup: build failed'));
   });
 
   it('builds nothing for a request worked out before the rollup was dropped', async () => {
