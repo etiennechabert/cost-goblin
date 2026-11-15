@@ -251,7 +251,11 @@ describe('what it says', () => {
     expect(text).toContain('Gitar       is reviewing the last commit');
     expect(text).toContain('SonarCloud  has not analysed the last commit yet (its analysis is of bbbbbbbb)');
     expect(text).toContain('To answer:\n- Sentry finding on src/a.ts:12: "Bug: off by one". It has no reply yet.');
-    expect(report(pullRequest({ checks: [] }), null)).toContain('Gitar       has not reviewed the last commit yet\nSonarCloud  could not be read');
+    expect(report(pullRequest({ checks: [] }), null)).toContain('Gitar       has not reviewed this pull request yet\nSonarCloud  could not be read');
+    // it reviews a PR that has just turned ready without a check: its summary is the only sign
+    expect(report(pullRequest({ checks: [], comments: [comment(GITAR, SUMMARY, { mine: ['THUMBS_UP'] })] }), null)).toContain(
+      'Gitar       has posted its summary, and left no check on the last commit: which commit it read is not shown\nSonarCloud  could not be read',
+    );
     expect(report(pullRequest(), undefined)).toContain('SonarCloud  not asked');
     expect(report(pullRequest(), { analysis: null, issues: [], hotspots: [] })).toContain('SonarCloud  has not analysed this pull request');
     expect(report(pullRequest(), { analysis: analysis({ gate: 'ERROR' }), issues: [], hotspots: [] })).toContain('SonarCloud  analysed the last commit: quality gate failed');

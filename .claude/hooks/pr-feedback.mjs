@@ -197,7 +197,10 @@ export function report(pr, sonar) {
     lines.push('Sentry and Gitar review it once it is ready for review.');
   } else {
     lines.push(`Sentry      ${REVIEW[sentry] ?? 'left no sign of a review of the last commit (it leaves a check only on the first commit it reviews)'}`);
-    lines.push(`Gitar       ${REVIEW[gitar] ?? 'has not reviewed the last commit yet'}`);
+    // Gitar reviews a PR that has just turned ready without leaving a check on its commit
+    const summarised = (pr.comments?.nodes ?? []).some((comment) => botOf(comment.author) === 'Gitar');
+    const unchecked = summarised ? 'has posted its summary, and left no check on the last commit: which commit it read is not shown' : 'has not reviewed this pull request yet';
+    lines.push(`Gitar       ${REVIEW[gitar] ?? unchecked}`);
   }
   lines.push(`SonarCloud  ${sonarLine(sonar, pr.headRefOid)}`, '');
   if (owed.length === 0) lines.push('Nothing to answer.');
