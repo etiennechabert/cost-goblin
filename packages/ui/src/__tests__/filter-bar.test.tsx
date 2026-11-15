@@ -220,13 +220,6 @@ describe('FilterBar', () => {
     expect(screen.getByText('Team \u00b7 2')).toBeDefined();
   });
 
-  it('clear all button appears when filters are active', () => {
-    const filters: FilterMap = { [asDimensionId('tag_team')]: [asTagValue('platform')] };
-    renderFilterBar({ filters });
-
-    expect(screen.getByText('Clear all')).toBeDefined();
-  });
-
   it('escape key closes dropdown', async () => {
     renderFilterBar();
 

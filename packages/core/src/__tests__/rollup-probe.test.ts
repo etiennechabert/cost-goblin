@@ -11,6 +11,7 @@ import { FIXTURE_PROVIDER_NAME } from '../__fixtures__/layout.js';
 import type { DimensionsConfig } from '../types/config.js';
 import type { CostScopeConfig } from '../types/cost-scope.js';
 import { asDimensionId, asProviderName, tagSqlColumn } from '../types/branded.js';
+import { queryAll } from './helpers/duckdb.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SYNTHETIC_DIR = join(__dirname, '..', '__fixtures__', 'synthetic');
@@ -36,29 +37,6 @@ const resourceGrain: DimensionsConfig = {
   ...stableGrain,
   builtIn: [...stableGrain.builtIn, { name: asDimensionId('resource_id'), label: 'Resource', field: 'resource_id' }],
 };
-
-interface Row { [k: string]: unknown }
-
-async function queryAll(conn: Awaited<ReturnType<Awaited<ReturnType<typeof DuckDBInstance.create>>['connect']>>, sql: string): Promise<Row[]> {
-  const result = await conn.run(sql);
-  const cols = result.columnCount;
-  const names: string[] = [];
-  for (let i = 0; i < cols; i++) names.push(result.columnName(i));
-  const rows: Row[] = [];
-  let chunk = await result.fetchChunk();
-  while (chunk !== null && chunk.rowCount > 0) {
-    for (let r = 0; r < chunk.rowCount; r++) {
-      const row: Row = {};
-      for (let c = 0; c < cols; c++) {
-        const name = names[c];
-        if (name !== undefined) row[name] = chunk.getColumnVector(c).getItem(r);
-      }
-      rows.push(row);
-    }
-    chunk = await result.fetchChunk();
-  }
-  return rows;
-}
 
 function toNum(v: unknown): number {
   if (typeof v === 'bigint') return Number(v);

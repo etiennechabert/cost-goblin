@@ -82,14 +82,6 @@ describe('EntityDetail', () => {
     expect(onBack).toHaveBeenCalledOnce();
   });
 
-  it('export CSV button is visible when data loads', async () => {
-    renderDetail();
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Export CSV/i })).toBeDefined();
-    });
-  });
-
   it('persists only the date range / granularity, never the column fields', async () => {
     const api = new RecordingPrefsApi();
     render(

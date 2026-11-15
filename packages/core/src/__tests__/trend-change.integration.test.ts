@@ -9,6 +9,7 @@ import { trendPercentChange, trendPercentChangeSql } from '../query/trend-change
 import { FIXTURE_PROVIDER_NAME } from '../__fixtures__/layout.js';
 import { asDateString, asDimensionId, asDollars, asProviderName } from '../types/branded.js';
 import type { DimensionsConfig } from '../types/config.js';
+import { runPreparedValues } from './helpers/duckdb.js';
 
 /**
  * The trend query's `percent_change` and `trendPercentChange` are twins: SQL
@@ -28,23 +29,6 @@ const dimensions: DimensionsConfig = {
   tags: [],
 };
 const providers: ProviderSourceSpec[] = [{ name: asProviderName(FIXTURE_PROVIDER_NAME), type: 'aws', availablePeriods: ['2026-01', '2026-02'] }];
-
-/** Positional $1..$n binding, mirroring the duckdb-worker's. */
-async function runPrepared(conn: DuckDBConnection, sql: string, params: readonly unknown[]): Promise<Record<string, unknown>[]> {
-  const stmt = await conn.prepare(sql);
-  try {
-    params.forEach((value, i) => {
-      if (typeof value === 'string') stmt.bindVarchar(i + 1, value);
-      else if (typeof value === 'number' && Number.isInteger(value)) stmt.bindInteger(i + 1, value);
-      else if (typeof value === 'number') stmt.bindDouble(i + 1, value);
-      else throw new Error(`unexpected query parameter ${String(value)}`);
-    });
-    const reader = await stmt.runAndReadAll();
-    return reader.getRowObjects();
-  } finally {
-    stmt.destroySync();
-  }
-}
 
 function num(row: Record<string, unknown> | undefined, column: string): number {
   const value = row?.[column];
@@ -78,7 +62,7 @@ describe('trend percent change (DuckDB execution)', () => {
       },
       { dataDir: SYNTHETIC_DIR, dimensions, providers },
     );
-    return runPrepared(conn, sql, params);
+    return runPreparedValues(conn, sql, params);
   }
 
   function expectPercentMatchesJs(rows: readonly Record<string, unknown>[]): void {
@@ -93,7 +77,7 @@ describe('trend percent change (DuckDB execution)', () => {
       [-150, -100], [-50, -100], [0, -100], [50, -100], [-12.34, -56.78],
     ];
     const values = cases.map(([c, p]) => `(${String(c)}::DOUBLE, ${String(p)}::DOUBLE)`).join(', ');
-    const rows = await runPrepared(
+    const rows = await runPreparedValues(
       conn,
       `SELECT c, p, ${trendPercentChangeSql('c', 'p')} AS pct FROM (VALUES ${values}) AS t(c, p)`,
       [],

@@ -8,6 +8,7 @@ import { buildSource, CHARGE_PERIOD_START_UTC_SQL } from '../query/builder.js';
 import { buildDuckDbSandboxStatements } from '../query/duckdb-sandbox.js';
 import type { DimensionsConfig } from '../types/config.js';
 import { asProviderName, tagSqlColumn } from '../types/branded.js';
+import { queryAll } from './helpers/duckdb.js';
 
 /**
  * Layer-2 proof of the MCP DuckDB sandbox (#594): a real instance configured
@@ -20,34 +21,12 @@ import { asProviderName, tagSqlColumn } from '../types/branded.js';
 
 type Instance = Awaited<ReturnType<typeof DuckDBInstance.create>>;
 type Conn = Awaited<ReturnType<Instance['connect']>>;
-type Row = Record<string, unknown>;
 
 const PROVIDER = asProviderName('aws');
 const CREDS_CANARY = 'CANARY-AWS-SECRET-594';
 const ADC_CANARY = 'CANARY-ADC-CLIENT-SECRET-594';
 const DECOY_CANARY = 'CANARY-TELEMETRY-OUTBOX-594';
 const SIBLING_CANARY = 'CANARY-PREFIX-SIBLING-594';
-
-async function queryAll(conn: Conn, sql: string): Promise<Row[]> {
-  const result = await conn.run(sql);
-  const cols = result.columnCount;
-  const names: string[] = [];
-  for (let i = 0; i < cols; i++) names.push(result.columnName(i));
-  const rows: Row[] = [];
-  let chunk = await result.fetchChunk();
-  while (chunk !== null && chunk.rowCount > 0) {
-    for (let r = 0; r < chunk.rowCount; r++) {
-      const row: Row = {};
-      for (let c = 0; c < cols; c++) {
-        const name = names[c];
-        if (name !== undefined) row[name] = chunk.getColumnVector(c).getItem(r);
-      }
-      rows.push(row);
-    }
-    chunk = await result.fetchChunk();
-  }
-  return rows;
-}
 
 /** Runs `sql` and returns either the serialised rows or the error message, so
  *  a test can assert BOTH that it failed and that no canary leaked anywhere. */

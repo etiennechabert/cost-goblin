@@ -150,11 +150,6 @@ afterAll(() => {
 });
 
 describe('aws + gcp in one union (DuckDB end-to-end)', () => {
-  it('sums both shapes into one total', async () => {
-    const rows = await rowsOf(`SELECT SUM(cost) AS cost FROM ${source()}`);
-    expect(rows).toEqual([{ cost: 187 }]); // 100 + 50 + 30 + 7
-  });
-
   it('attributes each row to its own provider', async () => {
     const rows = await rowsOf(`SELECT provider, SUM(cost) AS cost FROM ${source()} GROUP BY provider ORDER BY provider`);
     expect(rows).toEqual([

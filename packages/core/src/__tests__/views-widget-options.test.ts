@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { WIDGET_TYPES, validateViews } from '../config/views-validator.js';
-import { ConfigValidationError } from '../config/validator.js';
 import type { ViewSpec, WidgetSpec } from '../types/views.js';
+import { configError } from './helpers/config-error.js';
 
 const W = 'views[0].rows[0].widgets[0]';
 
@@ -19,17 +19,6 @@ function onlyWidget(raw: unknown): WidgetSpec {
   const widget = onlyView(viewsWith([raw])).rows[0]?.widgets[0];
   if (widget === undefined) throw new Error('expected one widget');
   return widget;
-}
-
-/** The message of the ConfigValidationError `fn` throws; anything else fails the test. */
-function configError(fn: () => unknown): string {
-  try {
-    fn();
-  } catch (err: unknown) {
-    if (err instanceof ConfigValidationError) return err.message;
-    throw err;
-  }
-  throw new Error('expected a ConfigValidationError, but nothing was thrown');
 }
 
 function widgetError(raw: unknown): string {

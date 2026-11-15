@@ -19,6 +19,7 @@ import { asDateString, asDimensionId, asEntityRef, asProviderName, asTagValue, t
 import type { DimensionsConfig, TagDimension } from '../types/config.js';
 import type { CostScopeConfig, ExclusionRule } from '../types/cost-scope.js';
 import type { FilterMap } from '../types/query.js';
+import { runPrepared } from './helpers/duckdb.js';
 
 /**
  * The filter, entity and DDL builders on real Parquet through real DuckDB:
@@ -64,22 +65,6 @@ function filters(entries: Record<string, readonly string[]>): FilterMap {
   const map: Record<string, readonly ReturnType<typeof asTagValue>[]> = {};
   for (const [id, values] of Object.entries(entries)) map[asDimensionId(id)] = values.map(v => asTagValue(v));
   return map;
-}
-
-/** Positional $1..$n binding, mirroring the duckdb-worker's. */
-async function runPrepared(conn: DuckDBConnection, sql: string, params: readonly unknown[]): Promise<Record<string, unknown>[]> {
-  const stmt = await conn.prepare(sql);
-  try {
-    params.forEach((value, i) => {
-      if (typeof value === 'string') stmt.bindVarchar(i + 1, value);
-      else if (typeof value === 'number' && Number.isInteger(value)) stmt.bindInteger(i + 1, value);
-      else throw new Error(`unexpected query parameter ${String(value)}`);
-    });
-    const reader = await stmt.runAndReadAll();
-    return reader.getRowObjectsJson();
-  } finally {
-    stmt.destroySync();
-  }
 }
 
 /** entity → total_cost, from a cost query's (entity, service) rows. */

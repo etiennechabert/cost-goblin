@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { parse } from 'yaml';
 import { parseConfigBundle } from '../config/sharing-bundle.js';
-import { ConfigValidationError } from '../config/validator.js';
+import { configError } from './helpers/config-error.js';
 
 // The yaml parser only throws Error subclasses, so the import path's
 // fallback for anything else is reachable only through a stub. `parse` stays
@@ -10,17 +10,6 @@ vi.mock('yaml', async (importOriginal) => {
   const actual = await importOriginal<typeof import('yaml')>();
   return { ...actual, parse: vi.fn(actual.parse) };
 });
-
-/** The message of the ConfigValidationError `fn` throws; anything else fails the test. */
-function configError(fn: () => unknown): string {
-  try {
-    fn();
-  } catch (err: unknown) {
-    if (err instanceof ConfigValidationError) return err.message;
-    throw err;
-  }
-  throw new Error('expected a ConfigValidationError, but nothing was thrown');
-}
 
 /** What the real parser says about `content`. */
 function parserMessage(content: string): string {

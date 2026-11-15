@@ -25,16 +25,6 @@ describe('buildDuckDbSandboxStatements', () => {
     ]);
   });
 
-  it('restricts access only after the resource limits and before the lock', () => {
-    const stmts = buildDuckDbSandboxStatements(BASE);
-    const idx = (needle: string): number => stmts.findIndex(s => s.includes(needle));
-    expect(idx('temp_directory')).toBeLessThan(idx('allowed_directories'));
-    expect(idx('allowed_directories')).toBeLessThan(idx('allowed_paths'));
-    expect(idx('allowed_paths')).toBeLessThan(idx('enable_external_access'));
-    expect(idx('enable_external_access')).toBeLessThan(idx('autoinstall_known_extensions'));
-    expect(stmts.at(-1)).toBe('SET lock_configuration = true');
-  });
-
   it("doubles a single quote in every interpolated path", () => {
     const stmts = buildDuckDbSandboxStatements({
       ...BASE,

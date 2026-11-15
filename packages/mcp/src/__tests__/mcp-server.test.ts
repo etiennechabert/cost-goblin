@@ -3,7 +3,6 @@ import { DuckDBInstance } from '@duckdb/node-api';
 import { existsSync, realpathSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
-import { createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,10 +14,13 @@ import {
   tagSqlColumn,
 } from '@costgoblin/core';
 import type { CostScopeConfig } from '@costgoblin/core';
-import type { McpContext, RawRow } from '../context.js';
+import type { McpContext } from '../context.js';
 import { createMcpHttpServer, MCP_MIN_TOKEN_LENGTH } from '../http-server.js';
 import type { McpHttpServer } from '../http-server.js';
 import { SERVER_INSTRUCTIONS, UNTRUSTED_DATA_NOTE } from '../server-instructions.js';
+import { freePort } from './helpers/free-port.js';
+import { isRecord } from './helpers/json-result.js';
+import { fetchRows } from './helpers/duckdb-rows.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = join(__dirname, '..', '..', '..', 'core', 'src', '__fixtures__');
@@ -28,27 +30,6 @@ const CONFIG_DIR = join(FIXTURES_DIR, 'config');
 // ---------- DuckDB helpers ----------
 
 type DuckDBConn = Awaited<ReturnType<Awaited<ReturnType<typeof DuckDBInstance.create>>['connect']>>;
-
-async function queryAll(conn: DuckDBConn, sql: string): Promise<RawRow[]> {
-  const result = await conn.run(sql);
-  const cols = result.columnCount;
-  const names: string[] = [];
-  for (let i = 0; i < cols; i++) names.push(result.columnName(i));
-  const rows: RawRow[] = [];
-  let chunk = await result.fetchChunk();
-  while (chunk !== null && chunk.rowCount > 0) {
-    for (let r = 0; r < chunk.rowCount; r++) {
-      const row: Record<string, unknown> = {};
-      for (let c = 0; c < cols; c++) {
-        const name = names[c];
-        if (name !== undefined) row[name] = chunk.getColumnVector(c).getItem(r);
-      }
-      rows.push(row);
-    }
-    chunk = await result.fetchChunk();
-  }
-  return rows;
-}
 
 function substituteParams(sql: string, params: readonly unknown[]): string {
   let result = sql;
@@ -62,10 +43,6 @@ function substituteParams(sql: string, params: readonly unknown[]): string {
 }
 
 // ---------- JSON response narrowing ----------
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
-}
 
 interface RunSqlJson {
   readonly columnKeys: readonly string[];
@@ -104,17 +81,6 @@ function runSqlJson(text: string): RunSqlJson {
     rowsMeta: isRecord(rowsField) ? rowsField['value'] : undefined,
     notes,
   };
-}
-
-/** A port nothing listens on right now (bound to 0, then released). A fixed
- *  port collides with this suite running in another checkout at the same time. */
-async function freePort(): Promise<number> {
-  const probe = createNetServer();
-  await new Promise<void>((resolve) => { probe.listen(0, '127.0.0.1', resolve); });
-  const address = probe.address();
-  await new Promise<void>((resolve) => { probe.close(() => { resolve(); }); });
-  if (address === null || typeof address === 'string') throw new Error('no port');
-  return address.port;
 }
 
 // ---------- MCP HTTP client ----------
@@ -310,8 +276,8 @@ describe('MCP server E2E', () => {
     ctx = {
       dataDir: SYNTHETIC_DIR,
       stateDir: FIXTURES_DIR,
-      runQuery: (sql) => queryAll(conn, sql),
-      runPreparedQuery: (sql, params) => queryAll(conn, substituteParams(sql, params)),
+      runQuery: (sql) => fetchRows(conn, sql),
+      runPreparedQuery: (sql, params) => fetchRows(conn, substituteParams(sql, params)),
       getConfig: () => Promise.resolve(config),
       getDimensions: () => Promise.resolve(dimensions),
       getQueryDimensions: () => Promise.resolve(dimensions),
@@ -915,8 +881,10 @@ describe('MCP server E2E', () => {
   });
 
   it('leaves /health open (unauthenticated liveness probe)', async () => {
-    const res = await fetch(`http://127.0.0.1:${String(port)}/health`);
-    expect(res.status).toBe(200);
+    const response = await fetch(`http://127.0.0.1:${String(port)}/health`);
+    const body = await response.json() as { status: string };
+    expect(response.status).toBe(200);
+    expect(body.status).toBe('ok');
   });
 
   // ---------- data-coverage banner ----------
@@ -1048,14 +1016,5 @@ describe('MCP server E2E', () => {
     } finally {
       loadScope = loaded;
     }
-  });
-
-  // ---------- Health endpoint ----------
-
-  it('health endpoint returns ok', async () => {
-    const response = await fetch(`http://127.0.0.1:${String(port)}/health`);
-    const body = await response.json() as { status: string };
-    expect(response.status).toBe(200);
-    expect(body.status).toBe('ok');
   });
 });

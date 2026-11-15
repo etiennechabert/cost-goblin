@@ -1,18 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ConfigValidationError, validateDimensions } from '../config/validator.js';
+import { validateDimensions } from '../config/validator.js';
 import { logger } from '../logger/logger.js';
 import type { TagDimension } from '../types/config.js';
-
-/** The message of the ConfigValidationError `fn` throws; anything else fails the test. */
-function configError(fn: () => unknown): string {
-  try {
-    fn();
-  } catch (err: unknown) {
-    if (err instanceof ConfigValidationError) return err.message;
-    throw err;
-  }
-  throw new Error('expected a ConfigValidationError, but nothing was thrown');
-}
+import { configError } from './helpers/config-error.js';
 
 function onlyTag(raw: Readonly<Record<string, unknown>>): TagDimension {
   const [tag] = validateDimensions({ builtIn: [], tags: [raw] }).tags;

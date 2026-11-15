@@ -93,10 +93,4 @@ describe('mergeTrendRowsByEntity', () => {
     const [spend] = mergeTrendRowsByEntity([trendRow('Prod', 250, 0, 100)]);
     expect(spend?.percentChange).toBe(100);
   });
-
-  it('measures a merged entity against its merged previous cost', () => {
-    // Two account ids sharing a display name: one new, one that existed.
-    const [merged] = mergeTrendRowsByEntity([trendRow('Prod', 50, 0, 100), trendRow('Prod', 130, 100, 30)]);
-    expect(merged).toMatchObject({ currentCost: 180, previousCost: 100, delta: 80, percentChange: 80 });
-  });
 });

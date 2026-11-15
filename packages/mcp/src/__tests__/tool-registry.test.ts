@@ -7,14 +7,11 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { McpContext } from '../context.js';
 import { registerTools } from '../tools/index.js';
+import { isRecord } from './helpers/json-result.js';
 
 // registerTools wires each tool to the MCP server and turns anything the tool
 // throws into an `Error: …` tool result (isError) instead of a protocol error.
 // Driven over an in-memory transport: the real SDK client and server, no HTTP.
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
-}
 
 interface ToolOutcome {
   readonly text: string;

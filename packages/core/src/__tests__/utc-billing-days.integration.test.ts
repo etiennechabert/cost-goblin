@@ -17,6 +17,7 @@ import { asDateString, asDimensionId, asDollars, asHourString, asProviderName } 
 import type { DimensionsConfig } from '../types/config.js';
 import type { CostScopeConfig } from '../types/cost-scope.js';
 import type { DateRange } from '../types/query.js';
+import { runPrepared } from './helpers/duckdb.js';
 
 /**
  * Billing days are UTC days, whatever time zone the machine runs in.
@@ -66,23 +67,6 @@ const dimensions: DimensionsConfig = {
 };
 const costScope: CostScopeConfig = { costMetric: 'effective', rules: [] };
 const service = asDimensionId('service');
-
-/** Positional $1..$n binding, mirroring the duckdb-worker's. */
-async function runPrepared(conn: DuckDBConnection, sql: string, params: readonly unknown[]): Promise<Record<string, unknown>[]> {
-  const stmt = await conn.prepare(sql);
-  try {
-    params.forEach((value, i) => {
-      if (typeof value === 'string') stmt.bindVarchar(i + 1, value);
-      else if (typeof value === 'number' && Number.isInteger(value)) stmt.bindInteger(i + 1, value);
-      else if (typeof value === 'number') stmt.bindDouble(i + 1, value);
-      else throw new Error(`unexpected query parameter ${String(value)}`);
-    });
-    const reader = await stmt.runAndReadAll();
-    return reader.getRowObjectsJson();
-  } finally {
-    stmt.destroySync();
-  }
-}
 
 async function rowsOf(conn: DuckDBConnection, sql: string): Promise<Record<string, unknown>[]> {
   return (await conn.runAndReadAll(sql)).getRowObjectsJson();

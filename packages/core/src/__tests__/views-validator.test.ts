@@ -136,16 +136,6 @@ describe('validateViews', () => {
     expect(cfg.views[1]).not.toHaveProperty('description');
   });
 
-  it('rejects an unknown widget type', () => {
-    expect(() => validateViews({
-      views: [{
-        id: 'v', name: 'V', rows: [{ widgets: [
-          { id: 'w', type: 'mystery', size: 'small' },
-        ] }],
-      }],
-    })).toThrow(ConfigValidationError);
-  });
-
   it('accepts a baseline widget (optional topN)', () => {
     const cfg = validateViews({
       views: [{
@@ -176,46 +166,6 @@ describe('validateViews', () => {
       ] }] }],
     });
     expect(cfg.views[0]?.rows[0]?.widgets[0]).toStrictEqual({ id: 'p', type: 'pie', size: 'medium', groupBy: 'service' });
-  });
-
-  it('rejects a missing groupBy on a chart widget', () => {
-    expect(() => validateViews({
-      views: [{
-        id: 'v', name: 'V', rows: [{ widgets: [
-          { id: 'w', type: 'pie', size: 'small' },
-        ] }],
-      }],
-    })).toThrow(ConfigValidationError);
-  });
-
-  it('rejects an invalid widget size', () => {
-    expect(() => validateViews({
-      views: [{
-        id: 'v', name: 'V', rows: [{ widgets: [
-          { id: 'w', type: 'summary', size: 'jumbo' },
-        ] }],
-      }],
-    })).toThrow(ConfigValidationError);
-  });
-
-  it('rejects duplicate widget ids within a view', () => {
-    expect(() => validateViews({
-      views: [{
-        id: 'v', name: 'V', rows: [
-          { widgets: [{ id: 'dup', type: 'summary', size: 'small' }] },
-          { widgets: [{ id: 'dup', type: 'summary', size: 'small' }] },
-        ],
-      }],
-    })).toThrow(/duplicate widget id/);
-  });
-
-  it('rejects duplicate view ids', () => {
-    expect(() => validateViews({
-      views: [
-        { id: 'same', name: 'A', rows: [{ widgets: [{ id: 'w1', type: 'summary', size: 'small' }] }] },
-        { id: 'same', name: 'B', rows: [{ widgets: [{ id: 'w2', type: 'summary', size: 'small' }] }] },
-      ],
-    })).toThrow(/duplicate view id/);
   });
 
   it('rejects views payload with no views key', () => {

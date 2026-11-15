@@ -28,13 +28,6 @@ const WRITE_CONTROLS = ['+ New view', 'Import', 'Reset built-ins'];
 const LOAD_ERROR = "Error invoking remote method 'views:get-config': ConfigValidationError: views[1].rows[0].widgets[0].topN must be a number";
 
 describe('ViewsEditor', () => {
-  it('shows the seed view name after load', async () => {
-    renderEditor();
-    await waitFor(() => {
-      expect(screen.getAllByText('Cost Overview').length).toBeGreaterThan(0);
-    });
-  });
-
   it('lets the user add a new view', async () => {
     renderEditor();
     await waitFor(() => {

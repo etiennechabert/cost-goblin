@@ -52,6 +52,10 @@ describe('SQL Injection Prevention', () => {
       { kind: 'double quotes', value: 'test"value"with"quotes' },
       { kind: 'SQL comment sequences', value: 'test--comment' },
       { kind: 'multi-line values with newlines', value: 'test\nvalue\nwith\nnewlines' },
+      { kind: 'null bytes', value: 'test\x00value' },
+      { kind: 'Unicode characters', value: 'test-值-🔒-value' },
+      { kind: 'backslashes', value: 'test\\value\\with\\backslashes' },
+      { kind: 'percent signs (LIKE injection attempt)', value: '%malicious%' },
     ])('handles $kind in filter values safely', ({ value }) => {
       const result = buildCostQuery(
         {
@@ -243,18 +247,6 @@ describe('SQL Injection Prevention', () => {
   });
 
   describe('Non-parameterizable identifiers are validated', () => {
-    it('accepts valid dimension IDs', () => {
-      const validResult = buildCostQuery(
-        {
-          groupBy: asDimensionId('service'),
-          dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
-          filters: {},
-        },
-        { dataDir: '/data', dimensions, providers },
-      );
-      expect(validResult.sql).toContain("COALESCE(service, '') AS entity");
-    });
-
     it('rejects unknown dimension IDs with SecurityError', () => {
       expect(() => buildCostQuery(
         {
@@ -334,54 +326,6 @@ describe('SQL Injection Prevention', () => {
   });
 
   describe('Edge cases and special characters', () => {
-    it('handles null bytes in filter values', () => {
-      const result = buildCostQuery(
-        {
-          groupBy: asDimensionId('service'),
-          dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
-          filters: { [asDimensionId('account')]: [asTagValue('test\x00value')] },
-        },
-        { dataDir: '/data', dimensions, providers },
-      );
-      expect(result.params).toContain('test\x00value');
-    });
-
-    it('handles Unicode characters in filter values', () => {
-      const result = buildCostQuery(
-        {
-          groupBy: asDimensionId('service'),
-          dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
-          filters: { [asDimensionId('account')]: [asTagValue('test-值-🔒-value')] },
-        },
-        { dataDir: '/data', dimensions, providers },
-      );
-      expect(result.params).toContain('test-值-🔒-value');
-    });
-
-    it('handles backslashes in filter values', () => {
-      const result = buildCostQuery(
-        {
-          groupBy: asDimensionId('service'),
-          dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
-          filters: { [asDimensionId('account')]: [asTagValue('test\\value\\with\\backslashes')] },
-        },
-        { dataDir: '/data', dimensions, providers },
-      );
-      expect(result.params).toContain('test\\value\\with\\backslashes');
-    });
-
-    it('handles percent signs (LIKE injection attempt)', () => {
-      const result = buildCostQuery(
-        {
-          groupBy: asDimensionId('service'),
-          dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
-          filters: { [asDimensionId('account')]: [asTagValue('%malicious%')] },
-        },
-        { dataDir: '/data', dimensions, providers },
-      );
-      expect(result.params).toContain('%malicious%');
-    });
-
     it('reads an empty filter value as the rows with no value, binding the others', () => {
       const result = buildCostQuery(
         {
@@ -416,18 +360,6 @@ describe('SQL Injection Prevention', () => {
       // Path should be in SQL, not params
       expect(result.sql).toContain('/data/aws/raw/');
       expect(result.params).not.toContain('/data');
-    });
-
-    it('includes data directory path in SQL structure', () => {
-      const result = buildCostQuery(
-        {
-          groupBy: asDimensionId('service'),
-          dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
-          filters: {},
-        },
-        { dataDir: '/custom/path', dimensions, providers },
-      );
-      expect(result.sql).toContain('/custom/path/aws/raw/');
     });
   });
 

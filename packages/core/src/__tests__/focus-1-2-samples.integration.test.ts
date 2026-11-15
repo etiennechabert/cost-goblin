@@ -391,19 +391,6 @@ describe('GCP FOCUS 1.2 BigQuery export (canonicalized locally by the shipped ad
     expect(Number(row?.['with_env'])).toBe(SAMPLE_ROW_COUNT);
   });
 
-  it('distinguishes used from unused commitment by the credit sign', async () => {
-    // Both states are the same x_Credits type; only the sign separates them,
-    // so a projection keyed on the type alone reports every commitment row as
-    // 'Used' and silently loses the unused one.
-    const source = sourceFor('gcp', NO_TAGS);
-    const rows = await rowsOf(`
-      SELECT commitment_status, COUNT(*) AS n FROM ${source}
-      WHERE commitment_status <> '' GROUP BY 1 ORDER BY 1`);
-    expect(rows.map(r => [r['commitment_status'], Number(r['n'])])).toEqual([
-      ['Unused', 1], ['Used', 14],
-    ]);
-  });
-
   it('leaves service_category empty rather than inventing one', async () => {
     const source = sourceFor('gcp', NO_TAGS);
     const rows = await rowsOf(`SELECT DISTINCT service_category FROM ${source}`);
@@ -452,7 +439,10 @@ describe('cross-provider', () => {
     // The same month is billed on every provider, so the canonical form has
     // to report the same commitment states — however differently each export
     // encodes them. This is the assertion that catches a projection which
-    // drops or mislabels a state rather than merely renaming it.
+    // drops or mislabels a state rather than merely renaming it. On GCP both
+    // states are the same x_Credits type and only the sign separates them, so
+    // a projection keyed on the type alone reports every commitment row as
+    // 'Used' and silently loses the unused one.
     for (const provider of SAMPLE_PROVIDERS) {
       const source = sourceFor(provider, NO_TAGS);
       const rows = await rowsOf(`

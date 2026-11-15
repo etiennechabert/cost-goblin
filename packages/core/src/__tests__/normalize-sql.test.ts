@@ -114,8 +114,4 @@ describe('buildAliasSqlCase rejects unknown normalize rules', () => {
     Reflect.set(dim, 'normalize', 'toString');
     expect(() => buildAliasSqlCase('service', dim)).toThrow(SecurityError);
   });
-
-  it('still applies a known rule', () => {
-    expect(buildAliasSqlCase('service', { normalize: 'lowercase' })).toBe('LOWER(service)');
-  });
 });

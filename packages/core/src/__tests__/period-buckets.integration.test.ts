@@ -9,6 +9,7 @@ import { FIXTURE_PROVIDER_NAME } from '../__fixtures__/layout.js';
 import { asDateString, asDimensionId, asEntityRef, asProviderName } from '../types/branded.js';
 import type { DimensionsConfig } from '../types/config.js';
 import type { DateRange, Granularity } from '../types/query.js';
+import { runPrepared } from './helpers/duckdb.js';
 
 /**
  * Weekly and monthly buckets over the synthetic daily tier: every row lands in
@@ -33,21 +34,6 @@ const opts: QueryContextOptions = { dataDir: SYNTHETIC_DIR, dimensions, provider
 // Jan 1 2026 is a Thursday, so the first weekly bucket starts in December.
 const RANGE: DateRange = { start: asDateString('2026-01-01'), end: asDateString('2026-02-28') };
 const service = asDimensionId('service');
-
-/** Positional $1..$n binding, mirroring the duckdb-worker's. */
-async function runPrepared(conn: DuckDBConnection, sql: string, params: readonly unknown[]): Promise<Record<string, unknown>[]> {
-  const stmt = await conn.prepare(sql);
-  try {
-    params.forEach((value, i) => {
-      if (typeof value === 'string') stmt.bindVarchar(i + 1, value);
-      else throw new Error(`unexpected query parameter ${String(value)}`);
-    });
-    const reader = await stmt.runAndReadAll();
-    return reader.getRowObjectsJson();
-  } finally {
-    stmt.destroySync();
-  }
-}
 
 function totalCost(rows: readonly Record<string, unknown>[]): number {
   return rows.reduce((total, row) => total + Number(row['cost']), 0);

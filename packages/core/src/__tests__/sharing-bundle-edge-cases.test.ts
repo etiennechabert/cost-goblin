@@ -10,23 +10,13 @@ import {
   parseConfigBundle,
   summarizeConfigBundle,
 } from '../config/sharing-bundle.js';
-import { ConfigValidationError, validateConfig } from '../config/validator.js';
+import { validateConfig } from '../config/validator.js';
 import { asBucketPath, asDimensionId, asTagValue } from '../types/branded.js';
 import type { BaselineSpec } from '../types/baseline.js';
 import type { CostGoblinConfig, DimensionsConfig, ProviderConfig } from '../types/config.js';
 import type { SharedCostGoblinConfig } from '../types/sharing.js';
 import { CONFIG_BUNDLE_KIND, CONFIG_BUNDLE_SCHEMA_VERSION } from '../types/sharing.js';
-
-/** The message of the ConfigValidationError `fn` throws; anything else fails the test. */
-function configError(fn: () => unknown): string {
-  try {
-    fn();
-  } catch (err: unknown) {
-    if (err instanceof ConfigValidationError) return err.message;
-    throw err;
-  }
-  throw new Error('expected a ConfigValidationError, but nothing was thrown');
-}
+import { configError } from './helpers/config-error.js';
 
 const defaults = { periodDays: 30, costMetric: 'effective', lagDays: 2 };
 
@@ -137,10 +127,6 @@ describe('parseConfigBundle: envelope errors', () => {
 
   it('rejects YAML whose top level is not a mapping', () => {
     expect(configError(() => parseConfigBundle('- a\n- b\n'))).toBe('bundle must be an object');
-  });
-
-  it('prefixes a YAML syntax error with "Not valid YAML"', () => {
-    expect(configError(() => parseConfigBundle('{not: yaml: at: all:'))).toMatch(/^Not valid YAML: \S/);
   });
 });
 

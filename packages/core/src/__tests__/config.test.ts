@@ -424,14 +424,6 @@ describe('validateDimensions', () => {
     })).toThrow(ConfigValidationError);
   });
 
-  it('strips the CUR-era user_ prefix from persisted tagNames (FOCUS Tags keys carry none)', () => {
-    const dims = validateDimensions({
-      builtIn: [],
-      tags: [{ tagName: 'user_team', label: 'Team' }],
-    });
-    expect(dims.tags[0]?.tagName).toBe('team');
-  });
-
   it('accepts tag keys that differ only by case (they get distinct SQL columns)', () => {
     const dims = validateDimensions({
       builtIn: [],

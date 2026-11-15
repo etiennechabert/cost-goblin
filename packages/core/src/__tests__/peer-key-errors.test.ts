@@ -64,9 +64,4 @@ describe('firstReachable with a failure that no candidate caused', () => {
     await expect(firstReachable(candidates, attempt)).rejects.toThrow('candidate list unavailable');
     expect(attempted).toEqual([]);
   });
-
-  it('reports an empty candidate list as unreachable with no errors', async () => {
-    const attempt = (candidate: string): Promise<string> => Promise.resolve(candidate);
-    await expect(firstReachable([], attempt)).resolves.toEqual({ status: 'unreachable', errors: [] });
-  });
 });

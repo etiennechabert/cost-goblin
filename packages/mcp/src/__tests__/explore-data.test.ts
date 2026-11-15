@@ -7,6 +7,7 @@ import { loadConfig, loadCostScope, loadDimensions, SecurityError, tagSqlColumn 
 import type { McpContext } from '../context.js';
 import { exploreData } from '../tools/explore-data.js';
 import { fetchRows, fetchRowsPrepared } from './helpers/duckdb-rows.js';
+import { isRecord } from './helpers/json-result.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = join(__dirname, '..', '..', '..', 'core', 'src', '__fixtures__');
@@ -17,10 +18,6 @@ interface RecordedCall {
   readonly kind: 'query' | 'prepared';
   readonly sql: string;
   readonly params: readonly unknown[];
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
 /** The first table's rows from a format=json tool response, narrowed. */
