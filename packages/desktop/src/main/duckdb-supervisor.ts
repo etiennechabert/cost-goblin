@@ -2,6 +2,8 @@ import { QUERY_CANCELLED_MESSAGE, logger } from '@costgoblin/core';
 import type { QueryEngineState } from '@costgoblin/core';
 import { isWorkerResponse } from './duckdb-client.js';
 import type { DuckDBClient, RawRow } from './duckdb-client.js';
+import { DUCKDB_SETTINGS_ENV } from './duckdb-tuning.js';
+import { ensureUvThreadpoolSize } from './uv-threadpool.js';
 
 /**
  * Supervises the app's shared DuckDB instance, which runs in a process of its
@@ -69,6 +71,28 @@ export type DuckDBSettings = Parameters<DuckDBClient['configure']>[0];
 
 /** Starts a process that applies `settings` before it reports ready. */
 export type SpawnDuckDBProcess = (settings: DuckDBSettings) => DuckDBProcess;
+
+/**
+ * The environment a host starts the DuckDB process with: `env` (the host's
+ * own), plus the settings the bundle applies before it reports ready.
+ *
+ * It also carries the size of libuv's thread pool, which a process reads
+ * once, at the pool's first use. A running query holds one pool thread until
+ * it returns, and with libuv's default of four a rollup build could not start
+ * while four queries ran, and every file read in the process waited behind
+ * them. The main process sizes its own pool at startup
+ * (`uv-threadpool-init.ts`) and that variable travels here in `env`; it is
+ * set again when `env` lacks it, so the process never depends on that.
+ */
+export function duckdbProcessEnv(env: Readonly<Record<string, string | undefined>>, settings: DuckDBSettings): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [name, value] of Object.entries(env)) {
+    if (value !== undefined) result[name] = value;
+  }
+  result[DUCKDB_SETTINGS_ENV] = JSON.stringify(settings);
+  ensureUvThreadpoolSize(result);
+  return result;
+}
 
 export interface SupervisedDuckDBClient extends DuckDBClient {
   getState(): QueryEngineState;

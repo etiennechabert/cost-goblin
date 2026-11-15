@@ -1,7 +1,7 @@
 import { utilityProcess } from 'electron';
 import { logger } from '@costgoblin/core';
+import { duckdbProcessEnv } from './duckdb-supervisor.js';
 import type { DuckDBProcess, DuckDBProcessExit, DuckDBSettings, SpawnDuckDBProcess } from './duckdb-supervisor.js';
-import { duckdbProcessEnv } from './duckdb-tuning.js';
 
 /** The name the DuckDB process goes by in `app.getAppMetrics()` and in
  *  Electron's `child-process-gone` event. */
@@ -28,7 +28,7 @@ export function utilityProcessSpawner(bundlePath: string): SpawnDuckDBProcess {
     const child = utilityProcess.fork(bundlePath, [], {
       serviceName: QUERY_ENGINE_PROCESS_NAME,
       // The settings the bundle starts with, and a thread pool sized for
-      // the queries it runs (see computeUvThreadPoolSize).
+      // the queries it runs (see duckdbProcessEnv).
       env: duckdbProcessEnv(process.env, settings),
       // stderr is piped to keep its end: that is where a native abort says
       // why ("terminating due to uncaught exception of type ...").

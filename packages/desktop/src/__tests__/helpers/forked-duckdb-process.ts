@@ -1,6 +1,6 @@
 import { fork } from 'node:child_process';
+import { duckdbProcessEnv } from '../../main/duckdb-supervisor.js';
 import type { DuckDBProcess, DuckDBProcessExit, DuckDBSettings } from '../../main/duckdb-supervisor.js';
-import { duckdbProcessEnv } from '../../main/duckdb-tuning.js';
 
 /**
  * The built DuckDB bundle in a child process of the test runner, behind the

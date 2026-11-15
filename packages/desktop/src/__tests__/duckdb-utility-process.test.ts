@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { logger } from '@costgoblin/core';
 import { QUERY_ENGINE_PROCESS_NAME, utilityProcessSpawner } from '../main/duckdb-utility-process.js';
 import type { DuckDBProcessExit } from '../main/duckdb-supervisor.js';
-import { DUCKDB_SETTINGS_ENV, computeUvThreadPoolSize } from '../main/duckdb-tuning.js';
+import { DUCKDB_SETTINGS_ENV } from '../main/duckdb-tuning.js';
+import { uvThreadpoolSize } from '../main/uv-threadpool.js';
 
 /** How the app hosts the DuckDB bundle: an Electron utility process, here a
  *  stand-in for `utilityProcess.fork` that records how it was asked for and
@@ -90,7 +91,7 @@ describe('utilityProcessSpawner', () => {
       const settings: unknown = JSON.parse(String(Reflect.get(Object(env), DUCKDB_SETTINGS_ENV)));
       expect(settings).toEqual({ tempDir: '/ws/tmp/it\'s here', memoryGB: 2, threads: 4 });
       // A thread pool sized for the queries the process runs.
-      expect(env).toMatchObject({ UV_THREADPOOL_SIZE: String(computeUvThreadPoolSize()) });
+      expect(Number(Reflect.get(Object(env), 'UV_THREADPOOL_SIZE'))).toBeGreaterThanOrEqual(uvThreadpoolSize());
       // Only strings: an unset variable is left out, not passed as "undefined".
       expect(Object.values(Object(env)).every(value => typeof value === 'string')).toBe(true);
     } finally {

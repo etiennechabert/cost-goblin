@@ -19,15 +19,6 @@ export interface DuckDBSettings {
   readonly threads?: number | undefined;
 }
 
-/** libuv's variable for the size of a process's thread pool. Read once, at
- *  the pool's first use, so it has to be in the process's environment. */
-const UV_THREADPOOL_SIZE_ENV = 'UV_THREADPOOL_SIZE';
-
-/** Threads left in the DuckDB process's libuv pool once every query it may
- *  run at a time holds one: for opening connections, fetching result chunks
- *  and the process's own file reads. */
-const UV_POOL_HEADROOM = 4;
-
 export const MIN_MEMORY_GB = 1;
 /** The most memory DuckDB may be told to use, whatever the machine has.
  *
@@ -107,40 +98,6 @@ export function computeDefaultPoolSize(): number {
  *  COSTGOBLIN_DUCKDB_POOL_SIZE. */
 export function computeQueryPoolSize(): number {
   return poolSizeOverride() ?? Math.max(2, Math.min(4, Math.ceil(maxThreads() / 4)));
-}
-
-/** Size of the libuv thread pool the DuckDB process is started with.
- *
- *  A query holds one pool thread from the moment DuckDB starts it until it
- *  returns, and libuv's default pool has four. The app runs up to
- *  {@link computeQueryPoolSize} queries and {@link computeDefaultPoolSize}
- *  rollup builds at a time, so with four threads the fifth query did not
- *  start, a cancel sent to it was lost (DuckDB clears its interrupt flag when
- *  a query starts), and every file read in the same process waited behind the
- *  running queries: 9.9 s for one `fs.stat`, measured in the main process
- *  when DuckDB still ran there. One thread per query the process may run,
- *  plus headroom; idle threads cost nothing. */
-export function computeUvThreadPoolSize(): number {
-  return computeQueryPoolSize() + computeDefaultPoolSize() + UV_POOL_HEADROOM;
-}
-
-/** The environment a host starts the DuckDB process with: `env` (the host's
- *  own), the settings the bundle applies before it reports ready, and a libuv
- *  thread pool sized for the queries it runs. A pool the user asked to be
- *  larger still is kept. */
-export function duckdbProcessEnv(
-  env: Readonly<Record<string, string | undefined>>,
-  settings: DuckDBSettings,
-): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const [name, value] of Object.entries(env)) {
-    if (value !== undefined) result[name] = value;
-  }
-  result[DUCKDB_SETTINGS_ENV] = JSON.stringify(settings);
-  const asked = Number.parseInt(env[UV_THREADPOOL_SIZE_ENV] ?? '', 10);
-  const size = Math.max(computeUvThreadPoolSize(), Number.isFinite(asked) ? asked : 0);
-  result[UV_THREADPOOL_SIZE_ENV] = String(size);
-  return result;
 }
 
 /** Default number of monthly rollup partitions built in parallel. Deliberately

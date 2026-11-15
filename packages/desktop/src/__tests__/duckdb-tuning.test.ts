@@ -8,12 +8,7 @@ import {
   clampRollupConcurrency,
   clampThreads,
   computeDefaultMemoryGB,
-  computeDefaultPoolSize,
   computeDefaultThreads,
-  computeQueryPoolSize,
-  computeUvThreadPoolSize,
-  DUCKDB_SETTINGS_ENV,
-  duckdbProcessEnv,
   maxRollupConcurrency,
   maxThreads,
   resolveMemoryGB,
@@ -132,35 +127,5 @@ describe('resolve* (override ?? default)', () => {
     expect(resolveRollupConcurrency(undefined)).toBe(2);
     expect(resolveRollupConcurrency(1)).toBe(1);
     expect(resolveRollupConcurrency(10_000)).toBe(maxRollupConcurrency());
-  });
-});
-
-describe('the DuckDB process environment', () => {
-  it('gives the process a thread for every query it may run at a time, and some to spare', () => {
-    // A running query holds a libuv pool thread until it returns; with fewer
-    // threads than queries, the last ones do not start and file reads wait.
-    const queries = computeQueryPoolSize() + computeDefaultPoolSize();
-    expect(computeUvThreadPoolSize()).toBeGreaterThan(queries);
-    // libuv's default, which four pooled queries alone used up.
-    expect(computeUvThreadPoolSize()).toBeGreaterThan(4);
-    // And its maximum.
-    expect(computeUvThreadPoolSize()).toBeLessThanOrEqual(1024);
-  });
-
-  it('carries the host environment, the settings and the pool size', () => {
-    const env = duckdbProcessEnv({ PATH: '/usr/bin', COSTGOBLIN_DATA_DIR: '/ws/data', UNSET: undefined }, { tempDir: "/ws/tmp/it's here", memoryGB: 2, threads: 4 });
-
-    expect(env).toMatchObject({ PATH: '/usr/bin', COSTGOBLIN_DATA_DIR: '/ws/data', UV_THREADPOOL_SIZE: String(computeUvThreadPoolSize()) });
-    expect(JSON.parse(env[DUCKDB_SETTINGS_ENV] ?? '')).toEqual({ tempDir: "/ws/tmp/it's here", memoryGB: 2, threads: 4 });
-    // Only strings: an unset variable is left out, not passed as "undefined".
-    expect('UNSET' in env).toBe(false);
-    expect(Object.values(env).every(value => typeof value === 'string')).toBe(true);
-  });
-
-  it('keeps a larger pool the user asked for, and replaces a smaller or unreadable one', () => {
-    const ours = computeUvThreadPoolSize();
-    expect(duckdbProcessEnv({ UV_THREADPOOL_SIZE: String(ours + 8) }, {})['UV_THREADPOOL_SIZE']).toBe(String(ours + 8));
-    expect(duckdbProcessEnv({ UV_THREADPOOL_SIZE: '2' }, {})['UV_THREADPOOL_SIZE']).toBe(String(ours));
-    expect(duckdbProcessEnv({ UV_THREADPOOL_SIZE: 'many' }, {})['UV_THREADPOOL_SIZE']).toBe(String(ours));
   });
 });

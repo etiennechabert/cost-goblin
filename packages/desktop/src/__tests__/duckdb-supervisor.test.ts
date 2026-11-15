@@ -2,13 +2,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { QUERY_CANCELLED_MESSAGE, logger } from '@costgoblin/core';
 import type { QueryEngineState } from '@costgoblin/core';
 import {
+  createSupervisedDuckDBClient,
   DEATH_WINDOW_MS,
+  duckdbProcessEnv,
   MAX_DEATHS,
   START_TIMEOUT_MS,
   TERMINATE_TIMEOUT_MS,
-  createSupervisedDuckDBClient,
 } from '../main/duckdb-supervisor.js';
 import type { DuckDBProcess, DuckDBProcessExit, DuckDBSettings, SupervisedDuckDBClient } from '../main/duckdb-supervisor.js';
+import { DUCKDB_SETTINGS_ENV } from '../main/duckdb-tuning.js';
+import { uvThreadpoolSize } from '../main/uv-threadpool.js';
 
 /** The supervisor of the app's DuckDB process, against a stand-in process the
  *  test drives: it says what the process says, and ends it when the test
@@ -768,5 +771,27 @@ describe('shutting down', () => {
 
     await expect(client.restart()).rejects.toThrow('The query engine was shut down.');
     expect(r.spawned).toHaveLength(3);
+  });
+});
+
+describe('the DuckDB process environment', () => {
+  it('carries the host environment and the settings', () => {
+    const env = duckdbProcessEnv({ PATH: '/usr/bin', COSTGOBLIN_DATA_DIR: '/ws/data', UNSET: undefined }, { tempDir: "/ws/tmp/it's here", memoryGB: 2, threads: 4 });
+
+    expect(env).toMatchObject({ PATH: '/usr/bin', COSTGOBLIN_DATA_DIR: '/ws/data' });
+    expect(JSON.parse(env[DUCKDB_SETTINGS_ENV] ?? '')).toEqual({ tempDir: "/ws/tmp/it's here", memoryGB: 2, threads: 4 });
+    // Only strings: an unset variable is left out, not passed as "undefined".
+    expect('UNSET' in env).toBe(false);
+    expect(Object.values(env).every(value => typeof value === 'string')).toBe(true);
+  });
+
+  it('gives the process the thread pool the main process sized for itself', () => {
+    // What main's startup put in its own environment travels to the child.
+    expect(duckdbProcessEnv({ UV_THREADPOOL_SIZE: '28' }, {})['UV_THREADPOOL_SIZE']).toBe('28');
+  });
+
+  it('sizes the pool itself for a host that did not: a query holds a thread, and the default is four', () => {
+    expect(duckdbProcessEnv({}, {})['UV_THREADPOOL_SIZE']).toBe(String(uvThreadpoolSize()));
+    expect(uvThreadpoolSize()).toBeGreaterThan(4);
   });
 });
