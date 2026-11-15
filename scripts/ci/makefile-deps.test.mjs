@@ -171,11 +171,9 @@ describe('Makefile targets', () => {
   const targets = parseTargets(readFileSync(makefile, 'utf8'));
 
   it('makes every target that runs npm or npx depend on deps', () => {
-    // `release` only runs `npm version`, which reads package.json, not node_modules.
-    const exempt = new Set(['deps', 'release']);
     const usesNodeModules = (recipe) => recipe.some((line) => /\bnp[mx]\b/.test(line));
     const missing = [...targets]
-      .filter(([name, { recipe }]) => !exempt.has(name) && usesNodeModules(recipe))
+      .filter(([name, { recipe }]) => name !== 'deps' && usesNodeModules(recipe))
       .filter(([, { prereqs }]) => !prereqs.includes('deps'))
       .map(([name]) => name);
     expect(targets.size).toBeGreaterThan(10);
