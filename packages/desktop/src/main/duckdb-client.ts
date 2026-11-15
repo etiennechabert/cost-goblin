@@ -248,8 +248,17 @@ export async function createDuckDBClient(workerPath: string, workerData?: DuckDB
     const id = lifecycle.nextId++;
     return new Promise<RawRow[]>((resolve, reject) => {
       pending.set(id, { onStarted, resolve, reject });
+      try {
+        worker.postMessage({ kind, id, sql, ...extraPayload });
+      } catch (err: unknown) {
+        // Nothing reached the worker (a parameter that cannot be cloned), so
+        // nothing will answer: counted or left pending, the request would
+        // keep a drain and terminate() waiting until their deadlines.
+        pending.delete(id);
+        reject(err instanceof Error ? err : new Error(String(err)));
+        return;
+      }
       posted += 1;
-      worker.postMessage({ kind, id, sql, ...extraPayload });
     });
   }
 
@@ -270,8 +279,8 @@ export async function createDuckDBClient(workerPath: string, workerData?: DuckDB
       worker.postMessage({ kind: 'cancel-pending', builds: true });
     },
     configure(settings: { tempDir?: string; memoryGB?: number; threads?: number }): void {
-      posted += 1;
       worker.postMessage({ kind: 'configure', ...settings });
+      posted += 1;
     },
     terminate(): Promise<void> {
       termination ??= shutDown();

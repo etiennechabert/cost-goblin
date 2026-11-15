@@ -152,9 +152,7 @@ function isCountedRequest(msg: unknown): boolean {
  *  drain. The queries in flight are interrupted until each has settled, as for
  *  any cancel (see keepInterruptingCancelled). */
 function handleDrain(): void {
-  for (const id of queuedIds) cancelledIds.add(id);
-  for (const id of runningIds) cancelledIds.add(id);
-  keepInterruptingCancelled();
+  handleCancelPending(true);
 }
 
 async function fetchAllRows(

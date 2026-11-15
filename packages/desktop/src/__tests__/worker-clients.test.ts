@@ -17,6 +17,8 @@ interface FakeWorker {
   readonly posted: unknown[];
   terminateCalls: number;
   failTerminate: boolean;
+  /** Thrown by the next postMessage, which then posts nothing. */
+  failNextPost: Error | null;
   emit(event: string, ...args: unknown[]): boolean;
 }
 
@@ -33,13 +35,21 @@ vi.mock('node:worker_threads', async () => {
     readonly posted: unknown[] = [];
     terminateCalls = 0;
     failTerminate = false;
+    failNextPost: Error | null = null;
     constructor(path: string, options?: unknown) {
       super();
       this.path = path;
       this.options = options;
       threads.created.push(this);
     }
-    postMessage(msg: unknown): void { this.posted.push(msg); }
+    postMessage(msg: unknown): void {
+      if (this.failNextPost !== null) {
+        const err = this.failNextPost;
+        this.failNextPost = null;
+        throw err;
+      }
+      this.posted.push(msg);
+    }
     terminate(): Promise<number> {
       this.terminateCalls += 1;
       return this.failTerminate ? Promise.reject(new Error('already gone')) : Promise.resolve(0);
@@ -434,6 +444,20 @@ describe('drainDuckDBClientsSync', () => {
     await expect(client.runPreparedQuery('SELECT $1', ['a'])).rejects.toThrow(CLIENT_TERMINATED_MESSAGE);
 
     expect(worker.posted).toEqual([DRAIN]);
+    gone(worker);
+  });
+
+  it('does not wait for a request that never reached the worker', async () => {
+    const { client, worker, settle } = await counted();
+    client.runQuery('SELECT 1').catch(() => undefined);
+    // What a parameter that cannot be cloned does to postMessage.
+    worker.failNextPost = new Error('could not be cloned');
+    await expect(client.runPreparedQuery('SELECT $1', ['a'])).rejects.toThrow('could not be cloned');
+
+    // One request is in flight, not two: counted, the one that was never sent
+    // would keep every drain waiting until its deadline.
+    settle(1);
+    expect(drainDuckDBClientsSync(0)).toBe(true);
     gone(worker);
   });
 
