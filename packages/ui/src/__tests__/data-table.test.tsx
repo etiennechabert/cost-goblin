@@ -56,15 +56,15 @@ describe('DataTable — an expandable row on the keyboard', () => {
     const { row } = renderTable(true);
 
     expect(fireEvent.keyDown(row, { key: ' ' })).toBe(false);
-    expect(screen.queryByText('detail of eu-central-1')).not.toBeNull();
+    expect(screen.getByText('detail of eu-central-1')).toBeDefined();
     expect(fireEvent.keyDown(row, { key: ' ' })).toBe(false);
     expect(screen.queryByText('detail of eu-central-1')).toBeNull();
 
     expect(fireEvent.keyDown(row, { key: 'Enter' })).toBe(true);
-    expect(screen.queryByText('detail of eu-central-1')).not.toBeNull();
+    expect(screen.getByText('detail of eu-central-1')).toBeDefined();
     expect(fireEvent.keyDown(row, { key: 'ArrowDown' })).toBe(true);
     expect(fireEvent.keyDown(row, { key: 'Tab' })).toBe(true);
-    expect(screen.queryByText('detail of eu-central-1')).not.toBeNull();
+    expect(screen.getByText('detail of eu-central-1')).toBeDefined();
   });
 
   // Space pressed on a button inside the row reaches the row's handler too.
