@@ -234,6 +234,44 @@ describe('DuckDB Worker', () => {
     expect((await waitForResult(afterId)).kind).toBe('rows');
   });
 
+  // Cross joins the worker cannot finish before a cancel sent on `started`
+  // reaches it: under a second for the first, several for the second. No more
+  // than that: an interrupt that reaches DuckDB before the query has begun is
+  // lost, and the query then runs to its end before it is reported cancelled.
+  const SLOW_SQL = 'SELECT sum(a.range + b.range) AS total FROM range(20000) a, range(20000) b';
+  const VERY_SLOW_SQL = 'SELECT sum(a.range + b.range) AS total FROM range(60000) a, range(60000) b';
+
+  it('leaves a rollup build running when the pending queries are cancelled', async () => {
+    const buildId = nextId++;
+    const queryId = nextId++;
+    const started = Promise.all([waitForStarted(buildId), waitForStarted(queryId)]);
+    const build = waitForResult(buildId);
+    const query = waitForResult(queryId);
+    worker.postMessage({ kind: 'query', id: buildId, sql: SLOW_SQL, fresh: true });
+    sendQuery(queryId, VERY_SLOW_SQL);
+    await started;
+
+    // What a view sends on every navigation and date change.
+    worker.postMessage({ kind: 'cancel-pending' });
+
+    expect(await query).toMatchObject({ kind: 'error', message: 'Query cancelled' });
+    // The build was running too, and is not a view's to cancel: cancelled, its
+    // month would stay out of the rollup and every query over it read raw data.
+    expect(expectRows(await build).rows).toHaveLength(1);
+  }, 60_000);
+
+  it('cancels a rollup build too when asked to cancel everything', async () => {
+    const buildId = nextId++;
+    const started = waitForStarted(buildId);
+    const build = waitForResult(buildId);
+    worker.postMessage({ kind: 'query', id: buildId, sql: VERY_SLOW_SQL, fresh: true });
+    await started;
+
+    worker.postMessage({ kind: 'cancel-pending', builds: true });
+
+    expect(await build).toMatchObject({ kind: 'error', message: 'Query cancelled' });
+  }, 60_000);
+
   it('handles sequential queries with correct IDs', async () => {
     const ids = [nextId++, nextId++, nextId++];
     for (const id of ids) {

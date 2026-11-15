@@ -461,7 +461,11 @@ export function createAppContext(ctx: IpcContext): AppContext {
       if (name === undefined) throw new Error('No provider configured');
       return name;
     },
-    runQuery: (sql) => ctx.db.runQuery(sql),
+    // The store's own small queries (a built partition's row count) are part
+    // of its build, so they run as one: on the pool, a count queued behind a
+    // view's slow queries was cancelled by the next click, and the month whose
+    // file had just been written was left out of the rollup.
+    runQuery: (sql) => ctx.db.runBuildQuery(sql),
     // Partition builds run on a fresh, disposable connection (flat per-build
     // time) and fan out up to buildConcurrency at a time. Defaults to 2 (kept
     // low so a rebuild stays gentle on the UI); the persisted Performance
@@ -706,7 +710,8 @@ export function createAppContext(ctx: IpcContext): AppContext {
       return rollupStore.isReady();
     },
     clearAllCaches: async (): Promise<void> => {
-      ctx.db.cancelPendingQueries();
+      // Builds too: the rollup they write is invalidated below.
+      ctx.db.cancelAllQueries();
       inflightQueries.clear();
       // Invalidate the rollup FIRST, while the provider config the store's
       // providerName closure reads is still populated. Nulling state.config
