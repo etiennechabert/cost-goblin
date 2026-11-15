@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { Worker } from 'node:worker_threads';
+import { pbkdf2 } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -10,6 +11,7 @@ import { CHARGE_PERIOD_START_UTC_SQL } from '@costgoblin/core';
 import type { DuckDbSandboxOptions } from '@costgoblin/core';
 import { createDuckDBClient } from '../main/duckdb-client.js';
 import type { DuckDBClient } from '../main/duckdb-client.js';
+import { MAX_MEMORY_GB, clampMemoryGB, resolveMemoryGB } from '../main/duckdb-tuning.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const workerPath = join(__dirname, '..', '..', 'out', 'worker', 'duckdb-worker.cjs');
@@ -232,6 +234,44 @@ describe('DuckDB Worker', () => {
     expect((await waitForResult(afterId)).kind).toBe('rows');
   });
 
+  // Cross joins the worker cannot finish before a cancel sent on `started`
+  // reaches it: under a second for the first, several for the second. No more
+  // than that: an interrupt that reaches DuckDB before the query has begun is
+  // lost, and the query then runs to its end before it is reported cancelled.
+  const SLOW_SQL = 'SELECT sum(a.range + b.range) AS total FROM range(20000) a, range(20000) b';
+  const VERY_SLOW_SQL = 'SELECT sum(a.range + b.range) AS total FROM range(60000) a, range(60000) b';
+
+  it('leaves a rollup build running when the pending queries are cancelled', async () => {
+    const buildId = nextId++;
+    const queryId = nextId++;
+    const started = Promise.all([waitForStarted(buildId), waitForStarted(queryId)]);
+    const build = waitForResult(buildId);
+    const query = waitForResult(queryId);
+    worker.postMessage({ kind: 'query', id: buildId, sql: SLOW_SQL, fresh: true });
+    sendQuery(queryId, VERY_SLOW_SQL);
+    await started;
+
+    // What a view sends on every navigation and date change.
+    worker.postMessage({ kind: 'cancel-pending' });
+
+    expect(await query).toMatchObject({ kind: 'error', message: 'Query cancelled' });
+    // The build was running too, and is not a view's to cancel: cancelled, its
+    // month would stay out of the rollup and every query over it read raw data.
+    expect(expectRows(await build).rows).toHaveLength(1);
+  }, 60_000);
+
+  it('cancels a rollup build too when asked to cancel everything', async () => {
+    const buildId = nextId++;
+    const started = waitForStarted(buildId);
+    const build = waitForResult(buildId);
+    worker.postMessage({ kind: 'query', id: buildId, sql: VERY_SLOW_SQL, fresh: true });
+    await started;
+
+    worker.postMessage({ kind: 'cancel-pending', builds: true });
+
+    expect(await build).toMatchObject({ kind: 'error', message: 'Query cancelled' });
+  }, 60_000);
+
   it('handles sequential queries with correct IDs', async () => {
     const ids = [nextId++, nextId++, nextId++];
     for (const id of ids) {
@@ -283,6 +323,82 @@ describe('DuckDB Worker', () => {
     expect(rows[0]).toHaveProperty('b');
     expect(rows[0]).toHaveProperty('c');
   });
+
+  it('holds a configure above the memory ceiling to the ceiling', async () => {
+    async function memoryLimit(): Promise<unknown> {
+      const id = nextId++;
+      sendQuery(id, "SELECT current_setting('memory_limit') AS m");
+      return expectRows(await waitForResult(id)).rows[0]?.['m'];
+    }
+    // A configure is not acknowledged and runs beside the queries, so each
+    // step waits for the limit to move away from the one before it.
+    async function configureFrom(previous: unknown, memoryGB: number): Promise<unknown> {
+      worker.postMessage({ kind: 'configure', memoryGB });
+      await vi.waitFor(async () => { expect(await memoryLimit()).not.toBe(previous); }, { timeout: 5000 });
+      return memoryLimit();
+    }
+    const ceilingGB = clampMemoryGB(MAX_MEMORY_GB);
+    // The steps below tell 1 GB from the default and from the ceiling.
+    expect(resolveMemoryGB(null)).toBeGreaterThan(1);
+    expect(ceilingGB).toBeGreaterThan(1);
+
+    const atOne = await configureFrom(await memoryLimit(), 1);
+    const atCeiling = await configureFrom(atOne, ceilingGB);
+    expect(await configureFrom(atCeiling, 1)).toBe(atOne);
+    // What an override saved under the old 24 GB ceiling would ask for.
+    expect(await configureFrom(atOne, 24)).toBe(atCeiling);
+  });
+
+  // A cross join that takes the worker far longer than CANCEL_DEADLINE_MS.
+  const UNFINISHABLE_SQL = 'SELECT sum(a.range + b.range) AS total FROM range(100000) a, range(100000) b';
+  const CANCEL_DEADLINE_MS = 10_000;
+
+  /** Keeps every thread of libuv's pool busy for a few hundred milliseconds.
+   *  DuckDB runs a query as a task on that pool, which the whole process
+   *  shares, worker threads included. A query the worker takes meanwhile waits
+   *  behind these tasks: the worker has posted `started` and can interrupt its
+   *  connection, but DuckDB has not begun the query. */
+  function occupyThreadPool(): Promise<void> {
+    const threads = Math.max(4, Number(process.env['UV_THREADPOOL_SIZE'] ?? '4') || 4);
+    const tasks = Array.from({ length: threads }, () => new Promise<void>((resolve, reject) => {
+      pbkdf2('password', 'salt', 1_000_000, 64, 'sha512', (err) => {
+        if (err === null) resolve();
+        else reject(err);
+      });
+    }));
+    return Promise.all(tasks).then(() => undefined);
+  }
+
+  function settlesWithin(result: Promise<ResultMsg>, ms: number): Promise<ResultMsg | 'still running'> {
+    let timer: NodeJS.Timeout | undefined;
+    const deadline = new Promise<'still running'>((resolve) => {
+      timer = setTimeout(() => { resolve('still running'); }, ms);
+    });
+    return Promise.race([result, deadline]).finally(() => { clearTimeout(timer); });
+  }
+
+  // DuckDB clears a connection's interrupted flag when a query begins on it, so
+  // an interrupt made before that is dropped: the query ran to its end, and was
+  // only then reported cancelled. The second round checks that a cancel still
+  // works once an earlier one has been served.
+  it.each([
+    ['a query', (id: number): void => { sendQuery(id, UNFINISHABLE_SQL); }],
+    ['a prepared query', (id: number): void => { sendPreparedQuery(id, UNFINISHABLE_SQL, []); }],
+  ])('cancels %s that DuckDB has not begun yet', async (_label, send) => {
+    for (let round = 0; round < 2; round++) {
+      const id = nextId++;
+      const started = waitForStarted(id);
+      const result = waitForResult(id);
+      const poolBusy = occupyThreadPool();
+      send(id);
+      await started;
+
+      worker.postMessage({ kind: 'cancel-pending' });
+      await poolBusy;
+
+      expect(await settlesWithin(result, CANCEL_DEADLINE_MS)).toEqual({ kind: 'error', id, message: 'Query cancelled' });
+    }
+  }, 60_000);
 });
 
 // ---------------------------------------------------------------------------

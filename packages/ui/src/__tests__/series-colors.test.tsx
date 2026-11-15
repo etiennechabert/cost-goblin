@@ -91,7 +91,10 @@ function stackedSegmentColors(look: Look, day: BarDay): Map<string, string> {
   return new Map(names.map((name, i) => {
     const seg = segments[i];
     if (!(seg instanceof HTMLElement)) throw new Error(`no segment for ${name}`);
-    return [name, normalized(seg.style.backgroundColor)];
+    // A segment draws its series color at the plot's alpha: rgb(from <color> …).
+    const color = /^rgb\(from (#[0-9a-f]{6}) /i.exec(seg.style.backgroundColor)?.[1];
+    if (color === undefined) throw new Error(`no series color in ${seg.style.backgroundColor}`);
+    return [name, normalized(color)];
   }));
 }
 

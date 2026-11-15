@@ -1,9 +1,23 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { StackedBarChart, bucketBars } from '../components/stacked-bar-chart.js';
 import type { BarDay, HistogramTab } from '../components/stacked-bar-chart.js';
 import { PaletteProvider } from '../hooks/use-palette.js';
+import { takeMemoRenders } from './memo-renders.js';
+
+vi.mock('react', async (importOriginal) =>
+  (await import('./memo-renders.js')).withMemoSpy(await importOriginal<typeof import('react')>()));
+
+beforeEach(() => {
+  takeMemoRenders();
+});
+
+/** How many times the bar columns and the bar segments rendered since the
+ *  last call (or the start of the test). */
+function takeRenders(): Readonly<Record<string, number>> {
+  return takeMemoRenders('BarColumn', 'BarSegment');
+}
 
 // Four days. Day 2 is the peak and adds RDS (absent the day before); day 3
 // drops EC2 to zero and S3 by 40%; day 4 has no spend at all.
@@ -73,6 +87,21 @@ function barsArea(container: HTMLElement): HTMLElement {
   const area = container.querySelector('.items-end.z-10');
   if (!(area instanceof HTMLElement)) throw new Error('no bars area');
   return area;
+}
+
+/** How much of their color the plot has the unfocused segments show. */
+function seriesAlpha(container: HTMLElement): string {
+  return barsArea(container).style.getPropertyValue('--series-alpha');
+}
+
+/** Whether a segment draws the focused look: an opaque color of its own,
+ *  outlined. The others read the plot's alpha. */
+function looksFocused(seg: HTMLElement): boolean {
+  const ownColor = /^rgb\(\d+, \d+, \d+\)$/.test(seg.style.backgroundColor);
+  const readsPlotAlpha = seg.style.backgroundColor.endsWith('/ var(--series-alpha))');
+  if (ownColor === readsPlotAlpha) throw new Error(`unexpected segment color ${seg.style.backgroundColor}`);
+  expect(seg.style.boxShadow.includes('inset')).toBe(ownColor);
+  return ownColor;
 }
 
 describe('bucketBars', () => {
@@ -314,9 +343,9 @@ describe('StackedBarChart — series focus', () => {
     const s3Row = within(openTooltip()).getByText('S3').closest('.pointer-events-auto');
     expect(s3Row?.className).toContain('bg-white/10');
     // The other series fade, the focused one is outlined.
-    expect(segment(day2, 0).style.opacity).toBe('0.25');
-    expect(segment(day2, 1).style.opacity).toBe('1');
-    expect(segment(day2, 1).style.boxShadow).toContain('inset');
+    expect(seriesAlpha(container)).toBe('0.25');
+    expect(looksFocused(segment(day2, 0))).toBe(false);
+    expect(looksFocused(segment(day2, 1))).toBe(true);
 
     // Pointing at a tooltip row moves the focus too.
     const ec2Row = within(openTooltip()).getByText('EC2').closest('.pointer-events-auto');
@@ -325,20 +354,57 @@ describe('StackedBarChart — series focus', () => {
     expect(onSegmentHover).toHaveBeenLastCalledWith('EC2');
     fireEvent.mouseLeave(ec2Row);
     expect(onSegmentHover).toHaveBeenLastCalledWith(null);
-    expect(segment(day2, 0).style.opacity).toBe('0.85');
+    expect(seriesAlpha(container)).toBe('0.85');
+    expect(segments(day2).map(looksFocused)).toEqual([false, false, false]);
   });
 
   it('dims everything but the series focused in another chart', () => {
     const { container } = renderChart(<StackedBarChart days={DAYS} highlightedGroup="EC2" />);
     const day1 = column(container, 0);
 
-    expect(segment(day1, 0).style.opacity).toBe('1');
-    expect(segment(day1, 0).style.filter).toBe('brightness(1.2)');
-    expect(segment(day1, 1).style.opacity).toBe('0.25');
+    expect(seriesAlpha(container)).toBe('0.25');
+    expect(looksFocused(segment(day1, 0))).toBe(true);
+    expect(looksFocused(segment(day1, 1))).toBe(false);
 
     fireEvent.mouseEnter(day1);
     const ec2Row = within(openTooltip()).getByText('EC2').closest('.pointer-events-auto');
     expect(ec2Row?.className).toContain('bg-white/10');
+  });
+
+  // An element with its own opacity or filter is a compositing group of its
+  // own, and Chromium regroups every one of them on each frame in which
+  // anything on the page moves: with thousands of segments that was most of
+  // a frame. The looks are colors (and a shadow), whatever is focused.
+  it('gives no segment an opacity or a filter of its own', () => {
+    const { container, rerender } = renderChart(<StackedBarChart days={DAYS} />);
+    const effects = (): string[] => columns(container).flatMap(segments).flatMap(seg => [seg.style.opacity, seg.style.filter]);
+
+    expect(new Set(effects())).toEqual(new Set(['']));
+    rerender(<PaletteProvider><StackedBarChart days={DAYS} highlightedGroup="EC2" /></PaletteProvider>);
+    expect(new Set(effects())).toEqual(new Set(['']));
+  });
+
+  it('fades between the looks only while the chart has few segments', () => {
+    const transitions = (root: HTMLElement): Set<string> => new Set(columns(root).flatMap(segments).map(seg => seg.style.transition));
+    const few = renderChart(<StackedBarChart days={DAYS} />);
+    expect(transitions(few.container)).toEqual(new Set(['background-color 0.15s, box-shadow 0.15s']));
+    few.unmount();
+
+    // Days of 100 series each: 15 of them are the 1,500 segments a chart
+    // still fades, one more segment is past it.
+    const breakdown = Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`series-${String(i)}`, i + 1]));
+    const hundreds = (count: number): BarDay[] => Array.from({ length: count }, (_, i) => ({ date: `2026-03-${String(i + 1).padStart(2, '0')}`, total: 5050, breakdown }));
+    const atLimit = renderChart(<StackedBarChart days={hundreds(15)} />);
+    expect(transitions(atLimit.container)).toEqual(new Set(['background-color 0.15s, box-shadow 0.15s']));
+    atLimit.unmount();
+
+    const many: BarDay[] = [...hundreds(15), { date: '2026-03-16', total: 1, breakdown: { 'series-99': 1 } }];
+    const { container } = renderChart(<StackedBarChart days={many} highlightedGroup="series-99" />);
+    expect(columns(container).flatMap(segments)).toHaveLength(1501);
+    expect(transitions(container)).toEqual(new Set(['none']));
+    // The looks themselves don't depend on it.
+    expect(seriesAlpha(container)).toBe('0.25');
+    expect(looksFocused(segment(column(container, 0), 0))).toBe(true);
   });
 
   it('filters on a segment click, Enter or Space', () => {
@@ -359,6 +425,103 @@ describe('StackedBarChart — series focus', () => {
     const { container } = renderChart(<StackedBarChart days={DAYS} />);
     expect(segment(column(container, 0), 0).tagName).toBe('DIV');
     expect(screen.queryByRole('button')).toBeNull();
+  });
+});
+
+// A month of daily bars with a few hundred series is thousands of segments:
+// rendering them all on every pointer move over the chart was about 3 ms of a
+// frame. A hover re-renders what it changes.
+describe('StackedBarChart — renders on hover', () => {
+  // 3 bars with something to draw (2 + 3 + 2 segments), 1 without.
+  const ALL = { BarColumn: 4, BarSegment: 7 };
+  const NONE = { BarColumn: 0, BarSegment: 0 };
+
+  it('renders no bar when the hovered day changes', () => {
+    const { container } = renderChart(<StackedBarChart days={DAYS} />);
+    expect(takeRenders()).toEqual(ALL);
+
+    fireEvent.mouseEnter(column(container, 1));
+    expect(within(openTooltip()).getByText('2026-03-02')).toBeDefined();
+    expect(takeRenders()).toEqual(NONE);
+
+    fireEvent.mouseEnter(column(container, 2));
+    expect(within(openTooltip()).getByText('2026-03-03')).toBeDefined();
+    expect(takeRenders()).toEqual(NONE);
+
+    const chartArea = container.querySelector('.relative.flex-1');
+    if (chartArea === null) throw new Error('no chart area');
+    fireEvent.mouseLeave(chartArea);
+    expect(tooltip()).toBeNull();
+    expect(takeRenders()).toEqual(NONE);
+  });
+
+  it('renders only the segments whose focus changed when the focused series changes', () => {
+    const { container } = renderChart(<StackedBarChart days={DAYS} />);
+    takeRenders();
+
+    // RDS is on days 2 and 3.
+    fireEvent.mouseEnter(segment(column(container, 1), 2));
+    expect(looksFocused(segment(column(container, 1), 2))).toBe(true);
+    expect(looksFocused(segment(column(container, 2), 1))).toBe(true);
+    expect(takeRenders()).toEqual({ BarColumn: 4, BarSegment: 2 });
+
+    // To S3, on days 1 to 3: RDS loses the focus, S3 takes it.
+    fireEvent.mouseEnter(segment(column(container, 1), 1));
+    expect(looksFocused(segment(column(container, 1), 2))).toBe(false);
+    expect(looksFocused(segment(column(container, 0), 1))).toBe(true);
+    expect(takeRenders()).toEqual({ BarColumn: 4, BarSegment: 5 });
+
+    // Entering another bar clears the focus, and S3 with it.
+    fireEvent.mouseEnter(column(container, 0));
+    expect(seriesAlpha(container)).toBe('0.85');
+    expect(takeRenders()).toEqual({ BarColumn: 4, BarSegment: 3 });
+  });
+
+  it('renders only the segments of a series focused in another chart', () => {
+    const { container, rerender } = renderChart(<StackedBarChart days={DAYS} />);
+    takeRenders();
+
+    rerender(<PaletteProvider><StackedBarChart days={DAYS} highlightedGroup="EC2" /></PaletteProvider>);
+    // EC2 is drawn on days 1 and 2 (it costs nothing on day 3).
+    expect(looksFocused(segment(column(container, 0), 0))).toBe(true);
+    expect(takeRenders()).toEqual({ BarColumn: 4, BarSegment: 2 });
+  });
+
+  // The widget hands the chart new `onSegmentClick` and `onSegmentHover`
+  // closures on each of its renders, and it renders on every cross-chart
+  // hover: the chart reporting its own focus, for one.
+  it('renders no bar when only its handlers are new, and calls the latest one', () => {
+    const first = vi.fn<(name: string) => void>();
+    const latest = vi.fn<(name: string) => void>();
+    const { container, rerender } = renderChart(
+      <StackedBarChart days={DAYS} onSegmentClick={(name) => { first(name); }} onSegmentHover={() => { /* a new closure */ }} />,
+    );
+    expect(takeRenders()).toEqual(ALL);
+
+    rerender(
+      <PaletteProvider>
+        <StackedBarChart days={DAYS} onSegmentClick={(name) => { latest(name); }} onSegmentHover={() => { /* another */ }} />
+      </PaletteProvider>,
+    );
+    expect(takeRenders()).toEqual(NONE);
+
+    fireEvent.click(segment(column(container, 1), 0));
+    fireEvent.keyDown(segment(column(container, 1), 1), { key: 'Enter' });
+    expect(first).not.toHaveBeenCalled();
+    expect(latest.mock.calls).toEqual([['EC2'], ['S3']]);
+  });
+
+  it('draws buttons or plain segments again when the click handler comes or goes', () => {
+    const { container, rerender } = renderChart(<StackedBarChart days={DAYS} />);
+    takeRenders();
+
+    rerender(<PaletteProvider><StackedBarChart days={DAYS} onSegmentClick={vi.fn()} /></PaletteProvider>);
+    expect(segment(column(container, 0), 0).tagName).toBe('BUTTON');
+    expect(takeRenders()).toEqual(ALL);
+
+    rerender(<PaletteProvider><StackedBarChart days={DAYS} /></PaletteProvider>);
+    expect(segment(column(container, 0), 0).tagName).toBe('DIV');
+    expect(takeRenders()).toEqual(ALL);
   });
 });
 

@@ -1,7 +1,7 @@
 import { isStringRecord, QueryBuilder, SecurityError } from '@costgoblin/core';
 import type { AggregatedTableRow, ExplorerSort } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
-import { aggregatedOrderBy, andWhere, groupByList, groupBySelectList, groupByValues, groupValueExpr, rowFilterConditions } from './explorer-columns.js';
+import { aggregatedOrderBy, andWhere, groupByList, groupBySelectList, groupByValues, groupValueExpr, MEASURE_COLUMNS, measuresSelectList, rowFilterConditions } from './explorer-columns.js';
 import type { GroupByColumn, RowFilter } from './explorer-columns.js';
 import { toNum } from './query-utils.js';
 
@@ -73,18 +73,26 @@ export interface AggregatedRowsQuery {
   readonly rowKeys: readonly RowKey[] | undefined;
 }
 
+/** How many groups pass, repeated on every row of the grouped result. */
+const TOTAL_GROUPS_COLUMN = 'total_groups';
+
 function toAggregatedRow(r: RawRow, groupBy: readonly GroupByColumn[]): AggregatedTableRow {
   return {
     values: groupByValues(r, groupBy),
-    cost: toNum(r['cost']),
-    listCost: toNum(r['list_cost']),
-    usageAmount: toNum(r['usage_amount']),
-    rowCount: toNum(r['row_count']),
+    cost: toNum(r[MEASURE_COLUMNS.cost]),
+    listCost: toNum(r[MEASURE_COLUMNS.listCost]),
+    usageAmount: toNum(r[MEASURE_COLUMNS.usageAmount]),
+    rowCount: toNum(r[MEASURE_COLUMNS.rowCount]),
   };
 }
 
 /** The aggregated table's rows (the first `rowLimit` groups in `sort` order,
- *  or the one total row without a group-by) and how many groups pass. */
+ *  or the one total row without a group-by) and how many groups pass.
+ *
+ *  One scan answers both: the groups are materialized once, then counted and
+ *  ranked from that result. Counting them with a second query grouped every
+ *  line item again, next to the first: on a table grouped by resource over raw
+ *  Parquet that doubled the slowest query a dashboard runs. */
 export async function queryAggregatedRows(run: RunSql, q: AggregatedRowsQuery): Promise<{ rows: AggregatedTableRow[]; totalRows: number }> {
   // One builder numbers every bound value, in WHERE order: the row filters', then the keys'.
   const qb = new QueryBuilder();
@@ -97,11 +105,7 @@ export async function queryAggregatedRows(run: RunSql, q: AggregatedRowsQuery): 
 
   if (q.groupBy.length === 0) {
     const sql = `
-      SELECT
-        CAST(SUM(cost) AS DOUBLE) AS cost,
-        CAST(SUM(list_cost) AS DOUBLE) AS list_cost,
-        CAST(SUM(usage_amount) AS DOUBLE) AS usage_amount,
-        CAST(COUNT(*) AS DOUBLE) AS row_count
+      SELECT ${measuresSelectList()}
       FROM ${q.source}
       ${where}
     `.trim();
@@ -110,40 +114,24 @@ export async function queryAggregatedRows(run: RunSql, q: AggregatedRowsQuery): 
     return { rows: [toAggregatedRow(r, q.groupBy)], totalRows: 1 };
   }
 
-  const groupKeys = groupByList(q.groupBy);
-  const countSql = `
-    SELECT CAST(COUNT(*) AS DOUBLE) AS n FROM (
-      SELECT 1 FROM ${q.source} ${where}
-      GROUP BY ${groupKeys}
-    ) AS _cnt
-  `.trim();
-  const dataSql = `
-    SELECT
-      ${groupBySelectList(q.groupBy)},
-      CAST(SUM(cost) AS DOUBLE) AS cost,
-      CAST(SUM(list_cost) AS DOUBLE) AS list_cost,
-      CAST(SUM(usage_amount) AS DOUBLE) AS usage_amount,
-      CAST(COUNT(*) AS DOUBLE) AS row_count
-    FROM ${q.source}
-    ${where}
-    GROUP BY ${groupKeys}
+  const sql = `
+    WITH grouped AS MATERIALIZED (
+      SELECT
+        ${groupBySelectList(q.groupBy)},
+        ${measuresSelectList()}
+      FROM ${q.source}
+      ${where}
+      GROUP BY ${groupByList(q.groupBy)}
+    )
+    SELECT grouped.*, (SELECT CAST(COUNT(*) AS DOUBLE) FROM grouped) AS ${TOTAL_GROUPS_COLUMN}
+    FROM grouped
     ORDER BY ${aggregatedOrderBy(q.sort, q.groupBy)}
     LIMIT ${String(q.rowLimit)}
   `.trim();
-
-  const countGroups = async (): Promise<number> => {
-    const r = (await run(countSql, params))[0];
-    return r === undefined ? 0 : toNum(r['n']);
+  const result = await run(sql, params);
+  const first = result[0];
+  return {
+    rows: result.map(r => toAggregatedRow(r, q.groupBy)),
+    totalRows: first === undefined ? 0 : toNum(first[TOTAL_GROUPS_COLUMN]),
   };
-  const toResult = (dataResult: RawRow[], totalRows: number) => ({ rows: dataResult.map(r => toAggregatedRow(r, q.groupBy)), totalRows });
-
-  if (keys.kind === 'some') {
-    // A page short of the limit holds every group that passes, and a keyed
-    // page nearly always is: count the groups (another full scan) only when
-    // the page is full.
-    const dataResult = await run(dataSql, params);
-    return toResult(dataResult, dataResult.length < q.rowLimit ? dataResult.length : await countGroups());
-  }
-  const [dataResult, totalRows] = await Promise.all([run(dataSql, params), countGroups()]);
-  return toResult(dataResult, totalRows);
 }
