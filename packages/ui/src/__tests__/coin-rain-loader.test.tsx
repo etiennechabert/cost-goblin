@@ -214,10 +214,11 @@ describe('CoinRainLoader', () => {
   it('tumbles each coin between its two edge-on angles without a jump', () => {
     render(<CoinRainLoader height={HEIGHT} count={COUNT} />);
 
+    expect(animations.started).toHaveLength(COUNT);
     for (const animation of animations.started) {
       const cycle = falls(animation);
-      expect(animations.started).toHaveLength(COUNT);
-    for (const [i, { start, end }] of cycle.entries()) {
+      expect(cycle.length).toBeGreaterThan(1);
+      for (const [i, { start, end }] of cycle.entries()) {
         // Every fall turns the coin over once, through its back face, and the
         // next one turns it back from where this one left it.
         expect([start.rotation, end.rotation].sort((a, b) => a - b)).toEqual([90, 270]);
