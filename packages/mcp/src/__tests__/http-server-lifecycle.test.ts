@@ -1,12 +1,11 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { IncomingMessage, RequestListener, ServerResponse } from 'node:http';
-import { createServer as createNetServer } from 'node:net';
-import type { Server as NetServer } from 'node:net';
 import { logger } from '@costgoblin/core';
 import type { LogEntry } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
 import { createMcpHttpServer } from '../http-server.js';
 import type { McpHttpServer } from '../http-server.js';
+import { freePort } from './helpers/free-port.js';
 
 // The HTTP layer around the MCP transport: routing, session reaping, listen
 // failures and what a client sees when the SDK transport or the tool
@@ -124,29 +123,6 @@ const ctx: McpContext = {
   warmup: () => Promise.resolve(),
   now: () => Date.UTC(2026, 2, 1),
 };
-
-/** A port nothing listens on right now (bound to 0, then released). */
-async function freePort(): Promise<number> {
-  const probe = createNetServer();
-  await new Promise<void>((resolve) => { probe.listen(0, '127.0.0.1', resolve); });
-  const address = probe.address();
-  await new Promise<void>((resolve) => { probe.close(() => { resolve(); }); });
-  if (address === null || typeof address === 'string') throw new Error('no port');
-  return address.port;
-}
-
-async function occupy(port: number, host: string): Promise<NetServer> {
-  const blocker = createNetServer();
-  await new Promise<void>((resolve, reject) => {
-    blocker.once('error', reject);
-    blocker.listen(port, host, resolve);
-  });
-  return blocker;
-}
-
-async function release(blocker: NetServer): Promise<void> {
-  await new Promise<void>((resolve) => { blocker.close(() => { resolve(); }); });
-}
 
 /** Poll (with real timers) until `check` passes. */
 async function eventually(check: () => boolean): Promise<void> {
@@ -281,16 +257,6 @@ describe('routing', () => {
 });
 
 describe('listen failures', () => {
-  it('rejects when the IPv4 port is already taken', async () => {
-    const port = await freePort();
-    const blocker = await occupy(port, '127.0.0.1');
-    try {
-      await expect(createMcpHttpServer(ctx, { port, authToken: TOKEN })).rejects.toMatchObject({ code: 'EADDRINUSE' });
-    } finally {
-      await release(blocker);
-    }
-  });
-
   it.each(['EAFNOSUPPORT', 'EADDRNOTAVAIL'])('serves IPv4 alone when the IPv6 loopback fails with %s', async (code) => {
     control.ipv6ListenError = code;
     const port = await freePort();

@@ -7,6 +7,7 @@ import { loadConfig, loadCostScope, loadDimensions } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
 import { queryTrends } from '../tools/query-trends.js';
 import { fetchRows, fetchRowsPrepared } from './helpers/duckdb-rows.js';
+import { isRecord } from './helpers/json-result.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = join(__dirname, '..', '..', '..', 'core', 'src', '__fixtures__');
@@ -16,10 +17,6 @@ const CONFIG_DIR = join(FIXTURES_DIR, 'config');
 // The monthly Tax charge and EC2 credit land on the 1st, so over 1–2 Feb
 // neither has any cost in the previous period (30–31 Jan).
 const NEW_SPEND_WINDOW = { start: '2026-02-01', end: '2026-02-02' };
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
-}
 
 interface TrendLine {
   readonly entity: unknown;

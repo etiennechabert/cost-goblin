@@ -65,17 +65,6 @@ describe('DataManagement error states', () => {
     expect(await screen.findByRole('button', { name: 'Retry' })).toBeDefined();
   });
 
-  it('shows network timeout error', async () => {
-    const api = new MockCostApi();
-    vi.spyOn(api, 'getDataInventory').mockRejectedValue(
-      new Error('NetworkError: request timed out after 30000ms'),
-    );
-    renderDataManagement(api);
-    await waitFor(() => {
-      expect(screen.getByText('NetworkError: request timed out after 30000ms')).toBeDefined();
-    });
-  });
-
   it('shows sync error in tier panel when sync fails', async () => {
     // The download list only includes periods within the tier's retention
     // window (mock daily retentionDays = 90). Pin the clock near the fixture's
@@ -278,22 +267,6 @@ describe('ViewsEditor error states', () => {
 
     await waitFor(() => {
       expect(screen.getByText('EACCES: permission denied, open views.yaml')).toBeDefined();
-    });
-  });
-
-  it('shows error when loading views config fails', async () => {
-    const api = new MockCostApi();
-    vi.spyOn(api, 'getViewsConfig').mockRejectedValue(
-      new Error('Config file corrupted'),
-    );
-    render(
-      <CostApiProvider value={api}>
-        <ViewsEditor />
-      </CostApiProvider>,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText('Config file corrupted')).toBeDefined();
     });
   });
 });

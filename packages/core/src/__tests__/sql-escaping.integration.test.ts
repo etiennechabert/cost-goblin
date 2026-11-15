@@ -8,6 +8,7 @@ import { SecurityError } from '../query/identifier-validator.js';
 import type { DimensionsConfig } from '../types/config.js';
 import { OU_PATH_SOURCE_KEY } from '../types/config.js';
 import { asDimensionId, asProviderName, tagSqlColumn } from '../types/branded.js';
+import { queryAll } from './helpers/duckdb-rows.js';
 
 /**
  * Behavioral lock on `sqlEscapeString` and the escaping applied to config
@@ -25,31 +26,6 @@ const QUOTED_TAG_KEY = "o'brien team";
 const QUOTED_FALLBACK_KEY = "cost'center";
 
 type Conn = Awaited<ReturnType<Awaited<ReturnType<typeof DuckDBInstance.create>>['connect']>>;
-
-interface QueryRow {
-  [key: string]: unknown;
-}
-
-async function queryAll(conn: Conn, sql: string): Promise<QueryRow[]> {
-  const result = await conn.run(sql);
-  const cols = result.columnCount;
-  const names: string[] = [];
-  for (let i = 0; i < cols; i++) names.push(result.columnName(i));
-  const rows: QueryRow[] = [];
-  let chunk = await result.fetchChunk();
-  while (chunk !== null && chunk.rowCount > 0) {
-    for (let r = 0; r < chunk.rowCount; r++) {
-      const row: QueryRow = {};
-      for (let c = 0; c < cols; c++) {
-        const name = names[c];
-        if (name !== undefined) row[name] = chunk.getColumnVector(c).getItem(r);
-      }
-      rows.push(row);
-    }
-    chunk = await result.fetchChunk();
-  }
-  return rows;
-}
 
 describe('SQL escaping of config literals (DuckDB execution)', () => {
   let db: Awaited<ReturnType<typeof DuckDBInstance.create>>;

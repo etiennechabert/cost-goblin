@@ -1,18 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { costScopeToYaml } from '../config/cost-scope-serialize.js';
 import { validateCostScope } from '../config/cost-scope-validator.js';
-import { ConfigValidationError } from '../config/validator.js';
-
-/** The message of the ConfigValidationError `fn` throws; anything else fails the test. */
-function configError(fn: () => unknown): string {
-  try {
-    fn();
-  } catch (err: unknown) {
-    if (err instanceof ConfigValidationError) return err.message;
-    throw err;
-  }
-  throw new Error('expected a ConfigValidationError, but nothing was thrown');
-}
+import { configError } from './helpers/config-error.js';
 
 const condition = { dimensionId: 'service', values: ['Amazon EC2'] };
 const rule = { id: 'user:ec2', name: 'EC2', enabled: true, conditions: [condition] };

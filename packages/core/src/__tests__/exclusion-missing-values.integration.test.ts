@@ -10,6 +10,7 @@ import { asDateString, asDimensionId, asDollars, asEntityRef, asProviderName, as
 import type { DimensionsConfig, TagDimension } from '../types/config.js';
 import type { ExclusionCondition, ExclusionRule } from '../types/cost-scope.js';
 import type { FilterMap } from '../types/query.js';
+import { runPrepared } from './helpers/duckdb-rows.js';
 
 /**
  * Exclusion rules against rows that have no value for the rule's dimension,
@@ -42,23 +43,6 @@ function rule(...conditions: ExclusionCondition[]): ExclusionRule {
   return { id: 'r', name: 'r', enabled: true, builtIn: false, conditions };
 }
 const team = (values: string[], matchMissing?: true): ExclusionCondition => ({ dimensionId: TEAM_ID, values, ...(matchMissing ? { matchMissing } : {}) });
-
-/** Positional $1..$n binding, mirroring the duckdb-worker's. */
-async function runPrepared(conn: DuckDBConnection, sql: string, params: readonly unknown[]): Promise<Record<string, unknown>[]> {
-  const stmt = await conn.prepare(sql);
-  try {
-    params.forEach((value, i) => {
-      if (typeof value === 'string') stmt.bindVarchar(i + 1, value);
-      else if (typeof value === 'number' && Number.isInteger(value)) stmt.bindInteger(i + 1, value);
-      else if (typeof value === 'number') stmt.bindDouble(i + 1, value);
-      else throw new Error(`unexpected query parameter ${String(value)}`);
-    });
-    const reader = await stmt.runAndReadAll();
-    return reader.getRowObjectsJson();
-  } finally {
-    stmt.destroySync();
-  }
-}
 
 describe('exclusion rules and missing values (DuckDB execution)', () => {
   let db: DuckDBInstance;

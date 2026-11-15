@@ -38,14 +38,6 @@ describe('DataManagement', () => {
     });
   });
 
-  it('shows hourly tier as not configured', async () => {
-    renderDataManagement();
-    await waitFor(() => {
-      const elements = screen.getAllByText('Not configured');
-      expect(elements.length).toBeGreaterThanOrEqual(1);
-    });
-  });
-
   it('shows cost optimization tier as not configured', async () => {
     renderDataManagement();
     await waitFor(() => {
@@ -75,17 +67,6 @@ describe('DataManagement', () => {
     await user.click(screen.getByText('Refresh'));
     await waitFor(() => {
       expect(spy.mock.calls.length).toBeGreaterThan(callsBefore);
-    });
-  });
-
-  it('delete all data button shows confirmation modal', async () => {
-    const { user } = renderDataManagement();
-    await waitFor(() => {
-      expect(screen.getByText('Delete All Data')).toBeDefined();
-    });
-    await user.click(screen.getByText('Delete All Data'));
-    await waitFor(() => {
-      expect(screen.getByText('Delete all local data')).toBeDefined();
     });
   });
 
@@ -271,17 +252,6 @@ describe('DataManagement', () => {
     await waitFor(() => {
       expect(removeSpy).toHaveBeenCalledWith('aws-secondary');
     });
-  });
-
-  it('add provider opens the wizard in add mode', async () => {
-    const { user } = renderDataManagement();
-    await waitFor(() => {
-      expect(screen.getByText('Add Provider')).toBeDefined();
-    });
-    await user.click(screen.getByText('Add Provider'));
-    // Add-mode wizard starts at the get-started hub.
-    const dialog = await screen.findByRole('dialog', { name: 'Add provider' });
-    expect(within(dialog).getByLabelText('Set up from AWS')).toBeDefined();
   });
 });
 

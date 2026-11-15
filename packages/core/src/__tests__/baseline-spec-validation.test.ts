@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { validateBaselines } from '../config/baselines-validator.js';
 import { DEFAULT_MARKETPLACE_ATTRIBUTION } from '../config/cost-scope-seed.js';
-import { ConfigValidationError } from '../config/validator.js';
 import { asDimensionId } from '../types/branded.js';
 import type { BaselineSpec } from '../types/baseline.js';
 import type { DimensionsConfig } from '../types/config.js';
+import { configError } from './helpers/config-error.js';
 
 const dimensions: DimensionsConfig = {
   builtIn: [
@@ -32,17 +32,6 @@ function validateOne(spec: unknown): BaselineSpec {
   const [validated] = validateBaselines({ baselines: [spec] }, dimensions);
   if (validated === undefined) throw new Error('expected one validated baseline');
   return validated;
-}
-
-/** The message of the ConfigValidationError `fn` throws; anything else fails the test. */
-function configError(fn: () => unknown): string {
-  try {
-    fn();
-  } catch (err: unknown) {
-    if (err instanceof ConfigValidationError) return err.message;
-    throw err;
-  }
-  throw new Error('expected a ConfigValidationError, but nothing was thrown');
 }
 
 describe('validateBaselines: view scopes', () => {

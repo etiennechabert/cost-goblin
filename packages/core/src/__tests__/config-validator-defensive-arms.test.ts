@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parseProviderName } from '../config/provider-name.js';
-import { ConfigValidationError, validateConfig, validateDimensions } from '../config/validator.js';
+import { validateConfig, validateDimensions } from '../config/validator.js';
 import { logger } from '../logger/logger.js';
 import { findTagIdCollisions } from '../types/branded.js';
+import { configError } from './helpers/config-error.js';
 
 // Two arms of validator.ts guard against collaborators misbehaving in ways
 // the real ones never do: parseProviderName only throws ProviderNameError,
@@ -17,17 +18,6 @@ vi.mock('../types/branded.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../types/branded.js')>();
   return { ...actual, findTagIdCollisions: vi.fn(actual.findTagIdCollisions) };
 });
-
-/** The message of the ConfigValidationError `fn` throws; anything else fails the test. */
-function configError(fn: () => unknown): string {
-  try {
-    fn();
-  } catch (err: unknown) {
-    if (err instanceof ConfigValidationError) return err.message;
-    throw err;
-  }
-  throw new Error('expected a ConfigValidationError, but nothing was thrown');
-}
 
 const config = {
   providers: [{

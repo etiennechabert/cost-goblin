@@ -10,6 +10,7 @@ import { rollupGrainColumns } from '../rollup/grain.js';
 import { asDateString, asDimensionId, asProviderName, asTagValue, tagDimColumn, tagSqlColumn } from '../types/branded.js';
 import type { DimensionsConfig, TagDimension } from '../types/config.js';
 import type { FilterMap } from '../types/query.js';
+import { runPrepared } from './helpers/duckdb-rows.js';
 
 /**
  * A customer had both a `STAGE` and a `stage` tag, each with its own values,
@@ -24,22 +25,6 @@ const PROVIDER = asProviderName('aws');
 const UPPER: TagDimension = { tagName: 'STAGE', label: 'Stage (upper)' };
 const LOWER: TagDimension = { tagName: 'stage', label: 'Stage (lower)' };
 const DATE_RANGE = { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') };
-
-/** Positional $1..$n binding, mirroring the duckdb-worker's. */
-async function runPrepared(conn: DuckDBConnection, sql: string, params: readonly unknown[]): Promise<Record<string, unknown>[]> {
-  const stmt = await conn.prepare(sql);
-  try {
-    params.forEach((value, i) => {
-      if (typeof value === 'string') stmt.bindVarchar(i + 1, value);
-      else if (typeof value === 'number' && Number.isInteger(value)) stmt.bindInteger(i + 1, value);
-      else throw new Error(`unexpected query parameter ${String(value)}`);
-    });
-    const reader = await stmt.runAndReadAll();
-    return reader.getRowObjectsJson();
-  } finally {
-    stmt.destroySync();
-  }
-}
 
 describe('tag dimensions whose keys differ only by case (DuckDB execution)', () => {
   let db: DuckDBInstance;

@@ -75,13 +75,6 @@ describe('SetupWizard', () => {
     });
   });
 
-  it('renders in source mode when source and profile provided', async () => {
-    renderWizard({ source: 'daily', profile: 'default' });
-    await waitFor(() => {
-      expect(screen.getByText('my-cur-bucket')).toBeDefined();
-    });
-  });
-
   it('continues to manual browsing when the bucket has no published config', async () => {
     const { api, user } = renderWizard();
     const beaconSpy = vi.spyOn(api, 'checkConfigBeacon');

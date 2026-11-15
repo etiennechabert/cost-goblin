@@ -143,16 +143,6 @@ describe('TableWidget Δ% column', () => {
     const adjustment = await expectDelta('Adjustment', '↑50.0%');
     expect(adjustment.querySelector('.text-negative')).not.toBeNull();
   });
-
-  it('keeps the change from a positive period, and shows none without a previous cost', async () => {
-    renderTable(new PeriodTableApi(CURRENT_ROWS, PREVIOUS_ROWS));
-
-    const usage = await expectDelta('Usage', '↑20.0%');
-    expect(usage.querySelector('.text-negative')).not.toBeNull();
-
-    expect((await deltaCell('Purchase')).textContent).toBe('');
-    expect((await deltaCell('Tax')).textContent).toBe('');
-  });
 });
 
 describe('TableWidget previous-period rows', () => {

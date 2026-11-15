@@ -73,13 +73,6 @@ function renderView(spec: ViewSpec = SPEC) {
 }
 
 describe('CustomView', () => {
-  it('renders the summary card after data loads', async () => {
-    renderView();
-    await waitFor(() => {
-      expect(screen.getByText('Total Cost')).toBeDefined();
-    });
-  });
-
   it('wraps a row onto a new line before a widget gets too narrow to read', async () => {
     const { container } = renderView(LAYOUT_SPEC);
     await waitFor(() => { expect(container.querySelector('[data-widget-id="u-s"]')).not.toBeNull(); });

@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Server } from 'node:http';
-import { createServer as createNetServer } from 'node:net';
 import { logger } from '@costgoblin/core';
 import type { LogEntry } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
 import { createMcpHttpServer } from '../http-server.js';
+import { freePort } from './helpers/free-port.js';
 
 // A listening server still emits 'error', for one when an accept fails (EMFILE
 // once the process is out of file descriptors). With no listener that error is
@@ -33,16 +33,6 @@ const ctx: McpContext = {
   warmup: () => Promise.resolve(),
   now: () => Date.UTC(2026, 2, 1),
 };
-
-/** A port nothing listens on right now (bound to 0, then released). */
-async function freePort(): Promise<number> {
-  const probe = createNetServer();
-  await new Promise<void>((resolve) => { probe.listen(0, '127.0.0.1', resolve); });
-  const address = probe.address();
-  await new Promise<void>((resolve) => { probe.close(() => { resolve(); }); });
-  if (address === null || typeof address === 'string') throw new Error('no port');
-  return address.port;
-}
 
 function hostOf(server: Server): string {
   const address = server.address();

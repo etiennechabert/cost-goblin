@@ -136,6 +136,8 @@ A test never runs a `git` command that writes (`git init`, `git config`, `git co
 
 A main-process rejection reaches the renderer prefixed by Electron (`Error invoking remote method 'query:costs': Error: …`), so nothing compares an IPC error's whole message: a cancelled query goes through `isQueryCancelled`, and a UI test's mock rejects with the prefixed text. A bare message in a mock is how `useQuery`'s retry stayed dead in the app with its tests green.
 
+A new test goes in the file that already tests that module, when there is one (`grep -l` the module's import path in the package's `__tests__/`), and repeats no case a test there or in a sibling file already pins. Most duplicates the November 2026 audit found were of that kind: a later `*-edge-cases` / `*-rejections` style file asserting again, often by exact message, what the original file asserted loosely. Helpers that more than one test file needs live in the package's `__tests__/helpers/`, such as each package's `duckdb-rows.ts` for reading DuckDB rows and core's `config-error.ts`: look there before writing one, and import it rather than declare a copy in the test file.
+
 ### Layer 1: Core Logic (Vitest)
 Pure functions: config loader, tag normalizer, alias resolver, org tree traversal, cost math.
 No I/O, no DuckDB. Tests run in milliseconds.

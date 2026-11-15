@@ -4,6 +4,7 @@ import { createServer as createNetServer } from 'node:net';
 import type { Server as NetServer } from 'node:net';
 import type { McpContext } from '../context.js';
 import { createMcpHttpServer } from '../http-server.js';
+import { freePort } from './helpers/free-port.js';
 
 // A start that fails leaves nothing behind: the caller gets no handle to close,
 // so a 127.0.0.1 listener left bound would keep serving MCP and fail every
@@ -59,16 +60,6 @@ const ctx: McpContext = {
   warmup: () => Promise.resolve(),
   now: () => Date.UTC(2026, 2, 1),
 };
-
-/** A port nothing listens on right now (bound to 0, then released). */
-async function freePort(): Promise<number> {
-  const probe = createNetServer();
-  await new Promise<void>((resolve) => { probe.listen(0, '127.0.0.1', resolve); });
-  const address = probe.address();
-  await new Promise<void>((resolve) => { probe.close(() => { resolve(); }); });
-  if (address === null || typeof address === 'string') throw new Error('no port');
-  return address.port;
-}
 
 async function occupy(port: number): Promise<NetServer> {
   const blocker = createNetServer();

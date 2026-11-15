@@ -9,6 +9,7 @@ import { FIXTURE_PROVIDER_NAME } from '../__fixtures__/layout.js';
 import type { DimensionsConfig } from '../types/config.js';
 import type { CostScopeConfig } from '../types/cost-scope.js';
 import { asDimensionId, asProviderName } from '../types/branded.js';
+import { queryAll } from './helpers/duckdb-rows.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SYNTHETIC_DIR = join(__dirname, '..', '__fixtures__', 'synthetic');
@@ -23,19 +24,6 @@ const dimensions: DimensionsConfig = {
   tags: [{ tagName: 'team', label: 'Team', concept: 'owner', normalize: 'lowercase-kebab' }],
 };
 const costScope: CostScopeConfig = { costMetric: 'effective', rules: [] };
-
-interface Row { [k: string]: unknown }
-async function queryAll(conn: Awaited<ReturnType<Awaited<ReturnType<typeof DuckDBInstance.create>>['connect']>>, sql: string): Promise<Row[]> {
-  const result = await conn.run(sql);
-  const cols = result.columnCount; const names: string[] = [];
-  for (let i = 0; i < cols; i++) names.push(result.columnName(i));
-  const rows: Row[] = []; let chunk = await result.fetchChunk();
-  while (chunk !== null && chunk.rowCount > 0) {
-    for (let r = 0; r < chunk.rowCount; r++) { const row: Row = {}; for (let c = 0; c < cols; c++) { const n = names[c]; if (n !== undefined) row[n] = chunk.getColumnVector(c).getItem(r); } rows.push(row); }
-    chunk = await result.fetchChunk();
-  }
-  return rows;
-}
 
 // The rollup invariant: aggregating the multi-month partition GLOB (with a
 // date-range filter, as the dashboard handlers do) yields exactly the same

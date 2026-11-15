@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { DuckDBInstance } from '@duckdb/node-api';
+import type { DuckDBConnection } from '@duckdb/node-api';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildCostQuery, buildDailyCostsQuery, buildMissingTagsQuery, buildNonResourceCostQuery, buildEntityDetailQuery, buildSource } from '../query/builder.js';
@@ -7,6 +8,8 @@ import { buildSource as rebuildSource } from '../query/builder.js';
 import { FIXTURE_PROVIDER_NAME } from '../__fixtures__/layout.js';
 import type { DimensionsConfig } from '../types/config.js';
 import { asDimensionId, asDateString, asDollars, asEntityRef, asProviderName, asTagValue } from '../types/branded.js';
+import { queryAll, substituteParams } from './helpers/duckdb-rows.js';
+import type { Row } from './helpers/duckdb-rows.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SYNTHETIC_DIR = join(__dirname, '..', '__fixtures__', 'synthetic');
@@ -40,47 +43,7 @@ const dimensions: DimensionsConfig = {
   ],
 };
 
-interface QueryRow {
-  [key: string]: unknown;
-}
-
-async function queryAll(conn: Awaited<ReturnType<Awaited<ReturnType<typeof DuckDBInstance.create>>['connect']>>, sql: string): Promise<QueryRow[]> {
-  const result = await conn.run(sql);
-  const cols = result.columnCount;
-  const names: string[] = [];
-  for (let i = 0; i < cols; i++) names.push(result.columnName(i));
-  const rows: QueryRow[] = [];
-  let chunk = await result.fetchChunk();
-  while (chunk !== null && chunk.rowCount > 0) {
-    for (let r = 0; r < chunk.rowCount; r++) {
-      const row: QueryRow = {};
-      for (let c = 0; c < cols; c++) {
-        const name = names[c];
-        if (name !== undefined) row[name] = chunk.getColumnVector(c).getItem(r);
-      }
-      rows.push(row);
-    }
-    chunk = await result.fetchChunk();
-  }
-  return rows;
-}
-
-/**
- * For integration testing only: substitutes parameters into SQL.
- * In production, the worker thread uses real prepared statements.
- */
-function substituteParams(sql: string, params: readonly unknown[]): string {
-  let result = sql;
-  for (let i = params.length; i >= 1; i--) {
-    const param = params[i - 1];
-    const placeholder = '$' + String(i);
-    const value = typeof param === 'string' ? `'${param}'` : String(param);
-    result = result.replaceAll(placeholder, value);
-  }
-  return result;
-}
-
-async function queryAllPrepared(conn: Awaited<ReturnType<Awaited<ReturnType<typeof DuckDBInstance.create>>['connect']>>, sql: string, params: readonly unknown[]): Promise<QueryRow[]> {
+async function queryAllPrepared(conn: DuckDBConnection, sql: string, params: readonly unknown[]): Promise<Row[]> {
   // For integration tests, substitute params back into SQL
   // (Production code uses real prepared statements via the worker)
   const substitutedSql = substituteParams(sql, params);
@@ -247,12 +210,6 @@ describe('DuckDB query integration', () => {
     );
     const rows = await queryAllPrepared(conn, result.sql, result.params);
     expect(rows.length).toBeGreaterThan(0);
-  });
-
-  it('reads hourly raw files', async () => {
-    const source = buildSource({ dataDir: SYNTHETIC_DIR, tier: 'hourly', dimensions, providers: [{ name: PROVIDER, type: 'aws' }] });
-    const rows = await queryAll(conn, `SELECT COUNT(*) as cnt FROM ${source}`);
-    expect(Number(rows[0]?.['cnt'])).toBeGreaterThan(0);
   });
 
   it('hourly tier exposes both usage_date (DATE) and usage_hour (TIMESTAMP)', async () => {

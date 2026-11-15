@@ -65,8 +65,4 @@ describe('emailFromIdToken', () => {
     expect(emailFromIdToken(token('["alice@acme.com"]'))).toBeNull();
     expect(emailFromIdToken(token('"alice@acme.com"'))).toBeNull();
   });
-
-  it('still reads the email claim of a well-formed payload', () => {
-    expect(emailFromIdToken(token('{"email":"alice@acme.com","sub":"1"}'))).toBe('alice@acme.com');
-  });
 });

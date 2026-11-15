@@ -502,10 +502,6 @@ describe('validateCostScope: legacy metric migration', () => {
     expect(result.costMetric).toBe('effective');
   });
 
-  it('rejects truly unknown costMetric values', () => {
-    expect(() => validateCostScope({ costMetric: 'nonsense', rules: [] })).toThrow(/costScope.costMetric must be one of/);
-  });
-
   it('ignores and drops a legacy costPerspective key', () => {
     const result = validateCostScope({ costMetric: 'effective', costPerspective: 'net', rules: [] });
     expect(result.costMetric).toBe('effective');
@@ -617,20 +613,6 @@ describe('validateCostScope: marketplace attribution', () => {
   it('honors an explicit disabled block (opt-out)', () => {
     const r = validateCostScope({ costMetric: 'effective', rules: [], marketplaceAttribution: { enabled: false, rules: [] } });
     expect(r.marketplaceAttribution).toEqual({ enabled: false, rules: [] });
-  });
-
-  it('rejects a rule with no operations', () => {
-    expect(() => validateCostScope({
-      costMetric: 'effective', rules: [],
-      marketplaceAttribution: { enabled: true, rules: [{ service: 'X', operations: [] }] },
-    })).toThrow(/operations must have at least one/);
-  });
-
-  it('rejects a rule with an empty service', () => {
-    expect(() => validateCostScope({
-      costMetric: 'effective', rules: [],
-      marketplaceAttribution: { enabled: true, rules: [{ service: '', operations: ['Op'] }] },
-    })).toThrow(/service must be a non-empty/);
   });
 
   it('round-trips through YAML serialization', () => {
