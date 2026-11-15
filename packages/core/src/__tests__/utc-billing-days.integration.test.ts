@@ -17,7 +17,7 @@ import { asDateString, asDimensionId, asDollars, asHourString, asProviderName } 
 import type { DimensionsConfig } from '../types/config.js';
 import type { CostScopeConfig } from '../types/cost-scope.js';
 import type { DateRange } from '../types/query.js';
-import { runPrepared } from './helpers/duckdb.js';
+import { runPrepared } from './helpers/duckdb-rows.js';
 
 /**
  * Billing days are UTC days, whatever time zone the machine runs in.

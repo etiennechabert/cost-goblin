@@ -10,7 +10,7 @@ import { rollupGrainColumns } from '../rollup/grain.js';
 import { asDateString, asDimensionId, asProviderName, asTagValue, tagDimColumn, tagSqlColumn } from '../types/branded.js';
 import type { DimensionsConfig, TagDimension } from '../types/config.js';
 import type { FilterMap } from '../types/query.js';
-import { runPrepared } from './helpers/duckdb.js';
+import { runPrepared } from './helpers/duckdb-rows.js';
 
 /**
  * A customer had both a `STAGE` and a `stage` tag, each with its own values,

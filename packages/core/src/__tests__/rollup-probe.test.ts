@@ -11,7 +11,7 @@ import { FIXTURE_PROVIDER_NAME } from '../__fixtures__/layout.js';
 import type { DimensionsConfig } from '../types/config.js';
 import type { CostScopeConfig } from '../types/cost-scope.js';
 import { asDimensionId, asProviderName, tagSqlColumn } from '../types/branded.js';
-import { queryAll } from './helpers/duckdb.js';
+import { queryAll } from './helpers/duckdb-rows.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SYNTHETIC_DIR = join(__dirname, '..', '__fixtures__', 'synthetic');

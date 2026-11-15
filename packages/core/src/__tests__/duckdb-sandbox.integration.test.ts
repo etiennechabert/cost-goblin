@@ -8,7 +8,7 @@ import { buildSource, CHARGE_PERIOD_START_UTC_SQL } from '../query/builder.js';
 import { buildDuckDbSandboxStatements } from '../query/duckdb-sandbox.js';
 import type { DimensionsConfig } from '../types/config.js';
 import { asProviderName, tagSqlColumn } from '../types/branded.js';
-import { queryAll } from './helpers/duckdb.js';
+import { queryAll } from './helpers/duckdb-rows.js';
 
 /**
  * Layer-2 proof of the MCP DuckDB sandbox (#594): a real instance configured

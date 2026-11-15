@@ -18,9 +18,9 @@ import type { McpContext } from '../context.js';
 import { createMcpHttpServer, MCP_MIN_TOKEN_LENGTH } from '../http-server.js';
 import type { McpHttpServer } from '../http-server.js';
 import { SERVER_INSTRUCTIONS, UNTRUSTED_DATA_NOTE } from '../server-instructions.js';
+import { fetchRows } from './helpers/duckdb-rows.js';
 import { freePort } from './helpers/free-port.js';
 import { isRecord } from './helpers/json-result.js';
-import { fetchRows } from './helpers/duckdb-rows.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = join(__dirname, '..', '..', '..', 'core', 'src', '__fixtures__');
@@ -882,9 +882,8 @@ describe('MCP server E2E', () => {
 
   it('leaves /health open (unauthenticated liveness probe)', async () => {
     const response = await fetch(`http://127.0.0.1:${String(port)}/health`);
-    const body = await response.json() as { status: string };
     expect(response.status).toBe(200);
-    expect(body.status).toBe('ok');
+    expect(await response.json()).toMatchObject({ status: 'ok' });
   });
 
   // ---------- data-coverage banner ----------

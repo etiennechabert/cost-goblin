@@ -8,7 +8,7 @@ import { SecurityError } from '../query/identifier-validator.js';
 import type { DimensionsConfig } from '../types/config.js';
 import { OU_PATH_SOURCE_KEY } from '../types/config.js';
 import { asDimensionId, asProviderName, tagSqlColumn } from '../types/branded.js';
-import { queryAll } from './helpers/duckdb.js';
+import { queryAll } from './helpers/duckdb-rows.js';
 
 /**
  * Behavioral lock on `sqlEscapeString` and the escaping applied to config

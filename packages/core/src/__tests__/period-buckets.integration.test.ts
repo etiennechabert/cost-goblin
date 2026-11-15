@@ -9,7 +9,7 @@ import { FIXTURE_PROVIDER_NAME } from '../__fixtures__/layout.js';
 import { asDateString, asDimensionId, asEntityRef, asProviderName } from '../types/branded.js';
 import type { DimensionsConfig } from '../types/config.js';
 import type { DateRange, Granularity } from '../types/query.js';
-import { runPrepared } from './helpers/duckdb.js';
+import { runPrepared } from './helpers/duckdb-rows.js';
 
 /**
  * Weekly and monthly buckets over the synthetic daily tier: every row lands in

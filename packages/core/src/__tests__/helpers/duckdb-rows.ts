@@ -1,10 +1,13 @@
-import type { DuckDBConnection, DuckDBPreparedStatement } from '@duckdb/node-api';
+import type { DuckDBConnection, DuckDBPreparedStatement, DuckDBResultReader } from '@duckdb/node-api';
 
 /** A result row keyed by column name. */
 export type Row = Record<string, unknown>;
 
 /** Runs `sql` and drains the result into name-keyed rows, each value as DuckDB
- *  hands it over (a DATE is a DuckDBDateValue, a HUGEINT a bigint, …). */
+ *  hands it over (a DATE is a DuckDBDateValue, a HUGEINT a bigint, …).
+ *
+ *  A loop rather than `getRowObjects()`: that renames a repeated column name
+ *  to `name:1`, where this keeps one key holding the last such column. */
 export async function queryAll(conn: DuckDBConnection, sql: string): Promise<Row[]> {
   const result = await conn.run(sql);
   const cols = result.columnCount;
@@ -37,27 +40,30 @@ function bindParams(stmt: DuckDBPreparedStatement, params: readonly unknown[]): 
   });
 }
 
-/** Runs a builder's `{ sql, params }` and returns the rows as JSON-shaped
- *  values (dates and timestamps as strings, HUGEINT as a string). */
-export async function runPrepared(conn: DuckDBConnection, sql: string, params: readonly unknown[]): Promise<Row[]> {
+/** Prepares `sql`, binds `params`, and hands the fully read result to `read`
+ *  before the statement is destroyed. */
+async function readPrepared(
+  conn: DuckDBConnection,
+  sql: string,
+  params: readonly unknown[],
+  read: (reader: DuckDBResultReader) => Row[],
+): Promise<Row[]> {
   const stmt = await conn.prepare(sql);
   try {
     bindParams(stmt, params);
-    const reader = await stmt.runAndReadAll();
-    return reader.getRowObjectsJson();
+    return read(await stmt.runAndReadAll());
   } finally {
     stmt.destroySync();
   }
 }
 
+/** Runs a builder's `{ sql, params }` and returns the rows as JSON-shaped
+ *  values (dates and timestamps as strings, HUGEINT as a string). */
+export function runPrepared(conn: DuckDBConnection, sql: string, params: readonly unknown[]): Promise<Row[]> {
+  return readPrepared(conn, sql, params, reader => reader.getRowObjectsJson());
+}
+
 /** `runPrepared`, with each value as DuckDB hands it over instead of JSON-shaped. */
-export async function runPreparedValues(conn: DuckDBConnection, sql: string, params: readonly unknown[]): Promise<Row[]> {
-  const stmt = await conn.prepare(sql);
-  try {
-    bindParams(stmt, params);
-    const reader = await stmt.runAndReadAll();
-    return reader.getRowObjects();
-  } finally {
-    stmt.destroySync();
-  }
+export function runPreparedValues(conn: DuckDBConnection, sql: string, params: readonly unknown[]): Promise<Row[]> {
+  return readPrepared(conn, sql, params, reader => reader.getRowObjects());
 }

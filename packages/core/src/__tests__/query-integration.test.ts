@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { DuckDBInstance } from '@duckdb/node-api';
+import type { DuckDBConnection } from '@duckdb/node-api';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildCostQuery, buildDailyCostsQuery, buildMissingTagsQuery, buildNonResourceCostQuery, buildEntityDetailQuery, buildSource } from '../query/builder.js';
@@ -7,7 +8,8 @@ import { buildSource as rebuildSource } from '../query/builder.js';
 import { FIXTURE_PROVIDER_NAME } from '../__fixtures__/layout.js';
 import type { DimensionsConfig } from '../types/config.js';
 import { asDimensionId, asDateString, asDollars, asEntityRef, asProviderName, asTagValue } from '../types/branded.js';
-import { queryAll } from './helpers/duckdb.js';
+import { queryAll } from './helpers/duckdb-rows.js';
+import type { Row } from './helpers/duckdb-rows.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SYNTHETIC_DIR = join(__dirname, '..', '__fixtures__', 'synthetic');
@@ -41,10 +43,6 @@ const dimensions: DimensionsConfig = {
   ],
 };
 
-interface QueryRow {
-  [key: string]: unknown;
-}
-
 /**
  * For integration testing only: substitutes parameters into SQL.
  * In production, the worker thread uses real prepared statements.
@@ -60,7 +58,7 @@ function substituteParams(sql: string, params: readonly unknown[]): string {
   return result;
 }
 
-async function queryAllPrepared(conn: Awaited<ReturnType<Awaited<ReturnType<typeof DuckDBInstance.create>>['connect']>>, sql: string, params: readonly unknown[]): Promise<QueryRow[]> {
+async function queryAllPrepared(conn: DuckDBConnection, sql: string, params: readonly unknown[]): Promise<Row[]> {
   // For integration tests, substitute params back into SQL
   // (Production code uses real prepared statements via the worker)
   const substitutedSql = substituteParams(sql, params);

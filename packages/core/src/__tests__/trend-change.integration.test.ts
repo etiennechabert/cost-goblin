@@ -9,7 +9,7 @@ import { trendPercentChange, trendPercentChangeSql } from '../query/trend-change
 import { FIXTURE_PROVIDER_NAME } from '../__fixtures__/layout.js';
 import { asDateString, asDimensionId, asDollars, asProviderName } from '../types/branded.js';
 import type { DimensionsConfig } from '../types/config.js';
-import { runPreparedValues } from './helpers/duckdb.js';
+import { runPreparedValues } from './helpers/duckdb-rows.js';
 
 /**
  * The trend query's `percent_change` and `trendPercentChange` are twins: SQL

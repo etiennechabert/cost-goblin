@@ -10,7 +10,7 @@ import { asDateString, asDimensionId, asDollars, asEntityRef, asProviderName, as
 import type { DimensionsConfig, TagDimension } from '../types/config.js';
 import type { ExclusionCondition, ExclusionRule } from '../types/cost-scope.js';
 import type { FilterMap } from '../types/query.js';
-import { runPrepared } from './helpers/duckdb.js';
+import { runPrepared } from './helpers/duckdb-rows.js';
 
 /**
  * Exclusion rules against rows that have no value for the rule's dimension,

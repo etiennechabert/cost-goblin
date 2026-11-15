@@ -19,7 +19,7 @@ import { asDateString, asDimensionId, asEntityRef, asProviderName, asTagValue, t
 import type { DimensionsConfig, TagDimension } from '../types/config.js';
 import type { CostScopeConfig, ExclusionRule } from '../types/cost-scope.js';
 import type { FilterMap } from '../types/query.js';
-import { runPrepared } from './helpers/duckdb.js';
+import { runPrepared } from './helpers/duckdb-rows.js';
 
 /**
  * The filter, entity and DDL builders on real Parquet through real DuckDB:
