@@ -7,6 +7,7 @@ import { WIDGET_TYPES } from '../packages/core/src/config/views-validator.js';
 import type { WidgetSize, WidgetType } from '../packages/core/src/types/views.js';
 import {
   FIXTURE_CONFIG_DIR,
+  QUERY_ENGINE_PROCESS_NAME,
   assertNoReactCrash,
   clickNavButton,
   expectVisibleData,
@@ -393,16 +394,13 @@ function buildWidgetMatrixYaml(): string {
 // what the user is left with: an app that still runs, a notice saying what
 // happened, and queries that work again.
 
-/** The name main gives the DuckDB process (QUERY_ENGINE_PROCESS_NAME). */
-const ENGINE_PROCESS_NAME = 'CostGoblin query engine';
-
 test.describe('Query engine death', () => {
   let engineApp: ElectronApplication;
   let enginePage: Page;
 
   /** The DuckDB process's pid, or null while there is none. */
   const enginePid = (): Promise<number | null> =>
-    engineApp.evaluate(({ app }, name) => app.getAppMetrics().find(metric => metric.name === name)?.pid ?? null, ENGINE_PROCESS_NAME);
+    engineApp.evaluate(({ app }, name) => app.getAppMetrics().find(metric => metric.name === name)?.pid ?? null, QUERY_ENGINE_PROCESS_NAME);
 
   /** Wait for a DuckDB process that is not `previous`, and return its pid. */
   async function nextEnginePid(previous: number): Promise<number> {
