@@ -8,17 +8,19 @@
 // PR body that merely mentions `gh pr create` must never be refused.
 
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
   CREATE_MESSAGE,
+  GH_BUDGET_MS,
   REVIEW_COMMENT,
   ShellSyntaxError,
   decide,
   ghPrCalls,
+  missingMessage,
   readCommands,
   readyMessage,
 } from '../../.claude/hooks/pr-guard.mjs';
@@ -69,7 +71,7 @@ const REVIEWED = '`/code-review xhigh --fix` ran on 4e0dcea4.\n\n11 findings fix
 function fakeGh(bodies, number = 834) {
   const calls = [];
   const runGh = (args, options) => {
-    calls.push({ args, ...options });
+    calls.push({ args, options });
     return { status: 0, stdout: JSON.stringify({ number, comments: bodies.map((body) => ({ body })) }), stderr: '' };
   };
   return { runGh, calls };
@@ -134,6 +136,14 @@ describe('readCommands', () => {
     expect(words('cat <<"E O F"\ngh pr create\nE O F\nls')).toEqual([['cat'], ['ls']]);
   });
 
+  it('starts a heredoc body at the next newline, even one inside a substitution or a subshell', () => {
+    // bash reads line 2 as text of the heredoc, not as a command of the substitution
+    expect(words("cat > notes <<'EOF' && r=$(\ngh pr create --title x\nEOF\n  date\n) && ls")).toEqual([['cat'], ['date'], ['r='], ['ls']]);
+    expect(words('cat <<EOF && (\ngh pr ready 5\nEOF\necho in\n)')).toEqual([['cat'], ['echo', 'in']]);
+    // two heredocs, the second opened inside the substitution: the bodies follow in that order
+    expect(words("cat <<'A' && echo \"$(cat <<'B'\nfirst gh pr create\nA\nsecond gh pr create\nB\n)\" && ls")).toEqual([['cat'], ['cat'], ['echo', ''], ['ls']]);
+  });
+
   it('takes a here-string and a redirection target for data, not arguments', () => {
     expect(words('cat <<< "gh pr create" > out.txt 2>&1')).toEqual([['cat']]);
     expect(words('gh pr ready 2>/dev/null')).toEqual([['gh', 'pr', 'ready']]);
@@ -178,6 +188,7 @@ describe('readCommands', () => {
     expect(cwds('cd sub && ls', null)).toEqual([null, null]);
     // a subshell's cd stays in the subshell
     expect(cwds('(cd /tmp && ls); ls')).toEqual(['/work/repo', '/tmp', '/work/repo']);
+    expect(cwds('builtin cd /tmp && ls; command cd /var && ls')).toEqual(['/work/repo', '/tmp', '/tmp', '/var']);
   });
 
   it.each([
@@ -214,6 +225,10 @@ describe('ghPrCalls', () => {
     'eval "gh pr create --title t"',
     'echo "$(gh pr create)"',
     'time gh pr create',
+    'function open { gh pr create; }; open',
+    'function open() { gh pr create; }',
+    'gh --repo="$REPO" pr create',
+    'gh -R"$REPO" pr create',
   ])('sees the create in: %s', (command) => {
     expect(kinds(command)).toEqual(['create']);
   });
@@ -235,10 +250,16 @@ describe('ghPrCalls', () => {
     expect(kinds(command)).toEqual([]);
   });
 
-  it('keeps the environment and the directory of the command', () => {
-    expect(ghPrCalls('cd /tmp/x && GH_REPO=o/r gh pr ready 5', '/work/repo')).toEqual([
-      { kind: 'ready', undo: false, exempt: false, selector: { text: '5', dynamic: false, quoted: false }, repo: null, cwd: '/tmp/x', env: { GH_REPO: 'o/r' } },
+  it('keeps the directory of the command, and of its own variables only GH_REPO, as the repository', () => {
+    expect(ghPrCalls('cd /tmp/x && PATH=/elsewhere GH_REPO=o/r gh pr ready 5', '/work/repo')).toEqual([
+      { kind: 'ready', undo: false, exempt: false, selector: { text: '5', dynamic: false, quoted: false }, repo: { text: 'o/r', dynamic: false }, cwd: '/tmp/x' },
     ]);
+    // gh puts -R before GH_REPO, and an empty GH_REPO names nothing
+    const repoOf = (command) => ghPrCalls(command, '/work/repo')[0].repo;
+    expect(repoOf('GH_REPO=o/r gh pr ready 5 -R a/b')).toMatchObject({ text: 'a/b', dynamic: false });
+    expect(repoOf('GH_REPO= gh pr ready 5')).toBeNull();
+    expect(repoOf('GH_REPO="$R" gh pr ready 5')).toEqual({ text: '', dynamic: true });
+    expect(repoOf('gh pr ready 5 -R=a/b')).toEqual({ text: 'a/b', dynamic: false });
   });
 });
 
@@ -256,6 +277,8 @@ describe('decide: gh pr create', () => {
     'gh pr create -Bdevelop -t t',
     'gh pr create --draft=false --title t',
     'gh pr create -d=false --title t',
+    'gh pr create --web=false --title t --body b',
+    'gh pr create --dry-run=0 -w=false --title t --body b',
     'gh pr create --title t -- --draft',
     'gh pr create --title t --body "$(cat <<\'EOF\'\nOpened with --draft, see gh pr create -d\nEOF\n)"',
   ])('refuses: %s', (command) => {
@@ -278,6 +301,8 @@ describe('decide: gh pr create', () => {
     'gh pr create --help',
     'gh pr create -h',
     'gh pr create --web',
+    'gh pr create --web=true --title t',
+    'gh pr create -w=1 --title t',
     'gh pr create --dry-run --title t --body b',
     // a flag out of a variable could be --draft: let it through
     'gh pr create $FLAGS --title t',
@@ -306,6 +331,7 @@ describe('decide: gh pr create', () => {
     ['-R at the end of a cluster', 'gh pr create -fRacme/gadgets'],
     ['-R before the subcommand', 'gh -R acme/gadgets pr create -t t -b b'],
     ['GH_REPO', 'GH_REPO=acme/gadgets gh pr create -t t -b b'],
+    ['a builtin cd into its checkout', 'builtin cd /work/elsewhere && gh pr create -t t -b b'],
   ])('leaves a create in another repository alone, named by %s', (_how, command) => {
     expect(create(command)).toEqual({});
   });
@@ -318,6 +344,8 @@ describe('decide: gh pr create', () => {
     ['in a directory that is no repository', 'cd /tmp/nowhere && gh pr create -t t -b b'],
     ['in a directory it cannot follow', 'cd "$DIR" && gh pr create -t t -b b'],
     ['whose repository comes out of a variable', 'gh pr create -R "$REPO" -t t -b b'],
+    ['whose repository, named before the subcommand, comes out of a variable', 'gh --repo="$REPO" pr create -t t -b b'],
+    ['behind a builtin cd it has to follow', 'builtin cd /work/repo/.claude/worktrees/x && gh pr create -t t -b b'],
   ])('still refuses a create %s', (_where, command) => {
     expect(create(command)).toEqual({ deny: CREATE_MESSAGE });
   });
@@ -338,7 +366,7 @@ describe('decide: gh pr ready', () => {
   it('lets a PR through once a comment says the review ran', () => {
     const gh = fakeGh(['Some other comment', REVIEWED]);
     expect(decide(bash('gh pr ready 834'), world(gh))).toEqual({});
-    expect(gh.calls).toEqual([{ args: ['pr', 'view', '834', '--json', 'number,comments'], cwd: '/work/repo', env: {} }]);
+    expect(gh.calls).toEqual([{ args: ['pr', 'view', '834', '--json', 'number,comments'], options: { cwd: '/work/repo', timeout: GH_BUDGET_MS } }]);
   });
 
   it('refuses a PR with no such comment, naming it', () => {
@@ -369,7 +397,7 @@ describe('decide: gh pr ready', () => {
   ])('asks GitHub about %s', (_what, command, args, cwd) => {
     const gh = fakeGh([REVIEWED]);
     expect(decide(bash(command), world(gh))).toEqual({});
-    expect(gh.calls.map((c) => [c.args, c.cwd])).toEqual([[args, cwd]]);
+    expect(gh.calls.map((c) => [c.args, c.options.cwd])).toEqual([[args, cwd]]);
   });
 
   it.each([
@@ -382,10 +410,28 @@ describe('decide: gh pr ready', () => {
     expect(decide(bash(command), world())).toEqual({});
   });
 
-  it('passes the environment of the command on to gh', () => {
+  it('hands gh nothing of the environment the command sets for itself: it runs before the command is approved', () => {
     const gh = fakeGh([REVIEWED]);
-    decide(bash('GH_REPO=acme/widgets GH_HOST=github.com gh pr ready 5'), world(gh));
-    expect(gh.calls[0].env).toEqual({ GH_REPO: 'acme/widgets', GH_HOST: 'github.com' });
+    decide(bash('PATH=/tmp/evil DYLD_INSERT_LIBRARIES=/tmp/x.dylib GH_REPO=acme/widgets gh pr ready 5'), world(gh));
+    // GH_REPO only says which repository: it becomes --repo
+    expect(gh.calls).toEqual([
+      { args: ['pr', 'view', '5', '--repo', 'acme/widgets', '--json', 'number,comments'], options: { cwd: '/work/repo', timeout: GH_BUDGET_MS } },
+    ]);
+  });
+
+  it.each([
+    ['opens it in the same command', 'gh pr create --draft -t t -b b && gh pr ready', 'no pull requests found for branch "claude/x"'],
+    ['names a number GitHub does not have', 'gh pr ready 999999', 'GraphQL: Could not resolve to a PullRequest with the number of 999999. (repository.pullRequest)'],
+  ])('refuses a ready on a PR that is not on GitHub: one that %s', (_what, command, stderr) => {
+    const runGh = () => ({ status: 1, stdout: '', stderr: `${stderr}\nmore` });
+    expect(decide(bash(command), world({ runGh }))).toEqual({ deny: missingMessage(stderr) });
+    expect(missingMessage(stderr)).toContain('in a command of its own');
+  });
+
+  it('shares its time for GitHub between the readies of one command', () => {
+    const gh = fakeGh([REVIEWED]);
+    decide(bash('gh pr ready 1 && gh pr ready 2 && gh pr ready 3'), world(gh));
+    expect(gh.calls.map((c) => c.options.timeout)).toEqual([GH_BUDGET_MS / 3, GH_BUDGET_MS / 3, GH_BUDGET_MS / 3]);
   });
 
   it.each(['gh pr ready --undo 834', 'gh pr ready 834 --undo', 'gh pr ready --help', 'gh pr ready -h'])(
@@ -413,7 +459,7 @@ describe('decide: gh pr ready', () => {
   });
 
   it.each([
-    ['gh exits non-zero', () => ({ status: 1, stdout: '', stderr: 'no pull requests found for branch "x"\nmore' }), 'no pull requests found for branch "x"'],
+    ['gh exits non-zero', () => ({ status: 1, stdout: '', stderr: 'HTTP 502: Bad Gateway (https://api.github.com/graphql)\nmore' }), 'HTTP 502: Bad Gateway'],
     ['gh cannot be started', () => { throw new Error('spawnSync gh ENOENT'); }, 'spawnSync gh ENOENT'],
     ['gh answers something that is not JSON', () => ({ status: 0, stdout: '<html>', stderr: '' }), 'gh could not read the pull request'],
   ])('lets through, saying so, when %s', (_what, runGh, why) => {
@@ -469,7 +515,7 @@ describe('decide: everything else', () => {
   it('uses the directory of the hook process when the input names none', () => {
     const gh = fakeGh([REVIEWED]);
     decide({ tool_name: 'Bash', tool_input: { command: 'gh pr ready' } }, world(gh));
-    expect(gh.calls[0].cwd).toBe(process.cwd());
+    expect(gh.calls[0].options.cwd).toBe(process.cwd());
   });
 });
 
@@ -498,7 +544,7 @@ describe('the hook as Claude Code runs it', () => {
   it('prints nothing and exits 0 for a command it has no say on', () => {
     expect(runHook(JSON.stringify(bash('npm run check')))).toEqual({ status: 0, stdout: '', stderr: '' });
     expect(runHook(JSON.stringify(bash('gh pr create --draft --title t --body b')))).toEqual({ status: 0, stdout: '', stderr: '' });
-    expect(runHook(JSON.stringify(bash('gh pr ready 834', scratch)), { env: withComments(REVIEWED) })).toEqual({ status: 0, stdout: '', stderr: '' });
+    expect(runHook(JSON.stringify(bash('gh pr ready 834', repoRoot)), { env: withComments(REVIEWED) })).toEqual({ status: 0, stdout: '', stderr: '' });
   });
 
   it('denies a create without --draft in the shape PreToolUse reads', () => {
@@ -510,7 +556,7 @@ describe('the hook as Claude Code runs it', () => {
   });
 
   it('denies a ready on a PR without the comment, having asked gh', () => {
-    const { status, stdout } = runHook(JSON.stringify(bash('gh pr ready 834', scratch)), { env: withComments('LGTM') });
+    const { status, stdout } = runHook(JSON.stringify(bash('gh pr ready 834', repoRoot)), { env: withComments('LGTM') });
     expect(status).toBe(0);
     expect(JSON.parse(stdout).hookSpecificOutput).toEqual({
       hookEventName: 'PreToolUse',
@@ -520,12 +566,28 @@ describe('the hook as Claude Code runs it', () => {
   });
 
   it('decides nothing when gh fails, and tells both the user and Claude', () => {
-    const { status, stdout } = runHook(JSON.stringify(bash('gh pr ready 834', scratch)));
+    const { status, stdout } = runHook(JSON.stringify(bash('gh pr ready 834', repoRoot)));
     expect(status).toBe(0);
     const output = JSON.parse(stdout);
     expect(output.hookSpecificOutput).toEqual({ hookEventName: 'PreToolUse', additionalContext: output.systemMessage });
     expect(output.systemMessage).toContain('fake gh: no network');
     expect(output.hookSpecificOutput.permissionDecision).toBeUndefined();
+  });
+
+  it('starts gh with its own environment, not the one the command sets', () => {
+    // were this assignment handed on, the fake gh would answer with a reviewed PR and the hook would say nothing
+    const reviewed = JSON.stringify({ number: 834, comments: [{ body: REVIEWED }] });
+    const { stdout } = runHook(JSON.stringify(bash(`FAKE_GH_JSON='${reviewed}' gh pr ready 834`, repoRoot)));
+    expect(JSON.parse(stdout).systemMessage).toContain('fake gh: no network');
+  });
+
+  it('turns a failure of its own into a note, and lets the command through', () => {
+    // nested deep enough to overflow the reader's stack
+    const { status, stdout, stderr } = runHook(JSON.stringify(bash(`gh pr create ${'$('.repeat(20_000)}`)));
+    expect({ status, stderr }).toEqual({ status: 0, stderr: '' });
+    const output = JSON.parse(stdout);
+    expect(output.systemMessage).toContain('pr-guard failed and checked nothing');
+    expect(output.hookSpecificOutput).toEqual({ hookEventName: 'PreToolUse', additionalContext: output.systemMessage });
   });
 
   it.each([['no input', ''], ['input that is not JSON', 'gh pr create'], ['JSON that is not a hook input', '[1, 2]']])(
@@ -536,8 +598,8 @@ describe('the hook as Claude Code runs it', () => {
   );
 
   it('guards this repository and its worktrees, and leaves the checkout of another alone', () => {
-    // real git this time: the hook asks it which repository a directory belongs to
-    // another repository, made by hand: HEAD, objects/ and refs/ are what git takes for one
+    // Real git this time: the hook asks it which repository a directory belongs to.
+    // The other repository is made by hand: HEAD, objects/ and refs/ are what git takes for one.
     const other = join(scratch, 'other-repo');
     mkdirSync(join(other, '.git/objects'), { recursive: true });
     mkdirSync(join(other, '.git/refs'));
@@ -560,8 +622,13 @@ describe('the hook as Claude Code runs it', () => {
     // with argv[1] as given would see two different files, and guard nothing.
     const link = join(scratch, 'linked-repo');
     symlinkSync(repoRoot, link);
-    const { stdout } = runHook(JSON.stringify(bash('gh pr create --title t --body b')), { script: join(link, '.claude/hooks/pr-guard.mjs') });
-    expect(JSON.parse(stdout).hookSpecificOutput.permissionDecision).toBe('deny');
+    try {
+      const { stdout } = runHook(JSON.stringify(bash('gh pr create --title t --body b')), { script: join(link, '.claude/hooks/pr-guard.mjs') });
+      expect(JSON.parse(stdout).hookSpecificOutput.permissionDecision).toBe('deny');
+    } finally {
+      // gone before the scratch directory is deleted with everything under it
+      unlinkSync(link);
+    }
   });
 });
 
@@ -581,9 +648,10 @@ describe('.claude/settings.json', () => {
     expect(existsSync(hookPath)).toBe(true);
   });
 
-  it('gives gh time to answer, and no more: a hook that times out lets the command through', () => {
+  it('outlasts the time the guard gives GitHub and git: a hook that is killed lets the command through unnoticed', () => {
     const [hook] = bashHooks;
-    expect(hook.timeout).toBeGreaterThan(10);
+    // the budget for gh, and four git lookups of two seconds at most
+    expect(hook.timeout * 1000).toBeGreaterThanOrEqual(GH_BUDGET_MS + 4 * 2000);
     expect(hook.timeout).toBeLessThanOrEqual(30);
   });
 

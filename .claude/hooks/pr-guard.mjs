@@ -24,10 +24,14 @@
 // one that misses a case, and a pass here only means the normal permission
 // flow decides: the hook never approves anything.
 //
+// It runs before the command has been approved, so nothing in the command
+// line decides what the hook itself executes: `gh` and `git` are started
+// with the hook's own environment, never with one the command sets.
+//
 // Wired in .claude/settings.json; pinned by scripts/ci/pr-guard.test.mjs.
 
 import { spawnSync } from 'node:child_process';
-import { readFileSync, realpathSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -39,8 +43,16 @@ import { fileURLToPath } from 'node:url';
  */
 export const REVIEW_COMMENT = /^\s*`?\/code-review (?:xhigh|max) --fix`? ran\b/;
 
-const GH_TIMEOUT_MS = 10_000;
-const GIT_TIMEOUT_MS = 5_000;
+/**
+ * What one run may spend asking GitHub, shared by its `gh pr ready` calls.
+ * With the git lookups it stays under the hook's timeout in
+ * .claude/settings.json: a hook that is killed lets the command through
+ * without the note that says it went unchecked.
+ */
+export const GH_BUDGET_MS = 15_000;
+const GIT_TIMEOUT_MS = 2_000;
+/** Above spawnSync's 1 MB default: a long-lived PR carries more than that in bot comments. */
+const GH_MAX_OUTPUT = 64 * 1024 * 1024;
 /** A directory of the repository this hook guards: its own. */
 const HOOK_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -56,6 +68,14 @@ export const readyMessage = (number) =>
     `Blocked by .claude/hooks/pr-guard.mjs: PR #${number} has no comment that opens with "\`/code-review xhigh --fix\` ran", so it stays a draft (CLAUDE.md, "After pushing", step 1).`,
     'Run the review, push its fixes and post that comment. Then run `gh pr ready` in a command of its own: this check reads GitHub before the command starts, so it cannot see a comment that the same command posts.',
     'If the user wants the PR ready without the review, tell them to run `gh pr ready` themselves.',
+  ].join(' ');
+
+/** For a `gh pr ready` on a PR that is not on GitHub: one the same command opens, or one that does not exist. */
+export const missingMessage = (ghSaid) =>
+  [
+    `Blocked by .claude/hooks/pr-guard.mjs: \`gh pr ready\` targets a pull request GitHub does not have (gh: ${ghSaid}).`,
+    'If this command opens it, it has not been through `/code-review xhigh --fix`: open it as a draft, run the review, push its fixes and post the comment that says so (CLAUDE.md, "After pushing", step 1).',
+    'Then run `gh pr ready` in a command of its own.',
   ].join(' ');
 
 // ---------------------------------------------------------------------------
@@ -95,6 +115,10 @@ export function readCommands(src, cwd = null) {
   const commands = [];
   const n = src.length;
   let i = 0;
+  // Heredocs whose body has not begun. It begins after the next newline the
+  // shell reads as one, whichever list that newline is in: for
+  // `cat <<EOF && x=$(` the body starts inside the substitution.
+  const heredocs = [];
 
   const fail = (what) => {
     throw new ShellSyntaxError(what);
@@ -107,10 +131,13 @@ export function readCommands(src, cwd = null) {
   /** A literal `cd` moves where the later commands of its list run. */
   function emit(words, scope) {
     commands.push({ words, cwd: scope.cwd });
-    const name = words[0].dynamic ? null : words[0].text;
+    // `builtin cd` and `command cd` change directory too
+    let at = 0;
+    while (at < words.length - 1 && !words[at].dynamic && (words[at].text === 'builtin' || words[at].text === 'command')) at++;
+    const name = words[at].dynamic ? null : words[at].text;
     if (name === 'popd') scope.cwd = null;
     if (name !== 'cd' && name !== 'pushd') return;
-    const target = words.slice(1).find((w) => w.dynamic || w.text === '-' || !w.text.startsWith('-'));
+    const target = words.slice(at + 1).find((w) => w.dynamic || w.text === '-' || !w.text.startsWith('-'));
     if (!target) {
       scope.cwd = name === 'cd' ? homedir() : null;
       return;
@@ -128,7 +155,8 @@ export function readCommands(src, cwd = null) {
   /** Commands up to `close`, or to the end of the input when `close` is null. */
   function list(scope, close) {
     let words = [];
-    let heredocs = [];
+    // after `function`, the next word names the function: neither is a command
+    let functionName = false;
     const end = () => {
       if (words.length > 0) emit(words, scope);
       words = [];
@@ -147,8 +175,7 @@ export function readCommands(src, cwd = null) {
       } else if (c === '\n') {
         i++;
         end();
-        for (const heredoc of heredocs) skipHeredoc(heredoc);
-        heredocs = [];
+        for (const heredoc of heredocs.splice(0)) skipHeredoc(heredoc);
       } else if (c === '#') {
         // between words, so this starts a comment
         while (i < n && src[i] !== '\n') i++;
@@ -169,12 +196,20 @@ export function readCommands(src, cwd = null) {
         end();
         list({ cwd: scope.cwd }, ')');
       } else if (c === '<' || c === '>') {
-        redirect(scope, heredocs);
+        redirect(scope);
       } else {
         const w = word(scope);
         const bare = !w.quoted && !w.dynamic;
         // the descriptor of `2>file` is not an argument
         if (bare && /^\d+$/.test(w.text) && (src[i] === '<' || src[i] === '>')) continue;
+        if (words.length === 0 && functionName) {
+          functionName = false;
+          continue;
+        }
+        if (bare && words.length === 0 && w.text === 'function') {
+          functionName = true;
+          continue;
+        }
         if (bare && words.length === 0 && BEFORE_COMMAND.has(w.text)) continue;
         words.push(w);
       }
@@ -192,7 +227,7 @@ export function readCommands(src, cwd = null) {
     }
   }
 
-  function redirect(scope, heredocs) {
+  function redirect(scope) {
     if (src.startsWith('<<', i) && src[i + 2] !== '<') {
       i += 2;
       const stripTabs = src[i] === '-';
@@ -449,11 +484,14 @@ export function ghPrCalls(src, cwd = null, nesting = 0) {
   const calls = [];
   for (const command of readCommands(src, cwd)) {
     let words = command.words;
-    const env = {};
+    // Of the variables a command sets for itself, only GH_REPO is read: it
+    // names the repository, as `-R` does. None is handed to anything the hook
+    // runs, which happens before the command has been approved.
+    let ghRepo = null;
     const takeAssignments = () => {
       while (words.length > 0 && ASSIGNMENT.test(words[0].text)) {
         const { text, dynamic } = words[0];
-        if (!dynamic) env[text.slice(0, text.indexOf('=')).replace(/\+$/, '')] = text.slice(text.indexOf('=') + 1);
+        if (text.startsWith('GH_REPO=')) ghRepo = { text: text.slice('GH_REPO='.length), dynamic };
         words = words.slice(1);
       }
     };
@@ -471,7 +509,8 @@ export function ghPrCalls(src, cwd = null, nesting = 0) {
     const args = words.slice(1);
     if (program === 'gh') {
       const call = ghPrCall(args);
-      if (call) calls.push({ ...call, cwd: command.cwd, env });
+      // gh puts `-R` before GH_REPO; an empty GH_REPO names nothing
+      if (call) calls.push({ ...call, repo: call.repo ?? (ghRepo?.dynamic || ghRepo?.text ? ghRepo : null), cwd: command.cwd });
     } else if (nesting < MAX_NESTING && SHELLS.has(program)) {
       const flag = args.findIndex((w) => !w.dynamic && /^-[A-Za-z]*c[A-Za-z]*$/.test(w.text));
       const script = flag === -1 ? null : plain(args[flag + 1]);
@@ -483,19 +522,38 @@ export function ghPrCalls(src, cwd = null, nesting = 0) {
   return calls;
 }
 
+/**
+ * A `-R` or `--repo` flag at `words[k]`, as `{ repo, taken }`: the word that
+ * names the repository, and how many words the flag takes up. Null for any
+ * other word.
+ */
+function repoFlag(words, k) {
+  const { text, dynamic } = words[k];
+  if (text === '-R' || text === '--repo') {
+    // `-R"$REPO"` carries its value; `-R "$REPO"` has it in the next word
+    return dynamic ? { repo: { text: '', dynamic }, taken: 1 } : { repo: words[k + 1] ?? null, taken: 2 };
+  }
+  if (text.startsWith('--repo=')) return { repo: { text: text.slice('--repo='.length), dynamic }, taken: 1 };
+  if (/^-R./.test(text)) return { repo: { text: text.slice(text[2] === '=' ? 3 : 2), dynamic }, taken: 1 };
+  return null;
+}
+
 /** `gh [flags] pr [flags] create|new|ready …`, or null for any other `gh` command. */
 function ghPrCall(args) {
   let repo = null;
   const path = [];
   let k = 0;
   for (; k < args.length && path.length < 2; k++) {
+    const flag = repoFlag(args, k);
+    if (flag) {
+      repo = flag.repo;
+      k += flag.taken - 1;
+      continue;
+    }
     const { text, dynamic } = args[k];
     // which command runs depends on a variable
     if (dynamic) return null;
-    if (text === '-R' || text === '--repo') repo = args[++k] ?? null;
-    else if (text.startsWith('--repo=')) repo = { text: text.slice('--repo='.length), dynamic: false };
-    else if (/^-R./.test(text)) repo = { text: text.slice(2), dynamic: false };
-    else if (!text.startsWith('-')) path.push(text);
+    if (!text.startsWith('-')) path.push(text);
   }
   if (path[0] !== 'pr') return null;
   const rest = args.slice(k);
@@ -515,6 +573,12 @@ function createCall(rest, repoBefore) {
     const { text, dynamic } = rest[k];
     if (text === '--' && !dynamic) break;
     if (text.startsWith('--')) {
+      const flag = repoFlag(rest, k);
+      if (flag) {
+        repo = flag.repo;
+        k += flag.taken - 1;
+        continue;
+      }
       const eq = text.indexOf('=');
       const name = eq === -1 ? text : text.slice(0, eq);
       if (eq === -1 && dynamic) unsure = true;
@@ -522,9 +586,10 @@ function createCall(rest, repoBefore) {
         if (eq === -1) draft = true;
         else if (dynamic) unsure = true;
         else draft = truthy(text.slice(eq + 1));
-      } else if (name === '--web' || name === '--dry-run' || name === '--help') exempt = true;
-      else if (name === '--repo') repo = eq === -1 ? (rest[++k] ?? null) : { text: text.slice(eq + 1), dynamic };
-      else if (eq === -1 && CREATE_VALUE_FLAGS.has(name)) k++;
+      } else if (name === '--web' || name === '--dry-run' || name === '--help') {
+        // `--web=false` opens the PR from here after all
+        if (eq === -1 || dynamic || truthy(text.slice(eq + 1))) exempt = true;
+      } else if (eq === -1 && CREATE_VALUE_FLAGS.has(name)) k++;
     } else if (text.startsWith('-') && text.length > 1) {
       // A cluster such as -fd, read as gh reads it. A letter that takes a
       // value ends it, and so does `=`: `-d=false` gives the flag its value.
@@ -541,7 +606,9 @@ function createCall(rest, repoBefore) {
         if (letter === 'd') {
           if (given?.dynamic) unsure = true;
           else draft = given ? truthy(given.text) : true;
-        } else if (letter === 'w' || letter === 'h') exempt = true;
+        } else if (letter === 'w' || letter === 'h') {
+          if (!given || given.dynamic || truthy(given.text)) exempt = true;
+        }
         if (given) break;
       }
     } else if (dynamic) {
@@ -557,12 +624,15 @@ function readyCall(rest, repoBefore) {
   let exempt = false;
   let selector = null;
   for (let k = 0; k < rest.length; k++) {
+    const flag = repoFlag(rest, k);
+    if (flag) {
+      repo = flag.repo;
+      k += flag.taken - 1;
+      continue;
+    }
     const word = rest[k];
     const { text, dynamic } = word;
-    if (!dynamic && (text === '-R' || text === '--repo')) repo = rest[++k] ?? null;
-    else if (text.startsWith('--repo=')) repo = { text: text.slice('--repo='.length), dynamic };
-    else if (/^-R./.test(text)) repo = { text: text.slice(2), dynamic };
-    else if (text === '--undo') undo = true;
+    if (text === '--undo') undo = true;
     else if (text.startsWith('--undo=')) undo = dynamic || truthy(text.slice('--undo='.length));
     else if (!dynamic && (text === '--help' || text === '-h')) exempt = true;
     else if (dynamic || !text.startsWith('-')) selector ??= word;
@@ -602,12 +672,11 @@ function slugOf(text) {
   return match ? `${match[1]}/${match[2]}`.toLowerCase() : null;
 }
 
-/** The repository a call names, which gh puts before the one of its directory: a pull request URL, then `-R`, then `GH_REPO`. */
-function namedRepository({ kind, selector, repo, env }) {
+/** The repository a call names, which gh puts before the one of its directory: a pull request URL, then `-R` or `GH_REPO`. */
+function namedRepository({ kind, selector, repo }) {
   const url = kind === 'ready' && selector && !selector.dynamic ? PR_URL.exec(selector.text) : null;
   if (url) return `${url[1]}/${url[2]}`.toLowerCase();
-  if (repo) return repo.dynamic ? null : slugOf(repo.text);
-  return Object.hasOwn(env, 'GH_REPO') ? slugOf(env.GH_REPO) : null;
+  return repo && !repo.dynamic ? slugOf(repo.text) : null;
 }
 
 /**
@@ -644,22 +713,32 @@ function otherRepository(runGit, here) {
 // Deciding
 // ---------------------------------------------------------------------------
 
-function defaultRunGh(args, { cwd, env }) {
+/**
+ * Runs in the hook's own environment: nothing the command line sets for
+ * itself (PATH, a library to preload) reaches it.
+ */
+function defaultRunGh(args, { cwd, timeout }) {
   const result = spawnSync('gh', args, {
     cwd,
-    env: { ...process.env, ...env, GH_PROMPT_DISABLED: '1', NO_COLOR: '1' },
+    env: { ...process.env, GH_PROMPT_DISABLED: '1', NO_COLOR: '1' },
     encoding: 'utf8',
-    timeout: GH_TIMEOUT_MS,
+    timeout,
+    maxBuffer: GH_MAX_OUTPUT,
   });
   if (result.error) throw result.error;
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
 const firstLine = (text) => (typeof text === 'string' ? text.trim().split('\n')[0] : '');
+/** What gh says of a PR that is not there: by branch, then by number. */
+const NO_SUCH_PR = /no (?:open )?pull requests found|Could not resolve to a PullRequest/i;
 
-/** `{}` when the PR has the review comment, `{ deny }` when it doesn't, `{ note }` when that couldn't be read. */
-function checkReady(call, runGh) {
-  const { selector, repo, cwd, env } = call;
+/**
+ * `{}` when the PR has the review comment, `{ deny }` when it doesn't or is
+ * not on GitHub at all, `{ note }` when that couldn't be read.
+ */
+function checkReady(call, runGh, timeout) {
+  const { selector, repo, cwd } = call;
   const unchecked = (why) => ({ note: `pr-guard did not check \`gh pr ready\`: ${why}.` });
   if (selector?.dynamic || repo?.dynamic) return unchecked('the pull request it targets comes out of a variable');
   const anywhere = selector !== null && (repo !== null || /^https?:\/\//.test(selector.text));
@@ -670,9 +749,13 @@ function checkReady(call, runGh) {
   args.push('--json', 'number,comments');
   let pr;
   try {
-    const result = runGh(args, { cwd: cwd ?? undefined, env });
+    const result = runGh(args, { cwd: cwd ?? undefined, timeout });
     if (result.status !== 0) {
-      return unchecked(`gh could not read the pull request (${firstLine(result.stderr) || `exit ${result.status}`})`);
+      const said = firstLine(result.stderr) || `exit ${result.status}`;
+      // No such PR is an answer, not a failure to ask: the PR this command
+      // would turn ready is one it opens itself, so nothing has reviewed it.
+      if (NO_SUCH_PR.test(said)) return { deny: missingMessage(said) };
+      return unchecked(`gh could not read the pull request (${said})`);
     }
     pr = JSON.parse(result.stdout);
   } catch (error) {
@@ -707,9 +790,10 @@ export function decide(input, { runGh = defaultRunGh, runGit = defaultRunGit, he
   const elsewhere = otherRepository(runGit, here);
   const ours = checked.filter((call) => !elsewhere(call));
   if (ours.some((call) => call.kind === 'create')) return { deny: CREATE_MESSAGE };
+  const timeout = Math.floor(GH_BUDGET_MS / Math.max(ours.length, 1));
   const notes = [];
   for (const call of ours) {
-    const { deny, note } = checkReady(call, runGh);
+    const { deny, note } = checkReady(call, runGh, timeout);
     if (deny) return { deny };
     if (note) notes.push(note);
   }
@@ -720,10 +804,18 @@ export function decide(input, { runGh = defaultRunGh, runGit = defaultRunGit, he
 // The hook itself
 // ---------------------------------------------------------------------------
 
-function main() {
+/** Read as a stream: `readFileSync(0)` throws EAGAIN on a pipe that is non-blocking and still empty. */
+async function readStdin() {
+  let text = '';
+  process.stdin.setEncoding('utf8');
+  for await (const chunk of process.stdin) text += chunk;
+  return text;
+}
+
+async function main() {
   let input;
   try {
-    input = JSON.parse(readFileSync(0, 'utf8'));
+    input = JSON.parse(await readStdin());
   } catch {
     // not a hook call: nothing to guard
     return;
@@ -772,4 +864,4 @@ function startedDirectly() {
   }
 }
 
-if (startedDirectly()) main();
+if (startedDirectly()) await main();

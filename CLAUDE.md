@@ -274,7 +274,7 @@ Both bodies go in a file: as a shell string, a double-quoted one runs its backti
 
 If a later cycle on the same PR runs the review again, that run gets its own comment. The PR stays ready.
 
-**A hook holds a Claude Code session to this order.** `.claude/hooks/pr-guard.mjs`, which `.claude/settings.json` runs before each Bash command, refuses a `gh pr create` without `--draft`, and a `gh pr ready` on a PR of this repository that has no comment opening with "`/code-review xhigh --fix` ran". It reads GitHub before the command starts, so `gh pr ready` goes in a command of its own, after the one that posts the comment. It is no check on the PR itself: it sees only the `gh pr` commands a session runs.
+**A hook holds a Claude Code session to this order.** For this repository's PRs, `.claude/hooks/pr-guard.mjs`, which `.claude/settings.json` runs before each Bash command, refuses a `gh pr create` without `--draft`, and a `gh pr ready` while the PR has no comment opening with "`/code-review xhigh --fix` ran". It reads GitHub before the command starts, so `gh pr ready` goes in a command of its own: after the one that posts the comment, and never in the one that opens the PR. It is no check on the PR itself: it sees only the `gh pr` commands a session runs.
 
 ### 2. Sentry comments
 
