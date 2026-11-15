@@ -94,7 +94,7 @@ export function PerformanceTab(): React.JSX.Element {
           <div className="min-w-0">
             <label htmlFor="perf-mem" className="text-sm text-text-primary">Memory limit (GB)</label>
             <p className="mt-0.5 max-w-xl text-xs text-text-muted">
-              How much RAM DuckDB may use for queries. Higher keeps large aggregations in memory instead of spilling to disk (faster on heavy queries); set too high it competes with the OS and your other apps and can make the whole machine sluggish.
+              How much RAM DuckDB may use for queries. Past it, large aggregations spill to disk instead. The ceiling is the same on every machine: DuckDB runs inside the app, which cannot safely hand it more.
             </p>
             <p className="mt-1 text-[11px] text-text-muted">
               Auto: {info.defaultMemoryGB} GB · range {info.minMemoryGB}–{memCeiling} · {info.totalMemoryGB} GB detected

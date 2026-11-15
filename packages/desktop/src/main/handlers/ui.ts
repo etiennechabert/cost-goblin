@@ -107,7 +107,14 @@ export function registerUIHandlers(app: AppContext): void {
   });
 
   ipcMain.handle('perf:get-info', async (): Promise<PerformanceInfo> => {
-    const current = parsePerformance(await readPrefs()) ?? { memoryLimitGB: null, threads: null, rollupConcurrency: null };
+    const saved = parsePerformance(await readPrefs()) ?? { memoryLimitGB: null, threads: null, rollupConcurrency: null };
+    // The overrides as they are applied: one saved under a higher ceiling (an
+    // older version's, or another machine's) runs clamped, so it reads clamped.
+    const current: PerformanceSettings = {
+      memoryLimitGB: saved.memoryLimitGB === null ? null : clampMemoryGB(saved.memoryLimitGB),
+      threads: saved.threads === null ? null : clampThreads(saved.threads),
+      rollupConcurrency: saved.rollupConcurrency === null ? null : clampRollupConcurrency(saved.rollupConcurrency),
+    };
     return {
       defaultMemoryGB: computeDefaultMemoryGB(),
       defaultThreads: computeDefaultThreads(),

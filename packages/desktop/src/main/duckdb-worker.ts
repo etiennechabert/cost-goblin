@@ -6,7 +6,7 @@ import { QUERY_CANCELLED_MESSAGE, buildDuckDbSandboxStatements, isDuckDbSandboxO
 import type { DuckDBConnection, DuckDBInstance } from './duckdb-loader.js';
 import { createResourcePool } from './connection-pool.js';
 import type { ResourcePool } from './connection-pool.js';
-import { computeDefaultMemoryGB, computeDefaultThreads, computeQueryPoolSize } from './duckdb-tuning.js';
+import { computeDefaultThreads, computeQueryPoolSize, resolveMemoryGB } from './duckdb-tuning.js';
 
 interface DuckDBModule {
   DuckDBInstance: { create: () => Promise<DuckDBInstance> };
@@ -28,7 +28,9 @@ async function configureDuckDB(conn: DuckDBConnection, settings: DuckDBSettings)
   // any connection affects the whole instance. Callers pass the resolved
   // effective values (user override or computed default); absent fields fall
   // back to the computed defaults so a partial message never under-provisions.
-  const memGB = settings.memoryGB ?? computeDefaultMemoryGB();
+  // The memory value is held to the ceiling again here, where the limit is
+  // set: one above it ends the app (see MAX_MEMORY_GB), whoever sent it.
+  const memGB = resolveMemoryGB(settings.memoryGB);
   const threads = settings.threads ?? computeDefaultThreads();
   await conn.run(`SET memory_limit = '${String(memGB)}GB'`);
   await conn.run(`SET threads = ${String(threads)}`);
