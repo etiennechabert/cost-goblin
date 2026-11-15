@@ -14,8 +14,8 @@ export async function queryAll(conn: DuckDBConnection, sql: string): Promise<Row
   const names: string[] = [];
   for (let i = 0; i < cols; i++) names.push(result.columnName(i));
   const rows: Row[] = [];
-  let chunk = await result.fetchChunk();
-  while (chunk !== null && chunk.rowCount > 0) {
+  const chunks = await result.fetchAllChunks();
+  for (const chunk of chunks) {
     for (let r = 0; r < chunk.rowCount; r++) {
       const row: Row = {};
       for (let c = 0; c < cols; c++) {
@@ -24,7 +24,6 @@ export async function queryAll(conn: DuckDBConnection, sql: string): Promise<Row
       }
       rows.push(row);
     }
-    chunk = await result.fetchChunk();
   }
   return rows;
 }
