@@ -432,6 +432,7 @@ describe('createAppContext: rollup lifecycle', () => {
     h.app.warmupBase();
     expect(await h.app.awaitWarmup(10_000)).toBe(false);
     await vi.waitFor(() => { expect(h.app.rollupStore.getStatus().state).toBe('ready'); }, { timeout: 15_000 });
+    await h.app.awaitResourceRollup();
     await flush();
     return h;
   }
@@ -453,6 +454,22 @@ describe('createAppContext: rollup lifecycle', () => {
     const isRowCount = (sql: string): boolean => sql.startsWith('SELECT COUNT(*)::BIGINT AS n FROM read_parquet(');
     expect(builds.mock.calls.filter(([sql]) => isRowCount(sql)).length).toBeGreaterThan(0);
     expect(pooled.mock.calls.filter(([sql]) => isRowCount(sql))).toEqual([]);
+  });
+
+  it("runs the resource rollup's own queries as steps of its build too", async () => {
+    const h = await harness({ data: 'synthetic', rollupBuilds: true });
+    const pooled = vi.spyOn(h.db, 'runQuery');
+    const builds = vi.spyOn(h.db, 'runBuildQuery');
+    h.app.warmupBase();
+    await vi.waitFor(() => { expect(h.app.rollupStore.getStatus().state).toBe('ready'); }, { timeout: 15_000 });
+    await h.app.awaitResourceRollup();
+    expect(h.app.resourceRollupStore.isReady()).toBe(true);
+
+    // The heavy set, the tail reads and the row counts: on the pool, each
+    // queues behind a view's queries and is cancelled by the next navigation.
+    const readsResourceRollup = (sql: string): boolean => sql.includes('resource-rollup');
+    expect(builds.mock.calls.filter(([sql]) => readsResourceRollup(sql)).length).toBeGreaterThan(0);
+    expect(pooled.mock.calls.filter(([sql]) => readsResourceRollup(sql))).toEqual([]);
   });
 
   it('settles without building when nothing is configured', async () => {
@@ -618,6 +635,31 @@ describe('createAppContext: rollup lifecycle', () => {
 
     h.app.resumeRollupBuilds();
     await vi.waitFor(() => { expect(h.app.rollupStore.getStatus()).toEqual({ state: 'ready', periods: 2 }); }, { timeout: 15_000 });
+  });
+
+  it('holds the resource rollup back too while builds are paused', async () => {
+    const h = await built();
+    const served = (): string[] => [...h.app.resourceRollupStore.getValidPeriods()].sort((a, b) => a.localeCompare(b));
+    expect(served()).toEqual(['2026-01', '2026-02']);
+    h.app.pauseRollupBuilds();
+    const maintain = vi.spyOn(h.app.resourceRollupStore, 'maintain');
+
+    // A warmup that finds the rollup built goes on to the resource rollup,
+    // and so does a sync's re-roll: neither builds while paused.
+    h.app.warmupBase();
+    expect(await h.app.awaitWarmup(10_000)).toBe(true);
+    h.app.maintainRollup(['2026-02']);
+    await h.app.awaitResourceRollup();
+    expect(maintain).not.toHaveBeenCalled();
+    // February was built from files the sync replaced: no longer served.
+    expect(served()).toEqual(['2026-01']);
+
+    h.app.resumeRollupBuilds();
+    await vi.waitFor(() => { expect(h.app.rollupStore.getStatus()).toEqual({ state: 'ready', periods: 2 }); }, { timeout: 15_000 });
+    await vi.waitFor(async () => {
+      await h.app.awaitResourceRollup();
+      expect(served()).toEqual(['2026-01', '2026-02']);
+    }, { timeout: 15_000 });
   });
 
   it('drops the rollup and re-warms when the cost scope changes', async () => {

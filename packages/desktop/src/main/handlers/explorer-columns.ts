@@ -165,13 +165,18 @@ export const MEASURE_COLUMNS = {
   rowCount: 'row_count',
 } satisfies Record<string, string>;
 
-/** The measures' SELECT list, over the line items of one group (or of all). */
-export function measuresSelectList(): string {
+/** The line items a row of the raw source stands for: itself. A rollup row
+ *  stands for `line_items` of them. */
+export const RAW_ROW_COUNT = 'COUNT(*)';
+
+/** The measures' SELECT list, over the line items of one group (or of all).
+ *  `rowCount` is how the source counts the line items behind its rows. */
+export function measuresSelectList(rowCount: string = RAW_ROW_COUNT): string {
   return [
     `CAST(SUM(cost) AS DOUBLE) AS ${MEASURE_COLUMNS.cost}`,
     `CAST(SUM(list_cost) AS DOUBLE) AS ${MEASURE_COLUMNS.listCost}`,
     `CAST(SUM(usage_amount) AS DOUBLE) AS ${MEASURE_COLUMNS.usageAmount}`,
-    `CAST(COUNT(*) AS DOUBLE) AS ${MEASURE_COLUMNS.rowCount}`,
+    `CAST(${rowCount} AS DOUBLE) AS ${MEASURE_COLUMNS.rowCount}`,
   ].join(', ');
 }
 

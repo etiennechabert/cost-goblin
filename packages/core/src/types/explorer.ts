@@ -116,6 +116,17 @@ export interface AggregatedTableParams extends ExplorerBaseParams {
    *  costs. A key matches the group with that value on every group-by
    *  column; an empty list matches none. `rowLimit` still caps the rows. */
   readonly rowKeys?: readonly Readonly<Record<string, string>>[] | undefined;
+  /** True when the caller takes the rows without the number of groups:
+   *  `totalRows` may then come back null, and `countAggregatedGroups` gives
+   *  it. Counting the groups means grouping every line item, which a page of
+   *  the costliest groups can do without. */
+  readonly deferTotalRows?: boolean | undefined;
+}
+
+/** What `countAggregatedGroups` counts: the groups of an aggregated table. */
+export interface AggregatedGroupCountParams extends ExplorerBaseParams {
+  readonly groupByColumns: readonly string[];
+  readonly rowFilters?: Readonly<Record<string, string>> | undefined;
 }
 
 export interface AggregatedTableRow {
@@ -131,7 +142,10 @@ export interface AggregatedTableRow {
 
 export interface AggregatedTableResult {
   readonly rows: readonly AggregatedTableRow[];
-  readonly totalRows: number;
+  /** How many groups pass, of which `rows` holds the first `rowLimit`. Null
+   *  only for a request that set `deferTotalRows`, when the rows came without
+   *  the count. */
+  readonly totalRows: number | null;
   readonly tagColumns: readonly ExplorerTagColumn[];
 }
 

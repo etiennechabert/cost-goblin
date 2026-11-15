@@ -71,6 +71,9 @@ export interface AggregatedRowsQuery {
   readonly sort: ExplorerSort | undefined;
   readonly rowLimit: number;
   readonly rowKeys: readonly RowKey[] | undefined;
+  /** How `source` counts the line items behind a row. Defaults to COUNT(*),
+   *  for a source with one row per line item. */
+  readonly rowCount?: string;
 }
 
 /** How many groups pass, repeated on every row of the grouped result. */
@@ -105,7 +108,7 @@ export async function queryAggregatedRows(run: RunSql, q: AggregatedRowsQuery): 
 
   if (q.groupBy.length === 0) {
     const sql = `
-      SELECT ${measuresSelectList()}
+      SELECT ${measuresSelectList(q.rowCount)}
       FROM ${q.source}
       ${where}
     `.trim();
@@ -118,7 +121,7 @@ export async function queryAggregatedRows(run: RunSql, q: AggregatedRowsQuery): 
     WITH grouped AS MATERIALIZED (
       SELECT
         ${groupBySelectList(q.groupBy)},
-        ${measuresSelectList()}
+        ${measuresSelectList(q.rowCount)}
       FROM ${q.source}
       ${where}
       GROUP BY ${groupByList(q.groupBy)}
@@ -134,4 +137,26 @@ export async function queryAggregatedRows(run: RunSql, q: AggregatedRowsQuery): 
     rows: result.map(r => toAggregatedRow(r, q.groupBy)),
     totalRows: first === undefined ? 0 : toNum(first[TOTAL_GROUPS_COLUMN]),
   };
+}
+
+/** How many groups the aggregated table has over every line item that passes:
+ *  `queryAggregatedRows`' count, for a caller whose page came without it. */
+export async function countAggregatedGroups(
+  run: RunSql,
+  q: Pick<AggregatedRowsQuery, 'source' | 'where' | 'groupBy' | 'rowFilters'>,
+): Promise<number> {
+  const qb = new QueryBuilder();
+  const filters = rowFilterConditions(q.rowFilters, qb);
+  const where = filters.length === 0 ? q.where : andWhere(q.where, filters.join(' AND '));
+  const { params } = qb.build();
+  // Without a group-by the table is its one total row.
+  if (q.groupBy.length === 0) return 1;
+  const sql = `
+    SELECT CAST(COUNT(*) AS DOUBLE) AS n FROM (
+      SELECT 1 FROM ${q.source} ${where}
+      GROUP BY ${groupByList(q.groupBy)}
+    ) AS _cnt
+  `.trim();
+  const r = (await run(sql, params))[0];
+  return r === undefined ? 0 : toNum(r['n']);
 }

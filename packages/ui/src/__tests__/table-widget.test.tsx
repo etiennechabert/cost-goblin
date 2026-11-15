@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
-import type { AggregatedTableParams, AggregatedTableResult, AggregatedTableRow, ExplorerSort, WidgetSpec } from '@costgoblin/core/browser';
+import type { AggregatedGroupCountParams, AggregatedTableParams, AggregatedTableResult, AggregatedTableRow, ExplorerSort, WidgetSpec } from '@costgoblin/core/browser';
 import { asDateString } from '@costgoblin/core/browser';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
@@ -235,6 +235,126 @@ describe('TableWidget previous-period rows', () => {
     await waitFor(() => { expect(shownCategories()).toHaveLength(2); });
     await act(() => new Promise(resolve => { setTimeout(resolve, 0); }));
     expect(api.previousRequests()).toHaveLength(1);
+  });
+});
+
+/** A table whose rows come without their group count, as a page read from
+ *  the resource rollup does: the count is a request of its own, held until
+ *  `answerCount()` and failed by `failCount()`. */
+class DeferredCountApi extends MockCostApi {
+  readonly rowRequests: AggregatedTableParams[] = [];
+  private readonly rows: readonly AggregatedTableRow[];
+  private readonly totalRows: number | null;
+  private pending: { resolve: (n: number) => void; reject: (err: Error) => void }[] = [];
+
+  constructor(rows: readonly AggregatedTableRow[], totalRows: number | null) {
+    super();
+    this.rows = rows;
+    this.totalRows = totalRows;
+  }
+
+  override queryAggregatedTable(params?: AggregatedTableParams): Promise<AggregatedTableResult> {
+    if (params === undefined) return super.queryAggregatedTable();
+    this.rowRequests.push(params);
+    const rows = [...this.rows].sort(compareRows(params.sort));
+    return Promise.resolve({ rows, totalRows: this.totalRows, tagColumns: [] });
+  }
+
+  override countAggregatedGroups(params: AggregatedGroupCountParams): Promise<number> {
+    this.groupCountRequests.push(params);
+    return new Promise((resolve, reject) => { this.pending.push({ resolve, reject }); });
+  }
+
+  answerCount(groups: number): void {
+    for (const request of this.pending.splice(0)) request.resolve(groups);
+  }
+
+  failCount(): void {
+    for (const request of this.pending.splice(0)) request.reject(new Error("Error invoking remote method 'explorer:count-aggregated-groups': Error: count failed"));
+  }
+}
+
+describe('TableWidget row count', () => {
+  const ROWS = [row('Usage', 1_200), row('Purchase', 300), row('Tax', 250)];
+
+  function renderCount(api: MockCostApi) {
+    return render(
+      <CostApiProvider value={api}>
+        <TableWidget
+          spec={SPEC}
+          dateRange={CURRENT}
+          previousDateRange={PREVIOUS}
+          compareEnabled={false}
+          granularity="daily"
+          globalFilters={{}}
+          dimensions={[]}
+          onSetFilter={() => undefined}
+        />
+      </CostApiProvider>,
+    );
+  }
+
+  function showing(): string {
+    return screen.getByText(/^Showing/).textContent;
+  }
+
+  it('lets the rows come without their count, and asks for none when they bring it', async () => {
+    const api = new DeferredCountApi(ROWS, 1_234);
+    renderCount(api);
+
+    await screen.findByText('Usage');
+    expect(showing()).toBe(`Showing 3 of ${(1_234).toLocaleString()} rows`);
+    expect(api.rowRequests.map(r => r.deferTotalRows)).toEqual([true]);
+    expect(api.groupCountRequests).toEqual([]);
+  });
+
+  it('shows the rows before their count, then the count once it is in', async () => {
+    const api = new DeferredCountApi(ROWS, null);
+    renderCount(api);
+
+    await screen.findByText('Usage');
+    await waitFor(() => { expect(showing()).toBe('Showing 3 of … rows'); });
+    expect(screen.getByTitle('Counting the rows').textContent).toBe('…');
+    expect(api.groupCountRequests).toEqual([{
+      filters: {},
+      dateRange: CURRENT,
+      granularity: 'daily',
+      applyCostScope: true,
+      groupByColumns: ['charge_category'],
+      origin: 'widget:table:count',
+    }]);
+
+    act(() => { api.answerCount(1_234); });
+    await waitFor(() => { expect(showing()).toBe(`Showing 3 of ${(1_234).toLocaleString()} rows`); });
+  });
+
+  it('keeps the count through a re-sort instead of asking again', async () => {
+    const api = new DeferredCountApi(ROWS, null);
+    renderCount(api);
+    await screen.findByText('Usage');
+    await waitFor(() => { expect(api.groupCountRequests).toHaveLength(1); });
+    act(() => { api.answerCount(1_234); });
+    await waitFor(() => { expect(showing()).toBe(`Showing 3 of ${(1_234).toLocaleString()} rows`); });
+
+    sortByChargeCategory();
+
+    await waitFor(() => { expect(api.rowRequests).toHaveLength(2); });
+    await waitFor(() => { expect(shownCategories()).toEqual(['Purchase', 'Tax', 'Usage']); });
+    expect(showing()).toBe(`Showing 3 of ${(1_234).toLocaleString()} rows`);
+    expect(api.groupCountRequests).toHaveLength(1);
+  });
+
+  it('keeps saying there are more rows when the count fails', async () => {
+    const api = new DeferredCountApi(ROWS, null);
+    renderCount(api);
+    await screen.findByText('Usage');
+    await waitFor(() => { expect(api.groupCountRequests).toHaveLength(1); });
+
+    act(() => { api.failCount(); });
+
+    await waitFor(() => { expect(screen.getByTitle('The rows could not be counted').textContent).toBe('…'); });
+    expect(showing()).toBe('Showing 3 of … rows');
+    expect(screen.getByText('Usage')).toBeDefined();
   });
 });
 

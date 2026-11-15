@@ -11,6 +11,7 @@ import { costExprFor, isUsageOnlyMetric, USAGE_ONLY_METRIC_CHARGE_CATEGORIES } f
 import { QueryBuilder, type ParameterizedQuery } from './parameterized.js';
 import { assertBillingPeriod, assertDateString, assertHourString, assertSafeColumnIdentifier, assertTier, isSafeColumnIdentifier, SecurityError } from './identifier-validator.js';
 import { rollupGrainColumns, rollupGrainDimensions } from '../rollup/grain.js';
+import { RESOURCE_ROLLUP_KEY_COLUMNS, resourceRollupDimensionColumns } from '../rollup/resource-rollup.js';
 import { sqlEscapeString, sqlStringLiteral } from './sql-escape.js';
 import { previousTrendPeriod, trendPercentChangeSql } from './trend-change.js';
 import { providerColumnExprs, withOptionalSourceColumns } from './provider-projection.js';
@@ -1337,18 +1338,30 @@ export function buildRollupPartitionQuery(
   outPath: string,
   opts: QueryContextOptions,
 ): string {
+  const { source, where } = rollupMonthScope(period, tier, opts);
+  const groupBy = rollupGrainColumns(opts.dimensions).join(', ');
+  const select =
+    `SELECT ${groupBy}, CAST(SUM(cost) AS DOUBLE) AS cost, CAST(COUNT(*) AS BIGINT) AS line_items ` +
+    `FROM ${source} WHERE ${where} GROUP BY ${groupBy}`;
+  return `COPY (${select}) TO ${sqlStringLiteral(outPath)} (FORMAT PARQUET)`;
+}
+
+/** What a month's rollup build reads: the provider's raw source for that one
+ *  period, and the WHERE keeping the month's days that the cost scope keeps.
+ *  Shared by the rollup and the resource rollup, so the two always agree on
+ *  which line items exist. */
+function rollupMonthScope(period: string, tier: string, opts: QueryContextOptions): { source: string; where: string } {
   // Same canonical period check the read_parquet glob applies downstream
   // (buildParquetSource → assertBillingPeriod); kept here to fail fast before
   // the surrounding date-bound math runs.
   assertBillingPeriod(period);
   const { dataDir, dimensions, orgAccountsPath, providers, accountReverseMap, costScope } = opts;
-  const grain = rollupGrainColumns(dimensions);
   const costMetric = costScope?.costMetric ?? DEFAULT_COST_METRIC;
 
   // Rollup partitions are built per provider: the caller passes exactly the
   // provider whose store is being (re)built, with the explicit period. Not slim:
-  // the grain or an exclusion rule can read Description, and the SELECT below
-  // names its columns, so DuckDB prunes the ones nothing here reads.
+  // the grain or an exclusion rule can read Description, and the SELECTs name
+  // their columns, so DuckDB prunes the ones nothing reads.
   const source = buildSource({
     dataDir, tier, dimensions, orgAccountsPath,
     providers: providers.map(pr => ({ name: pr.name, type: pr.type, periods: [period] })),
@@ -1364,11 +1377,63 @@ export function buildRollupPartitionQuery(
   assertDateString(start);
   assertDateString(end);
 
-  const whereConditions = [`usage_date >= '${start}'`, `usage_date < '${end}'`, ...exclusionClauses];
-  const groupBy = grain.join(', ');
+  return { source, where: [`usage_date >= '${start}'`, `usage_date < '${end}'`, ...exclusionClauses].join(' AND ') };
+}
+
+const RESOURCE_KEY = RESOURCE_ROLLUP_KEY_COLUMNS.join(', ');
+
+/** Build the DDL that ranks ONE month's (resource, description) pairs by
+ *  weight and writes the top `pairs` of them, plus the first one left out, to
+ *  Parquet: `resource_id, description, weight, rank` (see resource-rollup.ts).
+ *  Ties rank by the pair itself, so the same raw files always give the same
+ *  file. The row ranked `pairs + 1`, when there is one, holds the month's tail
+ *  bound; without it the month has no pair left out.
+ *
+ *  Same source, cost metric and exclusions as the rollup partition of that
+ *  month (`rollupMonthScope`).
+ *  @throws {SecurityError} when `pairs` is not a positive integer */
+export function buildResourceTopQuery(
+  period: string,
+  tier: string,
+  outPath: string,
+  opts: QueryContextOptions,
+  pairs: number,
+): string {
+  if (!Number.isSafeInteger(pairs) || pairs < 1) {
+    throw new SecurityError(`resource rollup pair count must be a positive integer, got ${String(pairs)}`);
+  }
+  const { source, where } = rollupMonthScope(period, tier, opts);
+  const order = `weight DESC, ${RESOURCE_KEY}`;
+  // Top-N first, so only the kept rows are numbered: a window over every
+  // pair of the month would sort millions of them.
   const select =
-    `SELECT ${groupBy}, CAST(SUM(cost) AS DOUBLE) AS cost, CAST(COUNT(*) AS BIGINT) AS line_items ` +
-    `FROM ${source} WHERE ${whereConditions.join(' AND ')} GROUP BY ${groupBy}`;
+    `SELECT *, row_number() OVER (ORDER BY ${order}) AS rank FROM (` +
+    `SELECT ${RESOURCE_KEY}, CAST(SUM(ABS(cost)) AS DOUBLE) AS weight ` +
+    `FROM ${source} WHERE ${where} GROUP BY ${RESOURCE_KEY} ` +
+    `ORDER BY ${order} LIMIT ${String(pairs + 1)})`;
+  return `COPY (${select}) TO ${sqlStringLiteral(outPath)} (FORMAT PARQUET)`;
+}
+
+/** Build the DDL that writes ONE month's resource rollup rows to Parquet: the
+ *  line items of the pairs listed in `heavyPath` (a Parquet file of
+ *  `resource_id, description`), aggregated to the rollup grain plus the pair
+ *  (`resourceRollupDimensionColumns`), with the measures an aggregated-table
+ *  row returns. A listed pair the month does not have writes nothing. */
+export function buildResourceRowsQuery(
+  period: string,
+  tier: string,
+  outPath: string,
+  heavyPath: string,
+  opts: QueryContextOptions,
+): string {
+  const { source, where } = rollupMonthScope(period, tier, opts);
+  const groupBy = resourceRollupDimensionColumns(opts.dimensions).join(', ');
+  const select =
+    `SELECT ${groupBy}, CAST(SUM(cost) AS DOUBLE) AS cost, CAST(SUM(list_cost) AS DOUBLE) AS list_cost, ` +
+    `CAST(SUM(usage_amount) AS DOUBLE) AS usage_amount, CAST(COUNT(*) AS BIGINT) AS line_items ` +
+    `FROM ${source} WHERE ${where} ` +
+    `AND (${RESOURCE_KEY}) IN (SELECT ${RESOURCE_KEY} FROM read_parquet(${sqlStringLiteral(heavyPath)})) ` +
+    `GROUP BY ${groupBy}`;
   return `COPY (${select}) TO ${sqlStringLiteral(outPath)} (FORMAT PARQUET)`;
 }
 

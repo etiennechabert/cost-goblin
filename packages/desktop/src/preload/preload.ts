@@ -55,6 +55,7 @@ import type {
   ExplorerPreferencesUpdate,
   ExplorerRowsParams,
   ExplorerRowsResult,
+  AggregatedGroupCountParams,
   AggregatedTableParams,
   AggregatedTableResult,
   AliasSuggestion,
@@ -368,6 +369,9 @@ const api: CostApi = {
   },
   queryAggregatedTable(params: AggregatedTableParams): Promise<AggregatedTableResult> {
     return invoke<AggregatedTableResult>('explorer:query-aggregated-table', params);
+  },
+  countAggregatedGroups(params: AggregatedGroupCountParams): Promise<number> {
+    return invoke<number>('explorer:count-aggregated-groups', params);
   },
   getExplorerFilterValues(params: ExplorerFilterValuesParams): Promise<ExplorerFilterValue[]> {
     return invoke<ExplorerFilterValue[]>('explorer:filter-values', params);

@@ -361,6 +361,7 @@ Everything lives under Electron `userData`, organized into named **workspaces**
               *.parquet
             cost-opt-YYYY-MM-DD/            # Cost-opt is split by export date during sync
           rollup/                           # Pre-aggregated daily rollup + manifest
+          resource-rollup/                  # Each month's costliest (resource, description) pairs, for the Table widget
           meta/
             sync-etags*.json                # Per-period file etags for diff
             sync-timestamps.json
