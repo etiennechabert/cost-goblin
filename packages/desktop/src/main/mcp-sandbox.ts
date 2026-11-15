@@ -21,7 +21,7 @@ export const MCP_SANDBOX_REFUSAL = 'Query tried to read outside the CostGoblin w
 
 /** Ceilings for the MCP instance — it runs alongside the app's shared instance,
  *  so it gets a small, fixed slice rather than the user's performance overrides. */
-const MCP_MAX_MEMORY_GB = 2;
+export const MCP_MAX_MEMORY_GB = 2;
 const MCP_MAX_THREADS = 4;
 
 export interface McpSandboxPaths {

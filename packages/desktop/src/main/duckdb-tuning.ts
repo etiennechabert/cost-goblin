@@ -6,9 +6,26 @@ import { cpus, totalmem } from 'node:os';
  *  it bundles cleanly into the worker. */
 
 export const MIN_MEMORY_GB = 1;
-/** Ceiling so we never starve the OS + Electron (main/renderer/GPU/workers) +
- *  the user's other apps on very large machines. */
-export const MAX_MEMORY_GB = 24;
+/** The most memory DuckDB may be told to use, whatever the machine has.
+ *
+ *  DuckDB runs inside the app's main process, where `malloc` is Chromium's
+ *  allocator, not the system's. That allocator serves the whole process from
+ *  one 16 GiB reservation of address space, never returns what a size class
+ *  has used to the others, and ends the process (the app, not the query) when
+ *  the reservation runs out. A limit DuckDB cannot reach is therefore not a
+ *  limit: it never spills to disk, it takes the app down.
+ *
+ *  Measured on a 46 GB workspace (242M daily rows; macOS arm64, Electron 44):
+ *  with the limit at 12 GB or more, the rollup build at launch killed the app
+ *  at about 9 GB resident, on every launch; at 10 GB and below it finished.
+ *  A session then keeps using up the reservation as it runs queries of other
+ *  shapes, so the ceiling sits well under the largest limit that survived a
+ *  build. It costs the build nothing: the full 12-month rebuild took the same
+ *  minute at 4, 6 and 10 GB.
+ *
+ *  The MCP instance (2 GB) and the GCP canonicalizer (2 GB) allocate from the
+ *  same reservation. Raise this only with DuckDB in a process of its own. */
+export const MAX_MEMORY_GB = 4;
 
 export function totalMemoryGB(): number {
   return Math.max(1, Math.round(totalmem() / (1024 * 1024 * 1024)));
@@ -18,11 +35,9 @@ export function maxThreads(): number {
   return Math.max(1, cpus().length);
 }
 
-/** Default DuckDB memory_limit: ~half of physical RAM, clamped to
- *  [MIN_MEMORY_GB, MAX_MEMORY_GB]. The previous hard 4GB cap throttled large
- *  machines (a multi-GB in-memory cost_base plus concurrent aggregations spill
- *  to disk at 4GB); this scales with RAM while staying conservative. No-op on
- *  <=8GB laptops. */
+/** Default DuckDB memory_limit: half of physical RAM, clamped to
+ *  [MIN_MEMORY_GB, MAX_MEMORY_GB]. Every machine with 8 GB or more gets the
+ *  ceiling; past it DuckDB spills to the workspace's temp directory. */
 export function computeDefaultMemoryGB(): number {
   const totalGB = totalmem() / (1024 * 1024 * 1024);
   return Math.round(Math.min(MAX_MEMORY_GB, Math.max(MIN_MEMORY_GB, totalGB * 0.5)));
