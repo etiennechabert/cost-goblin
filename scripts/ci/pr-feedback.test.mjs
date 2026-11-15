@@ -14,13 +14,17 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
+  EXPECT_MS,
   GH_TIMEOUT_MS,
+  POLL_MS,
   SONAR_TIMEOUT_S,
+  WAIT_MS,
   checkOf,
   command,
   owedOnGitHub,
   owedOnSonar,
   report,
+  reviewing,
   stopDecision,
   stopReason,
   titleOf,
@@ -43,19 +47,21 @@ const ME = { login: 'maintainer', __typename: 'User' };
 
 let nextId = 100;
 /** A comment. `mine` are the reactions of whoever `gh` is signed in as, `theirs` those of others. */
-function comment(author, body, { mine = [], theirs = [] } = {}) {
+function comment(author, body, { mine = [], theirs = [], createdAt } = {}) {
   const id = nextId++;
   return {
     databaseId: id,
     url: `https://github.com/acme/widgets/pull/7#c${id}`,
     body,
+    createdAt,
     author,
     reactionGroups: [...mine.map((content) => ({ content, viewerHasReacted: true })), ...theirs.map((content) => ({ content, viewerHasReacted: false }))],
   };
 }
 const thread = (comments, { isResolved = false, path = 'src/a.ts', line = 12 } = {}) => ({ isResolved, path, line, comments: { nodes: comments } });
 const checkRun = (name, status = 'COMPLETED') => ({ __typename: 'CheckRun', name, status });
-function pullRequest({ threads = [], comments = [], checks = [checkRun('Gitar')], ...rest } = {}) {
+/** `readyAt` is when it last turned ready for review (none for one opened ready), `committedAt` the date of its last commit. */
+function pullRequest({ threads = [], comments = [], checks = [checkRun('Gitar')], readyAt, committedAt, ...rest } = {}) {
   return {
     number: 7,
     url: 'https://github.com/acme/widgets/pull/7',
@@ -63,12 +69,18 @@ function pullRequest({ threads = [], comments = [], checks = [checkRun('Gitar')]
     isDraft: false,
     isCrossRepository: false,
     headRefOid: HEAD,
+    timelineItems: { nodes: readyAt === undefined ? [] : [{ createdAt: readyAt }] },
     reviewThreads: { nodes: threads },
     comments: { nodes: comments },
-    commits: { nodes: [{ commit: { statusCheckRollup: { contexts: { nodes: checks } } } }] },
+    commits: { nodes: [{ commit: { committedDate: committedAt, statusCheckRollup: { contexts: { nodes: checks } } } }] },
     ...rest,
   };
 }
+
+/** The moment the tests run at, and moments before it. */
+const NOW = Date.parse('2026-11-15T10:00:00Z');
+const ago = (ms) => new Date(NOW - ms).toISOString();
+const LONG_AGO = ago(24 * 3600_000);
 
 const FINDING = '<details>\n<summary>💡 <b>Edge Case:</b> A many-ready command passes unchecked</summary>\n\n`decide` divides the budget.\n</details>';
 const SUMMARY = '<details>\n<summary><b>Code Review</b> <kbd>✅ Approved</kbd></summary>\n\nNo open issues found.\n</details>';
@@ -116,6 +128,47 @@ describe('checkOf', () => {
   it('is running while any run of a check that was run again still is', () => {
     expect(checkOf(pullRequest({ checks: [checkRun('Gitar'), checkRun('Gitar', 'IN_PROGRESS')] }), 'Gitar')).toBe('running');
     expect(checkOf(pullRequest({ checks: [checkRun('Gitar'), checkRun('Gitar')] }), 'Gitar')).toBe('done');
+  });
+});
+
+describe('reviewing', () => {
+  const summary = (createdAt) => comment(GITAR, SUMMARY, { createdAt });
+
+  it('names a bot whose check on the last commit is running', () => {
+    expect(reviewing(pullRequest({ checks: [checkRun('Seer Code Review', 'IN_PROGRESS'), checkRun('Gitar')] }), NOW)).toEqual(['Sentry']);
+    expect(reviewing(pullRequest({ checks: [checkRun('Seer Code Review'), checkRun('Gitar', 'QUEUED')] }), NOW)).toEqual(['Gitar']);
+    // however long ago anything happened
+    expect(reviewing(pullRequest({ checks: [checkRun('Gitar', 'IN_PROGRESS')], readyAt: LONG_AGO, committedAt: LONG_AGO }), NOW)).toEqual(['Gitar']);
+  });
+
+  it('expects both on a pull request that has just turned ready and shows nothing yet', () => {
+    expect(reviewing(pullRequest({ checks: [], readyAt: ago(20_000), committedAt: ago(60_000), createdAt: LONG_AGO }), NOW)).toEqual(['Sentry', 'Gitar']);
+    // opened ready: no event says when, its creation does
+    expect(reviewing(pullRequest({ checks: [], createdAt: ago(20_000), committedAt: ago(60_000) }), NOW)).toEqual(['Sentry', 'Gitar']);
+    // one that turned ready again counts from then, not from its creation
+    expect(reviewing(pullRequest({ checks: [], readyAt: LONG_AGO, createdAt: ago(20_000), committedAt: LONG_AGO }), NOW)).toEqual([]);
+  });
+
+  it('takes the summary Gitar posted since for its review, and an older one for nothing', () => {
+    const justReady = { checks: [checkRun('Seer Code Review')], readyAt: ago(90_000), committedAt: ago(120_000) };
+    expect(reviewing(pullRequest({ ...justReady, comments: [summary(ago(15_000))] }), NOW)).toEqual([]);
+    expect(reviewing(pullRequest({ ...justReady, comments: [summary(LONG_AGO)] }), NOW)).toEqual(['Gitar']);
+    expect(reviewing(pullRequest({ ...justReady, comments: [comment(ME, 'ready now', { createdAt: ago(15_000) })] }), NOW)).toEqual(['Gitar']);
+  });
+
+  it('expects Gitar, whose check comes a minute after a push, on a commit just made', () => {
+    const pushed = { readyAt: LONG_AGO, committedAt: ago(30_000), comments: [summary(ago(3600_000))] };
+    expect(reviewing(pullRequest({ ...pushed, checks: [] }), NOW)).toEqual(['Gitar']);
+    // Sentry leaves no check on a later commit: nothing tells whether it is at work
+    expect(reviewing(pullRequest({ ...pushed, checks: [checkRun('Gitar')] }), NOW)).toEqual([]);
+  });
+
+  it('expects nobody once the time they take to show up has passed', () => {
+    const quiet = { checks: [], readyAt: ago(EXPECT_MS), committedAt: ago(EXPECT_MS + 1) };
+    expect(reviewing(pullRequest(quiet), NOW)).toEqual([]);
+    expect(reviewing(pullRequest({ ...quiet, readyAt: ago(EXPECT_MS - 1) }), NOW)).toEqual(['Sentry', 'Gitar']);
+    // and nobody on a pull request that says nothing of when
+    expect(reviewing(pullRequest({ checks: [] }), NOW)).toEqual([]);
   });
 });
 
@@ -259,6 +312,9 @@ describe('what it says', () => {
     expect(report(pullRequest(), undefined)).toContain('SonarCloud  not asked');
     expect(report(pullRequest(), { analysis: null, issues: [], hotspots: [] })).toContain('SonarCloud  has not analysed this pull request');
     expect(report(pullRequest(), { analysis: analysis({ gate: 'ERROR' }), issues: [], hotspots: [] })).toContain('SonarCloud  analysed the last commit: quality gate failed');
+    // just turned ready: neither has had the time to show anything
+    const fresh = report(pullRequest({ checks: [], readyAt: ago(20_000) }), null, NOW);
+    expect(fresh).toContain('Sentry      has not started on the last commit yet\nGitar       has not started on the last commit yet');
     // a gate SonarCloud has not computed did not pass
     expect(report(pullRequest(), { analysis: analysis({ gate: 'NONE' }), issues: [], hotspots: [] })).toContain('SonarCloud  analysed the last commit: quality gate not computed');
   });
@@ -323,7 +379,8 @@ const never = async () => {
   throw new Error('should not have been called');
 };
 let stateDirs = 0;
-const world = (options = {}) => ({ git: fakeGit(), gh: never, curl: fakeCurl().curl, here: HERE, stateDir: join(scratch, `state-${stateDirs++}`), ...options });
+/** Everything `stopDecision` reaches. It must not wait unless a test gives it a `sleep`. */
+const world = (options = {}) => ({ git: fakeGit(), gh: never, curl: fakeCurl().curl, here: HERE, stateDir: join(scratch, `state-${stateDirs++}`), now: () => NOW, sleep: never, ...options });
 const stop = (extra = {}) => ({ hook_event_name: 'Stop', session_id: 'session-1', cwd: '/work/repo/packages', stop_hook_active: false, ...extra });
 
 describe('stopDecision', () => {
@@ -385,6 +442,118 @@ describe('stopDecision', () => {
     const { gh, calls } = fakeGh(settled());
     await stopDecision(stop({ cwd: undefined }), world({ gh, git: fakeGit({ gitDir: '/work/repo/.git' }) }));
     expect(calls[0].cwd).toBe(process.cwd());
+  });
+
+  describe('waiting for Sentry and Gitar', () => {
+    /** A clock that only `sleep` moves, and a `gh` that answers with each of `states` in turn, then the last one again. */
+    function waiting(...states) {
+      let time = NOW;
+      const sleeps = [];
+      let reads = 0;
+      const gh = async () => {
+        const state = states[Math.min(reads++, states.length - 1)];
+        if (state instanceof Error) throw state;
+        return JSON.stringify({ data: { repository: { pullRequests: { nodes: state === null ? [] : [state] } } } });
+      };
+      const sleep = async (ms) => {
+        sleeps.push(ms);
+        time += ms;
+      };
+      return { options: world({ gh, sleep, now: () => time }), sleeps, reads: () => reads };
+    }
+    const busy = () => pullRequest({ checks: [checkRun('Seer Code Review', 'IN_PROGRESS'), checkRun('Gitar')] });
+    const done = (threads = []) => pullRequest({ checks: [checkRun('Seer Code Review'), checkRun('Gitar')], threads, comments: [comment(GITAR, SUMMARY, { mine: ['THUMBS_UP'] })] });
+
+    it('holds the stop until they are done, then sends the session back to what they found', async () => {
+      const found = done([thread([comment(SENTRY, 'Bug: off by one')])]);
+      const { options, sleeps, reads } = waiting(busy(), busy(), busy(), found);
+      expect(await stopDecision(stop(), options)).toEqual({ block: stopReason(found, owedOnGitHub(found)) });
+      // two looks while Sentry was at work, the one that saw it done, and one more to be sure
+      expect(sleeps).toEqual([POLL_MS, POLL_MS, POLL_MS, POLL_MS]);
+      expect(reads()).toBe(5);
+    });
+
+    it('lets the session stop when they found nothing', async () => {
+      const { options, sleeps } = waiting(busy(), done());
+      expect(await stopDecision(stop(), options)).toEqual({});
+      expect(sleeps).toEqual([POLL_MS, POLL_MS]);
+    });
+
+    it('waits for a pull request that has just turned ready, before either bot shows anything', async () => {
+      const justReady = pullRequest({ checks: [], readyAt: ago(5_000) });
+      const { options, sleeps } = waiting(justReady, busy(), done());
+      expect(await stopDecision(stop(), options)).toEqual({});
+      expect(sleeps).toHaveLength(3);
+    });
+
+    it('keeps waiting when they start again on a new commit', async () => {
+      const pushed = { ...busy(), headRefOid: OLDER };
+      const { options, sleeps } = waiting(busy(), done(), pushed, done());
+      expect(await stopDecision(stop(), options)).toEqual({});
+      // done, at work again on the new commit, done, and one more look to be sure
+      expect(sleeps).toHaveLength(4);
+    });
+
+    it('gives up after WAIT_MS, and goes by what is there', async () => {
+      const stuck = pullRequest({ checks: [checkRun('Seer Code Review', 'IN_PROGRESS')], threads: [thread([comment(GITAR, FINDING)])] });
+      const { options, sleeps } = waiting(stuck);
+      expect(await stopDecision(stop(), options)).toEqual({ block: stopReason(stuck, owedOnGitHub(stuck)) });
+      expect(sleeps).toHaveLength(WAIT_MS / POLL_MS);
+      expect(sleeps.reduce((sum, ms) => sum + ms, 0)).toBe(WAIT_MS);
+    });
+
+    it('waits once per commit in a session: a check that never ends holds one turn, not all of them', async () => {
+      const { options, sleeps } = waiting(busy());
+      await stopDecision(stop(), options);
+      const first = sleeps.length;
+      expect(first).toBe(WAIT_MS / POLL_MS);
+      expect(await stopDecision(stop(), options)).toEqual({});
+      expect(sleeps).toHaveLength(first);
+      // another session has not waited yet
+      await stopDecision(stop({ session_id: 'session-2' }), options);
+      expect(sleeps).toHaveLength(2 * first);
+      // and neither has this one, for another commit
+      const next = waiting({ ...busy(), headRefOid: OLDER }, { ...done(), headRefOid: OLDER });
+      expect(await stopDecision(stop(), { ...next.options, stateDir: options.stateDir })).toEqual({});
+      expect(next.sleeps).toHaveLength(2);
+    });
+
+    it('does not wait when it could not remember having waited', async () => {
+      const open = join(scratch, 'state-open-for-wait');
+      mkdirSync(open);
+      chmodSync(open, 0o777);
+      for (const [input, extra] of [
+        [stop({ session_id: undefined }), {}],
+        [stop(), { stateDir: open }],
+      ]) {
+        const { options, sleeps } = waiting(busy());
+        expect(await stopDecision(input, { ...options, ...extra })).toEqual({});
+        expect(sleeps).toEqual([]);
+      }
+    });
+
+    it('lets go of a pull request that closed or went back to draft meanwhile', async () => {
+      for (const after of [null, { ...unanswered(), isDraft: true }]) {
+        const { options, sleeps } = waiting(busy(), after);
+        expect(await stopDecision(stop(), options)).toEqual({});
+        expect(sleeps).toEqual([POLL_MS]);
+      }
+    });
+
+    it('goes by the last answer when GitHub stops answering', async () => {
+      const first = pullRequest({ checks: [checkRun('Seer Code Review', 'IN_PROGRESS')], threads: [thread([comment(GITAR, FINDING)])] });
+      const { options, sleeps } = waiting(first, new Error('HTTP 502'));
+      expect(await stopDecision(stop(), options)).toEqual({ block: stopReason(first, owedOnGitHub(first)) });
+      expect(sleeps).toEqual([POLL_MS]);
+    });
+
+    it('reads SonarCloud after the wait, for the commit the pull request is then at', async () => {
+      const sonar = fakeCurl({ list: [analysis({ sha: OLDER, codeSmells: 1 })], issues: [{ ...ISSUE, key: 'AZ9' }] });
+      const pushed = { ...done(), headRefOid: OLDER };
+      const { options } = waiting(busy(), pushed);
+      const { block } = await stopDecision(stop(), { ...options, curl: sonar.curl });
+      expect(block).toContain('SonarCloud issue typescript:S3776');
+    });
   });
 
   describe('SonarCloud', () => {
@@ -715,8 +884,14 @@ describe('.claude/settings.json', () => {
 
   it('gives it the time its requests can take: a hook that is killed says nothing', () => {
     const [hook] = entries[0].hooks;
-    // one request to GitHub, two rounds to SonarCloud (its list, then issues and hotspots together), and room for git and for Node to start
-    expect(hook.timeout * 1000).toBeGreaterThanOrEqual(GH_TIMEOUT_MS + 2 * (SONAR_TIMEOUT_S + 1) * 1000 + 5_000);
-    expect(hook.timeout).toBeLessThanOrEqual(60);
+    // The first request to GitHub, the wait for the bots and the request its last look
+    // can still be in, two rounds to SonarCloud (its list, then issues and hotspots
+    // together), and room for git and for Node to start.
+    expect(hook.timeout * 1000).toBeGreaterThanOrEqual(2 * GH_TIMEOUT_MS + WAIT_MS + 2 * (SONAR_TIMEOUT_S + 1) * 1000 + 5_000);
+    // under the 600 s a command hook gets by default: the wait is meant to be bounded
+    expect(hook.timeout).toBeLessThanOrEqual(360);
+    // the wait divides into whole looks, and leaves the bots the time they take to show up
+    expect(WAIT_MS % POLL_MS).toBe(0);
+    expect(WAIT_MS).toBeGreaterThan(EXPECT_MS);
   });
 });

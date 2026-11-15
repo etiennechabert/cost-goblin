@@ -24,11 +24,17 @@
 // A SonarCloud item is asked once per session: a false positive can only be
 // closed in SonarCloud's UI, so asking again would never end.
 //
+// Sentry and Gitar start when a pull request turns ready, and again on each
+// push, which is often when the session stops. So before it reads the list,
+// the hook waits for them while they are at work or about to be (`reviewing`):
+// at most WAIT_MS, and once per commit and session. It does not wait for
+// SonarCloud, whose analysis comes after CI.
+//
 // It stays silent for a draft (the bots do not review one), for a branch
 // with no pull request, in a directory of another repository, for a session
 // in plan mode (it could change nothing), and whenever GitHub cannot be read.
 // It only runs while a session is working: feedback that arrives after the
-// session stopped is not its business.
+// session stopped, or after the wait ran out, is not its business.
 //
 // Pinned by scripts/ci/pr-feedback.test.mjs.
 
@@ -47,6 +53,16 @@ const HOOK_DIR = dirname(fileURLToPath(import.meta.url));
 export const GH_TIMEOUT_MS = 10_000;
 /** For each request to SonarCloud: its list of pull requests, then issues and hotspots together. */
 export const SONAR_TIMEOUT_S = 4;
+/** The longest a session's stop is held for Sentry and Gitar to finish. */
+export const WAIT_MS = 240_000;
+/** Between two looks at the pull request while waiting. */
+export const POLL_MS = 10_000;
+/**
+ * How long after a pull request turned ready, or got its last commit, a bot
+ * that has shown nothing is still expected. Sentry starts its check within
+ * seconds; Gitar shows its first sign about 70 s in.
+ */
+export const EXPECT_MS = 180_000;
 /** Above execFile's 1 MB default: bot comments are long. */
 const MAX_OUTPUT = 64 * 1024 * 1024;
 const SONAR_HOST = 'https://sonarcloud.io';
@@ -58,11 +74,12 @@ const CHECKS = { Sentry: 'Seer Code Review', Gitar: 'Gitar' };
 
 const FEEDBACK = `
 fragment feedback on PullRequest {
-  number url state isDraft isCrossRepository headRefOid
+  number url state isDraft isCrossRepository headRefOid createdAt
+  timelineItems(last: 1, itemTypes: [READY_FOR_REVIEW_EVENT]) { nodes { ... on ReadyForReviewEvent { createdAt } } }
   reviewThreads(first: 100) { nodes { isResolved path line
     comments(first: 30) { nodes { databaseId url body author { login __typename } reactionGroups { content viewerHasReacted } } } } }
-  comments(last: 30) { nodes { databaseId url body author { login __typename } reactionGroups { content viewerHasReacted } } }
-  commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
+  comments(last: 30) { nodes { databaseId url body createdAt author { login __typename } reactionGroups { content viewerHasReacted } } }
+  commits(last: 1) { nodes { commit { committedDate statusCheckRollup { contexts(first: 100) { nodes {
     __typename ... on CheckRun { name status } ... on StatusContext { context state } } } } } } }
 }`;
 const BY_BRANCH = `query($owner: String!, $name: String!, $branch: String!) { repository(owner: $owner, name: $name) {
@@ -105,6 +122,39 @@ export function checkOf(pr, name) {
   return checks.every(over) ? 'done' : 'running';
 }
 
+const gitarComments = (pr) => (pr.comments?.nodes ?? []).filter((comment) => botOf(comment.author) === 'Gitar');
+
+/**
+ * The bots at work on a ready pull request, or about to be: 'Sentry', 'Gitar'.
+ * A check of theirs that is running says so. Before they show anything only
+ * the clock can, for EXPECT_MS after what sets them off:
+ * - Sentry reviews when the PR turns ready, and starts a check at once. On a
+ *   later commit it leaves no check, so nothing shows whether it is at work.
+ * - Gitar reviews when the PR turns ready, with no check: its summary comment
+ *   is the sign it is done. It reviews each later commit too, and that time
+ *   its check appears about a minute after the push.
+ */
+export function reviewing(pr, now) {
+  const recent = (iso) => {
+    const at = Date.parse(iso ?? '');
+    return Number.isFinite(at) && now - at < EXPECT_MS ? at : null;
+  };
+  // a pull request opened ready has no such event: it was ready when created
+  const readyAt = recent(pr.timelineItems?.nodes?.[0]?.createdAt ?? pr.createdAt);
+  const committedAt = recent(pr.commits?.nodes?.[0]?.commit?.committedDate);
+  const bots = [];
+  const sentry = checkOf(pr, CHECKS.Sentry);
+  if (sentry === 'running' || (sentry === 'absent' && readyAt !== null)) bots.push('Sentry');
+  const gitar = checkOf(pr, CHECKS.Gitar);
+  if (gitar === 'running') bots.push('Gitar');
+  else if (gitar === 'absent' && (readyAt !== null || committedAt !== null)) {
+    const since = Math.max(readyAt ?? 0, committedAt ?? 0);
+    // a summary posted since then is its review of this state
+    if (!gitarComments(pr).some((comment) => Date.parse(comment.createdAt ?? '') >= since)) bots.push('Gitar');
+  }
+  return bots;
+}
+
 /** What the PR owes Sentry and Gitar, from GitHub's answer to the `feedback` fragment. */
 export function owedOnGitHub(pr) {
   const owed = [];
@@ -121,7 +171,7 @@ export function owedOnGitHub(pr) {
     owed.push({ id: `comment:${first.databaseId}`, kind: 'finding', bot, where, title: titleOf(first.body), commentId: first.databaseId, url: first.url, missing });
   }
   // Gitar replaces its summary comment while it reviews, and a reaction goes with the old one
-  const summary = checkOf(pr, CHECKS.Gitar) === 'running' ? undefined : (pr.comments?.nodes ?? []).filter((comment) => botOf(comment.author) === 'Gitar').at(-1);
+  const summary = checkOf(pr, CHECKS.Gitar) === 'running' ? undefined : gitarComments(pr).at(-1);
   if (summary && !hasVerdict(summary)) {
     owed.push({ id: `comment:${summary.databaseId}`, kind: 'summary', bot: 'Gitar', commentId: summary.databaseId, url: summary.url, missing: ['reaction'] });
   }
@@ -188,7 +238,7 @@ function sonarLine(sonar, headOid) {
 }
 
 /** The report the command prints. */
-export function report(pr, sonar) {
+export function report(pr, sonar, now = Date.now()) {
   const owed = [...(pr.isDraft ? [] : owedOnGitHub(pr)), ...owedOnSonar(sonar, pr.headRefOid)];
   const sentry = checkOf(pr, CHECKS.Sentry);
   const gitar = checkOf(pr, CHECKS.Gitar);
@@ -196,11 +246,13 @@ export function report(pr, sonar) {
   if (pr.isDraft) {
     lines.push('Sentry and Gitar review it once it is ready for review.');
   } else {
-    lines.push(`Sentry      ${REVIEW[sentry] ?? 'left no sign of a review of the last commit (it leaves a check only on the first commit it reviews)'}`);
+    const expected = reviewing(pr, now);
+    const soon = 'has not started on the last commit yet';
+    const noSign = 'left no sign of a review of the last commit (it leaves a check only on the first commit it reviews)';
+    lines.push(`Sentry      ${REVIEW[sentry] ?? (expected.includes('Sentry') ? soon : noSign)}`);
     // Gitar reviews a PR that has just turned ready without leaving a check on its commit
-    const summarised = (pr.comments?.nodes ?? []).some((comment) => botOf(comment.author) === 'Gitar');
-    const unchecked = summarised ? 'has posted its summary, and left no check on the last commit: which commit it read is not shown' : 'has not reviewed this pull request yet';
-    lines.push(`Gitar       ${REVIEW[gitar] ?? unchecked}`);
+    const unchecked = gitarComments(pr).length > 0 ? 'has posted its summary, and left no check on the last commit: which commit it read is not shown' : 'has not reviewed this pull request yet';
+    lines.push(`Gitar       ${REVIEW[gitar] ?? (expected.includes('Gitar') ? soon : unchecked)}`);
   }
   lines.push(`SonarCloud  ${sonarLine(sonar, pr.headRefOid)}`, '');
   if (owed.length === 0) lines.push('Nothing to answer.');
@@ -316,8 +368,8 @@ function isPrivateDir(dir) {
   }
 }
 
-/** The SonarCloud items this session was already sent back for. */
-function toldBefore(file) {
+/** The ids kept for a session: the SonarCloud items it was sent back for, and the commits it waited on. */
+function keptIds(file) {
   try {
     const ids = JSON.parse(readFileSync(file, 'utf8'));
     return new Set(Array.isArray(ids) ? ids : []);
@@ -326,12 +378,67 @@ function toldBefore(file) {
   }
 }
 
+/** What the hook remembers of one session, or null for a session with no id to remember it by. */
+function memoryOf(stateDir, sessionId) {
+  const file = stateFile(stateDir, sessionId);
+  if (file === null) return null;
+  const known = isPrivateDir(stateDir) ? keptIds(file) : new Set();
+  return {
+    has: (id) => known.has(id),
+    /** False when the ids could not be kept: what depends on them is then asked, or done, again. */
+    add(ids) {
+      for (const id of ids) known.add(id);
+      try {
+        mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+        if (!isPrivateDir(stateDir)) return false;
+        writeFileSync(file, JSON.stringify([...known]), { mode: 0o600 });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+  };
+}
+
+const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * The pull request once Sentry and Gitar are done with it, or WAIT_MS later:
+ * null when it closed or went back to draft meanwhile. It waits once per
+ * commit and session, and only when it can remember having done so: a check
+ * that never finishes would otherwise hold every turn of the session.
+ */
+async function reviewed(pr, read, memory, now, sleep) {
+  const waited = `waited:${pr.headRefOid}`;
+  if (reviewing(pr, now()).length === 0 || memory === null || memory.has(waited) || !memory.add([waited])) return pr;
+  const deadline = now() + WAIT_MS;
+  let current = pr;
+  // Two quiet looks in a row: a summary can come a moment before the findings it sums up.
+  for (let quiet = 0; quiet < 2 && now() + POLL_MS <= deadline; ) {
+    await sleep(POLL_MS);
+    let next;
+    try {
+      next = await read();
+    } catch {
+      // GitHub stopped answering: go by what it last said
+      break;
+    }
+    if (next === null || next.isDraft) return null;
+    current = next;
+    quiet = reviewing(current, now()).length === 0 ? quiet + 1 : 0;
+  }
+  return current;
+}
+
 /**
  * What the hook answers for one Stop input: `{ block }`, the reason the
  * session goes on, or `{}` to let it stop. The tests inject what it reaches
  * outside itself.
  */
-export async function stopDecision(input, { git = runGit, gh = defaultGh, curl = defaultCurl, here = HOOK_DIR, stateDir = join(tmpdir(), 'claude-pr-feedback') } = {}) {
+export async function stopDecision(
+  input,
+  { git = runGit, gh = defaultGh, curl = defaultCurl, here = HOOK_DIR, stateDir = join(tmpdir(), 'claude-pr-feedback'), now = Date.now, sleep = defaultSleep } = {},
+) {
   // already sent back in this turn: asking twice would never let it end
   if (input?.hook_event_name !== 'Stop' || input.stop_hook_active === true) return {};
   // a session in plan mode can fix, push and reply to nothing
@@ -339,28 +446,24 @@ export async function stopDecision(input, { git = runGit, gh = defaultGh, curl =
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
   const at = branchForPr(cwd, git, here);
   if (at === null) return {};
+  const read = () => readPr(at, cwd, gh);
   let pr;
   try {
-    pr = await readPr(at, cwd, gh);
+    pr = await read();
   } catch {
     // GitHub not answering is no reason to hold a session
     return {};
   }
   if (pr === null || pr.isDraft) return {};
+  const memory = memoryOf(stateDir, input.session_id);
+  pr = await reviewed(pr, read, memory, now, sleep);
+  if (pr === null) return {};
   const sonar = await readSonar(git(cwd, ['rev-parse', '--show-toplevel']) ?? cwd, pr, curl);
-  const file = stateFile(stateDir, input.session_id);
-  const told = file !== null && isPrivateDir(stateDir) ? toldBefore(file) : new Set();
-  const onSonar = owedOnSonar(sonar, pr.headRefOid).filter((item) => !told.has(item.id));
+  const onSonar = owedOnSonar(sonar, pr.headRefOid).filter((item) => memory?.has(item.id) !== true);
   const owed = [...owedOnGitHub(pr), ...onSonar];
   if (owed.length === 0) return {};
-  if (file !== null && onSonar.length > 0) {
-    try {
-      mkdirSync(stateDir, { recursive: true, mode: 0o700 });
-      if (isPrivateDir(stateDir)) writeFileSync(file, JSON.stringify([...told, ...onSonar.map((item) => item.id)]), { mode: 0o600 });
-    } catch {
-      // it will be asked again next turn
-    }
-  }
+  // not kept: it will be asked again next turn
+  if (onSonar.length > 0) memory?.add(onSonar.map((item) => item.id));
   return { block: stopReason(pr, owed) };
 }
 
