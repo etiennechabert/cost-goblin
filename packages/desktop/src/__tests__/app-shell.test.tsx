@@ -6,6 +6,7 @@ import type {
   DataInventoryResult,
   DataSharingResult,
   DataSharingStatus,
+  QueryEngineStatus,
   SyncStatus,
   UpdateInfo,
   UpdateStatus,
@@ -15,7 +16,7 @@ import type {
 } from '@costgoblin/core/browser';
 import { MockCostApi } from '@costgoblin/ui';
 import { App } from '../renderer/App.js';
-import { fakeDebug, fakeUpdate } from './helpers/renderer-bridges.js';
+import { fakeDebug, fakeEngine, fakeUpdate } from './helpers/renderer-bridges.js';
 
 type User = ReturnType<typeof userEvent.setup>;
 
@@ -915,6 +916,84 @@ describe('App shell — data sharing banner', () => {
 
     await waitFor(() => { expect(disable).toHaveBeenCalledOnce(); });
     expect(await screen.findByRole('button', { name: 'Stop sharing' })).toBeDefined();
+  });
+});
+
+describe('App shell — query engine notice', () => {
+  const RESTARTED: QueryEngineStatus = { state: 'running', restartedAt: 1_700_000_000_000, rollupBuildsPaused: false };
+  const STOPPED: QueryEngineStatus = { state: 'stopped', deaths: 3, windowMinutes: 10, rollupBuildsPaused: true };
+
+  function engineNotice(): HTMLElement | null {
+    return screen.queryByText(/query engine|rollup build is paused/i);
+  }
+
+  it('says nothing while the engine has never stopped', async () => {
+    await bootApp();
+    expect(engineNotice()).toBeNull();
+  });
+
+  it('tells of a restart pushed by main, and runs the view again on request', async () => {
+    const api = new AppApi();
+    const user = await bootApp(api);
+    const dimensions = vi.spyOn(api, 'getDimensions');
+
+    act(() => { fakeEngine.statusPushes.emit(RESTARTED); });
+    expect(await screen.findByText('The query engine restarted.')).toBeDefined();
+    // The page under the notice is still there, and still usable.
+    expect(screen.getByRole('heading', { name: 'Cost Overview' })).toBeDefined();
+    dimensions.mockClear();
+
+    await user.click(screen.getByRole('button', { name: 'Reload view' }));
+
+    // The dashboard was mounted again: it asks for what it needs again.
+    await waitFor(() => { expect(dimensions).toHaveBeenCalled(); });
+    expect(await screen.findByRole('heading', { name: 'Cost Overview' })).toBeDefined();
+    expect(engineNotice()).toBeNull();
+  });
+
+  it('shows a stop that happened before the window was listening', async () => {
+    // At launch, while the rollup was building: nothing was pushed to a
+    // window that did not exist yet, so the state is pulled.
+    fakeEngine.status = STOPPED;
+    await bootApp();
+
+    expect((await screen.findByRole('alert')).textContent).toContain('The query engine stopped 3 times in 10 minutes.');
+  });
+
+  it('restarts a stopped engine, then asks main for the rollup again', async () => {
+    fakeEngine.status = STOPPED;
+    const user = await bootApp();
+
+    await user.click(await screen.findByRole('button', { name: 'Restart the query engine' }));
+    expect(fakeEngine.restartCalls).toBe(1);
+
+    act(() => { fakeEngine.statusPushes.emit({ state: 'running', restartedAt: 1_700_000_050_000, rollupBuildsPaused: true }); });
+    await user.click(await screen.findByRole('button', { name: 'Rebuild the rollup' }));
+    expect(fakeEngine.resumeCalls).toBe(1);
+
+    act(() => { fakeEngine.statusPushes.emit({ state: 'running', restartedAt: 1_700_000_050_000, rollupBuildsPaused: false }); });
+    await waitFor(() => { expect(engineNotice()).toBeNull(); });
+  });
+
+  it('keeps the alert when the restart fails, and opens Performance from it', async () => {
+    fakeEngine.status = STOPPED;
+    fakeEngine.restartError = new Error('The query engine stopped 3 times in 10 minutes and was not restarted.');
+    const user = await bootApp();
+
+    await user.click(await screen.findByRole('button', { name: 'Restart the query engine' }));
+    expect(fakeEngine.restartCalls).toBe(1);
+    expect(screen.getByRole('alert')).toBeDefined();
+
+    await user.click(screen.getByRole('button', { name: 'Performance settings' }));
+    expect(await screen.findByRole('navigation', { name: 'Settings sections' })).toBeDefined();
+    // Still there on the settings page: it is the app's state, not a page's.
+    expect(screen.getByRole('alert')).toBeDefined();
+  });
+
+  it('boots without the notice when the engine status cannot be read', async () => {
+    vi.spyOn(fakeEngine, 'getStatus').mockRejectedValue(new Error('ipc down'));
+    await bootApp();
+    expect(engineNotice()).toBeNull();
   });
 });
 

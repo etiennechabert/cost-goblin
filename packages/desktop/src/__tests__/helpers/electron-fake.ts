@@ -112,7 +112,16 @@ export const app = {
   getAppPath: (): string => electronAppState.appPath,
   relaunch: vi.fn<(options?: RelaunchOptions) => void>(),
   quit: vi.fn<() => void>(),
+  /** The app's child processes, as far as the handlers read them: none
+   *  unless a test names some. Memory is in KB, as Electron reports it. */
+  getAppMetrics: vi.fn<() => readonly FakeProcessMetric[]>(() => []),
 };
+
+/** One entry of `app.getAppMetrics()`. */
+export interface FakeProcessMetric {
+  readonly name?: string;
+  readonly memory: { readonly workingSetSize: number };
+}
 
 /** A renderer window as the broadcast helpers see it: only `webContents.send`. */
 export interface FakeWindow {
@@ -143,6 +152,7 @@ export function resetElectronFakes(): void {
   shell.showItemInFolder.mockReset();
   app.relaunch.mockReset();
   app.quit.mockReset();
+  app.getAppMetrics.mockReset();
   electronAppState.isPackaged = false;
   electronAppState.version = '9.9.9-test';
   electronAppState.appPath = process.cwd();

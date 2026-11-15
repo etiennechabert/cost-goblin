@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import { totalmem } from 'node:os';
 import {
   DEFAULT_ROLLUP_CONCURRENCY,
   MAX_MEMORY_GB,
@@ -15,6 +16,52 @@ import {
   resolveThreads,
   totalMemoryGB,
 } from '../main/duckdb-tuning.js';
+import { MCP_MAX_MEMORY_GB } from '../main/mcp-sandbox.js';
+
+// Pass-through, so a test can stand in for a machine of another size.
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>();
+  return { ...actual, totalmem: vi.fn(actual.totalmem) };
+});
+
+const GIB = 1024 * 1024 * 1024;
+/** The GCP canonicalizer's own limit (`canonicalizeGcpPeriod`'s default in
+ *  core, which the sync worker never overrides). */
+const CANONICALIZER_MEMORY_GB = 2;
+/** Memory the other in-process DuckDB instances may take from the same
+ *  allocator: the MCP sandbox and the GCP canonicalizer. */
+const OTHER_INSTANCES_GB = MCP_MAX_MEMORY_GB + CANONICALIZER_MEMORY_GB;
+/** Resident size at which the app died when DuckDB's limit let it get there. */
+const OBSERVED_CEILING_GB = 9;
+
+afterEach(() => { vi.mocked(totalmem).mockReset(); });
+
+describe('the memory ceiling', () => {
+  it('leaves the main process allocator room, with every instance at its limit', () => {
+    expect(MAX_MEMORY_GB + OTHER_INSTANCES_GB).toBeLessThan(OBSERVED_CEILING_GB);
+  });
+
+  it('is the default however much RAM the machine has', () => {
+    for (const gb of [8, 16, 32, 48, 128]) {
+      vi.mocked(totalmem).mockReturnValue(gb * GIB);
+      expect(computeDefaultMemoryGB()).toBe(MAX_MEMORY_GB);
+    }
+  });
+
+  it('gives a small machine half its RAM', () => {
+    vi.mocked(totalmem).mockReturnValue(4 * GIB);
+    expect(computeDefaultMemoryGB()).toBe(2);
+    vi.mocked(totalmem).mockReturnValue(1 * GIB);
+    expect(computeDefaultMemoryGB()).toBe(MIN_MEMORY_GB);
+  });
+
+  it('holds an override to the ceiling: a saved 24 GB cannot bring the crash back', () => {
+    vi.mocked(totalmem).mockReturnValue(48 * GIB);
+    expect(clampMemoryGB(24)).toBe(MAX_MEMORY_GB);
+    expect(resolveMemoryGB(24)).toBe(MAX_MEMORY_GB);
+    expect(resolveMemoryGB(2)).toBe(2);
+  });
+});
 
 describe('duckdb-tuning defaults', () => {
   it('memory default stays within [MIN, MAX] and never exceeds total RAM', () => {

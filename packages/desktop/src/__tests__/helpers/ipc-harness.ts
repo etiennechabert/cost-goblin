@@ -102,6 +102,7 @@ export async function createTestWorkspace(options: TestWorkspaceOptions = {}): P
 
 export interface HarnessDb extends DuckDBClient {
   readonly cancelPendingQueries: Mock<() => void>;
+  readonly cancelAllQueries: Mock<() => void>;
   readonly configure: Mock<(settings: { tempDir?: string; memoryGB?: number; threads?: number }) => void>;
   /** SQL text of every query and build, in submission order. */
   readonly statements: string[];
@@ -163,6 +164,7 @@ export function createHarnessDb(options: { readonly rollupBuilds?: boolean } = {
       });
     },
     cancelPendingQueries: vi.fn<() => void>(),
+    cancelAllQueries: vi.fn<() => void>(),
     configure: vi.fn<(settings: { tempDir?: string; memoryGB?: number; threads?: number }) => void>(),
     async terminate(): Promise<void> {
       await chain;
@@ -297,6 +299,8 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
       await app.awaitWarmup(5_000).catch(() => false);
       // Builds are refused unless asked for, so only real ones can still be writing.
       if (options.rollupBuilds === true) await drainRollupBuilds(app, 15_000);
+      // The resource rollup builds once the rollup has: it never rejects.
+      await app.awaitResourceRollup();
       await db.terminate();
       await rm(ws.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     },

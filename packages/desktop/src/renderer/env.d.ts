@@ -1,4 +1,4 @@
-import type { CostApi, UpdateApi, RollupApi, BaselinesApi } from '@costgoblin/core/browser';
+import type { CostApi, UpdateApi, RollupApi, BaselinesApi, QueryEngineApi } from '@costgoblin/core/browser';
 
 declare global {
   interface DebugQueryLogEntry {
@@ -61,6 +61,7 @@ declare global {
     costgoblinUpdate: UpdateApi;
     costgoblinRollup: RollupApi;
     costgoblinBaselines: BaselinesApi;
+    costgoblinEngine: QueryEngineApi;
     costgoblinDebug: DebugApi;
     costgoblinPerf?: PerfApi;
     __PERF_REACT__?: RenderTiming[];
@@ -69,6 +70,7 @@ declare global {
   var costgoblinUpdate: UpdateApi;
   var costgoblinRollup: RollupApi;
   var costgoblinBaselines: BaselinesApi;
+  var costgoblinEngine: QueryEngineApi;
   var costgoblinDebug: DebugApi;
   var costgoblinPerf: PerfApi | undefined;
   var __PERF_REACT__: RenderTiming[] | undefined;

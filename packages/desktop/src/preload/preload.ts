@@ -55,6 +55,7 @@ import type {
   ExplorerPreferencesUpdate,
   ExplorerRowsParams,
   ExplorerRowsResult,
+  AggregatedGroupCountParams,
   AggregatedTableParams,
   AggregatedTableResult,
   AliasSuggestion,
@@ -369,6 +370,9 @@ const api: CostApi = {
   queryAggregatedTable(params: AggregatedTableParams): Promise<AggregatedTableResult> {
     return invoke<AggregatedTableResult>('explorer:query-aggregated-table', params);
   },
+  countAggregatedGroups(params: AggregatedGroupCountParams): Promise<number> {
+    return invoke<number>('explorer:count-aggregated-groups', params);
+  },
   getExplorerFilterValues(params: ExplorerFilterValuesParams): Promise<ExplorerFilterValue[]> {
     return invoke<ExplorerFilterValue[]>('explorer:filter-values', params);
   },
@@ -588,6 +592,23 @@ exposeInMainWorld('costgoblinRollup', {
     const handler = (_event: unknown, status: unknown): void => { callback(status); };
     ipcRenderer.on('rollup:status-changed', handler);
     return () => { ipcRenderer.removeListener('rollup:status-changed', handler); };
+  },
+});
+
+exposeInMainWorld('costgoblinEngine', {
+  getStatus(): Promise<unknown> {
+    return invoke<unknown>('engine:get-status');
+  },
+  onStatusChanged(callback: (status: unknown) => void): () => void {
+    const handler = (_event: unknown, status: unknown): void => { callback(status); };
+    ipcRenderer.on('engine:status-changed', handler);
+    return () => { ipcRenderer.removeListener('engine:status-changed', handler); };
+  },
+  restart(): Promise<void> {
+    return invoke<undefined>('engine:restart').then(() => undefined);
+  },
+  resumeRollupBuilds(): Promise<void> {
+    return invoke<undefined>('engine:resume-rollup-builds').then(() => undefined);
   },
 });
 

@@ -59,10 +59,13 @@ describe('query plumbing channels', () => {
     const h = await queryApp({ data: 'none' });
     await h.ipc.invoke('query:cancel-pending');
     expect(h.db.cancelPendingQueries).toHaveBeenCalledTimes(1);
+    // A view's cancel is never the one that also stops rollup builds.
+    expect(h.db.cancelAllQueries).not.toHaveBeenCalled();
     expect(await h.ipc.invoke('costs:await-base', 'soon')).toBe(false);
     expect(await h.ipc.invoke('costs:await-base', 50)).toBe(false);
     await h.ipc.invoke('cache:clear-all');
-    expect(h.db.cancelPendingQueries).toHaveBeenCalledTimes(2);
+    expect(h.db.cancelPendingQueries).toHaveBeenCalledTimes(1);
+    expect(h.db.cancelAllQueries).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -327,6 +330,8 @@ describe('query:filter-values', () => {
     h.app.warmupBase();
     await h.app.awaitWarmup(10_000);
     await vi.waitFor(() => { expect(h.app.rollupStore.getStatus().state).toBe('ready'); }, { timeout: 15_000 });
+    // The resource rollup builds after it: its statements would be the last ones.
+    await h.app.awaitResourceRollup();
     const values = list(await h.ipc.invoke('query:filter-values', 'service', { region: ['eu-central-1'] }, FEBRUARY));
     expect(values.length).toBeGreaterThan(0);
     const last = h.app.queryLog.getEntries().at(-1);

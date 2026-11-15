@@ -658,6 +658,12 @@ export class MockCostApi implements CostApi {
       tagColumns: [{ id: 'tag_team', label: 'Team' }, { id: 'tag_env', label: 'Environment' }],
     });
   }
+  /** Every group count asked for, as asked. */
+  readonly groupCountRequests: import('@costgoblin/core/browser').AggregatedGroupCountParams[] = [];
+  countAggregatedGroups(params: import('@costgoblin/core/browser').AggregatedGroupCountParams): Promise<number> {
+    this.groupCountRequests.push(params);
+    return Promise.resolve(2);
+  }
   getExplorerFilterValues(): Promise<ExplorerFilterValue[]> {
     return Promise.resolve([
       { value: 'Amazon EC2', label: 'Amazon EC2', cost: 18_000, rows: 8_400 },
@@ -700,7 +706,7 @@ export class MockCostApi implements CostApi {
   acceptSuggestion(): Promise<void> { return Promise.resolve(); }
   cancelPendingQueries(): Promise<void> { return Promise.resolve(); }
   clearAllCaches(): Promise<void> { return Promise.resolve(); }
-  getPerformanceInfo(): Promise<PerformanceInfo> { return Promise.resolve({ defaultMemoryGB: 8, defaultThreads: 8, defaultRollupConcurrency: 2, totalMemoryGB: 16, maxThreads: 8, maxRollupConcurrency: 8, minMemoryGB: 1, maxMemoryGB: 24, current: { memoryLimitGB: null, threads: null, rollupConcurrency: null } }); }
+  getPerformanceInfo(): Promise<PerformanceInfo> { return Promise.resolve({ defaultMemoryGB: 4, defaultThreads: 8, defaultRollupConcurrency: 2, totalMemoryGB: 16, maxThreads: 8, maxRollupConcurrency: 8, minMemoryGB: 1, maxMemoryGB: 4, current: { memoryLimitGB: null, threads: null, rollupConcurrency: null } }); }
   setPerformanceSettings(): Promise<void> { return Promise.resolve(); }
   awaitMaterializedBase(): Promise<boolean> { return Promise.resolve(true); }
   // Stateful and OFF by default, like the real opt-in.

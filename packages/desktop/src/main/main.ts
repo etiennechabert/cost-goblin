@@ -13,11 +13,14 @@ const __dirname = dirname(__filename);
 // Worker bundles are built by `npm run build:worker` (esbuild) into out/worker/
 // — sibling to out/main/ where this file lives. We resolve up one level then
 // into out/worker/ to find them. The shared app instance and the MCP server's
-// dedicated sandboxed instance are both spawned from this bundle.
+// dedicated sandboxed instance both run this bundle: the first in a process
+// of its own (a utility process), the second in a worker thread of this one.
 const DUCKDB_WORKER_PATH = join(__dirname, '..', 'worker', 'duckdb-worker.cjs');
 import type { LogEntry } from '@costgoblin/core';
-import { createDuckDBClient } from './duckdb-client.js';
-import type { DuckDBClient } from './duckdb-client.js';
+import { drainDuckDBClientsSync } from './duckdb-client.js';
+import { createSupervisedDuckDBClient } from './duckdb-supervisor.js';
+import type { SupervisedDuckDBClient } from './duckdb-supervisor.js';
+import { utilityProcessSpawner } from './duckdb-utility-process.js';
 import { resolveMemoryGB, resolveRollupConcurrency, resolveThreads } from './duckdb-tuning.js';
 import { createSyncClient } from './sync-client.js';
 import type { SyncClient } from './sync-client.js';
@@ -190,9 +193,10 @@ function readPerformanceOverrides(stateDir: string): { memoryLimitGB: number | n
   return { memoryLimitGB: null, threads: null, rollupConcurrency: null };
 }
 
-async function createWindow(db: DuckDBClient, syncClient: SyncClient, rollupConcurrency: number, wsEnv: WorkspaceEnv): Promise<AppContext> {
+async function createWindow(db: SupervisedDuckDBClient, syncClient: SyncClient, rollupConcurrency: number, wsEnv: WorkspaceEnv): Promise<AppContext> {
   const appContext = registerIpcHandlers({
     db,
+    engine: db,
     syncClient,
     configPath: resolveConfigPath(wsEnv.configBase, 'costgoblin'),
     dimensionsPath: resolveConfigPath(wsEnv.configBase, 'dimensions'),
@@ -211,6 +215,7 @@ async function createWindow(db: DuckDBClient, syncClient: SyncClient, rollupConc
   // a saved override before the first warmup builds anything. The value is read
   // once in main() alongside the memory/threads overrides and passed in.
   appContext.rollupStore.setBuildConcurrency(rollupConcurrency);
+  appContext.resourceRollupStore.setBuildConcurrency(rollupConcurrency);
 
   const headless = process.env['COSTGOBLIN_HEADLESS'] === '1';
 
@@ -327,17 +332,24 @@ async function main(): Promise<void> {
     logger.warn(`provider-layout migration failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  const db = await createDuckDBClient(DUCKDB_WORKER_PATH);
+  // DuckDB runs in a process of its own, so a native failure in it ends that
+  // process and not the app: the supervisor fails the queries it was running
+  // and starts another. Each process starts with these settings (and whatever
+  // perf:set changed since), applied before its first query.
   const tempDir = wsEnv.tempDir;
   mkdirSync(tempDir, { recursive: true });
   const perf = readPerformanceOverrides(wsEnv.stateDir);
-  db.configure({
-    tempDir,
-    memoryGB: resolveMemoryGB(perf.memoryLimitGB),
-    threads: resolveThreads(perf.threads),
+  const db = await createSupervisedDuckDBClient({
+    spawn: utilityProcessSpawner(DUCKDB_WORKER_PATH),
+    settings: {
+      tempDir,
+      memoryGB: resolveMemoryGB(perf.memoryLimitGB),
+      threads: resolveThreads(perf.threads),
+    },
   });
+  duckdb = db;
 
-  logger.info('DuckDB worker ready');
+  logger.info('DuckDB process ready');
 
   // Upgrade guard: a v0.6.x install has AWS CUR 2.0 parquet in raw/, which the
   // FOCUS 1.2 query layer can't read (every dashboard would binder-error and
@@ -423,8 +435,32 @@ app.on('window-all-closed', () => {
   app.quit();
 });
 
+/** The DuckDB process's supervisor, once main() has started it. */
+let duckdb: SupervisedDuckDBClient | null = null;
+
+// The DuckDB process ends with the app. Said to its supervisor first, so that
+// exit is not taken for a death and answered with a new process. `quit` as
+// well as `will-quit`: app.exit() (a relaunch) emits only the first.
+function shutDownDuckDB(): void {
+  void duckdb?.terminate();
+}
+
 app.on('will-quit', () => {
   void stopMcpServer();
+  shutDownDuckDB();
+});
+
+app.on('quit', shutDownDuckDB);
+
+// Quitting with a query in flight in a DuckDB worker thread of this process
+// (the MCP server's instance) aborted the process as its worker threads were
+// torn down, and sent a crash report for what the user saw as a normal quit.
+// 'exit' is the last point where the workers still run: Electron emits it
+// from app 'quit', and Node from process.exit(). The query engine's own
+// process is not drained: it is killed (shutDownDuckDB), which goes through
+// no such teardown.
+process.on('exit', () => {
+  drainDuckDBClientsSync();
 });
 
 // Electron's ESM main entry does not support top-level await at launch, so the

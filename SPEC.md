@@ -153,16 +153,16 @@ The interface is exported from `@costgoblin/core/browser`. The renderer accesses
 
 ### Worker Thread Architecture
 
-DuckDB and S3 sync run in dedicated worker threads so the main process stays responsive.
+DuckDB and S3 sync run outside the main thread so the main process stays responsive, and DuckDB runs outside the main process so a native failure in it ends a query, not the app.
 
 ```
 Main Process
-  ├── DuckDB Worker Thread    # All query execution
+  ├── DuckDB Process          # All query execution (Electron utility process)
   ├── S3 Sync Worker Thread   # Download + repartition
   └── Window (Renderer)       # React UI
 ```
 
-- **DuckDB worker** owns the database exclusively. Queries arrive via structured-clone messages; results are serialized back to main. Connection pooling and prepared statement cache are internal to the worker.
+- **DuckDB process** owns the database exclusively. Queries arrive via structured-clone messages; results are serialized back to main. Connection pooling and prepared statement cache are internal to it. The main process supervises it: when it exits unexpectedly, the queries it was running fail with a clear error, a new process starts with the same settings, the rollup is re-warmed, and the window shows a notice. After 3 unexpected exits within 10 minutes it is no longer restarted, and the automatic rollup build is paused, until the user restarts it from that notice. The sandboxed MCP instance stays a worker thread of the main process.
 - **Sync worker** runs S3 downloads and DuckDB repartitioning. Progress events stream back to main for UI updates. Cancellation propagates via `AbortController` signaling.
 - Workers communicate via typed messages (`{ kind, id, ... }` discriminated unions). No `any` types cross the worker boundary.
 
@@ -361,6 +361,7 @@ Everything lives under Electron `userData`, organized into named **workspaces**
               *.parquet
             cost-opt-YYYY-MM-DD/            # Cost-opt is split by export date during sync
           rollup/                           # Pre-aggregated daily rollup + manifest
+          resource-rollup/                  # Each month's costliest (resource, description) pairs, for the Table widget
           meta/
             sync-etags*.json                # Per-period file etags for diff
             sync-timestamps.json

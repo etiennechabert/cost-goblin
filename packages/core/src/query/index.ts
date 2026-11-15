@@ -11,6 +11,8 @@ export {
   buildSource,
   buildMaterializeBaseQuery,
   buildRollupPartitionQuery,
+  buildResourceTopQuery,
+  buildResourceRowsQuery,
   buildGrainProbeQuery,
   buildExclusionClauses,
   buildFilterClauses,

@@ -22,6 +22,7 @@ costgoblin/
   scripts/                  # ci/ policy tests, build/ packaging, aws-exports/ template, gcp-focus-exporter/ (own lockfile)
   docs/                     # costgoblin.com website (incl. the GDPR privacy.html) and design docs
   .gitar/                   # Gitar AI-review config: review guidance, rules, risk and auto-apply policy
+  .claude/                  # Claude Code project config: shared skills, settings.json and the hooks it runs
 ```
 
 **Package dependency rules:**
@@ -68,8 +69,9 @@ Follow this sequence for EVERY feature:
 7. Run: vitest run <test-file> → see tests pass (green)
 8. Run: npm run check → full verification (MUST pass before moving on)
 9. If working on UI: npm run dev in desktop/ to visually verify
-10. After pushing & opening the PR — close the review loop (see "After pushing"):
-    - Run `/code-review xhigh --fix` yourself (via the `Skill` tool), review the fixes it applies, and re-run npm run check
+10. After pushing & opening the PR (as a draft) — close the review loop (see "After pushing"):
+    - Run `/code-review xhigh --fix` yourself (via the `Skill` tool), review the fixes it applies, re-run npm run check, and push them
+    - Comment on the PR that the review ran, then mark the PR ready for review (never before)
     - Address every sentry[bot] review comment on the PR
     - Reply to every gitar-bot[bot] finding, whether you agree with it or not
     - Read SonarCloud's new issues on the PR (even when its gate passes) and fix the valid ones
@@ -129,6 +131,8 @@ type QueryState<T> =
 ## Testing Approach
 
 In Vitest, a `vi.fn(impl)` from a `vi.mock` factory is reset with `mockReset()` in `afterEach`: since Vitest 3, `vi.restoreAllMocks()` only restores `vi.spyOn` spies, so an override or an unused `…Once` leaks into the next test.
+
+A test never runs a `git` command that writes (`git init`, `git config`, `git commit`), even on a temp directory. The pre-commit hook runs the whole suite with `GIT_DIR` exported, so the command lands on this clone: a `git init <tmpdir>` there set `core.bare = true` in the shared config and broke every worktree. Build a throwaway repository by hand (`.git/HEAD`, `objects/`, `refs/`), and give a `git` that has to look at another directory an environment without the variables `git rev-parse --local-env-vars` lists.
 
 A main-process rejection reaches the renderer prefixed by Electron (`Error invoking remote method 'query:costs': Error: …`), so nothing compares an IPC error's whole message: a cancelled query goes through `isQueryCancelled`, and a UI test's mock rejects with the prefixed text. A bare message in a mock is how `useQuery`'s retry stayed dead in the app with its tests green.
 
@@ -240,9 +244,13 @@ So the lifecycle is: tag `v0.2.6` released → first PR bumps both to `0.2.7` �
 
 ## After pushing — close the review loop
 
-A development cycle isn't done when the code is pushed. Once the changes are pushed and the PR is open, do ALL of the following before considering the work finished. Re-check the bots after every push: each one reviews the new head again.
+A development cycle isn't done when the code is pushed. Once the changes are pushed and the PR is open, do ALL of the following before considering the work finished. Re-check the bots after every push: each one reviews the new head again, Sentry and Gitar only once the PR is ready.
 
-### 1. `/code-review xhigh --fix`
+**The PR is opened as a draft** (`gh pr create --draft`) and turns ready for review only at the end of step 1. `sentry[bot]` and `gitar-bot[bot]` review no draft (Sentry skips them, and Gitar's "Skip drafts" setting is on), so the first code they read has already been through the local review. CI, the CLA check and SonarCloud run on a draft as on any PR.
+
+Sentry and Gitar start when the PR turns ready: Sentry as the `Seer Code Review` check, Gitar with its summary comment about a minute later. Until that check has finished and that comment is there, an empty comment list means they haven't run yet, not that they found nothing.
+
+### 1. `/code-review xhigh --fix`, then ready for review
 
 At the end of a dev cycle (changes just pushed), run `/code-review xhigh --fix` — a deep, multi-agent review that applies its findings to the working tree.
 
@@ -250,6 +258,23 @@ At the end of a dev cycle (changes just pushed), run `/code-review xhigh --fix` 
 - `xhigh` reviews the current branch; `/code-review xhigh <PR#>` reviews a specific GitHub PR. `--fix` applies the review's findings to the working tree after it completes (use `--comment` instead to post them as inline PR comments).
 - After it applies fixes: review the resulting diff, run `npm run check` (build the worker first — see the versioning note above), then commit and push. Treat anything it changed as a normal change that must pass verification.
 - The lighter effort levels (`/code-review` at low…high, optionally `--fix` / `--comment`) run faster for a quick pass mid-development; `xhigh` is the end-of-cycle pass. Run `max` only when the user explicitly asks for it.
+
+Once the review's fixes are pushed, or it found nothing to fix, finish the step in this order:
+
+1. **Comment on the PR** that `/code-review xhigh --fix` ran. Open with "`/code-review xhigh --fix` ran on <commit>", the commit being the one it reviewed, then say what came of it: the findings and the commit that fixes them, any finding left unfixed and why, or that there were none.
+2. **Mark the PR ready for review**, and not before: a draft without that comment hasn't been through the review, whatever else was run on it. A lighter `/code-review` pass doesn't count.
+
+```bash
+gh pr create --draft --title "…" --body-file <file>
+gh pr comment <pr> --body-file <file>
+gh pr ready <pr>
+```
+
+Both bodies go in a file: as a shell string, a double-quoted one runs its backtick spans as commands, and a single-quoted one ends at the first apostrophe.
+
+If a later cycle on the same PR runs the review again, that run gets its own comment. The PR stays ready.
+
+**A hook holds a Claude Code session to this order.** For this repository's PRs, `.claude/hooks/pr-guard.mjs`, which `.claude/settings.json` runs before each Bash command, refuses a `gh pr create` without `--draft`, and a `gh pr ready` while the PR has no comment opening with "`/code-review xhigh --fix` ran". It reads GitHub before the command starts, so `gh pr ready` goes in a command of its own: after the one that posts the comment, and never in the one that opens the PR. It is no check on the PR itself: it sees only the `gh pr` commands a session runs.
 
 ### 2. Sentry comments
 
@@ -271,7 +296,7 @@ Keep replies professional and free of any AI attribution (see global git rules).
 
 ### 3. Gitar review
 
-Gitar (`gitar-bot[bot]`) also reviews every PR: one summary comment on the PR, plus an inline comment per finding. **Reply to every Gitar finding, whether you agree with it or not**: an unanswered finding can't be told apart from an ignored one.
+Gitar (`gitar-bot[bot]`) also reviews every PR once it is ready for review: one summary comment on the PR, plus an inline comment per finding. **Reply to every Gitar finding, whether you agree with it or not**: an unanswered finding can't be told apart from an ignored one.
 
 For each inline `gitar-bot[bot]` finding:
 1. **Verify it against the actual code**, as for Sentry.
@@ -298,7 +323,7 @@ gh api -X POST repos/etiennechabert/cost-goblin/issues/comments/<id>/reactions -
 
 **Gitar can commit to the branch:** when someone ticks a suggestion's "Apply fix" box, replies `gitar fix`, turns on auto-apply, or adds the `gitar-managed` label. It also pushes a repair when one of its own commits breaks CI. If the remote branch moved, `git pull --ff-only` before pushing.
 
-**Editing `.gitar/`.** Gitar filters these files before each review, so put every instruction under a heading that matches it. On #716 a "flag this" note inside the "Don't comment on" list was dropped and never reached the reviewer. `npm run check` (`scripts/ci/gitar-config.test.mjs`) fails when a `.gitar/` file names a path or identifier that no longer exists, or when `review/` plus `instructions/` grow past 32 KB. See `.gitar/README.md` for what each file does.
+**Editing `.gitar/`.** Gitar filters these files before each review, so put every instruction under a heading that matches it. On #716 a "flag this" note inside the "Don't comment on" list was dropped and never reached the reviewer. A workflow rule added to a section of this file that `.gitar/instructions/cost-goblin.md` lists as repository rules, such as "What NOT To Do", says it is the maintainer's local workflow, or Gitar asks it of every PR author (#834). `npm run check` (`scripts/ci/gitar-config.test.mjs`) fails when a `.gitar/` file names a path or identifier that no longer exists, or when `review/` plus `instructions/` grow past 32 KB. See `.gitar/README.md` for what each file does.
 
 ### 4. SonarCloud findings
 
@@ -317,14 +342,19 @@ curl -s "https://sonarcloud.io/api/hotspots/search?projectKey=etiennechabert_cos
 ## Key Architecture Decisions
 
 - **Tag normalization at query time** — aliases applied via SQL, not during sync. Changing aliases takes effect immediately.
-- **`uv-threadpool-init.js` stays the main process's first import** — every DuckDB call in flight holds one thread of libuv's pool, which is one per process (4 by default) and shared with the main process's file, DNS, crypto and zlib calls. The import sizes the pool (`uvThreadpoolSize` in `packages/desktop/src/main/uv-threadpool.ts`) and libuv reads that once, on first use: nothing may use the pool before it. A new source of concurrent DuckDB calls goes into `uvThreadpoolSize`.
+- **`uv-threadpool-init.js` stays the main process's first import** — every DuckDB call in flight holds one thread of libuv's pool, which is one per process (4 by default) and shared with the main process's file, DNS, crypto and zlib calls. The import sizes the pool (`uvThreadpoolSize` in `packages/desktop/src/main/uv-threadpool.ts`) and libuv reads that once, on first use: nothing may use the pool before it. A new source of concurrent DuckDB calls goes into `uvThreadpoolSize`. The query engine's process is spawned with the same size (`duckdbProcessEnv` in `duckdb-supervisor.ts`), so one size covers both.
 - **The cost scope's freshness lag is applied where a query receives its range** — every desktop query handler and MCP tool caps the requested range at today − `lagDays` (`capToFreshnessLag` in `packages/core/src/query/freshness.ts`; `resolveToolDateRange` in the MCP tools) and answers empty when nothing is left, so a new handler or tool must do the same. The Explorer with "Apply cost scope" off is the one place that reads the newest days.
 - **Billing days and hours are UTC** — `buildSource` cuts `usage_date`/`usage_hour` from `CHARGE_PERIOD_START_UTC_SQL` (`packages/core/src/query/builder.ts`). Never cast `ChargePeriodStart` yourself: AWS writes it TIMESTAMPTZ, and `::DATE` on that takes the DuckDB session's zone, which is the machine's.
 - **Provider quirks are read in one place** — `providerColumnExprs` (`packages/core/src/query/provider-projection.ts`) holds the `buildSource` columns whose source differs by provider type: on GCP, `region` falls back to `x_Location` and `pricing_category` takes FOCUS casing. A column only one type reads goes in its `OPTIONAL_SOURCE_COLUMNS`, and a change to a type's read bumps its `SOURCE_PROJECTION_REVISION`, which re-rolls that type's rollups only.
+- **The Table widget reads the resource rollup only when that proves the answer** — `queryResourceRollupTable` (`packages/desktop/src/main/handlers/resource-table.ts`) serves a range no month of which leaves a pair out, named pairs the rollup holds whole, or a page whose last row clears the tail bound, and returns null (read raw) for anything else. The rollup holds each month's costliest (resource, description) pairs only, so a new reader of `resource-rollup/` must make the same proof (`docs/rollup-design.md` §10).
 - **FOCUS 1.2 is the core schema** — the AWS source is the FOCUS 1.2 Data Export (Parquet); providers are receivers that deliver FOCUS Parquet into per-month `raw/{tier}-{YYYY-MM}/` dirs. Queries read the downloaded Parquet as-is (no repartitioning); per-month dirs give file-level date filter pushdown.
+- **DuckDB runs in a process of its own, which main supervises** — an Electron utility process running the `duckdb-worker` bundle, behind the same `DuckDBClient` (`packages/desktop/src/main/duckdb-supervisor.ts`). When it dies, the queries it was running reject, a new process starts with the same settings, the rollup is re-warmed and the renderer shows a notice. After 3 deaths in 10 minutes it is not restarted, and the automatic rollup build stays paused, until the user asks. So any query can reject with "The query engine stopped unexpectedly…", and state held inside DuckDB (a `SET`, a temp table) is gone with the process: settings go through `configure`, which the supervisor replays. The MCP instance and the GCP canonicalizer are still worker threads of main.
+- **DuckDB gets at most 4 GB, whatever the machine has** — Chromium's allocator serves each Electron process, the DuckDB one included, from one 16 GiB reservation and ends the process when that runs out. A higher `memory_limit` never spills to disk, it kills the query engine (`MAX_MEMORY_GB` in `packages/desktop/src/main/duckdb-tuning.ts`). Its own process did not move that wall; raise the limit only once DuckDB no longer allocates from Chromium's allocator.
 - **No SQLite** — all state is YAML (user config) or JSON (app state). DuckDB is the only database.
 - **Only a missing config file is "absent"** — a YAML config that exists but doesn't load (a YAML or validation error, EACCES) is reported, never written over with defaults, and nothing runs as if it were absent: queries fail rather than run without cost-scope.yaml, and config bundles fail naming the file, except the LAN data share, which leaves out (and logs) a views.yaml that doesn't load (`buildCurrentBundle`'s `brokenViews: 'skip'`). Never `.catch(() => undefined)` a config load.
 - **A DuckDB worker thread is never ended under a running query** — that aborts the process hosting the thread (`libc++abi: terminating due to uncaught exception of type Napi::Error`), which for the MCP instance is Electron's main process. Stop one through `DuckDBClient.terminate()` (`packages/desktop/src/main/duckdb-client.ts`), which cancels what is in flight and waits for it; never call `worker.terminate()` on it yourself, and never "force" it when the wait runs out.
+- **A view's cancel never stops a rollup build** — `cancelPendingQueries()` (sent on every navigation and date change) spares `runBuildQuery`, because a cancelled partition build is not retried and its month then reads raw. Every query a build runs goes through it, its row count included. `cancelAllQueries()` is for a caller about to drop what the builds read or write.
+- **Quitting drains the DuckDB worker threads first** — the main process exiting ends every worker thread, under a running query as under none. The `exit` handler in `main.ts` calls `drainDuckDBClientsSync()`: it cancels everything and blocks until each DuckDB worker thread (the MCP instance) has settled every request posted to it, read from a counter in shared memory because an exiting process receives no messages. A new kind of request the worker runs asynchronously must be counted on both sides (`posted` in the client, `requestSettled` in the worker). The query engine's own process is not drained: its supervisor kills it, and a killed process goes through no such teardown.
 - **CostApi interface is the boundary** — UI codes against the interface, never calls DuckDB directly. Enables mock testing and future web mode.
 - **Dark mode default, light mode available** — two chart color palettes (standard + Okabe-Ito colorblind-safe), togglable.
 
@@ -344,6 +374,7 @@ curl -s "https://sonarcloud.io/api/hotspots/search?projectKey=etiennechabert_cos
 - visx from Airbnb (charts — D3 primitives as React components)
 - TanStack Table (headless table with virtual scrolling)
 - No animation library — Tailwind utilities for CSS motion, hand-rolled rAF where JS is needed. JS-driven motion must gate on `useReducedMotion` (`packages/ui/src/hooks/use-reduced-motion.ts`); CSS motion should use Tailwind's `motion-reduce:` variant.
+- Motion that loops (a loader) animates `transform` or `opacity` only, through CSS or `element.animate`, so the compositor runs it. Never move it from `requestAnimationFrame`, by React state or by writing styles: on a dashboard of a few thousand nodes every such frame rebuilds the page's layers on the main thread (13 of each 16 ms, measured), and a state update per frame keeps `useQuery`'s transition-applied results from ever rendering. jsdom shows neither cost: check with a renderer CPU profile or trace in the built app.
 - Lucide React (icons)
 - Every button gets its pointer cursor and a hover/press state layer from the base layer of `packages/desktop/src/renderer/app.css` (a `background-image` tint of its text colour). Don't add press effects with `transform` or `filter`: they move the target between press and release, and make the button the containing block of what it positions. A button stretched over a card (`after:absolute after:inset-0`) sets `data-feedback="none"`, and the card draws the hover and press states; so does a `role="button"` surface with its own feedback (a chart's drag-to-select plot). cmdk writes `data-disabled="false"` on enabled items: a disabled selector is `[data-disabled]:not([data-disabled='false'])`, never bare `[data-disabled]`.
 - Rows that are tidied or sorted from their own text, with React keys taken from it (the tag editor's alias rules), stay pinned while the user types and re-sort only once focus leaves the list. Re-keying a row unmounts the focused input, or the button that focus or a click is heading to.
@@ -353,7 +384,8 @@ curl -s "https://sonarcloud.io/api/hotspots/search?projectKey=etiennechabert_cos
 ## What NOT To Do
 
 - Do NOT skip `npm run check`. Every change must pass before moving on.
-- Do NOT consider a pushed change "done" until `/code-review xhigh --fix` has been run on it, every `sentry[bot]` and `gitar-bot[bot]` comment is answered, and SonarCloud's new issues are triaged.
+- Do NOT open a PR ready for review (maintainer's local workflow, not a repository rule). It starts as a draft and turns ready only at the end of step 1 of "After pushing": `/code-review xhigh --fix` has run on it and the PR has the comment saying so.
+- Do NOT consider a pushed change "done" (same local workflow) until `/code-review xhigh --fix` has been run on it, every `sentry[bot]` and `gitar-bot[bot]` comment is answered, and SonarCloud's new issues are triaged.
 - Do NOT add `any`, `@ts-ignore`, or `eslint-disable` to make code compile.
 - Do NOT write tests after implementation. Write them before or alongside.
 - Do NOT import from `core` into `ui` for anything except types.

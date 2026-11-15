@@ -416,7 +416,8 @@ describe('createAppContext: query result cache', () => {
     const invalidate = vi.spyOn(h.app.rollupStore, 'invalidate');
 
     await h.app.clearAllCaches();
-    expect(h.db.cancelPendingQueries).toHaveBeenCalledTimes(1);
+    // Builds included: the rollup they write is invalidated next.
+    expect(h.db.cancelAllQueries).toHaveBeenCalledTimes(1);
     expect(invalidate).toHaveBeenCalledTimes(1);
     expect(h.app.state).toMatchObject({ config: null, dimensions: null, views: null, costScope: null, accountMap: null, regionMap: null, orgAccountsPath: null });
     await h.app.runQuery(sql);
@@ -431,6 +432,7 @@ describe('createAppContext: rollup lifecycle', () => {
     h.app.warmupBase();
     expect(await h.app.awaitWarmup(10_000)).toBe(false);
     await vi.waitFor(() => { expect(h.app.rollupStore.getStatus().state).toBe('ready'); }, { timeout: 15_000 });
+    await h.app.awaitResourceRollup();
     await flush();
     return h;
   }
@@ -439,6 +441,36 @@ describe('createAppContext: rollup lifecycle', () => {
     // A directory where the daily etag sidecar belongs makes it unreadable.
     return mkdir(providerEtagPath(h.ws.dataDir, name, 'daily'), { recursive: true });
   }
+
+  it("counts a built partition's rows as a step of its build, out of a view's cancel", async () => {
+    const h = await harness({ data: 'synthetic', rollupBuilds: true });
+    const pooled = vi.spyOn(h.db, 'runQuery');
+    const builds = vi.spyOn(h.db, 'runBuildQuery');
+    h.app.warmupBase();
+    await vi.waitFor(() => { expect(h.app.rollupStore.getStatus().state).toBe('ready'); }, { timeout: 15_000 });
+
+    // On the pool it queues behind a view's queries, where the next
+    // navigation's cancel reaches it and the month it counted is left out.
+    const isRowCount = (sql: string): boolean => sql.startsWith('SELECT COUNT(*)::BIGINT AS n FROM read_parquet(');
+    expect(builds.mock.calls.filter(([sql]) => isRowCount(sql)).length).toBeGreaterThan(0);
+    expect(pooled.mock.calls.filter(([sql]) => isRowCount(sql))).toEqual([]);
+  });
+
+  it("runs the resource rollup's own queries as steps of its build too", async () => {
+    const h = await harness({ data: 'synthetic', rollupBuilds: true });
+    const pooled = vi.spyOn(h.db, 'runQuery');
+    const builds = vi.spyOn(h.db, 'runBuildQuery');
+    h.app.warmupBase();
+    await vi.waitFor(() => { expect(h.app.rollupStore.getStatus().state).toBe('ready'); }, { timeout: 15_000 });
+    await h.app.awaitResourceRollup();
+    expect(h.app.resourceRollupStore.isReady()).toBe(true);
+
+    // The heavy set, the tail reads and the row counts: on the pool, each
+    // queues behind a view's queries and is cancelled by the next navigation.
+    const readsResourceRollup = (sql: string): boolean => sql.includes('resource-rollup');
+    expect(builds.mock.calls.filter(([sql]) => readsResourceRollup(sql)).length).toBeGreaterThan(0);
+    expect(pooled.mock.calls.filter(([sql]) => readsResourceRollup(sql))).toEqual([]);
+  });
 
   it('settles without building when nothing is configured', async () => {
     const h = await harness({ config: 'none' });
@@ -553,6 +585,81 @@ describe('createAppContext: rollup lifecycle', () => {
     const warn = vi.spyOn(logger, 'warn');
     h.app.maintainRollup(['2026-01']);
     await vi.waitFor(() => { expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^rollup-maintain: /)); });
+  });
+
+  it('builds nothing on its own while rollup builds are paused, and serves what is built', async () => {
+    const h = await harness({ data: 'synthetic', rollupBuilds: true });
+    expect(h.app.rollupBuildsPaused()).toBe(false);
+    h.app.pauseRollupBuilds();
+    expect(h.app.rollupBuildsPaused()).toBe(true);
+    const maintain = vi.spyOn(h.app.rollupStore, 'maintainPeriods');
+
+    h.app.warmupBase();
+    expect(await h.app.awaitWarmup(10_000)).toBe(false);
+    // Settled, not left "computing" and not "failed": there is nothing to wait for.
+    expect(h.app.rollupStore.getStatus()).toEqual({ state: 'idle' });
+    expect(maintain).not.toHaveBeenCalled();
+
+    // Asked for again: the build that was held back starts now.
+    h.app.resumeRollupBuilds();
+    expect(h.app.rollupBuildsPaused()).toBe(false);
+    await vi.waitFor(() => { expect(h.app.rollupStore.getStatus()).toEqual({ state: 'ready', periods: 2 }); }, { timeout: 15_000 });
+
+    // Paused with a rollup built: it keeps serving every month it holds.
+    h.app.pauseRollupBuilds();
+    maintain.mockClear();
+    h.app.warmupBase();
+    expect(await h.app.awaitWarmup(10_000)).toBe(true);
+    expect(h.app.rollupStore.getStatus()).toEqual({ state: 'ready', periods: 2 });
+    expect(maintain).not.toHaveBeenCalled();
+  });
+
+  it('drops the months a sync changed instead of re-rolling them while builds are paused', async () => {
+    const h = await built();
+    const sql = 'SELECT 1 AS n';
+    await h.app.runQuery(sql);
+    h.app.pauseRollupBuilds();
+    const maintain = vi.spyOn(h.app.rollupStore, 'maintainPeriods');
+
+    h.app.maintainRollup(['2026-02', '2025-06']);
+
+    // February's partition was built from files that are gone: it must not
+    // be served, and nothing rebuilds it until builds resume.
+    await vi.waitFor(() => { expect([...h.app.rollupStore.getValidPeriods()]).toEqual(['2026-01']); });
+    await vi.waitFor(async () => { expect(await exists(join(h.ws.dataDir, AWS, 'rollup', 'daily-2026-02'))).toBe(false); });
+    expect(maintain).not.toHaveBeenCalled();
+    // Results cached from the replaced files went with it.
+    const before = h.db.statements.length;
+    await h.app.runQuery(sql);
+    expect(h.db.statements).toHaveLength(before + 1);
+
+    h.app.resumeRollupBuilds();
+    await vi.waitFor(() => { expect(h.app.rollupStore.getStatus()).toEqual({ state: 'ready', periods: 2 }); }, { timeout: 15_000 });
+  });
+
+  it('holds the resource rollup back too while builds are paused', async () => {
+    const h = await built();
+    const served = (): string[] => [...h.app.resourceRollupStore.getValidPeriods()].sort((a, b) => a.localeCompare(b));
+    expect(served()).toEqual(['2026-01', '2026-02']);
+    h.app.pauseRollupBuilds();
+    const maintain = vi.spyOn(h.app.resourceRollupStore, 'maintain');
+
+    // A warmup that finds the rollup built goes on to the resource rollup,
+    // and so does a sync's re-roll: neither builds while paused.
+    h.app.warmupBase();
+    expect(await h.app.awaitWarmup(10_000)).toBe(true);
+    h.app.maintainRollup(['2026-02']);
+    await h.app.awaitResourceRollup();
+    expect(maintain).not.toHaveBeenCalled();
+    // February was built from files the sync replaced: no longer served.
+    expect(served()).toEqual(['2026-01']);
+
+    h.app.resumeRollupBuilds();
+    await vi.waitFor(() => { expect(h.app.rollupStore.getStatus()).toEqual({ state: 'ready', periods: 2 }); }, { timeout: 15_000 });
+    await vi.waitFor(async () => {
+      await h.app.awaitResourceRollup();
+      expect(served()).toEqual(['2026-01', '2026-02']);
+    }, { timeout: 15_000 });
   });
 
   it('drops the rollup and re-warms when the cost scope changes', async () => {

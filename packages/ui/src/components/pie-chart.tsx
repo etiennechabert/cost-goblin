@@ -1,7 +1,8 @@
-import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { memo, useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Group } from '@visx/group';
 import { Pie } from '@visx/shape';
 import { OTHER_COLOR } from '../lib/palette.js';
+import type { SeriesColors } from '../lib/palette.js';
 import { CollapsedChart } from './collapsed-chart.js';
 import { useContainerWidth } from '../lib/use-container-width.js';
 import { formatDollars } from './format.js';
@@ -64,6 +65,252 @@ function legendTextClass(isDimmed: boolean, isHovered: boolean): string {
   return 'text-text-secondary';
 }
 
+function sliceColor(slice: DisplaySlice, seriesColor: SeriesColors): string {
+  return slice.folded ? OTHER_COLOR : seriesColor(slice.name);
+}
+
+/** What a slice cost in the previous period. The folded remainder has no such
+ *  cost: it is no entity, and only shares its name with one that may be called
+ *  "Other". */
+function previousCostOf(slice: DisplaySlice, previousCosts: ReadonlyMap<string, number> | undefined): number | undefined {
+  return slice.folded ? undefined : previousCosts?.get(slice.name);
+}
+
+/** A slice's change since the previous period, in percent. None without a
+ *  previous cost to divide by. */
+function percentDelta(cost: number, previousCost: number | undefined): number | undefined {
+  return previousCost !== undefined && previousCost > 0 ? ((cost - previousCost) / previousCost) * 100 : undefined;
+}
+
+// A dashboard renders its pies on every cross-chart hover, whichever chart
+// the pointer is over: the widget reads the focus, and hands the pie new
+// handler closures and a new title element. The plot, the legend, the slices
+// and the legend rows are drawn through `memo` so that such a render draws
+// what it changes: nothing when the focus is on another dimension, the slice
+// and the row that take or lose it when it moves. (A focus that appears or
+// goes dims or lights every slice, so all of them render.) That holds only
+// while every prop they get keeps its identity across the chart's renders:
+// the memoized slices and colors, primitives, and callbacks that don't change
+// (`onSliceClick` is the chart's own, not the host's).
+
+/** What a slice and its legend row do with the pointer. */
+interface SliceHandlers {
+  readonly onEnter: (slice: DisplaySlice) => void;
+  readonly onLeave: () => void;
+  readonly onSliceClick: ((name: string) => void) | undefined;
+}
+
+interface PieSliceMarkProps extends SliceHandlers {
+  readonly slice: DisplaySlice;
+  readonly path: string;
+  readonly color: string;
+  readonly hovered: boolean;
+  readonly dimmed: boolean;
+}
+
+function PieSliceMark({ slice, path, color, hovered, dimmed, onEnter, onLeave, onSliceClick }: PieSliceMarkProps) {
+  const sliceName = slice.name;
+  const interactive = !slice.folded && onSliceClick !== undefined;
+
+  return (
+    <g
+      onMouseEnter={() => { onEnter(slice); }}
+      onMouseLeave={onLeave}
+      onClick={() => { if (interactive) onSliceClick(sliceName); }}
+      onKeyDown={(e) => {
+        if (!interactive || (e.key !== 'Enter' && e.key !== ' ')) return;
+        // On anything but a real button, Space also scrolls the page.
+        if (e.key === ' ') e.preventDefault();
+        onSliceClick(sliceName);
+      }}
+      role={interactive ? 'button' : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      style={{ cursor: interactive ? 'pointer' : 'default' }}
+    >
+      <path
+        d={path}
+        fill={color}
+        opacity={dimmed ? 0.3 : 1}
+        stroke={hovered ? '#ffffff' : 'transparent'}
+        strokeWidth={hovered ? 2 : 0}
+        style={{
+          filter: hovered ? 'brightness(1.3)' : 'none',
+          transition: 'all 0.15s ease',
+        }}
+      />
+    </g>
+  );
+}
+
+const MemoPieSliceMark = memo(PieSliceMark);
+
+interface PiePlotProps extends SliceHandlers {
+  // visx takes a mutable array.
+  readonly slices: DisplaySlice[];
+  readonly pieSize: number;
+  readonly hoveredId: string | null;
+  readonly seriesColor: SeriesColors;
+}
+
+function PiePlot({ slices, pieSize, hoveredId, seriesColor, onEnter, onLeave, onSliceClick }: PiePlotProps) {
+  const radius = pieSize / 2;
+
+  return (
+    <svg width={pieSize + 32} height={pieSize + 16}>
+      <Group top={radius + 8} left={radius + 16}>
+        <Pie<DisplaySlice>
+          data={slices}
+          pieValue={(d) => d.cost}
+          outerRadius={radius}
+          innerRadius={0}
+          padAngle={0.015}
+        >
+          {(pie) =>
+            pie.arcs.map((arc) => {
+              const id = sliceId(arc.data);
+              return (
+                <MemoPieSliceMark
+                  key={id}
+                  slice={arc.data}
+                  path={pie.path(arc) ?? ''}
+                  color={sliceColor(arc.data, seriesColor)}
+                  hovered={hoveredId === id}
+                  dimmed={hoveredId !== null && hoveredId !== id}
+                  onEnter={onEnter}
+                  onLeave={onLeave}
+                  onSliceClick={onSliceClick}
+                />
+              );
+            })
+          }
+        </Pie>
+      </Group>
+    </svg>
+  );
+}
+
+const MemoPiePlot = memo(PiePlot);
+
+interface PieLegendRowProps extends SliceHandlers {
+  readonly slice: DisplaySlice;
+  readonly color: string;
+  readonly hovered: boolean;
+  readonly dimmed: boolean;
+  readonly previousCost: number | undefined;
+  /** Tells the chart which element draws the row, or null when it's gone. */
+  readonly registerRow: (id: string, el: HTMLElement | null) => void;
+}
+
+function PieLegendRow({ slice, color, hovered, dimmed, previousCost, registerRow, onEnter, onLeave, onSliceClick }: PieLegendRowProps) {
+  const id = sliceId(slice);
+  const itemRef = useCallback((el: HTMLElement | null) => { registerRow(id, el); }, [id, registerRow]);
+  const pctDelta = percentDelta(slice.cost, previousCost);
+
+  const isInteractive = !slice.folded && onSliceClick !== undefined;
+  const itemClassName = [
+    'rounded text-[11px] transition-colors w-full text-left',
+    isInteractive ? 'cursor-pointer' : '',
+    hovered ? 'bg-accent-muted/50 px-1.5 py-1' : 'flex items-center gap-1.5 px-1.5 py-0.5',
+  ].join(' ');
+  const itemProps = {
+    onMouseEnter: () => { onEnter(slice); },
+    onMouseLeave: onLeave,
+  };
+
+  const content = hovered ? (
+    <div className="flex flex-col gap-0.5">
+      <div className="flex items-center gap-1.5">
+        <span className="inline-block w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: color }} />
+        <span className="font-semibold text-text-primary text-xs break-all">{slice.name}</span>
+      </div>
+      <div className="flex items-center gap-2 pl-4">
+        <span className="tabular-nums text-text-primary font-medium">{formatDollars(slice.cost)} ({slice.percentage.toFixed(1)}%)</span>
+        {pctDelta !== undefined && (
+          <span className={`text-[10px] tabular-nums ${pctDelta >= 0 ? 'text-negative' : 'text-positive'}`}>
+            {pctDelta >= 0 ? '↑' : '↓'}{Math.abs(pctDelta).toFixed(1)}%
+          </span>
+        )}
+      </div>
+    </div>
+  ) : (
+    <>
+      <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: color }} />
+      <span className={`truncate min-w-0 flex-1 ${legendTextClass(dimmed, hovered)}`}>
+        {slice.name}
+      </span>
+      <span className={`tabular-nums shrink-0 whitespace-nowrap ${legendTextClass(dimmed, hovered)}`}>
+        {formatDollars(slice.cost)} ({slice.percentage.toFixed(1)}%)
+      </span>
+      {pctDelta !== undefined && (
+        <span className={`text-[10px] tabular-nums shrink-0 ${pctDelta >= 0 ? 'text-negative' : 'text-positive'}`}>
+          {pctDelta >= 0 ? '↑' : '↓'}{Math.abs(pctDelta).toFixed(1)}%
+        </span>
+      )}
+    </>
+  );
+
+  if (isInteractive) {
+    return (
+      <button
+        type="button"
+        ref={itemRef}
+        {...itemProps}
+        onClick={() => { onSliceClick(slice.name); }}
+        className={`${itemClassName} bg-transparent border-none p-0 font-[inherit]`}
+      >
+        {content}
+      </button>
+    );
+  }
+
+  return (
+    <div
+      ref={itemRef}
+      {...itemProps}
+      className={itemClassName}
+    >
+      {content}
+    </div>
+  );
+}
+
+const MemoPieLegendRow = memo(PieLegendRow);
+
+interface PieLegendProps extends SliceHandlers {
+  readonly slices: readonly DisplaySlice[];
+  readonly hoveredId: string | null;
+  readonly seriesColor: SeriesColors;
+  readonly previousCosts: ReadonlyMap<string, number> | undefined;
+  readonly registerRow: (id: string, el: HTMLElement | null) => void;
+}
+
+/** The legend — HTML for proper text truncation. */
+function PieLegend({ slices, hoveredId, seriesColor, previousCosts, registerRow, onEnter, onLeave, onSliceClick }: PieLegendProps) {
+  return (
+    <div className="flex-1 min-w-0 overflow-y-auto flex flex-col gap-0.5 py-1">
+      {slices.map((d) => {
+        const id = sliceId(d);
+        return (
+          <MemoPieLegendRow
+            key={id}
+            slice={d}
+            color={sliceColor(d, seriesColor)}
+            hovered={hoveredId === id}
+            dimmed={hoveredId !== null && hoveredId !== id}
+            previousCost={previousCostOf(d, previousCosts)}
+            registerRow={registerRow}
+            onEnter={onEnter}
+            onLeave={onLeave}
+            onSliceClick={onSliceClick}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+const MemoPieLegend = memo(PieLegend);
+
 function PieChartInner({
   data,
   title,
@@ -83,31 +330,47 @@ function PieChartInner({
 }: Omit<PieChartProps, 'collapsed'> & { width: number; height: number }) {
   const [localHovered, setLocalHovered] = useState<string | null>(null);
   const hoveredName = externalHoveredName ?? localHovered;
-  const legendRefs = useRef(new Map<string, HTMLElement>());
+  const legendRows = useRef(new Map<string, HTMLElement>());
+  const registerRow = useCallback((id: string, el: HTMLElement | null) => {
+    if (el === null) { legendRows.current.delete(id); } else { legendRows.current.set(id, el); }
+  }, []);
 
   useEffect(() => {
     if (hoveredName !== null) {
-      legendRefs.current.get(hoveredName)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      legendRows.current.get(hoveredName)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
   }, [hoveredName]);
 
   const displayData = useMemo(() => aggregateOther(data, maxSlices), [data, maxSlices]);
   const ranked = useMemo(() => displayData.filter(d => !d.folded), [displayData]);
   const seriesColor = useSeriesColors(ranked);
-  const colorOf = (slice: DisplaySlice): string => (slice.folded ? OTHER_COLOR : seriesColor(slice.name));
   const pieSize = showLegend ? Math.min(width * 0.38, height - 60) : Math.min(width - 32, height - 60);
-  const radius = pieSize / 2;
+
+  // The host hands over new closures on each of its renders, and it renders
+  // on every cross-chart hover. The slices and rows get callbacks that last
+  // the chart's life, which call the closures of the render on screen: the
+  // refs are set at commit, so a render React has started and not committed
+  // (a transition) can't change what the slices on screen do.
+  const onSliceHoverRef = useRef(onSliceHover);
+  const onSliceClickRef = useRef(onSliceClick);
+  useLayoutEffect(() => {
+    onSliceHoverRef.current = onSliceHover;
+    onSliceClickRef.current = onSliceClick;
+  });
 
   // The folded remainder is no entity, so it highlights nothing elsewhere.
   const handleMouseEnter = useCallback((slice: DisplaySlice) => {
     setLocalHovered(sliceId(slice));
-    onSliceHover?.(slice.folded ? null : slice.name);
-  }, [onSliceHover]);
+    onSliceHoverRef.current?.(slice.folded ? null : slice.name);
+  }, []);
 
   const handleMouseLeave = useCallback(() => {
     setLocalHovered(null);
-    onSliceHover?.(null);
-  }, [onSliceHover]);
+    onSliceHoverRef.current?.(null);
+  }, []);
+
+  const clickSlice = useCallback((name: string) => { onSliceClickRef.current?.(name); }, []);
+  const sliceClick = onSliceClick === undefined ? undefined : clickSlice;
 
   return (
     <div
@@ -153,61 +416,22 @@ function PieChartInner({
       <div className="flex flex-1 min-h-0 gap-2 relative">
         {/* Pie */}
         <div className={showLegend ? 'shrink-0' : 'flex-1 flex justify-center'} style={showLegend ? { width: pieSize + 32 } : undefined}>
-          <svg width={pieSize + 32} height={pieSize + 16}>
-            <Group top={radius + 8} left={radius + 16}>
-              <Pie<DisplaySlice>
-                data={displayData}
-                pieValue={(d) => d.cost}
-                outerRadius={radius}
-                innerRadius={0}
-                padAngle={0.015}
-              >
-                {(pie) =>
-                  pie.arcs.map((arc) => {
-                    const sliceName = arc.data.name;
-                    const interactive = !arc.data.folded && onSliceClick !== undefined;
-                    const color = colorOf(arc.data);
-                    const isHovered = hoveredName === sliceId(arc.data);
-                    const isDimmed = hoveredName !== null && !isHovered;
-                    const path = pie.path(arc) ?? '';
-
-                    return (
-                      <g
-                        key={sliceId(arc.data)}
-                        onMouseEnter={() => { handleMouseEnter(arc.data); }}
-                        onMouseLeave={handleMouseLeave}
-                        onClick={() => { if (interactive) onSliceClick(sliceName); }}
-                        onKeyDown={(e) => { if (interactive && (e.key === 'Enter' || e.key === ' ')) onSliceClick(sliceName); }}
-                        role={interactive ? 'button' : undefined}
-                        tabIndex={interactive ? 0 : undefined}
-                        style={{ cursor: interactive ? 'pointer' : 'default' }}
-                      >
-                        <path
-                          d={path}
-                          fill={color}
-                          opacity={isDimmed ? 0.3 : 1}
-                          stroke={isHovered ? '#ffffff' : 'transparent'}
-                          strokeWidth={isHovered ? 2 : 0}
-                          style={{
-                            filter: isHovered ? 'brightness(1.3)' : 'none',
-                            transition: 'all 0.15s ease',
-                          }}
-                        />
-                      </g>
-                    );
-                  })
-                }
-              </Pie>
-            </Group>
-          </svg>
+          <MemoPiePlot
+            slices={displayData}
+            pieSize={pieSize}
+            hoveredId={hoveredName}
+            seriesColor={seriesColor}
+            onEnter={handleMouseEnter}
+            onLeave={handleMouseLeave}
+            onSliceClick={sliceClick}
+          />
         </div>
 
         {/* Hover label for no-legend mode */}
         {!showLegend && hoveredName !== null && (() => {
           const d = displayData.find(s => sliceId(s) === hoveredName);
           if (d === undefined) return null;
-          const prev = previousCosts?.get(d.name);
-          const pctDelta = prev !== undefined && prev > 0 ? ((d.cost - prev) / prev) * 100 : undefined;
+          const pctDelta = percentDelta(d.cost, previousCostOf(d, previousCosts));
           return (
             <div className="absolute left-1/2 -translate-x-1/2 bottom-2 z-10 rounded-lg bg-bg-secondary/95 border border-border shadow-lg px-3 py-2 text-xs pointer-events-none whitespace-nowrap">
               <span className="font-semibold text-text-primary">{d.name}</span>
@@ -221,95 +445,18 @@ function PieChartInner({
           );
         })()}
 
-        {/* Legend — HTML for proper text truncation */}
-        {showLegend && <div className="flex-1 min-w-0 overflow-y-auto flex flex-col gap-0.5 py-1">
-          {displayData.map((d) => {
-            const color = colorOf(d);
-            const id = sliceId(d);
-            const isHovered = hoveredName === id;
-            const isDimmed = hoveredName !== null && !isHovered;
-
-            const isInteractive = !d.folded && onSliceClick !== undefined;
-            const itemClassName = [
-              'rounded text-[11px] transition-colors w-full text-left',
-              isInteractive ? 'cursor-pointer' : '',
-              isHovered ? 'bg-accent-muted/50 px-1.5 py-1' : 'flex items-center gap-1.5 px-1.5 py-0.5',
-            ].join(' ');
-            const itemRef = (el: HTMLElement | null) => { if (el === null) { legendRefs.current.delete(id); } else { legendRefs.current.set(id, el); } };
-            const itemProps = {
-              onMouseEnter: () => { handleMouseEnter(d); },
-              onMouseLeave: handleMouseLeave,
-            };
-
-            const content = isHovered ? (
-              <div className="flex flex-col gap-0.5">
-                <div className="flex items-center gap-1.5">
-                  <span className="inline-block w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: color }} />
-                  <span className="font-semibold text-text-primary text-xs break-all">{d.name}</span>
-                </div>
-                <div className="flex items-center gap-2 pl-4">
-                  <span className="tabular-nums text-text-primary font-medium">{formatDollars(d.cost)} ({d.percentage.toFixed(1)}%)</span>
-                  {(() => {
-                    const prev = previousCosts?.get(d.name);
-                    if (prev === undefined || prev <= 0) return null;
-                    const pctDelta = ((d.cost - prev) / prev) * 100;
-                    return (
-                      <span className={`text-[10px] tabular-nums ${pctDelta >= 0 ? 'text-negative' : 'text-positive'}`}>
-                        {pctDelta >= 0 ? '↑' : '↓'}{Math.abs(pctDelta).toFixed(1)}%
-                      </span>
-                    );
-                  })()}
-                </div>
-              </div>
-            ) : (
-              <>
-                <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: color }} />
-                <span className={`truncate min-w-0 flex-1 ${legendTextClass(isDimmed, isHovered)}`}>
-                  {d.name}
-                </span>
-                <span className={`tabular-nums shrink-0 whitespace-nowrap ${legendTextClass(isDimmed, isHovered)}`}>
-                  {formatDollars(d.cost)} ({d.percentage.toFixed(1)}%)
-                </span>
-                {(() => {
-                  const prev = previousCosts?.get(d.name);
-                  if (prev === undefined || prev <= 0) return null;
-                  const pctDelta = ((d.cost - prev) / prev) * 100;
-                  return (
-                    <span className={`text-[10px] tabular-nums shrink-0 ${pctDelta >= 0 ? 'text-negative' : 'text-positive'}`}>
-                      {pctDelta >= 0 ? '↑' : '↓'}{Math.abs(pctDelta).toFixed(1)}%
-                    </span>
-                  );
-                })()}
-              </>
-            );
-
-            if (isInteractive) {
-              return (
-                <button
-                  key={id}
-                  type="button"
-                  ref={itemRef}
-                  {...itemProps}
-                  onClick={() => { onSliceClick(d.name); }}
-                  className={`${itemClassName} bg-transparent border-none p-0 font-[inherit]`}
-                >
-                  {content}
-                </button>
-              );
-            }
-
-            return (
-              <div
-                key={id}
-                ref={itemRef}
-                {...itemProps}
-                className={itemClassName}
-              >
-                {content}
-              </div>
-            );
-          })}
-        </div>}
+        {showLegend && (
+          <MemoPieLegend
+            slices={displayData}
+            hoveredId={hoveredName}
+            seriesColor={seriesColor}
+            previousCosts={previousCosts}
+            registerRow={registerRow}
+            onEnter={handleMouseEnter}
+            onLeave={handleMouseLeave}
+            onSliceClick={sliceClick}
+          />
+        )}
       </div>
     </div>
   );

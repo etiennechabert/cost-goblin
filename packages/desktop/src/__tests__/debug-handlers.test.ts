@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { findGhCli, findGitCli } from '@costgoblin/core';
+import { QUERY_ENGINE_PROCESS_NAME } from '../main/duckdb-utility-process.js';
 import { registerDebugHandlers } from '../main/handlers/debug.js';
-import { electronAppState, resetElectronFakes } from './helpers/electron-fake.js';
+import { app as electronApp, electronAppState, resetElectronFakes } from './helpers/electron-fake.js';
 import { at, createHarness, list, type Harness } from './helpers/ipc-harness.js';
 
 /** The debug panel's IPC channels: the query log (list, EXPLAIN, clear), the
@@ -77,6 +78,20 @@ describe('query log', () => {
     const rss = await h.ipc.invoke('debug:get-memory-mb');
     expect(typeof rss).toBe('number');
     expect(Number(rss)).toBeGreaterThan(0);
+  });
+
+  it("counts the query engine's process in the memory figure, and no other child", async () => {
+    const h = await debugApp();
+    const alone = Number(await h.ipc.invoke('debug:get-memory-mb'));
+    // In KB: 3 GB for DuckDB's process, 1 GB for a renderer.
+    electronApp.getAppMetrics.mockReturnValue([
+      { name: QUERY_ENGINE_PROCESS_NAME, memory: { workingSetSize: 3 * 1024 * 1024 } },
+      { memory: { workingSetSize: 1024 * 1024 } },
+    ]);
+    const withEngine = Number(await h.ipc.invoke('debug:get-memory-mb'));
+    // This process's own size moves between the two reads, by far less than 1 GB.
+    expect(withEngine - alone).toBeGreaterThan(2.5 * 1024);
+    expect(withEngine - alone).toBeLessThan(3.5 * 1024);
   });
 });
 

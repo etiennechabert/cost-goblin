@@ -1,10 +1,12 @@
 import { stringify } from 'yaml';
 import type { DuckDBClient, RawRow } from '../duckdb-client.js';
+import type { SupervisedDuckDBClient } from '../duckdb-supervisor.js';
 import { LRUCache } from '../lru-cache.js';
 import { QueryLog } from '../query-log.js';
 import { awaitWithTimeout } from '../async-timeout.js';
 import { DEFAULT_ROLLUP_CONCURRENCY } from '../duckdb-tuning.js';
 import { RollupStore, type BuildPartitionSql, type RollupShape } from '../rollup-store.js';
+import { ResourceRollupStore, type ResourceBuildSql } from '../resource-rollup-store.js';
 import { traceSpan, SPAN_OP, type SpanOptions } from '../telemetry/tracing.js';
 import { BaselineStore, type BaselineEngineDeps } from '../baselines-store.js';
 import {
@@ -19,6 +21,9 @@ import {
   migrateRetiredSeedViews,
   viewsConfigToYaml,
   buildRollupPartitionQuery,
+  buildResourceRowsQuery,
+  buildResourceTopQuery,
+  resourceRollupDimensionColumns,
   computeShapeSignature,
   computeOrgAccountsDigest,
   rollupGrainColumns,
@@ -75,13 +80,24 @@ export interface IpcContext {
   /** The built DuckDB worker bundle — the MCP server spawns its own sandboxed
    *  instance from it (the shared `db` above is never used for MCP SQL). */
   readonly duckdbWorkerPath: string;
+  /** The supervisor of the process `db` runs in. Absent where `db` is not a
+   *  supervised process (the handler tests' in-process DuckDB). */
+  readonly engine?: QueryEngineControl;
   /** "Now" for every window anchored on today: default query ranges, the
    *  Cost Scope preview, tag discovery, baselines, retention cutoffs. Pinned
    *  by COSTGOBLIN_NOW (e2e) so main agrees with the renderer's patched Date.
    *  Elapsed-time uses (query durations, sync scheduling, audit timestamps)
    *  read Date directly and must not take this. */
   readonly now: Clock;
+  /** How many (resource, description) pairs each month adds to the resource
+   *  rollup's heavy set. Defaults to RESOURCE_ROLLUP_PAIRS_PER_MONTH; tests
+   *  lower it to exercise a rollup that leaves pairs out. */
+  readonly resourceRollupPairsPerMonth?: number;
 }
+
+/** What the handlers need of the DuckDB process's supervisor
+ *  (`duckdb-supervisor.ts`): its state, and how to start it again. */
+export type QueryEngineControl = Pick<SupervisedDuckDBClient, 'getState' | 'onStateChanged' | 'onRestarted' | 'restart'>;
 
 export interface OrgTreeConfig {
   readonly tree: readonly OrgNode[];
@@ -142,6 +158,11 @@ export interface AppContext {
   readonly queryLog: QueryLog;
   /** Persistent per-period pre-aggregated rollup backing dashboard queries. */
   readonly rollupStore: RollupStore;
+  /** The heaviest (resource, description) pairs' rows, for the tables grouped
+   *  by them. Built after the rollup, from the same raw files and scope. */
+  readonly resourceRollupStore: ResourceRollupStore;
+  /** Settles once the resource rollup builds started so far are done. */
+  readonly awaitResourceRollup: () => Promise<void>;
   /** Local-only cost baselines: discovery, drift, savings (issue #412). */
   readonly baselineStore: BaselineStore;
   /** The query/config capabilities the baseline store needs to recompute. */
@@ -158,6 +179,16 @@ export interface AppContext {
   readonly warmupBase: () => void;
   /** Re-roll the rollup partitions for the periods a sync changed. */
   readonly maintainRollup: (changedPeriods: readonly string[]) => void;
+  /** Stop starting rollup builds, the resource rollup's included: a warmup
+   *  then serves the partitions that are built and valid and builds none, and
+   *  a sync drops the months it changed instead of re-rolling them. For when
+   *  the DuckDB process keeps dying: the builds are the heaviest work the app
+   *  starts on its own, so they wait until the user asks for them. Not saved:
+   *  a relaunch builds again. */
+  readonly pauseRollupBuilds: () => void;
+  /** Build on its own again, starting with what was held back. */
+  readonly resumeRollupBuilds: () => void;
+  readonly rollupBuildsPaused: () => boolean;
   /** Resolve once the latest cost_base warmup settles (true if the base is
    *  ready, false if it timed out or no base was built). Lets the renderer
    *  hold the startup prewarm until the in-memory base exists, so those probes
@@ -317,6 +348,8 @@ export function createAppContext(ctx: IpcContext): AppContext {
   // leaves the rollup unloaded or without a sync's months until the next
   // warmup: the first query that can apply the cost scope again starts it.
   let rollupWaitsForCostScope = false;
+  // See AppContext.pauseRollupBuilds.
+  let rollupBuildsPaused = false;
 
   async function getQueryCostScope(): Promise<CostScopeConfig> {
     const costScope = await costScopeForQueries(getCostScope);
@@ -461,13 +494,32 @@ export function createAppContext(ctx: IpcContext): AppContext {
       if (name === undefined) throw new Error('No provider configured');
       return name;
     },
-    runQuery: (sql) => ctx.db.runQuery(sql),
+    // The store's own small queries (a built partition's row count) are part
+    // of its build, so they run as one: on the pool, a count queued behind a
+    // view's slow queries was cancelled by the next click, and the month whose
+    // file had just been written was left out of the rollup.
+    runQuery: (sql) => ctx.db.runBuildQuery(sql),
     // Partition builds run on a fresh, disposable connection (flat per-build
     // time) and fan out up to buildConcurrency at a time. Defaults to 2 (kept
     // low so a rebuild stays gentle on the UI); the persisted Performance
     // override is applied at startup (main.ts) and live via perf:set.
     runBuild: (sql) => traceSpan(ROLLUP_BUILD_SPAN, () => ctx.db.runBuildQuery(sql)),
     buildConcurrency: DEFAULT_ROLLUP_CONCURRENCY,
+  });
+  const resourceRollupStore = new ResourceRollupStore({
+    dataDir: ctx.dataDir,
+    providerName: () => {
+      const name = state.config?.providers[0]?.name;
+      if (name === undefined) throw new Error('No provider configured');
+      return name;
+    },
+    // Its own small queries (the heavy set, a tail read, a row count) are
+    // steps of a build, as the rollup store's are: on the pool they queue
+    // behind a view's slow queries, where the next navigation cancels them.
+    runQuery: (sql) => ctx.db.runBuildQuery(sql),
+    runBuild: (sql) => traceSpan(ROLLUP_BUILD_SPAN, () => ctx.db.runBuildQuery(sql)),
+    buildConcurrency: DEFAULT_ROLLUP_CONCURRENCY,
+    ...(ctx.resourceRollupPairsPerMonth === undefined ? {} : { pairsPerMonth: ctx.resourceRollupPairsPerMonth }),
   });
   const resultCache = new LRUCache<string, RawRow[]>(50);
 
@@ -561,6 +613,62 @@ export function createAppContext(ctx: IpcContext): AppContext {
     }));
   }
 
+  async function buildResourceSqlFor(provider: ProviderConfig, dimensions: DimensionsConfig): Promise<ResourceBuildSql> {
+    const opts = {
+      dataDir: ctx.dataDir,
+      dimensions,
+      orgAccountsPath: await getOrgAccountsPath(),
+      accountReverseMap: await getAccountReverseMap(),
+      costScope: await getQueryCostScope(),
+      providers: [{ name: provider.name, type: provider.type }],
+    };
+    return {
+      top: (period, outPath, pairs) => buildResourceTopQuery(period, 'daily', outPath, opts, pairs),
+      rows: (period, outPath, heavyPath) => buildResourceRowsQuery(period, 'daily', outPath, heavyPath, opts),
+    };
+  }
+
+  // Bring the resource rollup in line with the raw files: a no-op when it is
+  // already built from them. `changed` months are rebuilt whatever their stamp.
+  async function maintainResourceRollup(changed: readonly string[]): Promise<void> {
+    // Paused with the rollup's own builds (see AppContext.pauseRollupBuilds).
+    // The months it holds stay served; one a sync changed stays marked stale,
+    // so it reads raw and is rebuilt by the first build after the pause.
+    if (rollupBuildsPaused) return;
+    // What follows reads the dimensions and the cost scope: a drop while it
+    // does means they may be the ones just replaced.
+    const epoch = resourceRollupStore.currentEpoch();
+    try {
+      const provider = await getFirstProvider();
+      if (provider === null) return;
+      const dimensions = await getQueryDimensions();
+      // The rollup's own signature covers everything a build reads here too:
+      // dimensions, metric, exclusion rules, marketplace, org accounts.
+      const shape = {
+        signature: await signatureForDimensions(dimensions, provider.type),
+        dimensionColumns: resourceRollupDimensionColumns(dimensions),
+      };
+      const sql = await buildResourceSqlFor(provider, dimensions);
+      const periods = await listLocalMonths(ctx.dataDir, provider.name, 'daily');
+      const etagsByPeriod = await readEtags(ctx.dataDir, provider.name, 'daily').catch((err: unknown) => {
+        logger.warn(`resource-rollup: ${err instanceof Error ? err.message : String(err)}`);
+        return null;
+      });
+      await resourceRollupStore.maintain({ periods, changed, etagsByPeriod, shape, sql, epoch });
+    } catch (err: unknown) {
+      logRollupFailure('resource-rollup', err);
+    }
+  }
+
+  // Resource rollup builds run one after another, each once `after` (the
+  // rollup build it follows) has settled, so the two never compete for the
+  // same cores and memory.
+  let resourceRollupWork: Promise<void> = Promise.resolve();
+  function scheduleResourceRollup(after: Promise<unknown>, changed: readonly string[] = []): void {
+    const settled = Promise.all([resourceRollupWork, after.then(() => undefined, () => undefined)]);
+    resourceRollupWork = settled.then(() => maintainResourceRollup(changed));
+  }
+
   // Warm-load the persisted rollup: validate the manifest against the current
   // shape + raw etags (fast, sets readiness), then BACKGROUND-build any missing
   // or stale daily partitions (recent months first). Never blocks the app.
@@ -576,15 +684,23 @@ export function createAppContext(ctx: IpcContext): AppContext {
       const validation = await rollupStore.loadAndValidate(shape, etags);
       const available = await listLocalMonths(ctx.dataDir, provider.name, 'daily');
       const toBuild = available.filter(p => !validation.validPeriods.has(p)).sort((a, b) => b.localeCompare(a));
-      if (toBuild.length === 0) { rollupStore.markSettled(); return; }
+      if (toBuild.length === 0) {
+        rollupStore.markSettled();
+        scheduleResourceRollup(Promise.resolve());
+        return;
+      }
+      // Paused: the months validated above are served, the others read raw.
+      if (rollupBuildsPaused) { rollupStore.markSettled(); return; }
       const buildSql = await buildRollupSqlFor(provider);
       // Wrap the fire-and-forget rebuild in a transaction (the span is tied to the
       // promise, so it stays open until the background builds settle), mirroring
       // rollup.maintain — the rollup.build child spans nest under it.
-      void traceSpan(
+      const built = traceSpan(
         { name: 'rollup.warmup', op: SPAN_OP.rollupWarmup, forceTransaction: true, attributes: { 'rollup.periods': toBuild.length } },
         () => rollupStore.maintainPeriods(toBuild, buildSql, etags, shape),
       ).then(() => { resultCache.clear(); });
+      scheduleResourceRollup(built);
+      void built;
     } catch (err: unknown) {
       rollupStore.markSettled();
       logRollupFailure('rollup-warmup', err);
@@ -594,12 +710,24 @@ export function createAppContext(ctx: IpcContext): AppContext {
   // Re-roll only the periods a sync changed (file replace), then drop cached
   // results so dashboards re-render from the fresh partitions.
   async function maintainRollupForPeriods(changed: readonly string[]): Promise<void> {
+    // Their raw files are no longer the ones the resource rollup was built
+    // from. It is rebuilt once this re-roll settles, whatever became of it.
+    resourceRollupStore.markStale(changed);
+    let settle: () => void = () => undefined;
+    scheduleResourceRollup(new Promise<void>((resolve) => { settle = resolve; }), changed);
     try {
       const provider = await getFirstProvider();
       if (provider === null) return;
       const available = await listLocalMonths(ctx.dataDir, provider.name, 'daily');
       const periods = changed.filter(p => available.includes(p));
       if (periods.length === 0) return;
+      if (rollupBuildsPaused) {
+        // Their partitions were built from files the sync replaced, and
+        // nothing rebuilds them now: dropped, so these months read raw.
+        await Promise.all(periods.map(period => rollupStore.deletePeriod(period)));
+        resultCache.clear();
+        return;
+      }
       const shape = await getRollupShape(provider.type);
       // These months' raw files just changed, so they're rebuilt even when the
       // etags can't be read (null) — stamped unverified, which the next warmup
@@ -624,6 +752,8 @@ export function createAppContext(ctx: IpcContext): AppContext {
       // load stops this before any re-roll): drop results cached from them.
       resultCache.clear();
       logRollupFailure('rollup-maintain', err);
+    } finally {
+      settle();
     }
   }
 
@@ -644,6 +774,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
   let rerollTimer: ReturnType<typeof setTimeout> | null = null;
   function scheduleRollupReroll(): void {
     void rollupStore.invalidate().then(() => { resultCache.clear(); });
+    void resourceRollupStore.invalidate();
     if (rerollTimer !== null) clearTimeout(rerollTimer);
     rerollTimer = setTimeout(() => { rerollTimer = null; triggerWarmup(); }, ROLLUP_REROLL_DEBOUNCE_MS);
   }
@@ -682,6 +813,8 @@ export function createAppContext(ctx: IpcContext): AppContext {
     signatureForDimensions,
     queryLog,
     rollupStore,
+    resourceRollupStore,
+    awaitResourceRollup: () => resourceRollupWork,
     runQuery,
     runPreparedQuery,
     invalidateConfig: () => { state.config = null; },
@@ -694,10 +827,18 @@ export function createAppContext(ctx: IpcContext): AppContext {
     invalidateViews: () => { state.views = null; },
     invalidateCostScope: () => {
       state.costScope = null;
+      void resourceRollupStore.invalidate();
       void rollupStore.invalidate().then(() => { resultCache.clear(); triggerWarmup(); });
     },
     warmupBase: () => { resultCache.clear(); triggerWarmup(); },
     maintainRollup: (changedPeriods: readonly string[]) => { void maintainRollupForPeriods(changedPeriods); },
+    pauseRollupBuilds: () => { rollupBuildsPaused = true; },
+    resumeRollupBuilds: () => {
+      rollupBuildsPaused = false;
+      resultCache.clear();
+      triggerWarmup();
+    },
+    rollupBuildsPaused: () => rollupBuildsPaused,
     baselineStore,
     baselineEngineDeps,
     recomputeBaselines: () => { void baselineStore.recompute(baselineEngineDeps); },
@@ -706,14 +847,20 @@ export function createAppContext(ctx: IpcContext): AppContext {
       return rollupStore.isReady();
     },
     clearAllCaches: async (): Promise<void> => {
-      ctx.db.cancelPendingQueries();
+      // Builds too: the rollup they write is invalidated below.
+      ctx.db.cancelAllQueries();
       inflightQueries.clear();
       // Invalidate the rollup FIRST, while the provider config the store's
       // providerName closure reads is still populated. Nulling state.config
       // before this made the enqueued rollup-dir deletion throw 'No provider
       // configured', rejecting remove-provider, bundle import and snapshot pull
       // after they had already applied their changes.
+      // Both before the first await: invalidate() bumps a store's epoch at
+      // once, and until then the builds cancelled above would go on to their
+      // next month, reading what this caller is about to drop.
+      const resourceRollupDropped = resourceRollupStore.invalidate();
       await rollupStore.invalidate();
+      await resourceRollupDropped;
       state.config = null;
       state.dimensions = null;
       state.accountMap = null;

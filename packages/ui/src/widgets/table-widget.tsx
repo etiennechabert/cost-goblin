@@ -114,6 +114,13 @@ interface Loaded<T> {
   readonly value: T;
 }
 
+/** What the header says of rows that came without their count: they have
+ *  more behind them whether the count is on its way or failed, so it must
+ *  not read as the whole table. */
+function uncountedState(countFailed: boolean): 'counting' | 'unknown' {
+  return countFailed ? 'unknown' : 'counting';
+}
+
 /** The last value loaded, as long as it was loaded for `inputs`: it stays
  *  through a reload for the same inputs, and goes once they change.
  *  `loaded` must keep its identity between renders (memoize it): a new
@@ -206,9 +213,29 @@ export function TableWidget({
       groupByColumns,
       ...(sort === undefined ? {} : { sort }),
       rowLimit: ROW_LIMIT,
+      // The rows don't wait for the number of groups: on a large bill,
+      // counting them means grouping every line item.
+      deferTotalRows: true,
       origin: 'widget:table:rows',
     }).then(result => ({ result, inputs: rowsInputs })),
     [fk, dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour, granularity, groupByKey, sort?.column, sort?.direction, api],
+  );
+
+  // How many groups the rows came with: null when they came without the
+  // count. Kept while a re-sort reloads the rows, so the count is asked for
+  // once per set of inputs rather than once per sort.
+  const loadedTotal = useMemo(
+    () => (dataQuery.status === 'success' ? { inputs: dataQuery.data.inputs, value: { groups: dataQuery.data.result.totalRows } } : null),
+    [dataQuery],
+  );
+  const keptTotal = useLastLoaded(loadedTotal, rowsInputs);
+  const countDeferred = keptTotal !== null && keptTotal.groups === null;
+
+  const countQuery = useQuery(
+    () => countDeferred
+      ? api.countAggregatedGroups({ filters: explorerFilters, dateRange, granularity, applyCostScope: true, groupByColumns, origin: 'widget:table:count' })
+      : Promise.resolve(null),
+    [countDeferred, fk, dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour, granularity, groupByKey, api],
   );
 
   // Kept while a re-sort reloads the rows: when the new order shows the same
@@ -378,7 +405,10 @@ export function TableWidget({
 
   if (spec.type !== 'table') return null;
 
-  const aggregatedTotal = dataQuery.status === 'success' ? dataQuery.data.result.totalRows : totalRows;
+  // The rows' own count, else the one asked for on its own once it is in.
+  const countedGroups = countQuery.status === 'success' ? countQuery.data : null;
+  const aggregatedTotal = dataQuery.status === 'success' ? (dataQuery.data.result.totalRows ?? countedGroups ?? undefined) : totalRows;
+  const uncountedRows = countDeferred && countedGroups === null ? uncountedState(countQuery.status === 'error') : undefined;
   const loading = dataQuery.status === 'loading' || overviewQuery.status === 'loading';
   const error = dataQuery.status === 'error' ? dataQuery.error.message : null;
 
@@ -399,6 +429,7 @@ export function TableWidget({
         onSortingChange={handleSortingChange}
         onCellClick={handleCellClick}
         totalRows={aggregatedTotal}
+        uncountedRows={uncountedRows}
         loading={loading}
         error={error}
         height={400}
