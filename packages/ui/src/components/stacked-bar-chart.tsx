@@ -164,7 +164,10 @@ function BarSegment({ seg, segTotal, focused, fades, setHoveredSegment, onSegmen
         type="button"
         onMouseEnter={onMouseEnter}
         onClick={(e) => { e.stopPropagation(); onSegmentClick(seg.key); }}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); onSegmentClick(seg.key); } }}
+        // The browser makes a click of Enter and Space on a button, so onClick
+        // is what filters. The key press, like the click, stays out of the
+        // plot around the bars, a button of its own when it takes a drag.
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') e.stopPropagation(); }}
         className="w-full cursor-pointer border-none p-0 m-0 bg-transparent block"
         style={baseStyle}
       />

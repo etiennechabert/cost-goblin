@@ -11,6 +11,18 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/pr-feedback.mjs --hook",
+            "timeout": 300,
+            "statusMessage": "Checking the pull request's review feedback"
+          }
+        ]
+      }
     ]
   }
 }

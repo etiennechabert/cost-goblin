@@ -2,12 +2,15 @@
  * DIAGNOSTIC, not a test suite — walks every view of the built app on a CLONE
  * of a real workspace and reports, per step: time to settle, queries run (and
  * how many read raw Parquet instead of the rollup), UI/main-thread stalls and
- * memory. Made for workspaces too big for fixtures to imitate: it is how the
+ * memory, of the main process and of the query engine's (DuckDB runs in a
+ * process of its own, which main replaces when it dies: each death is
+ * counted). Made for workspaces too big for fixtures to imitate: it is how the
  * launch crash on a 46 GB workspace, and the dashboards that never finished
  * loading on it, were found and their fixes checked.
  *
  * It ends when the walk does or when the app dies; it asserts only that the
- * app survived. Everything else is the report it prints and writes to
+ * app survived and that its query engine never died. Everything else is the
+ * report it prints and writes to
  * `$TMPDIR/costgoblin-diag/large-workspace-<time>/` (report.json, samples.tsv
  * and each step's query log — SQL with local paths in it, so keep it local).
  *
@@ -22,7 +25,8 @@
  *  - telemetry is off unless COSTGOBLIN_DIAG_TELEMETRY=1 keeps the workspace's
  *    own opt-ins. An unpackaged build has no DSN: export COSTGOBLIN_SENTRY_DSN
  *    too if crash reports should be sent. Crashpad uploads a native crash on
- *    the NEXT launch, so a run that died is relaunched briefly to send it;
+ *    the NEXT launch, so a run in which the app or its query engine died is
+ *    relaunched briefly to send it;
  *  - the launch goes through launchElectron, so no cloud credentials reach the
  *    app and nothing syncs.
  *
@@ -42,7 +46,7 @@ import { appendFileSync, cpSync, createWriteStream, existsSync, lstatSync, mkdir
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { parse } from 'yaml';
-import { clickNavButton, closeApp, launchElectron, selectDatePreset } from '../helpers.js';
+import { QUERY_ENGINE_PROCESS_NAME, clickNavButton, closeApp, launchElectron, selectDatePreset } from '../helpers.js';
 
 const WORKSPACE = process.env['COSTGOBLIN_DIAG_WORKSPACE'] ?? '';
 /** A numeric option. A value that is not a positive number is a typo: used as
@@ -287,19 +291,46 @@ async function lagMs(run: () => Promise<unknown>, capMs: number): Promise<number
   }
 }
 
-interface StepStats { peakRssMb: number; maxMainLagMs: number; maxRendererLagMs: number; stalls: number }
+interface StepStats { peakRssMb: number; peakEngineRssMb: number; maxMainLagMs: number; maxRendererLagMs: number; stalls: number }
 
-/** Samples the main process's resident memory and both JS threads' lag four
- *  times a second, under the name of whatever step is running. */
+/** Samples in a row without a query engine process (two seconds of them)
+ *  after which it is taken for stopped, not for one being replaced: main
+ *  starts a replacement in about a tenth of a second, and gives up on the
+ *  third death in ten minutes. */
+const ENGINE_GONE_SAMPLES = 8;
+
+/** Samples the resident memory of the main process and of the query engine's,
+ *  and both JS threads' lag, four times a second, under the name of whatever
+ *  step is running. */
 class Sampler {
   private step = 'boot';
   private readonly stats = new Map<string, StepStats>();
   private running = true;
   private readonly loop: Promise<void>;
   peakRssMb = 0;
+  peakEngineRssMb = 0;
+  /** Every pid the query engine has had, in order: more than one means main
+   *  replaced it, because it died. */
+  readonly enginePids: number[] = [];
+  /** Samples in which main listed no query engine process at all. */
+  engineMissing = 0;
+  /** The latest samples in a row in which it listed none. */
+  private engineGoneFor = 0;
+
+  /** The query engine died and main has not replaced it: it gave up on it. */
+  engineStopped(): boolean { return this.enginePids.length > 0 && this.engineGoneFor >= ENGINE_GONE_SAMPLES; }
+
+  /** The query engine's pid as last seen. Null before the first sample saw
+   *  one, and once main has given up on it. One sample that misses it does
+   *  not make it unknown: a process that is gone just measures as nothing. */
+  enginePid(): number | null { return this.engineStopped() ? null : this.enginePids.at(-1) ?? null; }
+
+  /** How many times the query engine died: once per replacement, and once
+   *  more when the last one was not replaced. */
+  engineDeaths(): number { return Math.max(0, this.enginePids.length - 1) + (this.engineStopped() ? 1 : 0); }
 
   constructor(private readonly observed: Observed, private readonly page: () => Page | null, private readonly samplesPath: string) {
-    writeFileSync(samplesPath, 't_s\tstep\trss_mb\tmain_lag_ms\trenderer_lag_ms\n');
+    writeFileSync(samplesPath, 't_s\tstep\trss_mb\tengine_rss_mb\tmain_lag_ms\trenderer_lag_ms\n');
     this.loop = this.run();
   }
 
@@ -308,7 +339,7 @@ class Sampler {
   of(step: string): StepStats {
     let stats = this.stats.get(step);
     if (stats === undefined) {
-      stats = { peakRssMb: 0, maxMainLagMs: 0, maxRendererLagMs: 0, stalls: 0 };
+      stats = { peakRssMb: 0, peakEngineRssMb: 0, maxMainLagMs: 0, maxRendererLagMs: 0, stalls: 0 };
       this.stats.set(step, stats);
     }
     return stats;
@@ -320,19 +351,38 @@ class Sampler {
       const rss = residentMb(this.observed.pid);
       const page = this.page();
       const [main, renderer] = await Promise.all([
-        lagMs(() => this.observed.app.evaluate(() => 1), 5_000),
+        // The same round trip tells which process is the query engine now.
+        lagMs(async () => {
+          const pid = await this.observed.app.evaluate(
+            ({ app }, name) => app.getAppMetrics().find(metric => metric.name === name)?.pid ?? null,
+            QUERY_ENGINE_PROCESS_NAME,
+          );
+          if (pid === null) {
+            this.engineMissing += 1;
+            this.engineGoneFor += 1;
+            return;
+          }
+          this.engineGoneFor = 0;
+          if (pid !== this.enginePids.at(-1)) this.enginePids.push(pid);
+        }, 5_000),
         page === null ? Promise.resolve(0) : lagMs(() => page.evaluate(() => 1), 5_000),
       ]);
+      const enginePid = this.enginePid();
+      const engineRss = enginePid === null ? null : residentMb(enginePid);
       const stats = this.of(step);
       if (rss !== null) {
         stats.peakRssMb = Math.max(stats.peakRssMb, rss);
         this.peakRssMb = Math.max(this.peakRssMb, rss);
       }
+      if (engineRss !== null) {
+        stats.peakEngineRssMb = Math.max(stats.peakEngineRssMb, engineRss);
+        this.peakEngineRssMb = Math.max(this.peakEngineRssMb, engineRss);
+      }
       stats.maxMainLagMs = Math.max(stats.maxMainLagMs, main);
       stats.maxRendererLagMs = Math.max(stats.maxRendererLagMs, renderer);
       // A second without an answer is a freeze a user feels.
       if (main > 1_000 || renderer > 1_000) stats.stalls += 1;
-      appendFileSync(this.samplesPath, `${((Date.now() - this.observed.startedAt) / 1000).toFixed(1)}\t${step}\t${String(rss ?? '?')}\t${String(main)}\t${String(renderer)}\n`);
+      appendFileSync(this.samplesPath, `${((Date.now() - this.observed.startedAt) / 1000).toFixed(1)}\t${step}\t${String(rss ?? '?')}\t${String(engineRss ?? '?')}\t${String(main)}\t${String(renderer)}\n`);
       await sleep(250);
     }
   }
@@ -354,7 +404,10 @@ function unsettled(): string[] {
     const box = el.getBoundingClientRect();
     return box.width > 0 && box.height > 0 && box.bottom > 0 && box.top < window.innerHeight;
   };
-  const loaders = [...document.querySelectorAll('output')].filter(visible).length;
+  // A loader's text starts with "Loading". The other <output> elements are
+  // notices that stay up: the one about a query engine that restarted would
+  // otherwise keep every later step from settling.
+  const loaders = [...document.querySelectorAll('output')].filter(el => /^\s*Loading\b/.test(el.textContent ?? '') && visible(el)).length;
   if (loaders > 0) blockers.push(`${String(loaders)} loader(s)`);
   for (const slot of document.querySelectorAll('[data-widget-id]')) {
     if (slot.getAttribute('data-widget-state') !== 'mounted' && visible(slot)) blockers.push(`${slot.getAttribute('data-widget-id') ?? '(unnamed)'}: not mounted`);
@@ -449,9 +502,10 @@ interface Cage {
   readonly superPagesTotal: 8192;
 }
 
-/** DuckDB runs in the main process, where malloc is Chromium's PartitionAlloc:
- *  one 16 GiB reservation (VM tag 253) that only ever fills. `vmmap` shows which
- *  of it is accessible, so how close a session is to the end of it. */
+/** In every process Electron hosts, malloc is Chromium's PartitionAlloc: one
+ *  16 GiB reservation (VM tag 253) that only ever fills. `vmmap` shows which of
+ *  it is accessible, so how close a process is to the end of it. Measured for
+ *  the main process and for the query engine's, where DuckDB allocates. */
 function measureCage(pid: number): Cage | null {
   if (process.platform !== 'darwin') return null;
   let footprintMb: number | null = null;
@@ -526,11 +580,13 @@ test('walk every view on a clone of a real workspace', async () => {
     page = window;
 
     const results: StepResult[] = [];
-    const cages: { after: string; cage: Cage }[] = [];
+    const cages: { after: string; process: 'main' | 'query engine'; cage: Cage }[] = [];
     const report = (): void => {
       writeFileSync(join(outDir, 'report.json'), JSON.stringify({
         workspace: basename(WORKSPACE), passes: PASSES, memoryLimitGB: MEMORY_GB ?? 'app default',
-        exit: app.exit(), peakRssMb: monitor.peakRssMb, rollup: rollupProgress(clone.providerDir), cages,
+        exit: app.exit(), peakRssMb: monitor.peakRssMb, peakEngineRssMb: monitor.peakEngineRssMb,
+        engineDeaths: monitor.engineDeaths(), engineStopped: monitor.engineStopped(), enginePids: monitor.enginePids, engineMissingSamples: monitor.engineMissing,
+        rollup: rollupProgress(clone.providerDir), cages,
         warnings: [...new Set(app.warnings())].slice(0, 60), steps: results,
       }, null, 2));
     };
@@ -556,7 +612,7 @@ test('walk every view on a clone of a real workspace', async () => {
         name, outcome, settleMs: settled.ms, blockers: settled.blockers, ...stats,
         handlerErrors: [...new Set(app.handlerErrors().slice(errorsBefore))].slice(0, 5), queries,
       });
-      console.log(`[diag] ${name.padEnd(40)} ${outcome.padEnd(15)} ${(settled.ms / 1000).toFixed(1).padStart(6)} s | ${String(queries.ran).padStart(2)} queries, ${String(queries.raw)} raw, slowest ${queries.slowest[0]?.ms === undefined || queries.slowest[0].ms === null ? '-' : (queries.slowest[0].ms / 1000).toFixed(1)} s | rss ${(stats.peakRssMb / 1024).toFixed(1)} GB | lag ${String(stats.maxMainLagMs)}/${String(stats.maxRendererLagMs)} ms${stats.stalls > 0 ? ` | ${String(stats.stalls)} stall(s)` : ''}`);
+      console.log(`[diag] ${name.padEnd(40)} ${outcome.padEnd(15)} ${(settled.ms / 1000).toFixed(1).padStart(6)} s | ${String(queries.ran).padStart(2)} queries, ${String(queries.raw)} raw, slowest ${queries.slowest[0]?.ms === undefined || queries.slowest[0].ms === null ? '-' : (queries.slowest[0].ms / 1000).toFixed(1)} s | main ${(stats.peakRssMb / 1024).toFixed(1)} GB, engine ${(stats.peakEngineRssMb / 1024).toFixed(1)} GB | lag ${String(stats.maxMainLagMs)}/${String(stats.maxRendererLagMs)} ms${stats.stalls > 0 ? ` | ${String(stats.stalls)} stall(s)` : ''}`);
       report();
     };
 
@@ -582,11 +638,14 @@ test('walk every view on a clone of a real workspace', async () => {
         await step(`${tag}${view.toLowerCase()}`, async (p) => { await clickNavButton(p, view); });
       }
       if (app.exit() === null) {
-        const cage = measureCage(app.pid);
-        if (cage !== null) {
-          cages.push({ after: `pass ${String(pass)}`, cage });
+        const enginePid = monitor.enginePid();
+        const measured: readonly (readonly ['main' | 'query engine', number | null])[] = [['main', app.pid], ['query engine', enginePid]];
+        for (const [name, pid] of measured) {
+          const cage = pid === null ? null : measureCage(pid);
+          if (cage === null) continue;
+          cages.push({ after: `pass ${String(pass)}`, process: name, cage });
           const pages = cage.superPagesUsed;
-          console.log(`[diag] after pass ${String(pass)}: footprint ${String(cage.footprintMb ?? '?')} MB, allocator address space ${pages === null ? '?' : `${String(Math.round(100 * pages / cage.superPagesTotal))}% handed out (${String(pages)}/${String(cage.superPagesTotal)} super pages)`}`);
+          console.log(`[diag] after pass ${String(pass)}, ${name}: footprint ${String(cage.footprintMb ?? '?')} MB, allocator address space ${pages === null ? '?' : `${String(Math.round(100 * pages / cage.superPagesTotal))}% handed out (${String(pages)}/${String(cage.superPagesTotal)} super pages)`}`);
         }
       }
     }
@@ -595,7 +654,14 @@ test('walk every view on a clone of a real workspace', async () => {
 
     const exit = app.exit();
     const slow = results.filter(r => r.settleMs > 10_000 || r.outcome !== 'ok');
-    console.log(`[diag] ${exit === null ? 'the app survived' : `THE APP DIED: ${exit.signal ?? String(exit.code)} at ${exit.atS.toFixed(0)} s`} | peak ${(monitor.peakRssMb / 1024).toFixed(1)} GB resident | ${String(slow.length)} step(s) over 10 s or unfinished`);
+    const engineSeen = monitor.enginePids.length > 0;
+    const engineDeaths = monitor.engineDeaths();
+    let engineVerdict = 'the query engine never died';
+    // Under another name main's process is never found: said, and failed on
+    // below, rather than reported as an engine that never died.
+    if (!engineSeen) engineVerdict = `NO "${QUERY_ENGINE_PROCESS_NAME}" PROCESS WAS EVER SEEN`;
+    else if (engineDeaths > 0) engineVerdict = `THE QUERY ENGINE DIED ${String(engineDeaths)} TIME(S)${monitor.engineStopped() ? ' AND WAS NOT RESTARTED' : ''}`;
+    console.log(`[diag] ${exit === null ? 'the app survived' : `THE APP DIED: ${exit.signal ?? String(exit.code)} at ${exit.atS.toFixed(0)} s`} | ${engineVerdict} | peak resident: main ${(monitor.peakRssMb / 1024).toFixed(1)} GB, query engine ${(monitor.peakEngineRssMb / 1024).toFixed(1)} GB | ${String(slow.length)} step(s) over 10 s or unfinished`);
     for (const r of slow) console.log(`[diag]   ${r.name}: ${r.outcome}, ${(r.settleMs / 1000).toFixed(0)} s${r.blockers.length > 0 ? ` (${r.blockers.join('; ').slice(0, 100)})` : ''}`);
     // A month missing from the rollup sends every query over it to the raw export.
     const rollup = rollupProgress(clone.providerDir);
@@ -603,9 +669,11 @@ test('walk every view on a clone of a real workspace', async () => {
     const warned = [...new Set(app.warnings())];
     if (warned.length > 0) console.log(`[diag] ${String(warned.length)} distinct warning(s) in the app's log:\n${warned.slice(0, 12).map(line => `[diag]   ${line.slice(0, 200)}`).join('\n')}`);
 
-    if (exit !== null && TELEMETRY) {
+    if ((exit !== null || engineDeaths > 0) && TELEMETRY) {
       // Crashpad hands a native crash to the SDK on the next launch: give it one,
-      // with a limit low enough not to die the same way before the upload.
+      // with a limit low enough not to die the same way before the upload. For
+      // the query engine's crashes too: whatever the app that kept running did
+      // not send, this launch does.
       await closeAndForget(app.app);
       observed = undefined;
       writePreferences(clone.workspaceDir, '2');
@@ -615,6 +683,8 @@ test('walk every view on a clone of a real workspace', async () => {
       console.log('[diag] relaunched for 45 s so the crash report could be uploaded');
     }
     expect(exit, 'the app process ended during the walk').toBeNull();
+    expect(engineSeen, `main never listed a "${QUERY_ENGINE_PROCESS_NAME}" process: its memory and its deaths went unseen`).toBe(true);
+    expect(engineDeaths, 'the query engine process died during the walk').toBe(0);
   } finally {
     await sampler?.stop();
     if (observed !== undefined) await closeApp(observed.app);
