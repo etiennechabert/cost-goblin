@@ -33,10 +33,10 @@
 // Wired in .claude/settings.json; pinned by scripts/ci/pr-guard.test.mjs.
 
 import { spawnSync } from 'node:child_process';
-import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { runGit as defaultRunGit, readStdin, slugOf, startedDirectly } from './shared.mjs';
 
 /**
  * What the comment `gh pr ready` waits for opens with (CLAUDE.md, "After
@@ -54,7 +54,6 @@ export const REVIEW_COMMENT = /^\s*`?\/code-review (?:xhigh|max) --fix`? ran\b/;
 export const GH_BUDGET_MS = 15_000;
 /** No lookup is started with less than this left: it would time out, and pass for unchecked. */
 export const GH_MIN_CALL_MS = 2_000;
-const GIT_TIMEOUT_MS = 2_000;
 /** Above spawnSync's 1 MB default: a long-lived PR carries more than that in bot comments. */
 const GH_MAX_OUTPUT = 64 * 1024 * 1024;
 /** A directory of the repository this hook guards: its own. */
@@ -656,33 +655,7 @@ function readyCall(rest, repoBefore) {
 // Whose pull request
 // ---------------------------------------------------------------------------
 
-let gitEnvironment;
-/**
- * The environment without the variables that tie git to one repository
- * (GIT_DIR and the like, which git lists itself). A git hook exports them,
- * and under them every directory would look like that hook's repository.
- */
-function gitEnv() {
-  if (gitEnvironment === undefined) {
-    gitEnvironment = { ...process.env };
-    const listed = spawnSync('git', ['rev-parse', '--local-env-vars'], { encoding: 'utf8', timeout: GIT_TIMEOUT_MS });
-    if (listed.status === 0) for (const name of listed.stdout.split('\n')) delete gitEnvironment[name];
-  }
-  return gitEnvironment;
-}
-
-function defaultRunGit(dir, args) {
-  const result = spawnSync('git', ['-C', dir, ...args], { env: gitEnv(), encoding: 'utf8', timeout: GIT_TIMEOUT_MS });
-  return result.status === 0 ? result.stdout.trim() : null;
-}
-
 const PR_URL = /^https?:\/\/[^/]+\/([^/]+)\/([^/]+)\/pull\/\d+/;
-
-/** `owner/name`, lowercased, out of a remote URL or of gh's `[HOST/]OWNER/REPO`. Null when it has no such shape. */
-function slugOf(text) {
-  const match = /([^/:\s]+)\/([^/\s]+?)(?:\.git)?\/?$/.exec(text.trim());
-  return match ? `${match[1]}/${match[2]}`.toLowerCase() : null;
-}
 
 /** The repository a call names, which gh puts before the one of its directory: a pull request URL, then `-R` or `GH_REPO`. */
 function namedRepository({ kind, selector, repo }) {
@@ -827,14 +800,6 @@ export function decide(input, { runGh = defaultRunGh, runGit = defaultRunGit, he
 // The hook itself
 // ---------------------------------------------------------------------------
 
-/** Read as a stream: `readFileSync(0)` throws EAGAIN on a pipe that is non-blocking and still empty. */
-async function readStdin() {
-  let text = '';
-  process.stdin.setEncoding('utf8');
-  for await (const chunk of process.stdin) text += chunk;
-  return text;
-}
-
 async function main() {
   let input;
   try {
@@ -873,18 +838,4 @@ async function main() {
   }
 }
 
-/**
- * True when Node was started on this file. Both paths are resolved first:
- * Node gives `import.meta.url` the real path, so behind a symlinked directory
- * a plain comparison with `process.argv[1]` fails, and the hook would exit
- * having checked nothing.
- */
-function startedDirectly() {
-  try {
-    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (startedDirectly()) await main();
+if (startedDirectly(import.meta.url)) await main();
