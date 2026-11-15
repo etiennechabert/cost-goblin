@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { Worker } from 'node:worker_threads';
 import { pbkdf2 } from 'node:crypto';
 import { existsSync } from 'node:fs';
@@ -11,6 +11,7 @@ import { CHARGE_PERIOD_START_UTC_SQL } from '@costgoblin/core';
 import type { DuckDbSandboxOptions } from '@costgoblin/core';
 import { createDuckDBClient } from '../main/duckdb-client.js';
 import type { DuckDBClient } from '../main/duckdb-client.js';
+import { MAX_MEMORY_GB, clampMemoryGB, resolveMemoryGB } from '../main/duckdb-tuning.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const workerPath = join(__dirname, '..', '..', 'out', 'worker', 'duckdb-worker.cjs');
@@ -117,7 +118,8 @@ describe('DuckDB Worker', () => {
       const timeout = setTimeout(() => { reject(new Error('Worker ready timeout')); }, 10000);
       worker.once('message', (msg) => {
         clearTimeout(timeout);
-        expect(msg).toEqual({ kind: 'ready' });
+        // The ready message carries the worker's settled counter (see duckdb-drain.test.ts).
+        expect(msg).toEqual({ kind: 'ready', settled: expect.any(SharedArrayBuffer) });
         resolve();
       });
       worker.once('error', (e: unknown) => {
@@ -323,6 +325,31 @@ describe('DuckDB Worker', () => {
     expect(rows[0]).toHaveProperty('c');
   });
 
+  it('holds a configure above the memory ceiling to the ceiling', async () => {
+    async function memoryLimit(): Promise<unknown> {
+      const id = nextId++;
+      sendQuery(id, "SELECT current_setting('memory_limit') AS m");
+      return expectRows(await waitForResult(id)).rows[0]?.['m'];
+    }
+    // A configure is not acknowledged and runs beside the queries, so each
+    // step waits for the limit to move away from the one before it.
+    async function configureFrom(previous: unknown, memoryGB: number): Promise<unknown> {
+      worker.postMessage({ kind: 'configure', memoryGB });
+      await vi.waitFor(async () => { expect(await memoryLimit()).not.toBe(previous); }, { timeout: 5000 });
+      return memoryLimit();
+    }
+    const ceilingGB = clampMemoryGB(MAX_MEMORY_GB);
+    // The steps below tell 1 GB from the default and from the ceiling.
+    expect(resolveMemoryGB(null)).toBeGreaterThan(1);
+    expect(ceilingGB).toBeGreaterThan(1);
+
+    const atOne = await configureFrom(await memoryLimit(), 1);
+    const atCeiling = await configureFrom(atOne, ceilingGB);
+    expect(await configureFrom(atCeiling, 1)).toBe(atOne);
+    // What an override saved under the old 24 GB ceiling would ask for.
+    expect(await configureFrom(atOne, 24)).toBe(atCeiling);
+  });
+
   // A cross join that takes the worker far longer than CANCEL_DEADLINE_MS.
   const UNFINISHABLE_SQL = 'SELECT sum(a.range + b.range) AS total FROM range(100000) a, range(100000) b';
   const CANCEL_DEADLINE_MS = 10_000;
@@ -465,7 +492,7 @@ describe('DuckDB Worker (sandboxed)', () => {
     beforeAll(async () => {
       const spawned = await spawnWithData({ sandbox });
       worker = spawned.worker;
-      expect(spawned.first).toEqual({ kind: 'ready' });
+      expect(spawned.first).toEqual({ kind: 'ready', settled: expect.any(SharedArrayBuffer) });
     });
 
     afterAll(async () => {

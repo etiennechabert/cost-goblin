@@ -16,6 +16,7 @@ import {
   resolveThreads,
   totalMemoryGB,
 } from '../main/duckdb-tuning.js';
+import { MCP_MAX_MEMORY_GB } from '../main/mcp-sandbox.js';
 
 // Pass-through, so a test can stand in for a machine of another size.
 vi.mock('node:os', async (importOriginal) => {
@@ -24,9 +25,12 @@ vi.mock('node:os', async (importOriginal) => {
 });
 
 const GIB = 1024 * 1024 * 1024;
+/** The GCP canonicalizer's own limit (`canonicalizeGcpPeriod`'s default in
+ *  core, which the sync worker never overrides). */
+const CANONICALIZER_MEMORY_GB = 2;
 /** Memory the other in-process DuckDB instances may take from the same
- *  allocator: the MCP sandbox and the GCP canonicalizer, 2 GB each. */
-const OTHER_INSTANCES_GB = 4;
+ *  allocator: the MCP sandbox and the GCP canonicalizer. */
+const OTHER_INSTANCES_GB = MCP_MAX_MEMORY_GB + CANONICALIZER_MEMORY_GB;
 /** Resident size at which the app died when DuckDB's limit let it get there. */
 const OBSERVED_CEILING_GB = 9;
 

@@ -6,7 +6,7 @@ import { QUERY_CANCELLED_MESSAGE, buildDuckDbSandboxStatements, isDuckDbSandboxO
 import type { DuckDBConnection, DuckDBInstance } from './duckdb-loader.js';
 import { createResourcePool } from './connection-pool.js';
 import type { ResourcePool } from './connection-pool.js';
-import { DUCKDB_SETTINGS_ENV, computeDefaultMemoryGB, computeDefaultThreads, computeQueryPoolSize } from './duckdb-tuning.js';
+import { DUCKDB_SETTINGS_ENV, computeDefaultThreads, computeQueryPoolSize, resolveMemoryGB } from './duckdb-tuning.js';
 import type { DuckDBSettings } from './duckdb-tuning.js';
 
 interface DuckDBModule {
@@ -41,7 +41,9 @@ async function configureDuckDB(conn: DuckDBConnection, settings: DuckDBSettings)
   // any connection affects the whole instance. Callers pass the resolved
   // effective values (user override or computed default); absent fields fall
   // back to the computed defaults so a partial message never under-provisions.
-  const memGB = settings.memoryGB ?? computeDefaultMemoryGB();
+  // The memory value is held to the ceiling again here, where the limit is
+  // set: one above it ends the app (see MAX_MEMORY_GB), whoever sent it.
+  const memGB = resolveMemoryGB(settings.memoryGB);
   const threads = settings.threads ?? computeDefaultThreads();
   await conn.run(`SET memory_limit = '${String(memGB)}GB'`);
   await conn.run(`SET threads = ${String(threads)}`);
@@ -68,6 +70,11 @@ function isSettings(value: unknown): value is Record<string, unknown> & DuckDBSe
 
 /** The channel to whoever started this bundle. */
 interface ParentLink {
+  /** Whether memory can be shared over it: with the thread that owns a worker
+   *  thread only. A process's channel cannot carry a SharedArrayBuffer (a
+   *  utility process's refuses the whole message: "An object could not be
+   *  cloned"), and another process could not wait on one anyway. */
+  readonly sharesMemory: boolean;
   post(message: WorkerResponse): void;
   onMessage(listener: (message: unknown) => void): void;
 }
@@ -94,6 +101,7 @@ function connectToParent(): ParentLink {
   if (parentPort !== null) {
     const port = parentPort;
     return {
+      sharesMemory: true,
       post: (message) => { port.postMessage(message); },
       onMessage: (listener) => { port.on('message', listener); },
     };
@@ -101,6 +109,7 @@ function connectToParent(): ParentLink {
   const utilityPort: unknown = Reflect.get(process, 'parentPort');
   if (isUtilityParentPort(utilityPort)) {
     return {
+      sharesMemory: false,
       post: (message) => { utilityPort.postMessage(message); },
       onMessage: (listener) => { utilityPort.on('message', (event) => { listener(event.data); }); },
     };
@@ -113,6 +122,7 @@ function connectToParent(): ParentLink {
     // leave a crash report for a process nobody was using.
     process.on('disconnect', () => { process.kill(process.pid, 'SIGKILL'); });
     return {
+      sharesMemory: false,
       post: (message) => { send(message); },
       onMessage: (listener) => { process.on('message', listener); },
     };
@@ -152,7 +162,7 @@ function resolveWorkerMode(data: unknown): WorkerMode {
 const mode: WorkerMode = resolveWorkerMode(workerData);
 
 type WorkerResponse =
-  | { kind: 'ready' }
+  | { kind: 'ready'; settled?: SharedArrayBuffer }
   | { kind: 'started'; id: number }
   | { kind: 'rows'; id: number; rows: Readonly<Record<string, unknown>>[] }
   | { kind: 'error'; id: number; message: string };
@@ -174,6 +184,10 @@ function isCancelRequest(msg: unknown): msg is { kind: 'cancel-pending'; builds?
   return msg['kind'] === 'cancel-pending';
 }
 
+function isDrainRequest(msg: unknown): msg is { kind: 'drain' } {
+  return hasProps(msg) && msg['kind'] === 'drain';
+}
+
 function isConfigureRequest(msg: unknown): msg is { kind: 'configure'; tempDir?: string; memoryGB?: number; threads?: number } {
   return isSettings(msg) && msg['kind'] === 'configure';
 }
@@ -186,6 +200,42 @@ const queuedIds = new Set<number>();  // waiting for pool.acquire()
 const runningIds = new Set<number>(); // executing in DuckDB
 const runningConns = new Map<number, DuckDBConnection>(); // id → connection for interrupt()
 const buildIds = new Set<number>();   // `fresh` queries: rollup partition builds
+
+// ---------------------------------------------------------------------------
+// Drain — letting the thread be torn down safely
+// ---------------------------------------------------------------------------
+// A DuckDB call still in flight when this thread is torn down aborts the whole
+// process: its completion runs in an environment that can no longer take it,
+// throws, and nothing catches the throw. A process that is exiting therefore
+// asks for a drain first and waits until every request it posted has settled.
+// (terminate() waits for the requests' answers instead, see duckdb-client.ts.)
+// Only a worker thread is drained. In a process of its own this bundle is
+// killed, which goes through no teardown, and the counter below is not shared.
+
+/** How many requests have settled, for the owner to compare with how many it
+ *  posted. Shared memory, because an owner that is exiting waits on it with
+ *  its event loop stopped: it can read this, it cannot receive a message. */
+const settledBuffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
+const settledCount = new Int32Array(settledBuffer);
+
+function requestSettled(): void {
+  Atomics.add(settledCount, 0, 1);
+  Atomics.notify(settledCount, 0);
+}
+
+/** The message kinds the owner counts as requests. */
+const COUNTED_KINDS: ReadonlySet<unknown> = new Set(['query', 'prepared-query', 'configure']);
+
+function isCountedRequest(msg: unknown): boolean {
+  return hasProps(msg) && COUNTED_KINDS.has(msg['kind']);
+}
+
+/** Cancels everything, builds included: nothing is meant to run after a
+ *  drain. The queries in flight are interrupted until each has settled, as for
+ *  any cancel (see keepInterruptingCancelled). */
+function handleDrain(): void {
+  handleCancelPending(true);
+}
 
 async function fetchAllRows(
   conn: DuckDBConnection,
@@ -329,7 +379,9 @@ function send(msg: WorkerResponse): void {
 async function initWorker(): Promise<void> {
   try {
     await getPool();
-    send({ kind: 'ready' });
+    // The settled counter goes to an owner that can read it, and to no other:
+    // a process's channel would refuse the message, and 'ready' with it.
+    send(parent.sharesMemory ? { kind: 'ready', settled: settledBuffer } : { kind: 'ready' });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     send({ kind: 'error', id: -1, message: `DuckDB worker init failed: ${message}` });
@@ -531,16 +583,22 @@ function reportUnexpectedFailure(id: number, err: unknown): void {
 }
 
 parent.onMessage((msg: unknown) => {
-  if (isQueryRequest(msg)) {
+  if (isDrainRequest(msg)) {
+    handleDrain();
+  } else if (isQueryRequest(msg)) {
     const { id } = msg;
-    handleRequest(msg).catch((err: unknown) => { reportUnexpectedFailure(id, err); });
+    handleRequest(msg).catch((err: unknown) => { reportUnexpectedFailure(id, err); }).finally(requestSettled);
   } else if (isPreparedQueryRequest(msg)) {
     const { id } = msg;
-    handlePreparedRequest(msg).catch((err: unknown) => { reportUnexpectedFailure(id, err); });
+    handlePreparedRequest(msg).catch((err: unknown) => { reportUnexpectedFailure(id, err); }).finally(requestSettled);
   } else if (isCancelRequest(msg)) {
     handleCancelPending(msg.builds === true);
   } else if (isConfigureRequest(msg)) {
-    handleConfigure(msg).catch(() => undefined);
+    handleConfigure(msg).catch(() => undefined).finally(requestSettled);
+  } else if (isCountedRequest(msg)) {
+    // The owner counted it as posted and it is refused here as malformed: it
+    // settles all the same, or a drain would wait for it until its deadline.
+    requestSettled();
   }
 });
 

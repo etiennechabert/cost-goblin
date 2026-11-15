@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { asDimensionId } from '@costgoblin/core/browser';
@@ -6,7 +6,21 @@ import type { Dimension } from '@costgoblin/core/browser';
 import { PieChart } from '../components/pie-chart.js';
 import type { PieSlice } from '../components/pie-chart.js';
 import { PaletteProvider } from '../hooks/use-palette.js';
-import { PALETTE_STANDARD, assignSeriesColors } from '../lib/palette.js';
+import { PALETTE_STANDARD, assignSeriesColors, getActivePalette } from '../lib/palette.js';
+import { takeMemoRenders } from './memo-renders.js';
+
+vi.mock('react', async (importOriginal) =>
+  (await import('./memo-renders.js')).withMemoSpy(await importOriginal<typeof import('react')>()));
+
+beforeEach(() => {
+  takeMemoRenders();
+});
+
+/** How many times the slices and the legend rows rendered since the last call
+ *  (or the start of the test). */
+function takeRenders(): Readonly<Record<string, number>> {
+  return takeMemoRenders('PieSliceMark', 'PieLegendRow');
+}
 
 const SLICES: readonly PieSlice[] = [
   { name: 'EC2', cost: 500, percentage: 50 },
@@ -145,6 +159,27 @@ describe('PieChart — slices', () => {
     expect(onSliceClick.mock.calls).toEqual([['EC2'], ['S3'], ['RDS']]);
   });
 
+  // A slice is a focusable <g>, not a <button>: Space on it is the page's
+  // "scroll down a screen" unless the slice takes it.
+  it('keeps Space on a slice from scrolling the page, and leaves the other keys alone', async () => {
+    const { container } = renderPie(<PieChart data={SLICES} title="t" maxSlices={3} onSliceClick={vi.fn()} />);
+    const groups = await slices(container, 4);
+
+    // fireEvent answers false when a handler prevented the default action.
+    expect(fireEvent.keyDown(slice(groups, 0), { key: ' ' })).toBe(false);
+    expect(fireEvent.keyDown(slice(groups, 0), { key: 'Enter' })).toBe(true);
+    expect(fireEvent.keyDown(slice(groups, 0), { key: 'Tab' })).toBe(true);
+    // The folded remainder does nothing with Space, so the page keeps it.
+    expect(fireEvent.keyDown(slice(groups, 3), { key: ' ' })).toBe(true);
+  });
+
+  it('leaves Space to the page on a slice without a click handler', async () => {
+    const { container } = renderPie(<PieChart data={SLICES} title="t" />);
+    const groups = await slices(container, 4);
+
+    expect(fireEvent.keyDown(slice(groups, 0), { key: ' ' })).toBe(true);
+  });
+
   it('keeps the folded Other slice inert', async () => {
     const onSliceClick = vi.fn<(name: string) => void>();
     const { container } = renderPie(<PieChart data={SLICES} title="t" maxSlices={2} onSliceClick={onSliceClick} />);
@@ -205,6 +240,36 @@ describe('PieChart — slices', () => {
 });
 
 describe('PieChart — legend', () => {
+  // The folded remainder is named "Other" and is no entity: a previous cost
+  // filed under that name belongs to a real "Other" (FOCUS has such a service
+  // category), drawn or not.
+  it('shows no delta on the folded remainder, whatever cost a real Other had before', async () => {
+    const user = userEvent.setup();
+    const { rerender } = renderPie(<PieChart data={SLICES} title="t" maxSlices={2} previousCosts={new Map([['Other', 100]])} />);
+
+    // EC2, S3 and the remainder ($200): nothing to compare any of them with.
+    expect(await screen.findByText('$200.00 (20.0%)')).not.toBeNull();
+    expect(screen.queryByText(/[↑↓]\d/)).toBeNull();
+    // Nor once the row is hovered and shows its detail.
+    await user.hover(screen.getByText('Other'));
+    expect(screen.getByText('Other').className).toContain('font-semibold');
+    expect(screen.queryByText(/[↑↓]\d/)).toBeNull();
+    await user.unhover(screen.getByText('Other'));
+
+    // A real Other among the slices keeps its own delta; the remainder below
+    // it still has none.
+    const data = [{ name: 'Other', cost: 500, percentage: 50 }, ...SLICES.slice(1)];
+    rerender(
+      <PaletteProvider>
+        <PieChart data={data} title="t" maxSlices={2} previousCosts={new Map([['Other', 400], ['S3', 400]])} />
+      </PaletteProvider>,
+    );
+    expect(await screen.findByText('↑25.0%')).not.toBeNull();
+    expect(screen.getByText('↓25.0%')).not.toBeNull();
+    expect(screen.getAllByText('Other')).toHaveLength(2);
+    expect(screen.getAllByText(/[↑↓]\d/)).toHaveLength(2);
+  });
+
   it('shows period-over-period deltas only where a previous cost exists', async () => {
     renderPie(<PieChart data={SLICES} title="t" previousCosts={PREVIOUS} />);
 
@@ -278,6 +343,22 @@ describe('PieChart — without a legend', () => {
     expect(screen.queryByText('Lambda')).toBeNull();
   });
 
+  it('shows no delta in the label of the folded remainder', async () => {
+    const data = [{ name: 'Other', cost: 500, percentage: 50 }, ...SLICES.slice(1)];
+    const previousCosts = new Map([['Other', 400]]);
+    const { container } = renderPie(<PieChart data={data} title="t" showLegend={false} maxSlices={2} previousCosts={previousCosts} />);
+    const groups = await slices(container, 3);
+
+    fireEvent.mouseEnter(slice(groups, 2));
+    expect(screen.getByText('$200.00 (20.0%)')).not.toBeNull();
+    expect(screen.queryByText(/[↑↓]\d/)).toBeNull();
+
+    // The real Other, first slice, still shows its own.
+    fireEvent.mouseEnter(slice(groups, 0));
+    expect(screen.getByText('$500.00 (50.0%)')).not.toBeNull();
+    expect(screen.getByText('↑25.0%').className).toContain('text-negative');
+  });
+
   it('shows no delta without previous costs', async () => {
     const { container } = renderPie(<PieChart data={SLICES} title="t" showLegend={false} />);
     const groups = await slices(container, 4);
@@ -296,5 +377,151 @@ describe('PieChart — without a legend', () => {
     for (const path of container.querySelectorAll('svg path')) {
       expect(path.getAttribute('opacity')).toBe('0.3');
     }
+  });
+});
+
+// A dashboard renders its pies on every cross-chart hover: the widget reads
+// the focus and hands the chart new handler closures. A pie of 50 slices has
+// 50 legend rows, each formatting a cost.
+describe('PieChart — what a hover renders', () => {
+  type PieProps = React.ComponentProps<typeof PieChart>;
+
+  function pie(props: Partial<PieProps>): React.ReactElement {
+    return <PaletteProvider><PieChart data={SLICES} title="t" {...props} /></PaletteProvider>;
+  }
+
+  it('renders only the slice and the legend row that take or lose the focus when it moves', async () => {
+    const { container, rerender } = render(pie({ externalHoveredName: 'EC2', previousCosts: PREVIOUS, onSliceClick: vi.fn() }));
+    const groups = await slices(container, 4);
+    takeRenders();
+
+    rerender(pie({ externalHoveredName: 'RDS', previousCosts: PREVIOUS, onSliceClick: vi.fn() }));
+
+    expect(slicePath(slice(groups, 2)).getAttribute('stroke')).toBe('#ffffff');
+    expect(slicePath(slice(groups, 0)).getAttribute('stroke')).toBe('transparent');
+    expect(screen.getByText('RDS').className).toContain('font-semibold');
+    expect(screen.getByText('EC2').className).toContain('text-text-muted');
+    expect(takeRenders()).toEqual({ PieSliceMark: 2, PieLegendRow: 2 });
+  });
+
+  it('renders them all when a focus appears or goes: every other slice dims or lights up again', async () => {
+    const { container, rerender } = render(pie({}));
+    const groups = await slices(container, 4);
+    takeRenders();
+
+    rerender(pie({ externalHoveredName: 'S3' }));
+    expect(slicePath(slice(groups, 0)).getAttribute('opacity')).toBe('0.3');
+    expect(takeRenders()).toEqual({ PieSliceMark: 4, PieLegendRow: 4 });
+
+    rerender(pie({ externalHoveredName: null }));
+    expect(slicePath(slice(groups, 0)).getAttribute('opacity')).toBe('1');
+    expect(takeRenders()).toEqual({ PieSliceMark: 4, PieLegendRow: 4 });
+  });
+
+  it('renders the two slices its own hover moves between', async () => {
+    const { container } = render(pie({ maxSlices: 3 }));
+    const groups = await slices(container, 4);
+    fireEvent.mouseEnter(slice(groups, 0));
+    takeRenders();
+
+    fireEvent.mouseEnter(slice(groups, 1));
+    expect(takeRenders()).toEqual({ PieSliceMark: 2, PieLegendRow: 2 });
+
+    // Onto the folded remainder, from the legend.
+    fireEvent.mouseEnter(screen.getByText('Other'));
+    expect(slicePath(slice(groups, 3)).getAttribute('stroke')).toBe('#ffffff');
+    expect(takeRenders()).toEqual({ PieSliceMark: 2, PieLegendRow: 2 });
+  });
+
+  it('renders no slice or row when its host renders it again, and calls the handlers of that render', async () => {
+    const first = { onSliceClick: vi.fn<(name: string) => void>(), onSliceHover: vi.fn<(name: string | null) => void>() };
+    const second = { onSliceClick: vi.fn<(name: string) => void>(), onSliceHover: vi.fn<(name: string | null) => void>() };
+    const { container, rerender } = render(pie({ ...first, title: <span>By service</span>, previousCosts: PREVIOUS }));
+    const groups = await slices(container, 4);
+    takeRenders();
+
+    rerender(pie({ ...second, title: <span>By service</span>, previousCosts: PREVIOUS }));
+    expect(takeRenders()).toEqual({ PieSliceMark: 0, PieLegendRow: 0 });
+
+    fireEvent.click(slice(groups, 1));
+    fireEvent.keyDown(slice(groups, 2), { key: 'Enter' });
+    fireEvent.click(screen.getByRole('button', { name: /Lambda/ }));
+    expect(second.onSliceClick.mock.calls).toEqual([['S3'], ['RDS'], ['Lambda']]);
+    fireEvent.mouseEnter(slice(groups, 0));
+    expect(second.onSliceHover.mock.calls).toEqual([['EC2']]);
+    fireEvent.mouseLeave(slice(groups, 0));
+    expect(second.onSliceHover).toHaveBeenLastCalledWith(null);
+    expect(first.onSliceClick).not.toHaveBeenCalled();
+    expect(first.onSliceHover).not.toHaveBeenCalled();
+  });
+
+  it('makes its slices clickable, or inert again, when the host adds or drops the click handler', async () => {
+    const onSliceClick = vi.fn<(name: string) => void>();
+    const { container, rerender } = render(pie({}));
+    const groups = await slices(container, 4);
+    expect(slice(groups, 0).getAttribute('role')).toBeNull();
+    expect(screen.queryByRole('button', { name: /EC2/ })).toBeNull();
+
+    rerender(pie({ onSliceClick }));
+    expect(slice(groups, 0).getAttribute('role')).toBe('button');
+    fireEvent.click(screen.getByRole('button', { name: /EC2/ }));
+    expect(onSliceClick.mock.calls).toEqual([['EC2']]);
+
+    rerender(pie({}));
+    expect(slice(groups, 0).getAttribute('role')).toBeNull();
+    fireEvent.click(slice(groups, 0));
+    expect(onSliceClick).toHaveBeenCalledTimes(1);
+  });
+
+  // What a slice or a row shows comes from its props alone: these are the
+  // inputs, other than the focus, that have to reach them.
+  it('draws again what the palette, the previous costs and the data change', async () => {
+    const tree = (props: Partial<PieProps>, palette: 'standard' | 'colorblind'): React.ReactElement => (
+      <PaletteProvider palette={palette}><PieChart data={SLICES} title="t" {...props} /></PaletteProvider>
+    );
+    const { container, rerender } = render(tree({}, 'standard'));
+    const groups = await slices(container, 4);
+    const fills = (): (string | null)[] => groups.map(g => slicePath(g).getAttribute('fill'));
+    const swatches = (): string[] => [...container.querySelectorAll<HTMLElement>('span.inline-block')].map(el => el.style.backgroundColor);
+    const standardFills = fills();
+    const standardSwatches = swatches();
+    takeRenders();
+
+    rerender(tree({}, 'colorblind'));
+    const colorblind = assignSeriesColors(SLICES, getActivePalette('colorblind', 'dark'), { colorblind: true });
+    expect(fills()).toEqual(SLICES.map(s => colorblind(s.name)));
+    expect(fills()).not.toEqual(standardFills);
+    expect(swatches()).toHaveLength(4);
+    expect(swatches()).not.toEqual(standardSwatches);
+    expect(takeRenders()).toEqual({ PieSliceMark: 4, PieLegendRow: 4 });
+
+    // EC2, S3 and RDS get a previous cost, Lambda has none: its row stays.
+    rerender(tree({ previousCosts: PREVIOUS }, 'colorblind'));
+    expect(screen.getByText('↑25.0%').className).toContain('text-negative');
+    expect(screen.getByText('↓25.0%').className).toContain('text-positive');
+    expect(takeRenders()).toEqual({ PieSliceMark: 0, PieLegendRow: 3 });
+
+    const halved = SLICES.map(s => ({ ...s, cost: s.cost / 2 }));
+    rerender(tree({ data: halved, previousCosts: PREVIOUS }, 'colorblind'));
+    expect(screen.getByText('$250.00 (50.0%)')).not.toBeNull();
+    expect(screen.queryByText('$500.00 (50.0%)')).toBeNull();
+    expect(screen.getByText('↓37.5%').className).toContain('text-positive');
+    expect(takeRenders()).toEqual({ PieSliceMark: 4, PieLegendRow: 4 });
+  });
+
+  it('scrolls the legend to the row that takes the focus, each time it moves', async () => {
+    const scroll = vi.spyOn(Element.prototype, 'scrollIntoView');
+    const { container, rerender } = render(pie({ externalHoveredName: 'EC2' }));
+    await slices(container, 4);
+    scroll.mockClear();
+
+    rerender(pie({ externalHoveredName: 'Lambda' }));
+    expect(scroll.mock.contexts).toHaveLength(1);
+    const scrolled = scroll.mock.contexts[0];
+    expect(scrolled instanceof HTMLElement && scrolled.textContent.startsWith('Lambda')).toBe(true);
+
+    // The same focus again scrolls nothing.
+    rerender(pie({ externalHoveredName: 'Lambda' }));
+    expect(scroll).toHaveBeenCalledTimes(1);
   });
 });

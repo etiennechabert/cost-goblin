@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type {
+  CostApi,
   CostMetric,
   CostScopeConfig,
   MarketplaceAttributionConfig,
@@ -766,29 +767,39 @@ export function CostScopeView({ onConfigLoaded }: CostScopeViewProps = {}): Reac
     setLoadAttempt(n => n + 1);
   }
 
-  // Pre-fetch filter-value suggestions once per enabled dim so every
-  // ConditionRow's datalist shares a single IPC round-trip. Without this,
-  // every condition row fires its own identical fetch on mount.
+  // Value suggestions for the dimensions the rules name, shared by every
+  // condition on one. A list reads every line item on disk (it bypasses the
+  // scope, to offer what a rule excludes), so a dimension is asked for only
+  // once a condition is on it, and once: on a large bill, one list per
+  // enabled dimension took over a minute.
+  const suggestedKey = useMemo(() => {
+    const enabled = new Set(dimensions.filter(d => d.enabled !== false).map(d => String(getDimensionId(d))));
+    const named = draft.rules.flatMap(rule => rule.conditions.map(c => String(c.dimensionId)));
+    return [...new Set(named)].filter(id => enabled.has(id)).sort((a, b) => a.localeCompare(b)).join('\n');
+  }, [draft.rules, dimensions]);
+  // The dimensions asked for so far, and through which API: another one is
+  // other data, so what the last one listed says nothing about it.
+  const askedRef = useRef<{ readonly api: CostApi; readonly ids: Set<string> } | null>(null);
   useEffect(() => {
-    let cancelled = false;
-    async function fetchDimValues(d: typeof dimensions[number]): Promise<[string, readonly string[]]> {
-      const id = getDimensionId(d);
-      try {
-        const vals = await api.getFilterValues(id, {}, undefined, { bypassCostScope: true }, `cost-scope:${id}`);
-        return [id, vals.map(v => v.value)];
-      } catch {
-        return [id, []];
-      }
-    }
-    async function run(): Promise<void> {
-      const enabled = dimensions.filter(d => d.enabled !== false);
-      const entries = await Promise.all(enabled.map(fetchDimValues));
-      if (!cancelled) setSuggestionsByDim(new Map(entries));
-    }
     // Only the rule editor uses them, and it shows once the file has loaded.
-    if (editable && dimensions.length > 0) run().catch(() => undefined);
-    return () => { cancelled = true; };
-  }, [api, dimensions, editable]);
+    if (!editable || suggestedKey.length === 0) return;
+    const previous = askedRef.current;
+    const asked = previous !== null && previous.api === api ? previous : { api, ids: new Set<string>() };
+    if (asked !== previous) {
+      askedRef.current = asked;
+      if (previous !== null) setSuggestionsByDim(new Map());
+    }
+    for (const id of suggestedKey.split('\n')) {
+      if (asked.ids.has(id)) continue;
+      asked.ids.add(id);
+      // A list that arrives after the API changed is the old API's.
+      const keep = (values: readonly string[]): void => {
+        if (askedRef.current === asked) setSuggestionsByDim(prev => new Map(prev).set(id, values));
+      };
+      api.getFilterValues(id, {}, undefined, { bypassCostScope: true }, `cost-scope:${id}`)
+        .then(vals => { keep(vals.map(v => v.value)); }, () => { keep([]); });
+    }
+  }, [api, suggestedKey, editable]);
 
   const refreshPreview = useCallback((config: CostScopeConfig, range: CostScopePreviewRange) => {
     // Only the latest request may land: a year-long preview answers after

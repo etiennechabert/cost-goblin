@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { logger } from '@costgoblin/core';
 import type { SyncLogLevel, SyncProgress } from '@costgoblin/core';
-import { CANCEL_RESEND_MS, CLIENT_TERMINATED_MESSAGE, TERMINATE_GRACE_MS, createDuckDBClient } from '../main/duckdb-client.js';
+import { CANCEL_RESEND_MS, CLIENT_TERMINATED_MESSAGE, createDuckDBClient, drainDuckDBClientsSync, TERMINATE_GRACE_MS } from '../main/duckdb-client.js';
 import { createSyncClient } from '../main/sync-client.js';
 import type { SyncOptions } from '../main/sync-client.js';
 import { initWorkerLifecycle } from '../main/worker-lifecycle.js';
@@ -17,6 +17,8 @@ interface FakeWorker {
   readonly posted: unknown[];
   terminateCalls: number;
   failTerminate: boolean;
+  /** Thrown by the next postMessage, which then posts nothing. */
+  failNextPost: Error | null;
   emit(event: string, ...args: unknown[]): boolean;
 }
 
@@ -33,13 +35,21 @@ vi.mock('node:worker_threads', async () => {
     readonly posted: unknown[] = [];
     terminateCalls = 0;
     failTerminate = false;
+    failNextPost: Error | null = null;
     constructor(path: string, options?: unknown) {
       super();
       this.path = path;
       this.options = options;
       threads.created.push(this);
     }
-    postMessage(msg: unknown): void { this.posted.push(msg); }
+    postMessage(msg: unknown): void {
+      if (this.failNextPost !== null) {
+        const err = this.failNextPost;
+        this.failNextPost = null;
+        throw err;
+      }
+      this.posted.push(msg);
+    }
     terminate(): Promise<number> {
       this.terminateCalls += 1;
       return this.failTerminate ? Promise.reject(new Error('already gone')) : Promise.resolve(0);
@@ -369,6 +379,109 @@ describe('createDuckDBClient', () => {
     lastWorker().emit('message', { kind: 'error', id: 7, message: 'late answer' });
     lastWorker().emit('message', READY);
     await expect(recovering).resolves.toBeDefined();
+  });
+});
+
+// The exit drain's bookkeeping, against a stand-in worker whose settled counter
+// the test moves itself. duckdb-drain.test.ts runs the same against real queries.
+describe('drainDuckDBClientsSync', () => {
+  interface Counted {
+    readonly client: Awaited<ReturnType<typeof createDuckDBClient>>;
+    readonly worker: FakeWorker;
+    /** The worker's side of the counter: how many requests it has settled. */
+    readonly settle: (count: number) => void;
+  }
+
+  async function counted(): Promise<Counted> {
+    const settled = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
+    const cells = new Int32Array(settled);
+    const creating = createDuckDBClient('/w/duckdb-worker.cjs');
+    const worker = lastWorker();
+    worker.emit('message', { kind: 'ready', settled });
+    return { client: await creating, worker, settle: (count) => { Atomics.store(cells, 0, count); } };
+  }
+
+  /** A stand-in worker never exits by itself, and a live client is waited on. */
+  function gone(worker: FakeWorker): void {
+    worker.emit('exit', 0);
+  }
+
+  const DRAIN = { kind: 'drain' };
+  const isDrain = (msg: unknown): boolean => JSON.stringify(msg) === JSON.stringify(DRAIN);
+
+  it('waits until the worker has settled as many requests as were posted', async () => {
+    const { client, worker, settle } = await counted();
+    const queries = [client.runQuery('SELECT 1'), client.runBuildQuery('COPY x TO y'), client.runPreparedQuery('SELECT $1', ['a'])];
+    for (const query of queries) query.catch(() => undefined);
+    client.configure({ memoryGB: 4 });
+
+    // Four posted, three settled: one is still in flight at the deadline.
+    settle(3);
+    expect(drainDuckDBClientsSync(20)).toBe(false);
+    settle(4);
+    expect(drainDuckDBClientsSync(20)).toBe(true);
+
+    // Asked to drain once, however often it is waited on.
+    expect(worker.posted.filter(isDrain)).toHaveLength(1);
+    expect(worker.posted.at(-1)).toEqual(DRAIN);
+    gone(worker);
+  });
+
+  it('is settled from the start when nothing was posted', async () => {
+    const { worker } = await counted();
+
+    expect(drainDuckDBClientsSync(0)).toBe(true);
+    expect(worker.posted).toEqual([DRAIN]);
+    gone(worker);
+  });
+
+  it('starts no query once it is draining', async () => {
+    const { client, worker } = await counted();
+    drainDuckDBClientsSync(0);
+
+    await expect(client.runQuery('SELECT 1')).rejects.toThrow(CLIENT_TERMINATED_MESSAGE);
+    await expect(client.runBuildQuery('COPY x TO y')).rejects.toThrow(CLIENT_TERMINATED_MESSAGE);
+    await expect(client.runPreparedQuery('SELECT $1', ['a'])).rejects.toThrow(CLIENT_TERMINATED_MESSAGE);
+
+    expect(worker.posted).toEqual([DRAIN]);
+    gone(worker);
+  });
+
+  it('does not wait for a request that never reached the worker', async () => {
+    const { client, worker, settle } = await counted();
+    client.runQuery('SELECT 1').catch(() => undefined);
+    // What a parameter that cannot be cloned does to postMessage.
+    worker.failNextPost = new Error('could not be cloned');
+    await expect(client.runPreparedQuery('SELECT $1', ['a'])).rejects.toThrow('could not be cloned');
+
+    // One request is in flight, not two: counted, the one that was never sent
+    // would keep every drain waiting until its deadline.
+    settle(1);
+    expect(drainDuckDBClientsSync(0)).toBe(true);
+    gone(worker);
+  });
+
+  it('no longer waits on a worker that exited', async () => {
+    const { client, worker } = await counted();
+    client.runQuery('SELECT 1').catch(() => undefined);
+    expect(drainDuckDBClientsSync(0)).toBe(false);
+
+    worker.emit('exit', 1);
+
+    expect(drainDuckDBClientsSync(0)).toBe(true);
+  });
+
+  it('asks nothing of a worker that shares no counter, and does not wait on it', async () => {
+    const creating = createDuckDBClient('/w/duckdb-worker.cjs');
+    const worker = lastWorker();
+    worker.emit('message', READY);
+    const client = await creating;
+    client.runQuery('SELECT 1').catch(() => undefined);
+
+    expect(drainDuckDBClientsSync(0)).toBe(true);
+
+    expect(worker.posted.filter(isDrain)).toHaveLength(0);
+    gone(worker);
   });
 });
 

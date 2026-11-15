@@ -441,6 +441,20 @@ describe('createAppContext: rollup lifecycle', () => {
     return mkdir(providerEtagPath(h.ws.dataDir, name, 'daily'), { recursive: true });
   }
 
+  it("counts a built partition's rows as a step of its build, out of a view's cancel", async () => {
+    const h = await harness({ data: 'synthetic', rollupBuilds: true });
+    const pooled = vi.spyOn(h.db, 'runQuery');
+    const builds = vi.spyOn(h.db, 'runBuildQuery');
+    h.app.warmupBase();
+    await vi.waitFor(() => { expect(h.app.rollupStore.getStatus().state).toBe('ready'); }, { timeout: 15_000 });
+
+    // On the pool it queues behind a view's queries, where the next
+    // navigation's cancel reaches it and the month it counted is left out.
+    const isRowCount = (sql: string): boolean => sql.startsWith('SELECT COUNT(*)::BIGINT AS n FROM read_parquet(');
+    expect(builds.mock.calls.filter(([sql]) => isRowCount(sql)).length).toBeGreaterThan(0);
+    expect(pooled.mock.calls.filter(([sql]) => isRowCount(sql))).toEqual([]);
+  });
+
   it('settles without building when nothing is configured', async () => {
     const h = await harness({ config: 'none' });
     h.app.warmupBase();
