@@ -143,18 +143,35 @@ describe('queryAggregatedRows against DuckDB', () => {
     expect(result).toEqual({ rows: [], totalRows: 0 });
   });
 
-  it('counts the groups only when a keyed page is full', async () => {
+  it('reads the rows and the group count in one query, never a second scan', async () => {
     const queries: string[] = [];
     const recording: RunSql = (sql, params) => { queries.push(sql); return run(sql, params); };
-    const counts = (): number => queries.filter(sql => sql.includes('AS _cnt')).length;
+
+    // Every group: five of them, the top two returned.
+    const top = await queryAggregatedRows(recording, { ...byServiceAndRegion, rowLimit: 2 });
+    expect([top.rows.length, top.totalRows]).toEqual([2, 5]);
+    expect(top.rows.map(r => r.cost)).toEqual([50, 40]);
+    expect(queries).toHaveLength(1);
+
+    // A keyed page that the limit cuts still counts every listed group.
     const rowKeys = [{ service: 'EC2', region: 'us-east-1' }, { service: 'RDS', region: 'eu-west-1' }];
-
-    expect((await queryAggregatedRows(recording, { ...byServiceAndRegion, rowKeys })).totalRows).toBe(2);
-    expect(counts()).toBe(0);
-
     const full = await queryAggregatedRows(recording, { ...byServiceAndRegion, rowKeys, rowLimit: 1 });
     expect([full.rows.length, full.totalRows]).toEqual([1, 2]);
-    expect(counts()).toBe(1);
+    expect(queries).toHaveLength(2);
+    // The source appears once per query: the groups are not computed twice.
+    for (const sql of queries) expect(sql.split('FROM (SELECT *, cost AS list_cost').length - 1).toBe(1);
+  });
+
+  it('sorts by each measure and by a grouped column as its rows read', async () => {
+    const sorted = async (column: string, direction: 'asc' | 'desc'): Promise<unknown[]> =>
+      (await queryAggregatedRows(run, { ...byServiceAndRegion, sort: { column, direction } })).rows.map(r => r.values['service']);
+    expect(await sorted('cost', 'asc')).toEqual(['EC2', 'EC2', 'RDS', "O'Brien", '']);
+    expect(await sorted('service', 'desc')).toEqual(['RDS', "O'Brien", 'EC2', 'EC2', '']);
+    const byRows = await queryAggregatedRows(run, {
+      ...byServiceAndRegion, groupBy: explorerGroupBy(['region'], new Map()), sort: { column: 'row_count', direction: 'desc' },
+    });
+    expect(byRows.rows.map(r => [r.values['region'], r.rowCount])).toEqual([['eu-west-1', 4], ['us-east-1', 1]]);
+    expect(byRows.totalRows).toBe(2);
   });
 
   it('runs nothing for keys that match no group', async () => {
@@ -174,6 +191,31 @@ describe('queryAggregatedRows against DuckDB', () => {
     expect(bySize.rows.map(r => [r.values['service'], r.cost])).toEqual([['Credit', -45], ['EC2', 30]]);
     const byCost = await queryAggregatedRows(run, { ...signed, sort: { column: 'cost', direction: 'desc' } });
     expect(byCost.rows.map(r => r.values['service'])).toEqual(['EC2', 'RDS']);
+  });
+
+  it('keeps a measure apart from a group-by column of the same name', async () => {
+    // cost, list_cost and usage_amount can be grouped by. Costs 9 and 10 sort
+    // the other way round as text, and ABS() of the group's text does not run.
+    const byCostColumn: AggregatedRowsQuery = {
+      ...byServiceAndRegion,
+      source: "(SELECT *, cost * 2 AS list_cost, 1.0 AS usage_amount FROM (VALUES (9.0), (10.0), (10.0), (-30.0)) AS t(cost))",
+      groupBy: explorerGroupBy(['cost'], new Map()),
+    };
+    const bySum = await queryAggregatedRows(run, { ...byCostColumn, sort: { column: 'cost', direction: 'desc' } });
+    expect(bySum.rows.map(r => [r.values['cost'], r.cost, r.listCost, r.rowCount])).toEqual([
+      ['10.0', 20, 40, 2], ['9.0', 9, 18, 1], ['-30.0', -30, -60, 1],
+    ]);
+    expect(bySum.totalRows).toBe(3);
+    const bySize = await queryAggregatedRows(run, { ...byCostColumn, sort: { column: 'abs_cost', direction: 'desc' } });
+    expect(bySize.rows.map(r => r.cost)).toEqual([-30, 20, 9]);
+    const byDefault = await queryAggregatedRows(run, { ...byCostColumn, sort: undefined });
+    expect(byDefault.rows.map(r => r.cost)).toEqual([20, 9, -30]);
+    const byListCost = await queryAggregatedRows(run, {
+      ...byCostColumn, groupBy: explorerGroupBy(['list_cost', 'usage_amount'], new Map()), sort: { column: 'list_cost', direction: 'desc' },
+    });
+    expect(byListCost.rows.map(r => [r.values, r.listCost, r.usageAmount])).toEqual([
+      [{ list_cost: '20.0', usage_amount: '1.0' }, 40, 2], [{ list_cost: '18.0', usage_amount: '1.0' }, 18, 1], [{ list_cost: '-60.0', usage_amount: '1.0' }, -60, 1],
+    ]);
   });
 
   it('keeps the total row of a table with no group-by for any key', async () => {
