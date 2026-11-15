@@ -183,7 +183,7 @@ describe('sharing:apply-bundle', () => {
     expect(await readdir(backupDir)).toEqual(expect.arrayContaining(['costgoblin.yaml', 'dimensions.yaml']));
     expect(await readFile(h.ws.configPath, 'utf-8')).toContain('credentialsProfile: imported-sso');
     // Caches dropped (a stale cache would still hold test-profile).
-    expect(h.db.cancelPendingQueries).toHaveBeenCalledTimes(1);
+    expect(h.db.cancelAllQueries).toHaveBeenCalledTimes(1);
     expect((await h.app.getConfig()).providers[0]).toMatchObject({ credentialsProfile: 'imported-sso' });
   });
 

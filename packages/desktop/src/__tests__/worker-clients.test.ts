@@ -216,11 +216,14 @@ describe('createDuckDBClient', () => {
     const { client, worker } = await connected();
 
     client.cancelPendingQueries();
+    client.cancelAllQueries();
     client.configure({ tempDir: '/tmp/duck', memoryGB: 4, threads: 2 });
     await client.terminate();
 
     expect(worker.posted).toEqual([
+      // A view's cancel names no builds: the worker spares them.
       { kind: 'cancel-pending' },
+      { kind: 'cancel-pending', builds: true },
       { kind: 'configure', tempDir: '/tmp/duck', memoryGB: 4, threads: 2 },
     ]);
     expect(worker.terminateCalls).toBe(1);
@@ -230,8 +233,10 @@ describe('createDuckDBClient', () => {
   // it (duckdb-terminate.test.ts), so terminate() first empties the worker.
   describe('terminate with queries in flight', () => {
     const CANCELLED = { kind: 'error', message: 'Query cancelled' };
+    // Builds included: unlike a view's cancel, a worker that is stopping spares nothing.
+    const CANCEL_ALL = { kind: 'cancel-pending', builds: true };
     const cancelsPosted = (worker: FakeWorker): number =>
-      worker.posted.filter(msg => JSON.stringify(msg) === JSON.stringify({ kind: 'cancel-pending' })).length;
+      worker.posted.filter(msg => JSON.stringify(msg) === JSON.stringify(CANCEL_ALL)).length;
 
     it('cancels them and ends the worker only once every one has answered', async () => {
       const { client, worker } = await connected();
@@ -239,7 +244,7 @@ describe('createDuckDBClient', () => {
       const second = expect(client.runPreparedQuery('SELECT $1', [1])).resolves.toEqual([]);
 
       const terminating = client.terminate();
-      expect(worker.posted.at(-1)).toEqual({ kind: 'cancel-pending' });
+      expect(worker.posted.at(-1)).toEqual(CANCEL_ALL);
 
       worker.emit('message', { ...CANCELLED, id: 0 });
       expect(await isSettled(terminating)).toBe(false);
