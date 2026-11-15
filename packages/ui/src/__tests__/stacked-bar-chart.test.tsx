@@ -407,18 +407,52 @@ describe('StackedBarChart — series focus', () => {
     expect(looksFocused(segment(column(container, 0), 0))).toBe(true);
   });
 
-  it('filters on a segment click, Enter or Space', () => {
+  // A segment is a native button: the browser turns Enter and Space on it
+  // into a click, which user-event does too. The key press itself must not
+  // filter a second time.
+  it('filters once on a segment click, Enter or Space', async () => {
+    const user = userEvent.setup();
     const onSegmentClick = vi.fn<(name: string) => void>();
     const { container } = renderChart(<StackedBarChart days={DAYS} onSegmentClick={onSegmentClick} />);
     const day2 = column(container, 1);
 
     expect(segment(day2, 0).tagName).toBe('BUTTON');
     fireEvent.click(segment(day2, 0));
-    fireEvent.keyDown(segment(day2, 1), { key: 'Enter' });
-    fireEvent.keyDown(segment(day2, 2), { key: ' ' });
-    fireEvent.keyDown(segment(day2, 2), { key: 'Escape' });
+    segment(day2, 1).focus();
+    await user.keyboard('{Enter}');
+    segment(day2, 2).focus();
+    await user.keyboard(' ');
+    await user.keyboard('{Escape}');
 
     expect(onSegmentClick.mock.calls).toEqual([['EC2'], ['S3'], ['RDS']]);
+  });
+
+  // Filtering on a segment is not a press of anything around it: the plot is
+  // a button of its own when it takes a drag selection. The plot's handlers
+  // can't be watched from here, so a listener above the chart stands in.
+  it('keeps a segment click, Enter and Space from a listener above the chart', async () => {
+    const user = userEvent.setup();
+    const onClick = vi.fn();
+    const keys = vi.fn<(key: string) => void>();
+    const { container } = render(
+      <div onClick={onClick} onKeyDown={(e) => { keys(e.key); }}>
+        <PaletteProvider>
+          <StackedBarChart days={DAYS} onSegmentClick={vi.fn()} onRangeSelect={vi.fn()} />
+        </PaletteProvider>
+      </div>,
+    );
+    const day2 = column(container, 1);
+
+    fireEvent.click(segment(day2, 0));
+    segment(day2, 1).focus();
+    await user.keyboard('{Enter}');
+    await user.keyboard(' ');
+    expect(onClick).not.toHaveBeenCalled();
+    expect(keys).not.toHaveBeenCalled();
+
+    // Any other key is not the segment's to keep.
+    await user.keyboard('{Escape}');
+    expect(keys.mock.calls).toEqual([['Escape']]);
   });
 
   it('draws plain segments when nothing filters', () => {
@@ -490,7 +524,7 @@ describe('StackedBarChart — renders on hover', () => {
   // The widget hands the chart new `onSegmentClick` and `onSegmentHover`
   // closures on each of its renders, and it renders on every cross-chart
   // hover: the chart reporting its own focus, for one.
-  it('renders no bar when only its handlers are new, and calls the latest one', () => {
+  it('renders no bar when only its handlers are new, and calls the latest one', async () => {
     const first = vi.fn<(name: string) => void>();
     const latest = vi.fn<(name: string) => void>();
     const { container, rerender } = renderChart(
@@ -506,7 +540,8 @@ describe('StackedBarChart — renders on hover', () => {
     expect(takeRenders()).toEqual(NONE);
 
     fireEvent.click(segment(column(container, 1), 0));
-    fireEvent.keyDown(segment(column(container, 1), 1), { key: 'Enter' });
+    segment(column(container, 1), 1).focus();
+    await userEvent.setup().keyboard('{Enter}');
     expect(first).not.toHaveBeenCalled();
     expect(latest.mock.calls).toEqual([['EC2'], ['S3']]);
   });
