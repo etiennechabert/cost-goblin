@@ -16,7 +16,8 @@ serves those same queries in **~50–170 ms regardless of window** (13× faster 
 benchmark). The split:
 
 - **Dashboard widgets → the rollup.**
-- **Cost Explorer + the Table widget → raw.**
+- **Cost Explorer → raw.**
+- **The Table widget → the resource rollup (§10) when it proves the answer, else raw.**
 
 One data path per surface. This is deliberate: it bounds the rollup's
 responsibilities and therefore the bug surface.
@@ -147,7 +148,8 @@ and filter-value lists — all at daily granularity, over enabled-dim grain.
 **Raw** (always):
 - **Cost Explorer** — independent metric/perspective toggles, full line-item schema.
 - **The Table widget** — needs `resource_id` / `description` / raw row counts /
-  CSV. It's Explorer-grade; it stays on raw and is the **last widget to load**.
+  CSV, which the grain leaves out. It reads the **resource rollup** (§10) when
+  that proves the answer, and raw otherwise.
 - **Hourly / sub-day** (drag-zoom) — the rollup is daily.
 - **Any group-by on a raw-only dim** (`resource_id`, …).
 
@@ -211,6 +213,66 @@ Route dashboard queries to the partition glob; warm filter-values from it at
 startup (retires the "Loading dimensions N/8" hang).
 
 **Phase 4 — estimator UI + raw-only flagging** (§8).
+
+## 10. Resource rollup (the Table widget)
+
+The dashboard's table groups by `resource_id` + `description` by default. No
+grain can hold those: a large bill has millions of (resource, description)
+pairs a month, so the table grouped every line item of its range (seconds for
+30 days, a minute or more for a year).
+
+Almost all of those pairs are tiny, and the table shows the 500 costliest. So a
+second rollup per provider, `{provider}/resource-rollup/`, keeps only the pairs
+that can reach a page, and enough to **prove** when a page read from it is the
+one raw Parquet gives.
+
+- **Weight.** A pair's weight in a month is `SUM(ABS(cost))` over its line
+  items. No subset of them (some days, a filter, a finer group-by) can sum
+  beyond it, in either direction.
+- **Heavy set.** Each month ranks its pairs by weight (`top.parquet`) and keeps
+  the first `RESOURCE_ROLLUP_PAIRS_PER_MONTH` (20,000). The weight of the first
+  pair left out is the month's **tail bound**; a month that leaves none out is
+  **complete**. The heavy set (`heavy-N.parquet`) is the union of every month's
+  kept pairs.
+- **Rows.** Every month stores the day-level rows of every heavy pair it has
+  (`rows-N.parquet`): the main grain's columns plus `resource_id` and
+  `description`, with `cost`, `list_cost`, `usage_amount` and `line_items`. So a
+  stored pair is whole in every month, and a pair not stored weighs at most
+  the tail bound in each month.
+- **Generations.** A month whose raw files changed is ranked again, and every
+  month's rows are extracted again as generation N+1, which one manifest write
+  makes current. Generation N's files stay until the next build, for queries
+  still reading them.
+
+The table reads it only for a daily query of one provider in the saved cost
+scope, grouped by both key columns, over stored columns. Then it is exact in
+three cases, and reads raw in every other:
+
+1. **No month in range leaves a pair out**: the rows hold everything, so any
+   sort, any keys and the group count are right.
+2. **The query names its pairs** (the previous period's costs for the rows on
+   screen, or the row a detail expands) and all are heavy: each is whole.
+3. **A page of the costliest pairs** (by cost or by size, descending) whose
+   last row is beyond the sum of the range's tail bounds: no pair left out
+   can reach it. The rollup can't count the groups it leaves out, so this page
+   comes without `totalRows`; the table asks for the count on its own
+   (`explorer:count-aggregated-groups`, a raw scan) and shows the rows
+   meanwhile.
+
+What stays raw: a filter narrow enough that the page's last row is under the
+tail bound, other sorts, a group-by without both key columns, the hourly tier,
+several providers, a metric override, and the group count itself.
+
+Measured through the app on a synthetic workspace shaped like a large bill (12
+months, 22 GB, 268M line items, 8.9M pairs a month; DuckDB capped at 4 GB):
+
+| Range | Raw (rows + count) | Resource rollup (rows) | Count, in the background |
+|---|---|---|---|
+| 30 days | 2.4 s | 46 ms | 0.9 s |
+| 90 days | 24.3 s | 93 ms | 4.3 s |
+| 365 days | 171 s | 312 ms | 29 s |
+
+Build: 20 s for the 12 months (rank + extract), 285 MB on disk (1.3% of raw).
 
 ## Appendix — Confirmed benchmark
 

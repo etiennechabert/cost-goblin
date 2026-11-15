@@ -140,5 +140,6 @@ export function registerUIHandlers(app: AppContext): void {
     // parallelism takes effect on the next partition-build batch.
     ctx.db.configure({ memoryGB: resolveMemoryGB(memoryLimitGB), threads: resolveThreads(threads) });
     app.rollupStore.setBuildConcurrency(resolveRollupConcurrency(rollupConcurrency));
+    app.resourceRollupStore.setBuildConcurrency(resolveRollupConcurrency(rollupConcurrency));
   });
 }

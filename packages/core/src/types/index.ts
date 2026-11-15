@@ -204,6 +204,7 @@ export type {
   ExplorerFilterValuesParams,
   ExplorerPreferences,
   ExplorerPreferencesUpdate,
+  AggregatedGroupCountParams,
   AggregatedTableParams,
   AggregatedTableRow,
   AggregatedTableResult,

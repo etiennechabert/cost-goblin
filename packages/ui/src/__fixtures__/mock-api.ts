@@ -658,6 +658,12 @@ export class MockCostApi implements CostApi {
       tagColumns: [{ id: 'tag_team', label: 'Team' }, { id: 'tag_env', label: 'Environment' }],
     });
   }
+  /** Every group count asked for, as asked. */
+  readonly groupCountRequests: import('@costgoblin/core/browser').AggregatedGroupCountParams[] = [];
+  countAggregatedGroups(params: import('@costgoblin/core/browser').AggregatedGroupCountParams): Promise<number> {
+    this.groupCountRequests.push(params);
+    return Promise.resolve(2);
+  }
   getExplorerFilterValues(): Promise<ExplorerFilterValue[]> {
     return Promise.resolve([
       { value: 'Amazon EC2', label: 'Amazon EC2', cost: 18_000, rows: 8_400 },

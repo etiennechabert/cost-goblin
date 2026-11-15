@@ -140,7 +140,10 @@ export async function cascadeRollupForDeletedMonth(app: AppContext, month: strin
   if (provider === null) return;
   const monthsLeft = await listLocalMonths(app.ctx.dataDir, provider, 'daily');
   if (monthsLeft.includes(month)) app.maintainRollup([month]);
-  else await app.rollupStore.deletePeriod(month);
+  else {
+    await app.rollupStore.deletePeriod(month);
+    await app.resourceRollupStore.deletePeriod(month);
+  }
 }
 
 /** Periods (etag keys / dir names) → the unique YYYY-MM rollup partitions they

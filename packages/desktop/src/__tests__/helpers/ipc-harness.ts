@@ -299,6 +299,8 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
       await app.awaitWarmup(5_000).catch(() => false);
       // Builds are refused unless asked for, so only real ones can still be writing.
       if (options.rollupBuilds === true) await drainRollupBuilds(app, 15_000);
+      // The resource rollup builds once the rollup has: it never rejects.
+      await app.awaitResourceRollup();
       await db.terminate();
       await rm(ws.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     },

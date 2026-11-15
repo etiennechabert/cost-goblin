@@ -40,6 +40,13 @@ interface UseAggregatedGroupsResult {
   readonly distinctTotal: number;
 }
 
+/** How many groups a result has. A request made without `deferTotalRows`
+ *  always comes back with the count; without one, the rows are all that is
+ *  known. */
+function totalGroups(result: AggregatedTableResult): number {
+  return result.totalRows ?? result.rows.length;
+}
+
 function normalize(result: AggregatedTableResult, columnKey: string): AggGroupRow[] {
   return result.rows.map(r => ({
     name: r.values[columnKey] ?? '',
@@ -86,7 +93,7 @@ export function useAggregatedGroups({
     [query, columnKey],
   );
 
-  const distinctTotal = query.status === 'success' && query.data !== null ? query.data.totalRows : 0;
+  const distinctTotal = query.status === 'success' && query.data !== null ? totalGroups(query.data) : 0;
 
   return {
     status: query.status,
@@ -210,7 +217,7 @@ export function usePairedGroups({
         });
       const fetchTop = async (range: DateRange, queryOrigin: string): Promise<PeriodTop> => {
         const result = await fetchGroups(range, queryOrigin, rowLimit);
-        return { rows: normalize(result, columnKey), capped: result.totalRows > result.rows.length };
+        return { rows: normalize(result, columnKey), capped: totalGroups(result) > result.rows.length };
       };
       const fetchByName = async (range: DateRange, queryOrigin: string, names: readonly string[]): Promise<AggGroupRow[]> => {
         if (names.length === 0) return [];
