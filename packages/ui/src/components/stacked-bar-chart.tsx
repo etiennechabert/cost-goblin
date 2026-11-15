@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { formatDollars } from './format.js';
 import { CoinRainLoader } from './coin-rain-loader.js';
 import { useSeriesColors } from '../hooks/use-palette.js';
+import { brighten } from '../lib/palette.js';
 import type { SeriesColors } from '../lib/palette.js';
 import { useBarDragSelect } from '../hooks/use-bar-drag-select.js';
 import type { Granularity } from '@costgoblin/core/browser';
@@ -73,6 +74,26 @@ function daySegments(day: BarDay, seriesColor: SeriesColors): Segment[] {
     .sort((a, b) => b.value - a.value);
 }
 
+// How much of its color a segment shows: most of it, a quarter while another
+// series is focused, all of it (brightened, outlined) when it is the focused
+// one. The first two are one number the plot sets and every segment's color
+// reads, not an `opacity` on each segment: an element with its own opacity (or
+// filter) is a compositing group of its own, and Chromium regroups them all
+// (Layerize) on every frame in which anything on the page moves. A month of
+// daily bars with a few hundred series is thousands of segments, which made
+// each such frame cost several milliseconds.
+const SERIES_ALPHA = '--series-alpha';
+const SEGMENT_ALPHA = 0.85;
+const DIMMED_ALPHA = 0.25;
+const FOCUSED_BRIGHTNESS = 1.2;
+
+/** The most segments a chart fades between those looks. Each fading segment
+ *  is restyled and repainted on every frame of the fade, so a chart with more
+ *  switches at once. */
+const FADE_MAX_SEGMENTS = 1500;
+
+type PlotStyle = React.CSSProperties & Readonly<Record<typeof SERIES_ALPHA, number>>;
+
 interface TooltipSegmentRowProps {
   readonly seg: Segment;
   readonly isHigh: boolean;
@@ -104,31 +125,38 @@ function TooltipSegmentRow({ seg, isHigh, pct, delta, highlightRef, setHoveredSe
   );
 }
 
+// A chart of a month of daily bars with a few hundred series draws thousands
+// of segments, and the pointer moving over it changes the hovered day or the
+// focused series on most frames. BarColumn and BarSegment are drawn through
+// `memo` so that such a change renders what it changes: nothing for the
+// hovered day, the segments that take or lose the focus for the series. That
+// holds only while every prop they get keeps its identity across the chart's
+// renders: state setters, values from `bars`, primitives, and callbacks that
+// don't change (`onSegmentClick` is the chart's own, not the host's).
+
 interface BarSegmentProps {
   readonly seg: Segment;
   readonly segTotal: number;
-  readonly highlightedGroup?: string | null | undefined;
-  readonly onMouseEnter: () => void;
+  readonly focused: boolean;
+  readonly fades: boolean;
+  readonly setHoveredSegment: (key: string | null) => void;
   readonly onSegmentClick?: ((name: string) => void) | undefined;
 }
 
-function BarSegment({ seg, segTotal, highlightedGroup, onMouseEnter, onSegmentClick }: BarSegmentProps) {
+function BarSegment({ seg, segTotal, focused, fades, setHoveredSegment, onSegmentClick }: BarSegmentProps) {
+  const onMouseEnter = (): void => { setHoveredSegment(seg.key); };
   const pct = segTotal > 0 ? (seg.value / segTotal) * 100 : 0;
-  const isHighlighted = highlightedGroup !== null && highlightedGroup !== undefined && highlightedGroup === seg.key;
-  const isDimmed = highlightedGroup !== null && highlightedGroup !== undefined && !isHighlighted;
-  let opacity = 0.85;
-  if (isDimmed) opacity = 0.25;
-  else if (isHighlighted) opacity = 1;
-  // Match the pie chart's emphasis: dimmed series fade to ~25%, the focused
-  // one stays at full opacity with a subtle brightness boost and a thin white
-  // outline inset so it reads as "selected" the way a pie slice does on hover.
+  // Match the pie chart's emphasis: the other series fade to a quarter (the
+  // plot's --series-alpha), the focused one shows at full strength with a
+  // subtle brightness boost and a thin white outline inset, so it reads as
+  // "selected" the way a pie slice does on hover.
   const baseStyle: React.CSSProperties = {
     height: `${String(pct)}%`,
-    backgroundColor: seg.color,
-    opacity,
-    filter: isHighlighted ? 'brightness(1.2)' : 'none',
-    boxShadow: isHighlighted ? 'inset 0 0 0 1.5px rgba(255,255,255,0.85)' : 'none',
-    transition: 'opacity 0.15s, filter 0.15s, box-shadow 0.15s',
+    backgroundColor: focused
+      ? brighten(seg.color, FOCUSED_BRIGHTNESS)
+      : `rgb(from ${seg.color} r g b / var(${SERIES_ALPHA}))`,
+    boxShadow: focused ? 'inset 0 0 0 1.5px rgb(255 255 255)' : 'none',
+    transition: fades ? 'background-color 0.15s, box-shadow 0.15s' : 'none',
   };
   if (onSegmentClick !== undefined) {
     return (
@@ -150,18 +178,25 @@ function BarSegment({ seg, segTotal, highlightedGroup, onMouseEnter, onSegmentCl
   );
 }
 
-interface BarColumnProps {
+const MemoBarSegment = memo(BarSegment);
+
+/** A day's bar: its segments and what they add up to. */
+interface Bar {
   readonly day: BarDay;
   readonly segments: readonly Segment[];
   readonly segTotal: number;
+}
+
+interface BarColumnProps extends Bar {
   readonly barPct: number;
   readonly highlightedGroup?: string | null | undefined;
+  readonly fades: boolean;
   readonly onSegmentClick?: ((name: string) => void) | undefined;
   readonly setHoveredDay: (date: string | null) => void;
   readonly setHoveredSegment: (key: string | null) => void;
 }
 
-function BarColumn({ day, segments, segTotal, barPct, highlightedGroup, onSegmentClick, setHoveredDay, setHoveredSegment }: BarColumnProps) {
+function BarColumn({ day, segments, segTotal, barPct, highlightedGroup, fades, onSegmentClick, setHoveredDay, setHoveredSegment }: BarColumnProps) {
   return (
     <div
       className="group relative flex-1 min-w-0"
@@ -173,12 +208,13 @@ function BarColumn({ day, segments, segTotal, barPct, highlightedGroup, onSegmen
         style={{ height: `${String(barPct)}%`, minHeight: barPct > 0 ? '2px' : '0' }}
       >
         {segments.map(seg => (
-          <BarSegment
+          <MemoBarSegment
             key={seg.key}
             seg={seg}
             segTotal={segTotal}
-            highlightedGroup={highlightedGroup}
-            onMouseEnter={() => { setHoveredSegment(seg.key); }}
+            focused={highlightedGroup === seg.key}
+            fades={fades}
+            setHoveredSegment={setHoveredSegment}
             onSegmentClick={onSegmentClick}
           />
         ))}
@@ -186,6 +222,8 @@ function BarColumn({ day, segments, segTotal, barPct, highlightedGroup, onSegmen
     </div>
   );
 }
+
+const MemoBarColumn = memo(BarColumn);
 
 export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expanded, onExpandToggle, title, loading, onSegmentClick, previousTotals, onRangeSelect, granularity, onSegmentHover }: StackedBarChartProps) {
   const [hoveredDay, setHoveredDay] = useState<string | null>(null);
@@ -227,6 +265,17 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
     onSegmentHoverRef.current?.(hoveredSegment);
   }, [hoveredSegment]);
 
+  // The host hands over a new click closure on each of its renders, and it
+  // renders on every cross-chart hover (this chart reporting its own focus,
+  // for one). The bars get one callback for the chart's life, which calls the
+  // closure of the render on screen: the ref is set at commit, so a render
+  // React has started and not committed (a transition) can't change what a
+  // click on the bars it hasn't replaced yet does.
+  const onSegmentClickRef = useRef(onSegmentClick);
+  useLayoutEffect(() => { onSegmentClickRef.current = onSegmentClick; });
+  const clickSegment = useCallback((name: string) => { onSegmentClickRef.current?.(name); }, []);
+  const segmentClick = onSegmentClick === undefined ? undefined : clickSegment;
+
   // Each series' cost over the whole range ranks it for color, the way the
   // pie and every other widget over the same range rank it.
   const seriesTotals = useMemo(() => {
@@ -243,9 +292,19 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
   const prevMax = previousTotals === undefined ? 0 : previousTotals.reduce((m, v) => Math.max(m, v), 0);
   const maxCost = Math.max(days.reduce((m, d) => Math.max(m, d.total), 0), prevMax);
 
+  const bars = useMemo(() => days.map((day): Bar => {
+    const segments = daySegments(day, seriesColor);
+    return { day, segments, segTotal: segments.reduce((sum, seg) => sum + seg.value, 0) };
+  }), [days, seriesColor]);
+  const fades = bars.reduce((count, bar) => count + bar.segments.length, 0) <= FADE_MAX_SEGMENTS;
+
   // Either an external focus signal or a row the user is currently pointing at
   // in the tooltip should fade the other series to match how pies behave.
   const focusedKey = highlightedGroup ?? hoveredSegment;
+  const plotStyle: PlotStyle = {
+    gap: days.length > 100 ? '1px' : '2px',
+    [SERIES_ALPHA]: focusedKey === null ? SEGMENT_ALPHA : DIMMED_ALPHA,
+  };
 
   return (
     <div className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-4 flex flex-col h-full overflow-hidden">
@@ -396,24 +455,23 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
               'absolute left-12 right-0 top-0 bottom-7 flex items-end z-10 outline-none',
               onRangeSelect === undefined ? '' : 'cursor-crosshair select-none',
             ].join(' ')}
-            style={{ gap: days.length > 100 ? '1px' : '2px' }}
+            style={plotStyle}
             onMouseDown={handleMouseDown}
             onKeyDown={() => { /* pixel drag has no keyboard equivalent */ }}
           >
-            {days.map((day) => {
+            {bars.map(({ day, segments, segTotal }) => {
               const barPct = maxCost > 0 ? (day.total / maxCost) * 100 : 0;
-              const segments = daySegments(day, seriesColor);
-              const segTotal = segments.reduce((sum, s) => sum + s.value, 0);
 
               return (
-                <BarColumn
+                <MemoBarColumn
                   key={day.date}
                   day={day}
                   segments={segments}
                   segTotal={segTotal}
                   barPct={barPct}
                   highlightedGroup={focusedKey}
-                  onSegmentClick={onSegmentClick}
+                  fades={fades}
+                  onSegmentClick={segmentClick}
                   setHoveredDay={setHoveredDay}
                   setHoveredSegment={setHoveredSegment}
                 />

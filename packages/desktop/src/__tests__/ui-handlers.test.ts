@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parseWorkspaceName } from '@costgoblin/core';
 import type { ChartPalette } from '@costgoblin/core';
 import { registerUIHandlers } from '../main/handlers/ui.js';
-import { MAX_MEMORY_GB, MIN_MEMORY_GB, maxThreads, totalMemoryGB } from '../main/duckdb-tuning.js';
+import { MAX_MEMORY_GB, MIN_MEMORY_GB, maxRollupConcurrency, maxThreads, totalMemoryGB } from '../main/duckdb-tuning.js';
 import { at, createHarness, num, type Harness, type TestWorkspace } from './helpers/ipc-harness.js';
 import type { IpcContext } from '../main/handlers/context.js';
 
@@ -180,7 +180,19 @@ describe('Performance settings', () => {
     expect(typeof applied?.threads).toBe('number');
     await writeFile(prefsFile(h), JSON.stringify({ performance: { memoryLimitGB: '4', threads: 2 } }));
     expect(at(await h.ipc.invoke('ui:get-preferences'), 'performance')).toEqual({ memoryLimitGB: null, threads: 2, rollupConcurrency: null });
-    await writeFile(prefsFile(h), JSON.stringify({ performance: { memoryLimitGB: 6, threads: 'two', rollupConcurrency: 3 } }));
-    expect(at(await h.ipc.invoke('perf:get-info'), 'current')).toEqual({ memoryLimitGB: 6, threads: null, rollupConcurrency: 3 });
+    await writeFile(prefsFile(h), JSON.stringify({ performance: { memoryLimitGB: 2, threads: 'two', rollupConcurrency: 3 } }));
+    expect(at(await h.ipc.invoke('perf:get-info'), 'current')).toEqual({ memoryLimitGB: 2, threads: null, rollupConcurrency: 3 });
+  });
+
+  it('reports an override saved above the ceiling as the ceiling it runs at', async () => {
+    const h = await uiApp();
+    // What a version with a higher ceiling, or a larger machine, left behind.
+    await writeFile(prefsFile(h), JSON.stringify({ performance: { memoryLimitGB: 24, threads: 10_000, rollupConcurrency: 10_000 } }));
+    const ceiling = Math.max(MIN_MEMORY_GB, Math.min(MAX_MEMORY_GB, totalMemoryGB()));
+    expect(at(await h.ipc.invoke('perf:get-info'), 'current')).toEqual({
+      memoryLimitGB: ceiling, threads: maxThreads(), rollupConcurrency: maxRollupConcurrency(),
+    });
+    // The file keeps what was saved: only a save through the tab rewrites it.
+    expect(at(at(JSON.parse(await readFile(prefsFile(h), 'utf-8')), 'performance'), 'memoryLimitGB')).toBe(24);
   });
 });

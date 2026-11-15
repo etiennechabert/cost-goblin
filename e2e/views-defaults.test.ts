@@ -1,12 +1,11 @@
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
 import { join } from 'node:path';
-import { mkdtempSync, readdirSync, copyFileSync, readFileSync, statSync, writeFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { parse as parseYaml } from 'yaml';
 import {
   launchAppWithCoverage,
   finishCoverage,
-  FIXTURE_CONFIG_DIR,
+  copyOfConfigDir,
   ROOT,
   screenshot,
   assertNoReactCrash,
@@ -33,19 +32,6 @@ const DEFAULT_VIEWS = [
 
 function slug(s: string): string {
   return s.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
-}
-
-/** A throwaway copy of the active config dir, without the files in `skip`.
- *  Dimensions + data come from the active config, so widgets still populate. */
-function copyOfConfigDir(skip: readonly string[] = []): string {
-  const srcConfig = process.env['COSTGOBLIN_CONFIG_DIR'] ?? FIXTURE_CONFIG_DIR;
-  const tmpConfig = mkdtempSync(join(tmpdir(), 'cg-seed-config-'));
-  for (const entry of readdirSync(srcConfig)) {
-    if (skip.includes(entry)) continue;
-    const p = join(srcConfig, entry);
-    if (statSync(p).isFile()) copyFileSync(p, join(tmpConfig, entry));
-  }
-  return tmpConfig;
 }
 
 function configDirWithoutViews(): string {

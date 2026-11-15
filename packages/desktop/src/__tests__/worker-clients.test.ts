@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { logger } from '@costgoblin/core';
 import type { SyncLogLevel, SyncProgress } from '@costgoblin/core';
-import { createDuckDBClient } from '../main/duckdb-client.js';
+import { CANCEL_RESEND_MS, CLIENT_TERMINATED_MESSAGE, TERMINATE_GRACE_MS, createDuckDBClient } from '../main/duckdb-client.js';
 import { createSyncClient } from '../main/sync-client.js';
 import type { SyncOptions } from '../main/sync-client.js';
 import { initWorkerLifecycle } from '../main/worker-lifecycle.js';
@@ -70,6 +71,11 @@ async function isSettled(promise: Promise<unknown>): Promise<boolean> {
 
 beforeEach(() => {
   threads.created.length = 0;
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe('initWorkerLifecycle', () => {
@@ -210,14 +216,136 @@ describe('createDuckDBClient', () => {
     const { client, worker } = await connected();
 
     client.cancelPendingQueries();
+    client.cancelAllQueries();
     client.configure({ tempDir: '/tmp/duck', memoryGB: 4, threads: 2 });
     await client.terminate();
 
     expect(worker.posted).toEqual([
+      // A view's cancel names no builds: the worker spares them.
       { kind: 'cancel-pending' },
+      { kind: 'cancel-pending', builds: true },
       { kind: 'configure', tempDir: '/tmp/duck', memoryGB: 4, threads: 2 },
     ]);
     expect(worker.terminateCalls).toBe(1);
+  });
+
+  // Tearing the thread down under a running query aborts the process hosting
+  // it (duckdb-terminate.test.ts), so terminate() first empties the worker.
+  describe('terminate with queries in flight', () => {
+    const CANCELLED = { kind: 'error', message: 'Query cancelled' };
+    // Builds included: unlike a view's cancel, a worker that is stopping spares nothing.
+    const CANCEL_ALL = { kind: 'cancel-pending', builds: true };
+    const cancelsPosted = (worker: FakeWorker): number =>
+      worker.posted.filter(msg => JSON.stringify(msg) === JSON.stringify(CANCEL_ALL)).length;
+
+    it('cancels them and ends the worker only once every one has answered', async () => {
+      const { client, worker } = await connected();
+      const first = expect(client.runQuery('SELECT slow')).rejects.toThrow('Query cancelled');
+      const second = expect(client.runPreparedQuery('SELECT $1', [1])).resolves.toEqual([]);
+
+      const terminating = client.terminate();
+      expect(worker.posted.at(-1)).toEqual(CANCEL_ALL);
+
+      worker.emit('message', { ...CANCELLED, id: 0 });
+      expect(await isSettled(terminating)).toBe(false);
+      expect(worker.terminateCalls).toBe(0);
+
+      // The second one finished before its cancel landed: rows end the wait too.
+      worker.emit('message', { kind: 'rows', id: 1, rows: [] });
+      await terminating;
+      expect(worker.terminateCalls).toBe(1);
+      await first;
+      await second;
+    });
+
+    it('re-sends the cancel until the queries answer, then stops', async () => {
+      const { client, worker } = await connected();
+      vi.useFakeTimers();
+      const query = expect(client.runQuery('SELECT slow')).rejects.toThrow('Query cancelled');
+
+      const terminating = client.terminate();
+      expect(cancelsPosted(worker)).toBe(1);
+      await vi.advanceTimersByTimeAsync(CANCEL_RESEND_MS * 3);
+      expect(cancelsPosted(worker)).toBe(4);
+
+      worker.emit('message', { ...CANCELLED, id: 0 });
+      await terminating;
+      await query;
+      await vi.advanceTimersByTimeAsync(CANCEL_RESEND_MS * 3);
+      expect(cancelsPosted(worker)).toBe(4);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(worker.terminateCalls).toBe(1);
+    });
+
+    it('stops waiting after the grace period, and still ends the worker only once the query settles', async () => {
+      const warn = vi.spyOn(logger, 'warn');
+      const { client, worker } = await connected();
+      vi.useFakeTimers();
+      const query = expect(client.runQuery('SELECT stuck')).resolves.toEqual([{ n: 1 }]);
+
+      const terminating = client.terminate();
+      await vi.advanceTimersByTimeAsync(TERMINATE_GRACE_MS - 1);
+      expect(warn).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await terminating;
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]?.[1]).toEqual({ inFlight: 1, graceMs: TERMINATE_GRACE_MS });
+
+      // The caller has moved on; the thread is left alone while it is busy...
+      await vi.advanceTimersByTimeAsync(TERMINATE_GRACE_MS);
+      expect(worker.terminateCalls).toBe(0);
+      expect(cancelsPosted(worker)).toBeGreaterThan(TERMINATE_GRACE_MS / CANCEL_RESEND_MS);
+
+      // ...and torn down the moment it no longer is. A failure there has no
+      // caller left to reach, so it is logged rather than left unhandled.
+      worker.failTerminate = true;
+      worker.emit('message', { kind: 'rows', id: 0, rows: [{ n: 1 }] });
+      await vi.advanceTimersByTimeAsync(0);
+      await query;
+      expect(worker.terminateCalls).toBe(1);
+      expect(warn).toHaveBeenCalledTimes(2);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('ends the wait when the worker dies by itself', async () => {
+      const { client, worker } = await connected();
+      const crashed = expect(client.runQuery('SELECT slow')).rejects.toThrow('Worker exited unexpectedly with code 1');
+      const terminating = client.terminate();
+      worker.emit('exit', 1);
+      await terminating;
+      await crashed;
+      expect(worker.terminateCalls).toBe(1);
+
+      // A clean exit leaves the query unanswered, but there is no thread left to protect.
+      const second = await connected();
+      void second.client.runQuery('SELECT slow');
+      const secondTerminating = second.client.terminate();
+      second.worker.emit('exit', 0);
+      await secondTerminating;
+      expect(second.worker.terminateCalls).toBe(1);
+    });
+
+    it('reports a failure to end the worker to the caller still waiting for it', async () => {
+      const { client, worker } = await connected();
+      worker.failTerminate = true;
+      const query = expect(client.runQuery('SELECT slow')).rejects.toThrow('Query cancelled');
+      const terminating = expect(client.terminate()).rejects.toThrow('already gone');
+      worker.emit('message', { ...CANCELLED, id: 0 });
+      await terminating;
+      await query;
+    });
+  });
+
+  it('refuses queries once terminated, and ends the worker once however often it is asked', async () => {
+    const { client, worker } = await connected();
+
+    await Promise.all([client.terminate(), client.terminate()]);
+    await client.terminate();
+    expect(worker.terminateCalls).toBe(1);
+
+    await expect(client.runQuery('SELECT 1')).rejects.toThrow(CLIENT_TERMINATED_MESSAGE);
+    await expect(client.runBuildQuery('SELECT 1')).rejects.toThrow(CLIENT_TERMINATED_MESSAGE);
+    expect(worker.posted).toEqual([]);
   });
 
   it('rejects new queries at once after the worker has crashed', async () => {

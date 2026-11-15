@@ -75,16 +75,27 @@ export function columnForDimension(dimensions: DimensionsConfig, dimId: string):
  *  Multi-provider queries read raw via the per-provider union instead.
  *  The caller still applies its own date-range WHERE — the rollup glob
  *  spans all months, so it is NOT pre-windowed like the old in-memory
- *  base. */
+ *  base.
+ *
+ *  Only the months the provider has on disk have to be valid, as on the raw
+ *  path (`resolveProviderBranches`), which reads no others either. A month with
+ *  nothing synced has no partition to build, so requiring one sent every range
+ *  that touches it back to raw Parquet: "Last 365 days" over a history with a
+ *  one-month gap, or over less than a year of exports, scanned every raw file
+ *  once per widget. */
 export function resolveRollupSource(
-  rollupStore: RollupStore,
+  rollupStore: Pick<RollupStore, 'resolveSource'>,
   providers: readonly ProviderSourceSpec[],
   dateRange: { readonly start: string; readonly end: string },
   tier: 'daily' | 'hourly',
   neededColumns: readonly string[],
 ): string | undefined {
-  if (providers.length !== 1) return undefined;
-  return rollupStore.resolveSource({ requiredPeriods: computePeriodsInRange(dateRange), tier, neededColumns });
+  const [provider, ...others] = providers;
+  if (provider === undefined || others.length > 0) return undefined;
+  const inRange = computePeriodsInRange(dateRange);
+  const onDisk = provider.availablePeriods;
+  const requiredPeriods = onDisk === undefined ? inRange : inRange.filter(period => onDisk.includes(period));
+  return rollupStore.resolveSource({ requiredPeriods, tier, neededColumns });
 }
 
 /** True when NO configured provider has a month on disk intersecting the
