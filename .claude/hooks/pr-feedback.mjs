@@ -58,9 +58,9 @@ export const WAIT_MS = 240_000;
 /** Between two looks at the pull request while waiting. */
 export const POLL_MS = 10_000;
 /**
- * How long after a pull request turned ready, or got its last commit, a bot
- * that has shown nothing is still expected. Sentry starts its check within
- * seconds; Gitar shows its first sign about 70 s in.
+ * How long after a pull request turned ready, or its last commit was pushed,
+ * a bot that has shown nothing is still expected. Sentry starts its check
+ * within seconds; Gitar shows its first sign about 70 s in.
  */
 export const EXPECT_MS = 180_000;
 /** Above execFile's 1 MB default: bot comments are long. */
@@ -79,7 +79,7 @@ fragment feedback on PullRequest {
   reviewThreads(first: 100) { nodes { isResolved path line
     comments(first: 30) { nodes { databaseId url body author { login __typename } reactionGroups { content viewerHasReacted } } } } }
   comments(last: 30) { nodes { databaseId url body createdAt author { login __typename } reactionGroups { content viewerHasReacted } } }
-  commits(last: 1) { nodes { commit { committedDate statusCheckRollup { contexts(first: 100) { nodes {
+  commits(last: 1) { nodes { commit { committedDate checkSuites(first: 50) { nodes { createdAt } } statusCheckRollup { contexts(first: 100) { nodes {
     __typename ... on CheckRun { name status } ... on StatusContext { context state } } } } } } }
 }`;
 const BY_BRANCH = `query($owner: String!, $name: String!, $branch: String!) { repository(owner: $owner, name: $name) {
@@ -132,27 +132,36 @@ const gitarComments = (pr) => (pr.comments?.nodes ?? []).filter((comment) => bot
  *   later commit it leaves no check, so nothing shows whether it is at work.
  * - Gitar reviews when the PR turns ready, with no check: its summary comment
  *   is the sign it is done. It reviews each later commit too, and that time
- *   its check appears about a minute after the push.
+ *   its check appears about a minute after the push (`pushTime`).
  */
 export function reviewing(pr, now) {
-  const recent = (iso) => {
-    const at = Date.parse(iso ?? '');
-    return Number.isFinite(at) && now - at < EXPECT_MS ? at : null;
-  };
+  const recent = (at) => (Number.isFinite(at) && now - at < EXPECT_MS ? at : null);
   // a pull request opened ready has no such event: it was ready when created
-  const readyAt = recent(pr.timelineItems?.nodes?.[0]?.createdAt ?? pr.createdAt);
-  const committedAt = recent(pr.commits?.nodes?.[0]?.commit?.committedDate);
+  const readyAt = recent(Date.parse(pr.timelineItems?.nodes?.[0]?.createdAt ?? pr.createdAt ?? ''));
+  const pushedAt = recent(pushTime(pr.commits?.nodes?.[0]?.commit));
   const bots = [];
   const sentry = checkOf(pr, CHECKS.Sentry);
   if (sentry === 'running' || (sentry === 'absent' && readyAt !== null)) bots.push('Sentry');
   const gitar = checkOf(pr, CHECKS.Gitar);
   if (gitar === 'running') bots.push('Gitar');
-  else if (gitar === 'absent' && (readyAt !== null || committedAt !== null)) {
-    const since = Math.max(readyAt ?? 0, committedAt ?? 0);
+  else if (gitar === 'absent' && (readyAt !== null || pushedAt !== null)) {
+    const since = Math.max(readyAt ?? 0, pushedAt ?? 0);
     // a summary posted since then is its review of this state
     if (!gitarComments(pr).some((comment) => Date.parse(comment.createdAt ?? '') >= since)) bots.push('Gitar');
   }
   return bots;
+}
+
+/**
+ * When a commit reached GitHub, in ms. GitHub opens the commit's check suites
+ * as the push arrives, so the earliest is the push. The commit's own date is
+ * when it was made, on the committer's clock: minutes before the push when a
+ * pre-push check runs, days before for a cherry-pick. It only stands in for a
+ * commit with no check suite.
+ */
+function pushTime(commit) {
+  const suites = (commit?.checkSuites?.nodes ?? []).map((suite) => Date.parse(suite.createdAt ?? '')).filter(Number.isFinite);
+  return suites.length > 0 ? Math.min(...suites) : Date.parse(commit?.committedDate ?? '');
 }
 
 /** What the PR owes Sentry and Gitar, from GitHub's answer to the `feedback` fragment. */

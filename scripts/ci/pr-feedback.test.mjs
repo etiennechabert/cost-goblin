@@ -60,8 +60,12 @@ function comment(author, body, { mine = [], theirs = [], createdAt } = {}) {
 }
 const thread = (comments, { isResolved = false, path = 'src/a.ts', line = 12 } = {}) => ({ isResolved, path, line, comments: { nodes: comments } });
 const checkRun = (name, status = 'COMPLETED') => ({ __typename: 'CheckRun', name, status });
-/** `readyAt` is when it last turned ready for review (none for one opened ready), `committedAt` the date of its last commit. */
-function pullRequest({ threads = [], comments = [], checks = [checkRun('Gitar')], readyAt, committedAt, ...rest } = {}) {
+/**
+ * `readyAt` is when it last turned ready for review (none for one opened
+ * ready), `committedAt` the date its last commit carries, `pushedAt` when
+ * GitHub got it: the creation of its check suites, opened within seconds.
+ */
+function pullRequest({ threads = [], comments = [], checks = [checkRun('Gitar')], readyAt, committedAt, pushedAt, ...rest } = {}) {
   return {
     number: 7,
     url: 'https://github.com/acme/widgets/pull/7',
@@ -72,7 +76,17 @@ function pullRequest({ threads = [], comments = [], checks = [checkRun('Gitar')]
     timelineItems: { nodes: readyAt === undefined ? [] : [{ createdAt: readyAt }] },
     reviewThreads: { nodes: threads },
     comments: { nodes: comments },
-    commits: { nodes: [{ commit: { committedDate: committedAt, statusCheckRollup: { contexts: { nodes: checks } } } }] },
+    commits: {
+      nodes: [
+        {
+          commit: {
+            committedDate: committedAt,
+            checkSuites: { nodes: pushedAt === undefined ? [] : [{ createdAt: new Date(Date.parse(pushedAt) + 5_000).toISOString() }, { createdAt: pushedAt }] },
+            statusCheckRollup: { contexts: { nodes: checks } },
+          },
+        },
+      ],
+    },
     ...rest,
   };
 }
@@ -161,6 +175,16 @@ describe('reviewing', () => {
     expect(reviewing(pullRequest({ ...pushed, checks: [] }), NOW)).toEqual(['Gitar']);
     // Sentry leaves no check on a later commit: nothing tells whether it is at work
     expect(reviewing(pullRequest({ ...pushed, checks: [checkRun('Gitar')] }), NOW)).toEqual([]);
+  });
+
+  it('counts from when the commit was pushed, not from the date it carries', () => {
+    const ready = { checks: [], readyAt: LONG_AGO, comments: [summary(ago(3600_000))] };
+    // made ten minutes ago, behind a pre-push check, and pushed just now
+    expect(reviewing(pullRequest({ ...ready, committedAt: ago(600_000), pushedAt: ago(20_000) }), NOW)).toEqual(['Gitar']);
+    // pushed ten minutes ago, with a date from a clock that runs ahead
+    expect(reviewing(pullRequest({ ...ready, committedAt: ago(-60_000), pushedAt: ago(600_000) }), NOW)).toEqual([]);
+    // no check suite to tell: the commit's date is all there is
+    expect(reviewing(pullRequest({ ...ready, committedAt: ago(20_000) }), NOW)).toEqual(['Gitar']);
   });
 
   it('expects nobody once the time they take to show up has passed', () => {
