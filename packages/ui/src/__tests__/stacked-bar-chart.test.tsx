@@ -427,10 +427,10 @@ describe('StackedBarChart — series focus', () => {
     expect(onSegmentClick.mock.calls).toEqual([['EC2'], ['S3'], ['RDS']]);
   });
 
-  // The plot around the bars is a button of its own when it takes a drag
-  // selection. Filtering on a segment is not a press of the plot, nor of
-  // anything else that listens above the chart.
-  it('keeps a segment click, Enter and Space from the plot and what is above it', async () => {
+  // Filtering on a segment is not a press of anything around it: the plot is
+  // a button of its own when it takes a drag selection. The plot's handlers
+  // can't be watched from here, so a listener above the chart stands in.
+  it('keeps a segment click, Enter and Space from a listener above the chart', async () => {
     const user = userEvent.setup();
     const onClick = vi.fn();
     const keys = vi.fn<(key: string) => void>();
