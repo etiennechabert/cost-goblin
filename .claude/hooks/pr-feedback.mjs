@@ -8,9 +8,10 @@
 // answer what Sentry, Gitar and SonarCloud say on its pull request. This
 // reads GitHub and SonarCloud and lists what is still owed:
 //
-// - a Sentry or Gitar finding (a review thread the bot opened) that is not
-//   resolved and has no reply from a person, or no +1 or -1 from whoever
-//   `gh` is signed in as;
+// - a Sentry or Gitar finding (a review thread the bot opened) that no person
+//   resolved and that has no reply from a person, or no +1 or -1 from whoever
+//   `gh` is signed in as. Gitar resolves its own thread once it sees the fix:
+//   that finding still wants its reply and its reaction;
 // - Gitar's summary comment without that reaction, once its review of the
 //   last commit is over (it replaces the comment while it reviews);
 // - SonarCloud's open issues, its hotspots to review and a failed quality
@@ -81,7 +82,7 @@ const FEEDBACK = `
 fragment feedback on PullRequest {
   number url state isDraft isCrossRepository headRefOid createdAt
   timelineItems(last: 1, itemTypes: [READY_FOR_REVIEW_EVENT]) { nodes { ... on ReadyForReviewEvent { createdAt } } }
-  reviewThreads(first: 100) { nodes { isResolved path line
+  reviewThreads(first: 100) { nodes { isResolved resolvedBy { login } path line
     comments(first: 30) { nodes { databaseId url body author { login __typename } reactionGroups { content viewerHasReacted } } } } }
   comments(last: 30) { nodes { databaseId url body createdAt author { login __typename } reactionGroups { content viewerHasReacted } } }
   commits(last: 1) { nodes { commit { committedDate checkSuites(first: 50) { nodes { createdAt } } statusCheckRollup { contexts(first: 100) { nodes {
@@ -103,6 +104,11 @@ function botOf(author) {
   return Object.hasOwn(BOTS, login) ? BOTS[login] : null;
 }
 const isPerson = (author) => author != null && author.__typename !== 'Bot';
+/** True for a review bot's login as GitHub gives it where it names a user, such as who resolved a thread: `gitar-bot[bot]`. */
+function isBotUser(login) {
+  const name = /^(.+)\[bot\]$/.exec(login ?? '')?.[1];
+  return name !== undefined && Object.hasOwn(BOTS, name);
+}
 const hasVerdict = (comment) =>
   (comment.reactionGroups ?? []).some((group) => group.viewerHasReacted && (group.content === 'THUMBS_UP' || group.content === 'THUMBS_DOWN'));
 
@@ -188,7 +194,9 @@ export function owedOnGitHub(pr) {
   for (const thread of pr.reviewThreads?.nodes ?? []) {
     const [first, ...replies] = thread.comments?.nodes ?? [];
     const bot = botOf(first?.author);
-    if (!bot || thread.isResolved) continue;
+    // A thread a person resolved is settled. One the bot resolved itself is not:
+    // Gitar does so once it sees the fix, and the finding still wants its answer.
+    if (!bot || (thread.isResolved && !isBotUser(thread.resolvedBy?.login))) continue;
     const missing = [];
     // the bot's own follow-up on its thread is not an answer
     if (!replies.some((reply) => isPerson(reply.author))) missing.push('reply');

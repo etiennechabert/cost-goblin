@@ -58,7 +58,14 @@ function comment(author, body, { mine = [], theirs = [], createdAt } = {}) {
     reactionGroups: [...mine.map((content) => ({ content, viewerHasReacted: true })), ...theirs.map((content) => ({ content, viewerHasReacted: false }))],
   };
 }
-const thread = (comments, { isResolved = false, path = 'src/a.ts', line = 12 } = {}) => ({ isResolved, path, line, comments: { nodes: comments } });
+/** `resolvedBy` is the login of who resolved it: a person by default, when `isResolved`. */
+const thread = (comments, { isResolved = false, resolvedBy = 'maintainer', path = 'src/a.ts', line = 12 } = {}) => ({
+  isResolved,
+  resolvedBy: isResolved ? { login: resolvedBy } : null,
+  path,
+  line,
+  comments: { nodes: comments },
+});
 const checkRun = (name, status = 'COMPLETED') => ({ __typename: 'CheckRun', name, status });
 /**
  * `readyAt` is when it last turned ready for review (none for one opened
@@ -238,13 +245,23 @@ describe('owedOnGitHub', () => {
   it.each([
     ['a reply and a +1', thread([comment(GITAR, FINDING, { mine: ['THUMBS_UP'] }), comment(ME, 'Fixed.')])],
     ['a reply and a -1', thread([comment(SENTRY, 'Bug: off by one', { mine: ['THUMBS_DOWN'] }), comment(ME, 'Not a bug: see x.')])],
-    ['been resolved', thread([comment(GITAR, FINDING)], { isResolved: true })],
+    ['been resolved by a person', thread([comment(GITAR, FINDING)], { isResolved: true })],
+    ['been resolved by a person whose name only looks like a bot\'s', thread([comment(GITAR, FINDING)], { isResolved: true, resolvedBy: 'gitar-bot' })],
+    ['been resolved by the bot, after its reply and its reaction', thread([comment(GITAR, FINDING, { mine: ['THUMBS_UP'] }), comment(ME, 'Fixed.')], { isResolved: true, resolvedBy: 'gitar-bot[bot]' })],
     ['been opened by a person', thread([comment(ME, 'Why this?')])],
     ['been opened by another bot', thread([comment(SONAR_BOT, 'Quality gate')])],
     ['been opened by a bot named like a property every object has', thread([comment({ login: 'constructor', __typename: 'Bot' }, 'Hello')])],
     ['been opened by a person named like a review bot', thread([comment({ login: 'sentry', __typename: 'User' }, 'Hello')])],
   ])('owes nothing on a thread that has %s', (_what, t) => {
     expect(owedOnGitHub(pullRequest({ threads: [t] }))).toEqual([]);
+  });
+
+  it('still owes the answer on a thread the bot resolved itself, as Gitar does once it sees the fix', () => {
+    const byGitar = { isResolved: true, resolvedBy: 'gitar-bot[bot]' };
+    expect(missingOf(pullRequest({ threads: [thread([comment(GITAR, FINDING)], byGitar)] }))).toEqual([['finding', 'Gitar', 'reply+reaction']]);
+    expect(missingOf(pullRequest({ threads: [thread([comment(GITAR, FINDING), comment(ME, 'Fixed.')], byGitar)] }))).toEqual([['finding', 'Gitar', 'reaction']]);
+    // another bot resolving it is nobody's answer either way: only the review bots count
+    expect(missingOf(pullRequest({ threads: [thread([comment(GITAR, FINDING)], { isResolved: true, resolvedBy: 'dependabot[bot]' })] }))).toEqual([]);
   });
 
   it('knows Sentry by both spellings of its login', () => {
