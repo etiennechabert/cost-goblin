@@ -42,6 +42,7 @@ import { execFile } from 'node:child_process';
 import { lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { setTimeout as sleepFor } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { readStdin, runGit, slugOf, startedDirectly } from './shared.mjs';
@@ -57,10 +58,13 @@ export const SONAR_TIMEOUT_S = 4;
 export const WAIT_MS = 240_000;
 /** Between two looks at the pull request while waiting. */
 export const POLL_MS = 10_000;
+/** Looks that fail in a row before the wait is given up. */
+const MAX_FAILED_LOOKS = 3;
 /**
  * How long after a pull request turned ready, or its last commit was pushed,
- * a bot that has shown nothing is still expected. Sentry starts its check
- * within seconds; Gitar shows its first sign about 70 s in.
+ * a bot that has shown nothing is still expected. Both start a check within
+ * seconds, except Gitar on a PR that has just turned ready: it shows nothing
+ * until its summary, about 70 s in.
  */
 export const EXPECT_MS = 180_000;
 /** Above execFile's 1 MB default: bot comments are long. */
@@ -130,9 +134,10 @@ const gitarComments = (pr) => (pr.comments?.nodes ?? []).filter((comment) => bot
  * the clock can, for EXPECT_MS after what sets them off:
  * - Sentry reviews when the PR turns ready, and starts a check at once. On a
  *   later commit it leaves no check, so nothing shows whether it is at work.
- * - Gitar reviews when the PR turns ready, with no check: its summary comment
- *   is the sign it is done. It reviews each later commit too, and that time
- *   its check appears about a minute after the push (`pushTime`).
+ * - Gitar reviews when the PR turns ready, with no check: its summary comment,
+ *   about 70 s later, is the sign it is done. It reviews each later commit
+ *   too, and that time its check starts within seconds of the push
+ *   (`pushTime`).
  */
 export function reviewing(pr, now) {
   const recent = (at) => (Number.isFinite(at) && now - at < EXPECT_MS ? at : null);
@@ -409,8 +414,6 @@ function memoryOf(stateDir, sessionId) {
   };
 }
 
-const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
 /**
  * The pull request once Sentry and Gitar are done with it, or WAIT_MS later:
  * null when it closed or went back to draft meanwhile. It waits once per
@@ -422,6 +425,7 @@ async function reviewed(pr, read, memory, now, sleep) {
   if (reviewing(pr, now()).length === 0 || memory === null || memory.has(waited) || !memory.add([waited])) return pr;
   const deadline = now() + WAIT_MS;
   let current = pr;
+  let failures = 0;
   // Two quiet looks in a row: a summary can come a moment before the findings it sums up.
   for (let quiet = 0; quiet < 2 && now() + POLL_MS <= deadline; ) {
     await sleep(POLL_MS);
@@ -429,9 +433,14 @@ async function reviewed(pr, read, memory, now, sleep) {
     try {
       next = await read();
     } catch {
-      // GitHub stopped answering: go by what it last said
-      break;
+      // One look that failed tells nothing, and this commit is not waited for
+      // again. A GitHub that stopped answering is no reason to hold on.
+      quiet = 0;
+      failures += 1;
+      if (failures === MAX_FAILED_LOOKS) break;
+      continue;
     }
+    failures = 0;
     if (next === null || next.isDraft) return null;
     current = next;
     quiet = reviewing(current, now()).length === 0 ? quiet + 1 : 0;
@@ -446,7 +455,7 @@ async function reviewed(pr, read, memory, now, sleep) {
  */
 export async function stopDecision(
   input,
-  { git = runGit, gh = defaultGh, curl = defaultCurl, here = HOOK_DIR, stateDir = join(tmpdir(), 'claude-pr-feedback'), now = Date.now, sleep = defaultSleep } = {},
+  { git = runGit, gh = defaultGh, curl = defaultCurl, here = HOOK_DIR, stateDir = join(tmpdir(), 'claude-pr-feedback'), now = Date.now, sleep = sleepFor } = {},
 ) {
   // already sent back in this turn: asking twice would never let it end
   if (input?.hook_event_name !== 'Stop' || input.stop_hook_active === true) return {};

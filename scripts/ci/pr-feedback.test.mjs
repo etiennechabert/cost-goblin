@@ -564,11 +564,26 @@ describe('stopDecision', () => {
       }
     });
 
-    it('goes by the last answer when GitHub stops answering', async () => {
+    it('looks again after a look that failed', async () => {
+      const found = done([thread([comment(SENTRY, 'Bug: off by one')])]);
+      const { options, sleeps } = waiting(busy(), new Error('HTTP 502'), busy(), new Error('HTTP 502'), new Error('HTTP 502'), found);
+      expect(await stopDecision(stop(), options)).toEqual({ block: stopReason(found, owedOnGitHub(found)) });
+      // five looks to get to the answer, and one more to be sure of it
+      expect(sleeps).toHaveLength(6);
+    });
+
+    it('gives up, and goes by the last answer, once GitHub has stopped answering', async () => {
       const first = pullRequest({ checks: [checkRun('Seer Code Review', 'IN_PROGRESS')], threads: [thread([comment(GITAR, FINDING)])] });
       const { options, sleeps } = waiting(first, new Error('HTTP 502'));
       expect(await stopDecision(stop(), options)).toEqual({ block: stopReason(first, owedOnGitHub(first)) });
-      expect(sleeps).toEqual([POLL_MS]);
+      expect(sleeps).toEqual([POLL_MS, POLL_MS, POLL_MS]);
+    });
+
+    it('does not take a failed look for a quiet one', async () => {
+      // done, a look that failed, done: the two quiet looks in a row start over
+      const { options, sleeps } = waiting(busy(), done(), new Error('HTTP 502'), done());
+      expect(await stopDecision(stop(), options)).toEqual({});
+      expect(sleeps).toHaveLength(4);
     });
 
     it('reads SonarCloud after the wait, for the commit the pull request is then at', async () => {
