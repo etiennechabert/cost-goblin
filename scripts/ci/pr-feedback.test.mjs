@@ -187,6 +187,16 @@ describe('reviewing', () => {
     expect(reviewing(pullRequest({ ...ready, committedAt: ago(20_000) }), NOW)).toEqual(['Gitar']);
   });
 
+  it('goes by the time this clone pushed the commit, when it pushed it itself', () => {
+    // made ten minutes ago, and GitHub has opened no check suite for it yet
+    const pr = pullRequest({ checks: [], readyAt: LONG_AGO, committedAt: ago(600_000), comments: [summary(ago(3600_000))] });
+    expect(reviewing(pr, NOW)).toEqual([]);
+    expect(reviewing(pr, NOW, { sha: HEAD, at: NOW - 20_000 })).toEqual(['Gitar']);
+    expect(reviewing(pr, NOW, { sha: HEAD, at: NOW - EXPECT_MS })).toEqual([]);
+    // a push of another commit says nothing of this one
+    expect(reviewing(pr, NOW, { sha: OLDER, at: NOW - 20_000 })).toEqual([]);
+  });
+
   it('expects nobody once the time they take to show up has passed', () => {
     const quiet = { checks: [], readyAt: ago(EXPECT_MS), committedAt: ago(EXPECT_MS + 1) };
     expect(reviewing(pullRequest(quiet), NOW)).toEqual([]);
@@ -362,10 +372,19 @@ const sonarRoot = join(scratch, 'root');
 mkdirSync(sonarRoot);
 writeFileSync(join(sonarRoot, 'sonar-project.properties'), 'sonar.organization=acme\nsonar.projectKey=acme_widgets\n');
 
-/** git as the hook sees one checkout of this repository. */
-function fakeGit({ branch = 'feature/x', pushed = true, origin = 'git@github.com:acme/widgets.git', gitDir = '/work/repo/.git', originHead = 'origin/main', root = sonarRoot } = {}) {
+/**
+ * git as the hook sees one checkout of this repository. `lastMove` is what
+ * the reflog says last moved the branch on the remote: `{ ago, by }`, `by`
+ * being 'push' or 'fetch'. None by default, as in a clone that keeps no reflog.
+ */
+function fakeGit({ branch = 'feature/x', pushed = true, origin = 'git@github.com:acme/widgets.git', gitDir = '/work/repo/.git', originHead = 'origin/main', root = sonarRoot, lastMove } = {}) {
   return (dir, args) => {
     const asked = args.join(' ');
+    if (asked === `reflog show -1 --format=%gd %gs --date=unix refs/remotes/origin/${branch}`) {
+      if (lastMove === undefined) return '';
+      const what = lastMove.by === 'push' ? 'update by push' : 'fetch origin: fast-forward';
+      return `origin/${branch}@{${Math.floor((NOW - lastMove.ago) / 1000)}} ${what}`;
+    }
     if (asked === 'rev-parse --path-format=absolute --git-common-dir') return dir === HERE ? '/work/repo/.git' : gitDir;
     if (asked === 'config --get remote.origin.url') return origin;
     if (asked === 'symbolic-ref --quiet --short HEAD') return branch;
@@ -485,6 +504,8 @@ describe('stopDecision', () => {
       };
       return { options: world({ gh, sleep, now: () => time }), sleeps, reads: () => reads };
     }
+    /** GitHub's pull request, still at the commit before the one this clone pushed (HEAD, as `fakeGit` has it). */
+    const stale = () => ({ ...done(), headRefOid: OLDER });
     const busy = () => pullRequest({ checks: [checkRun('Seer Code Review', 'IN_PROGRESS'), checkRun('Gitar')] });
     const done = (threads = []) => pullRequest({ checks: [checkRun('Seer Code Review'), checkRun('Gitar')], threads, comments: [comment(GITAR, SUMMARY, { mine: ['THUMBS_UP'] })] });
 
@@ -516,6 +537,38 @@ describe('stopDecision', () => {
       expect(await stopDecision(stop(), options)).toEqual({});
       // done, at work again on the new commit, done, and one more look to be sure
       expect(sleeps).toHaveLength(4);
+    });
+
+    it('waits for GitHub to show the commit this clone has just pushed', async () => {
+      // the pull request's head follows a push by a second or two: until then GitHub shows the reviews of the commit before
+      const found = done([thread([comment(GITAR, FINDING)])]);
+      const { options, sleeps } = waiting(stale(), stale(), busy(), found);
+      const git = fakeGit({ lastMove: { ago: 2_000, by: 'push' } });
+      expect(await stopDecision(stop(), { ...options, git })).toEqual({ block: stopReason(found, owedOnGitHub(found)) });
+      expect(sleeps).toHaveLength(4);
+      // the commit waited on is the one pushed, not the one GitHub still showed
+      expect(JSON.parse(readFileSync(join(options.stateDir, 'session-1.json'), 'utf8'))).toEqual([`waited:${HEAD}`]);
+      // so the next turn does not wait for it again
+      const again = waiting(busy());
+      expect(await stopDecision(stop(), { ...again.options, git, stateDir: options.stateDir })).toEqual({});
+      expect(again.sleeps).toEqual([]);
+    });
+
+    it.each([
+      ['its last move was a fetch of somebody else\'s commits', { ago: 2_000, by: 'fetch' }],
+      ['this clone pushed long ago', { ago: EXPECT_MS, by: 'push' }],
+      ['the clone keeps no trace of its pushes', undefined],
+    ])('does not wait for a branch that is not where GitHub is when %s', async (_what, lastMove) => {
+      const { options, sleeps } = waiting(stale());
+      expect(await stopDecision(stop(), { ...options, git: fakeGit({ lastMove }) })).toEqual({});
+      expect(sleeps).toEqual([]);
+    });
+
+    it('stops waiting for a push GitHub never shows', async () => {
+      const { options, sleeps } = waiting(stale());
+      expect(await stopDecision(stop(), { ...options, git: fakeGit({ lastMove: { ago: 2_000, by: 'push' } }) })).toEqual({});
+      // until the push is too old to be on its way: 178 s of the 180, in looks of 10, and two quiet looks
+      expect(sleeps).toHaveLength(Math.ceil((EXPECT_MS - 2_000) / POLL_MS) + 1);
     });
 
     it('gives up after WAIT_MS, and goes by what is there', async () => {

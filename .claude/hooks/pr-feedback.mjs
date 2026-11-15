@@ -138,12 +138,13 @@ const gitarComments = (pr) => (pr.comments?.nodes ?? []).filter((comment) => bot
  *   about 70 s later, is the sign it is done. It reviews each later commit
  *   too, and that time its check starts within seconds of the push
  *   (`pushTime`).
+ * `pushed` is what the clone itself last pushed to the branch, when it is known.
  */
-export function reviewing(pr, now) {
+export function reviewing(pr, now, pushed = null) {
   const recent = (at) => (Number.isFinite(at) && now - at < EXPECT_MS ? at : null);
   // a pull request opened ready has no such event: it was ready when created
   const readyAt = recent(Date.parse(pr.timelineItems?.nodes?.[0]?.createdAt ?? pr.createdAt ?? ''));
-  const pushedAt = recent(pushTime(pr.commits?.nodes?.[0]?.commit));
+  const pushedAt = recent(pushed?.sha === pr.headRefOid ? pushed.at : pushTime(pr.commits?.nodes?.[0]?.commit));
   const bots = [];
   const sentry = checkOf(pr, CHECKS.Sentry);
   if (sentry === 'running' || (sentry === 'absent' && readyAt !== null)) bots.push('Sentry');
@@ -158,11 +159,18 @@ export function reviewing(pr, now) {
 }
 
 /**
- * When a commit reached GitHub, in ms. GitHub opens the commit's check suites
- * as the push arrives, so the earliest is the push. The commit's own date is
- * when it was made, on the committer's clock: minutes before the push when a
- * pre-push check runs, days before for a cherry-pick. It only stands in for a
- * commit with no check suite.
+ * True while GitHub's pull request is not yet at the commit this clone has
+ * just pushed: its head follows a push by a second or two, and a hook that
+ * runs in between reads the reviews of the commit before.
+ */
+const behind = (pr, pushed, now) => pushed !== null && pushed.sha !== pr.headRefOid && now - pushed.at < EXPECT_MS;
+
+/**
+ * When a commit reached GitHub, in ms, for a commit this clone did not push
+ * itself. GitHub opens the commit's check suites as the push arrives, so the
+ * earliest is the push. The commit's own date is when it was made, on the
+ * committer's clock: minutes before the push when a pre-push check runs, days
+ * before for a cherry-pick. It only stands in for a commit with no check suite.
  */
 function pushTime(commit) {
   const suites = (commit?.checkSuites?.nodes ?? []).map((suite) => Date.parse(suite.createdAt ?? '')).filter(Number.isFinite);
@@ -298,16 +306,34 @@ function checkoutOf(cwd, git) {
   return slug === null ? null : { slug, branch: git(cwd, ['symbolic-ref', '--quiet', '--short', 'HEAD']) };
 }
 
-/** The checkout, when its branch can have a pull request in this repository. No network is used to tell. */
+/**
+ * The checkout, when its branch can have a pull request in this repository:
+ * `{ slug, branch, pushed }`. No network is used to tell.
+ */
 function branchForPr(cwd, git, here) {
   const ours = git(here, GIT_DIR);
   if (ours === null || git(cwd, GIT_DIR) !== ours) return null;
   const at = checkoutOf(cwd, git);
   if (at === null || at.branch === null) return null;
   // a pull request needs its branch on the remote, and is never opened from the default branch
-  if (git(cwd, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${at.branch}`]) === null) return null;
+  const remote = `refs/remotes/origin/${at.branch}`;
+  const sha = git(cwd, ['rev-parse', '--verify', '--quiet', remote]);
+  if (sha === null) return null;
   const main = git(cwd, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'])?.replace(/^origin\//, '') ?? 'main';
-  return at.branch === main || at.branch === 'main' || at.branch === 'master' ? null : at;
+  if (at.branch === main || at.branch === 'main' || at.branch === 'master') return null;
+  return { ...at, pushed: lastPush(cwd, git, remote, sha) };
+}
+
+/**
+ * `{ sha, at }`: the commit this clone last pushed to the branch, and when,
+ * in ms on this machine's clock. Null when the branch's last move was not a
+ * push from here (a fetch of somebody else's commits), or left no trace.
+ */
+function lastPush(cwd, git, remote, sha) {
+  // the reflog dates each move of the remote-tracking branch, and says what moved it
+  const entry = git(cwd, ['reflog', 'show', '-1', '--format=%gd %gs', '--date=unix', remote]);
+  const seconds = /@\{(\d+)\} update by push$/.exec(entry ?? '')?.[1];
+  return seconds === undefined ? null : { sha, at: Number(seconds) * 1000 };
 }
 
 /** The pull request with its feedback: by number, or the open one of a branch. Null when there is none; throws when GitHub cannot be read. */
@@ -419,10 +445,13 @@ function memoryOf(stateDir, sessionId) {
  * null when it closed or went back to draft meanwhile. It waits once per
  * commit and session, and only when it can remember having done so: a check
  * that never finishes would otherwise hold every turn of the session.
+ * `pushed` is the clone's own last push to the branch, or null.
  */
-async function reviewed(pr, read, memory, now, sleep) {
-  const waited = `waited:${pr.headRefOid}`;
-  if (reviewing(pr, now()).length === 0 || memory === null || memory.has(waited) || !memory.add([waited])) return pr;
+async function reviewed(pr, read, memory, pushed, now, sleep) {
+  const busy = (state) => behind(state, pushed, now()) || reviewing(state, now(), pushed).length > 0;
+  // the commit waited on: the one just pushed, even while GitHub still shows the one before
+  const waited = `waited:${behind(pr, pushed, now()) ? pushed.sha : pr.headRefOid}`;
+  if (!busy(pr) || memory === null || memory.has(waited) || !memory.add([waited])) return pr;
   const deadline = now() + WAIT_MS;
   let current = pr;
   let failures = 0;
@@ -443,7 +472,7 @@ async function reviewed(pr, read, memory, now, sleep) {
     failures = 0;
     if (next === null || next.isDraft) return null;
     current = next;
-    quiet = reviewing(current, now()).length === 0 ? quiet + 1 : 0;
+    quiet = busy(current) ? 0 : quiet + 1;
   }
   return current;
 }
@@ -474,7 +503,7 @@ export async function stopDecision(
   }
   if (pr === null || pr.isDraft) return {};
   const memory = memoryOf(stateDir, input.session_id);
-  pr = await reviewed(pr, read, memory, now, sleep);
+  pr = await reviewed(pr, read, memory, at.pushed, now, sleep);
   if (pr === null) return {};
   const sonar = await readSonar(git(cwd, ['rev-parse', '--show-toplevel']) ?? cwd, pr, curl);
   const onSonar = owedOnSonar(sonar, pr.headRefOid).filter((item) => memory?.has(item.id) !== true);
