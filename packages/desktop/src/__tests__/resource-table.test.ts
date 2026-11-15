@@ -97,6 +97,20 @@ async function addHeavyPairs(h: Harness): Promise<void> {
             WHERE ServiceName = '${EC2}' AND PricingCategory = 'Standard' ORDER BY ChargePeriodStart, ResourceId LIMIT 1) AS template,
            range(12) AS pairs(n), range(28) AS days(d)
     ) TO '${join(dir, 'heavy.parquet')}' (FORMAT PARQUET)`);
+    // Two pairs charged all January and credited the same all February, so
+    // they net to nothing over both months: one large, and one small enough
+    // for a rollup of 60 pairs a month to leave out.
+    const sign = month === '2026-01' ? 1 : -1;
+    const swing = `(${String(sign)} * CASE WHEN n = 0 THEN 900 ELSE 1 END)::DOUBLE`;
+    await h.db.runQuery(`COPY (
+      SELECT template.* REPLACE (
+        TIMESTAMP '${month}-01' + INTERVAL (d) DAY AS ChargePeriodStart,
+        'arn:test:swing-' || n AS ResourceId, 'charged in January, credited in February' AS ChargeDescription,
+        ${swing} AS EffectiveCost, ${swing} AS BilledCost, ${swing} AS ListCost, ${swing} AS ContractedCost)
+      FROM (SELECT * FROM read_parquet('${join(dir, 'data.parquet')}')
+            WHERE ServiceName = '${EC2}' AND PricingCategory = 'Standard' ORDER BY ChargePeriodStart, ResourceId LIMIT 1) AS template,
+           range(2) AS pairs(n), range(28) AS days(d)
+    ) TO '${join(dir, 'swing.parquet')}' (FORMAT PARQUET)`);
   }
 }
 
@@ -247,6 +261,46 @@ describe('the breakdown table over a resource rollup that leaves pairs out', () 
     await expectRolledLikeRaw(h, { ...params, sort: { column: 'cost', direction: 'desc' }, rowLimit: 9 });
     await expectRolledLikeRaw(h, { ...params, sort: { column: 'abs_cost', direction: 'desc' }, rowLimit: 6 });
     await expectRolledLikeRaw(h, { ...params, filters: { service: [EC2] }, rowLimit: 5 });
+  });
+
+  // The proof a page rests on, checked against raw Parquet itself: a pair's
+  // costs can be credits, or charges one month and credits the next, and
+  // still no pair left out adds up to more than the tail bound, either way.
+  it('bounds every pair it leaves out, credits and cancelling months included, in cost and in size', async () => {
+    const months = ['2026-01', '2026-02'];
+    const served = h.app.resourceRollupStore.resolveSource({ requiredPeriods: months, neededColumns: ['cost'] });
+    if (served === undefined) throw new Error('expected the rollup to serve both months');
+    const files = months.map(m => `'${join(h.ws.dataDir, FIXTURE_AWS_PROVIDER, 'raw', `daily-${m}`, '*.parquet').replaceAll('\\', '/')}'`).join(', ');
+    const leftOut = (start: string, end: string): string => `
+      SELECT COALESCE(ResourceId, '') AS resource_id, COALESCE(ChargeDescription, '') AS description,
+             SUM(EffectiveCost) AS net, MIN(EffectiveCost) AS lowest, MAX(EffectiveCost) AS highest
+      FROM read_parquet([${files}], union_by_name = true)
+      WHERE CAST(ChargePeriodStart AS DATE) BETWEEN DATE '${start}' AND DATE '${end}'
+        AND (COALESCE(ResourceId, ''), COALESCE(ChargeDescription, '')) NOT IN (SELECT resource_id, description FROM ${served.heavySource})
+      GROUP BY ALL`;
+    for (const [start, end] of [[BOTH_MONTHS.start, BOTH_MONTHS.end], ['2026-01-10', '2026-02-19'], [FEBRUARY.start, FEBRUARY.end]] as const) {
+      const [row] = await h.db.runQuery(`
+        SELECT CAST(COUNT(*) AS DOUBLE) AS pairs, CAST(MAX(net) AS DOUBLE) AS costliest, CAST(MAX(ABS(net)) AS DOUBLE) AS largest,
+               CAST(COUNT(*) FILTER (WHERE net < 0) AS DOUBLE) AS credits,
+               CAST(COUNT(*) FILTER (WHERE lowest < 0 AND highest > 0) AS DOUBLE) AS mixed
+        FROM (${leftOut(start, end)})`);
+      expect(num(row?.['pairs'])).toBeGreaterThan(100);
+      expect(num(row?.['costliest'])).toBeLessThanOrEqual(tailBound);
+      expect(num(row?.['largest'])).toBeLessThanOrEqual(tailBound);
+      // What makes it worth checking: credits among them, and over both
+      // months a pair with charges and credits.
+      expect(num(row?.['credits'])).toBeGreaterThan(0);
+      if (start === BOTH_MONTHS.start) expect(num(row?.['mixed'])).toBeGreaterThan(0);
+    }
+
+    // The large pair that nets to nothing is stored: it tops January, and is
+    // nowhere near a page of both months, by cost or by size.
+    const january = await expectRolledLikeRaw(h, { dateRange: { start: '2026-01-01', end: '2026-01-31' }, rowLimit: 10, deferTotalRows: true });
+    expect(tableRows(january.result).some(r => r.values['resource_id'] === 'arn:test:swing-0')).toBe(true);
+    for (const sort of [{ column: 'cost', direction: 'desc' }, { column: 'abs_cost', direction: 'desc' }]) {
+      const both = await expectRolledLikeRaw(h, { dateRange: BOTH_MONTHS, rowLimit: 8, deferTotalRows: true, sort });
+      expect(tableRows(both.result).some(r => String(r.values['resource_id']).startsWith('arn:test:swing-'))).toBe(false);
+    }
   });
 
   it('reads raw Parquet when a pair left out could belong on the page', async () => {
