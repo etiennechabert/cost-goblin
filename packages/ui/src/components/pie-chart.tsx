@@ -69,6 +69,13 @@ function sliceColor(slice: DisplaySlice, seriesColor: SeriesColors): string {
   return slice.folded ? OTHER_COLOR : seriesColor(slice.name);
 }
 
+/** What a slice cost in the previous period. The folded remainder has no such
+ *  cost: it is no entity, and only shares its name with one that may be called
+ *  "Other". */
+function previousCostOf(slice: DisplaySlice, previousCosts: ReadonlyMap<string, number> | undefined): number | undefined {
+  return slice.folded ? undefined : previousCosts?.get(slice.name);
+}
+
 /** A slice's change since the previous period, in percent. None without a
  *  previous cost to divide by. */
 function percentDelta(cost: number, previousCost: number | undefined): number | undefined {
@@ -110,7 +117,12 @@ function PieSliceMark({ slice, path, color, hovered, dimmed, onEnter, onLeave, o
       onMouseEnter={() => { onEnter(slice); }}
       onMouseLeave={onLeave}
       onClick={() => { if (interactive) onSliceClick(sliceName); }}
-      onKeyDown={(e) => { if (interactive && (e.key === 'Enter' || e.key === ' ')) onSliceClick(sliceName); }}
+      onKeyDown={(e) => {
+        if (!interactive || (e.key !== 'Enter' && e.key !== ' ')) return;
+        // On anything but a real button, Space also scrolls the page.
+        if (e.key === ' ') e.preventDefault();
+        onSliceClick(sliceName);
+      }}
       role={interactive ? 'button' : undefined}
       tabIndex={interactive ? 0 : undefined}
       style={{ cursor: interactive ? 'pointer' : 'default' }}
@@ -285,7 +297,7 @@ function PieLegend({ slices, hoveredId, seriesColor, previousCosts, registerRow,
             color={sliceColor(d, seriesColor)}
             hovered={hoveredId === id}
             dimmed={hoveredId !== null && hoveredId !== id}
-            previousCost={previousCosts?.get(d.name)}
+            previousCost={previousCostOf(d, previousCosts)}
             registerRow={registerRow}
             onEnter={onEnter}
             onLeave={onLeave}
@@ -419,7 +431,7 @@ function PieChartInner({
         {!showLegend && hoveredName !== null && (() => {
           const d = displayData.find(s => sliceId(s) === hoveredName);
           if (d === undefined) return null;
-          const pctDelta = percentDelta(d.cost, previousCosts?.get(d.name));
+          const pctDelta = percentDelta(d.cost, previousCostOf(d, previousCosts));
           return (
             <div className="absolute left-1/2 -translate-x-1/2 bottom-2 z-10 rounded-lg bg-bg-secondary/95 border border-border shadow-lg px-3 py-2 text-xs pointer-events-none whitespace-nowrap">
               <span className="font-semibold text-text-primary">{d.name}</span>
