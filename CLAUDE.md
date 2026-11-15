@@ -22,6 +22,7 @@ costgoblin/
   scripts/                  # ci/ policy tests, build/ packaging, aws-exports/ template, gcp-focus-exporter/ (own lockfile)
   docs/                     # costgoblin.com website (incl. the GDPR privacy.html) and design docs
   .gitar/                   # Gitar AI-review config: review guidance, rules, risk and auto-apply policy
+  .claude/                  # Claude Code project config: shared skills, settings.json and the hooks it runs
 ```
 
 **Package dependency rules:**
@@ -130,6 +131,8 @@ type QueryState<T> =
 ## Testing Approach
 
 In Vitest, a `vi.fn(impl)` from a `vi.mock` factory is reset with `mockReset()` in `afterEach`: since Vitest 3, `vi.restoreAllMocks()` only restores `vi.spyOn` spies, so an override or an unused `…Once` leaks into the next test.
+
+A test never runs a `git` command that writes (`git init`, `git config`, `git commit`), even on a temp directory. The pre-commit hook runs the whole suite with `GIT_DIR` exported, so the command lands on this clone: a `git init <tmpdir>` there set `core.bare = true` in the shared config and broke every worktree. Build a throwaway repository by hand (`.git/HEAD`, `objects/`, `refs/`), and give a `git` that has to look at another directory an environment without the variables `git rev-parse --local-env-vars` lists.
 
 A main-process rejection reaches the renderer prefixed by Electron (`Error invoking remote method 'query:costs': Error: …`), so nothing compares an IPC error's whole message: a cancelled query goes through `isQueryCancelled`, and a UI test's mock rejects with the prefixed text. A bare message in a mock is how `useQuery`'s retry stayed dead in the app with its tests green.
 
@@ -258,7 +261,7 @@ At the end of a dev cycle (changes just pushed), run `/code-review xhigh --fix` 
 
 Once the review's fixes are pushed, or it found nothing to fix, finish the step in this order:
 
-1. **Comment on the PR** that `/code-review xhigh --fix` ran. Open with the command and the commit it reviewed, then say what came of it: the findings and the commit that fixes them, any finding left unfixed and why, or that there were none.
+1. **Comment on the PR** that `/code-review xhigh --fix` ran. Open with "`/code-review xhigh --fix` ran on <commit>", the commit being the one it reviewed, then say what came of it: the findings and the commit that fixes them, any finding left unfixed and why, or that there were none.
 2. **Mark the PR ready for review**, and not before: a draft without that comment hasn't been through the review, whatever else was run on it. A lighter `/code-review` pass doesn't count.
 
 ```bash
@@ -270,6 +273,8 @@ gh pr ready <pr>
 Both bodies go in a file: as a shell string, a double-quoted one runs its backtick spans as commands, and a single-quoted one ends at the first apostrophe.
 
 If a later cycle on the same PR runs the review again, that run gets its own comment. The PR stays ready.
+
+**A hook holds a Claude Code session to this order.** `.claude/hooks/pr-guard.mjs`, which `.claude/settings.json` runs before each Bash command, refuses a `gh pr create` without `--draft`, and a `gh pr ready` on a PR of this repository that has no comment opening with "`/code-review xhigh --fix` ran". It reads GitHub before the command starts, so `gh pr ready` goes in a command of its own, after the one that posts the comment. It is no check on the PR itself: it sees only the `gh pr` commands a session runs.
 
 ### 2. Sentry comments
 

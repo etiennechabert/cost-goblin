@@ -25,10 +25,14 @@ workers/signup/.dev.vars
 # Editor backups
 *~
 
-# Claude Code local state (ignore everything except shared skills)
+# Claude Code local state: ignore everything except what the project shares
+# (its skills, its settings and the hooks they run)
 .claude/*
 !.claude/skills/
 !.claude/skills/**
+!.claude/settings.json
+!.claude/hooks/
+!.claude/hooks/**
 
 # Auto Claude data directory
 .auto-claude/
