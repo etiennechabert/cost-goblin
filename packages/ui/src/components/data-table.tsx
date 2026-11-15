@@ -494,11 +494,14 @@ function TableRow<TData extends RowData>({ row, expanded, canExpand, onToggle, o
         ].join(' ')}
         onClick={canExpand ? onToggle : undefined}
         onKeyDown={canExpand ? (e) => {
+          // A key pressed on a button inside the row gets here too, and is
+          // that button's: its click stays out of the row, so its key press
+          // must neither toggle the row nor lose its default, that click.
+          if (e.target !== e.currentTarget) return;
           if (e.key !== 'Enter' && e.key !== ' ') return;
           // The row takes the focus but is no button: left to the browser,
-          // Space on it also scrolls the page. Space on a button inside the
-          // row gets here too and keeps its default, that button's click.
-          if (e.key === ' ' && e.target === e.currentTarget) e.preventDefault();
+          // Space on it also scrolls the page.
+          if (e.key === ' ') e.preventDefault();
           onToggle();
         } : undefined}
         tabIndex={canExpand ? 0 : undefined}
