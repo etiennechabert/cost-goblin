@@ -143,7 +143,8 @@ describe('aggregated table helpers', () => {
     expect(groupByList(monthly)).toBe(`${MONTH}, ${text(UPPER)}`);
     expect(groupByValues({ usage_date: '2026-10-01', [UPPER]: 'PROD' }, monthly))
       .toEqual({ usage_date: '2026-10-01', tag_STAGE: 'PROD' });
-    expect(aggregatedOrderBy({ column: 'usage_date', direction: 'asc' }, monthly)).toBe(`${MONTH} ASC`);
+    // Sorted as the grouped result names it: the bucket's text, in date order.
+    expect(aggregatedOrderBy({ column: 'usage_date', direction: 'asc' }, monthly)).toBe('usage_date ASC');
     expect(groupBySelectList(explorerGroupBy(['usage_date'], columns, 'weekly'))).toBe(`${text(WEEK)} AS usage_date`);
   });
 
@@ -161,16 +162,16 @@ describe('aggregated table helpers', () => {
       .toEqual({ usage_date: '2026-01-05', tag_STAGE: 'PROD', tag_stage: 'dev' });
   });
 
-  it('sorts by a measure, then by a grouped column, else by SUM(cost)', () => {
-    expect(aggregatedOrderBy({ column: 'row_count', direction: 'asc' }, groupBy)).toBe('COUNT(*) ASC');
-    expect(aggregatedOrderBy({ column: 'abs_cost', direction: 'desc' }, groupBy)).toBe('ABS(SUM(cost)) DESC');
-    expect(aggregatedOrderBy({ column: 'tag_stage', direction: 'desc' }, groupBy)).toBe(`${text(LOWER)} DESC`);
+  it('sorts the grouped result by a measure, then by a grouped column, else by the cost', () => {
+    expect(aggregatedOrderBy({ column: 'row_count', direction: 'asc' }, groupBy)).toBe('row_count ASC');
+    expect(aggregatedOrderBy({ column: 'abs_cost', direction: 'desc' }, groupBy)).toBe('ABS(sum_cost) DESC');
+    expect(aggregatedOrderBy({ column: 'tag_stage', direction: 'desc' }, groupBy)).toBe(`${LOWER} DESC`);
     expect(aggregatedOrderBy({ column: 'usage_date', direction: 'asc' }, groupBy)).toBe('usage_date ASC');
-    expect(aggregatedOrderBy({ column: 'region', direction: 'asc' }, groupBy)).toBe('SUM(cost) DESC');
-    expect(aggregatedOrderBy(undefined, groupBy)).toBe('SUM(cost) DESC');
+    expect(aggregatedOrderBy({ column: 'region', direction: 'asc' }, groupBy)).toBe('sum_cost DESC');
+    expect(aggregatedOrderBy(undefined, groupBy)).toBe('sum_cost DESC');
   });
 
   it('never reads a sort column off the prototype', () => {
-    expect(aggregatedOrderBy({ column: 'constructor', direction: 'asc' }, groupBy)).toBe('SUM(cost) DESC');
+    expect(aggregatedOrderBy({ column: 'constructor', direction: 'asc' }, groupBy)).toBe('sum_cost DESC');
   });
 });

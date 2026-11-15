@@ -63,7 +63,7 @@ import type {
   TagValue,
 } from '@costgoblin/core';
 import type { RawRow } from './duckdb-client.js';
-import { columnForDimension, providersEmptyForRange } from './handlers/query-utils.js';
+import { columnForDimension, providersEmptyForRange, resolveRollupSource } from './handlers/query-utils.js';
 
 /** The query/config capabilities the store needs to recompute. Mirrors the
  *  pieces the cost-query handlers pull off AppContext, kept structural so the
@@ -896,7 +896,7 @@ export class BaselineStore {
       orgAccountsDigest: this.cachedOrgDigest,
     });
     if (sig !== built) return undefined;
-    return deps.rollupStore.resolveSource({ requiredPeriods: periodsFor(dateRange), tier: 'daily', neededColumns });
+    return resolveRollupSource(deps.rollupStore, providers, dateRange, 'daily', neededColumns);
   }
 
   private cachedOrgDigest = '';
@@ -909,19 +909,6 @@ export class BaselineStore {
 }
 
 // --- module helpers -----------------------------------------------------------
-
-function periodsFor(dateRange: { start: string; end: string }): string[] {
-  const out: string[] = [];
-  const start = new Date(`${dateRange.start}T00:00:00Z`);
-  const end = new Date(`${dateRange.end}T00:00:00Z`);
-  const cursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
-  const last = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), 1));
-  while (cursor.getTime() <= last.getTime()) {
-    out.push(`${String(cursor.getUTCFullYear())}-${String(cursor.getUTCMonth() + 1).padStart(2, '0')}`);
-    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
-  }
-  return out;
-}
 
 function primaryGroupBy(scope: BaselineScope) {
   if (scope.kind === 'filter') {

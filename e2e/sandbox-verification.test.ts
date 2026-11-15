@@ -195,6 +195,36 @@ test.describe('the MCP server is opt-in', () => {
     expect(sandboxed).toBe(true);
   });
 
+  // libuv has one thread pool per process, 4 threads unless told otherwise,
+  // and every DuckDB call in flight holds one. With them all held, the main
+  // process's own file reads waited behind multi-second queries and a cancel
+  // sent to a call that had not started was lost. The app sizes the pool as
+  // its first import (uv-threadpool-init.ts), which only works while nothing
+  // uses the pool before that: this fails if a later import ever does. Named
+  // pipes stand in for the calls: opening one holds a thread and no CPU.
+  test('a file read still gets a libuv thread while six are held', async () => {
+    test.skip(process.platform === 'win32', 'needs mkfifo');
+    if (optApp === undefined) throw new Error('the app was not launched');
+    const read = await optApp.evaluate(async (_modules, dir) => {
+      const fs = process.getBuiltinModule('node:fs');
+      const { execFileSync } = process.getBuiltinModule('node:child_process');
+      const pipes = Array.from({ length: 6 }, (_, i) => `${dir}/held-${String(i)}`);
+      for (const pipe of pipes) execFileSync('mkfifo', [pipe]);
+      // Each open blocks one pool thread until its pipe has a writer.
+      const held = pipes.map(pipe => fs.promises.open(pipe, 'r'));
+      const outcome = await Promise.race([
+        fs.promises.stat(dir).then(() => 'served'),
+        new Promise<string>((resolve) => { setTimeout(() => { resolve('starved'); }, 3_000); }),
+      ]);
+      // A read-write open never blocks, and gives every pipe its writer.
+      const writers = pipes.map(pipe => fs.openSync(pipe, fs.constants.O_RDWR));
+      for (const reader of await Promise.all(held)) await reader.close();
+      for (const writer of writers) fs.closeSync(writer);
+      return outcome;
+    }, scratch);
+    expect(read).toBe('served');
+  });
+
   test('nothing listens until Enable; Disable closes the port again', async () => {
     test.setTimeout(60_000);
     // main() runs its launch-time check right after the window loads, long
