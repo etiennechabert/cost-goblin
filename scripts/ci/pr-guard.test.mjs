@@ -16,11 +16,13 @@ import { afterAll, describe, expect, it } from 'vitest';
 import {
   CREATE_MESSAGE,
   GH_BUDGET_MS,
+  GH_MIN_CALL_MS,
   REVIEW_COMMENT,
   ShellSyntaxError,
   decide,
   ghPrCalls,
   missingMessage,
+  outOfTimeMessage,
   readCommands,
   readyMessage,
 } from '../../.claude/hooks/pr-guard.mjs';
@@ -428,10 +430,52 @@ describe('decide: gh pr ready', () => {
     expect(missingMessage(stderr)).toContain('in a command of its own');
   });
 
-  it('shares its time for GitHub between the readies of one command', () => {
-    const gh = fakeGh([REVIEWED]);
-    decide(bash('gh pr ready 1 && gh pr ready 2 && gh pr ready 3'), world(gh));
-    expect(gh.calls.map((c) => c.options.timeout)).toEqual([GH_BUDGET_MS / 3, GH_BUDGET_MS / 3, GH_BUDGET_MS / 3]);
+  /** A `gh` that finds every PR reviewed and takes `ms` of a clock the test owns. */
+  function slowGh(ms) {
+    let clock = 1_000_000;
+    const timeouts = [];
+    const runGh = (_args, { timeout }) => {
+      timeouts.push(timeout);
+      clock += ms;
+      return { status: 0, stdout: JSON.stringify({ number: 1, comments: [{ body: REVIEWED }] }), stderr: '' };
+    };
+    return { runGh, now: () => clock, timeouts };
+  }
+
+  it('gives each ready of a command what is left of its time for GitHub', () => {
+    const gh = slowGh(1_000);
+    expect(decide(bash('gh pr ready 1 && gh pr ready 2 && gh pr ready 3'), world(gh))).toEqual({});
+    expect(gh.timeouts).toEqual([GH_BUDGET_MS, GH_BUDGET_MS - 1_000, GH_BUDGET_MS - 2_000]);
+  });
+
+  it('refuses the readies it has no time left to check, rather than let them through unread', () => {
+    // 6 s a lookup: the third starts with 3 s left, the fourth would start with none
+    const gh = slowGh(6_000);
+    const five = 'gh pr ready 1; gh pr ready 2; gh pr ready 3; gh pr ready 4; gh pr ready 5';
+    expect(decide(bash(five), world(gh))).toEqual({ deny: outOfTimeMessage(2) });
+    expect(gh.timeouts).toEqual([GH_BUDGET_MS, GH_BUDGET_MS - 6_000, GH_BUDGET_MS - 12_000]);
+    expect(GH_BUDGET_MS - 12_000).toBeGreaterThanOrEqual(GH_MIN_CALL_MS);
+    expect(outOfTimeMessage(2)).toContain('in commands of their own');
+  });
+
+  it('never refuses a single ready for time: a lookup that times out is a note', () => {
+    const runGh = () => {
+      throw new Error('spawnSync gh ETIMEDOUT');
+    };
+    const { deny, note } = decide(bash('gh pr ready 5'), world({ runGh }));
+    expect(deny).toBeUndefined();
+    expect(note).toContain('ETIMEDOUT');
+  });
+
+  it('asks git once about a directory, however many calls run there', () => {
+    const asked = [];
+    const git = fakeGit();
+    const runGit = (dir, args) => {
+      asked.push(`${args[0]} ${dir}`);
+      return git(dir, args);
+    };
+    decide(bash('gh pr ready 1; gh pr ready 2; cd /work/elsewhere; gh pr ready 3; gh pr ready 4'), world({ ...fakeGh([REVIEWED]), runGit }));
+    expect(asked.sort()).toEqual(['rev-parse /work/elsewhere', 'rev-parse /work/repo']);
   });
 
   it.each(['gh pr ready --undo 834', 'gh pr ready 834 --undo', 'gh pr ready --help', 'gh pr ready -h'])(
@@ -650,7 +694,8 @@ describe('.claude/settings.json', () => {
 
   it('outlasts the time the guard gives GitHub and git: a hook that is killed lets the command through unnoticed', () => {
     const [hook] = bashHooks;
-    // the budget for gh, and four git lookups of two seconds at most
+    // the budget for gh, and the git lookups of a command that stays in one
+    // directory (git's variables, origin, this repository, that directory) at two seconds each
     expect(hook.timeout * 1000).toBeGreaterThanOrEqual(GH_BUDGET_MS + 4 * 2000);
     expect(hook.timeout).toBeLessThanOrEqual(30);
   });

@@ -22,7 +22,9 @@
 // a flag that comes out of a variable, GitHub not answering) it lets the
 // command through. A hook that blocks work it has misread costs more than
 // one that misses a case, and a pass here only means the normal permission
-// flow decides: the hook never approves anything.
+// flow decides: the hook never approves anything. One case is refused all the
+// same: a command with more `gh pr ready` calls than the hook has time to
+// check, because that command can be split.
 //
 // It runs before the command has been approved, so nothing in the command
 // line decides what the hook itself executes: `gh` and `git` are started
@@ -50,6 +52,8 @@ export const REVIEW_COMMENT = /^\s*`?\/code-review (?:xhigh|max) --fix`? ran\b/;
  * without the note that says it went unchecked.
  */
 export const GH_BUDGET_MS = 15_000;
+/** No lookup is started with less than this left: it would time out, and pass for unchecked. */
+export const GH_MIN_CALL_MS = 2_000;
 const GIT_TIMEOUT_MS = 2_000;
 /** Above spawnSync's 1 MB default: a long-lived PR carries more than that in bot comments. */
 const GH_MAX_OUTPUT = 64 * 1024 * 1024;
@@ -76,6 +80,14 @@ export const missingMessage = (ghSaid) =>
     `Blocked by .claude/hooks/pr-guard.mjs: \`gh pr ready\` targets a pull request GitHub does not have (gh: ${ghSaid}).`,
     'If this command opens it, it has not been through `/code-review xhigh --fix`: open it as a draft, run the review, push its fixes and post the comment that says so (CLAUDE.md, "After pushing", step 1).',
     'Then run `gh pr ready` in a command of its own.',
+  ].join(' ');
+
+/** For the `gh pr ready` calls of one command that the hook had no time left to check. */
+export const outOfTimeMessage = (unchecked) =>
+  [
+    `Blocked by .claude/hooks/pr-guard.mjs: this command has more \`gh pr ready\` calls than the hook had time to check with GitHub (${unchecked} left unchecked).`,
+    'A PR turns ready only once it has the comment that opens with "`/code-review xhigh --fix` ran" (CLAUDE.md, "After pushing", step 1).',
+    'Run the `gh pr ready` calls in commands of their own, a few at a time.',
   ].join(' ');
 
 // ---------------------------------------------------------------------------
@@ -694,8 +706,13 @@ function otherRepository(runGit, here) {
     let value;
     return () => (value === undefined ? (value = read()) : value);
   };
-  const gitDirOf = (dir) => runGit(dir, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
-  const ourGitDir = once(() => gitDirOf(here));
+  // one lookup per directory, however many calls of the command run there
+  const gitDirs = new Map();
+  const gitDirOf = (dir) => {
+    if (!gitDirs.has(dir)) gitDirs.set(dir, runGit(dir, ['rev-parse', '--path-format=absolute', '--git-common-dir']));
+    return gitDirs.get(dir);
+  };
+  const ourGitDir = () => gitDirOf(here);
   const ourOrigin = once(() => {
     const url = runGit(here, ['config', '--get', 'remote.origin.url']);
     return url === null ? null : slugOf(url);
@@ -769,10 +786,10 @@ function checkReady(call, runGh, timeout) {
 /**
  * What the hook answers for one PreToolUse input: `{ deny }` to refuse the
  * command, `{ note }` when a `gh pr ready` could not be checked, `{}` to say
- * nothing. The tests inject `runGh` and `runGit`, and `here`, a directory of
- * the repository being guarded.
+ * nothing. The tests inject `runGh` and `runGit`, the clock, and `here`, a
+ * directory of the repository being guarded.
  */
-export function decide(input, { runGh = defaultRunGh, runGit = defaultRunGit, here = HOOK_DIR } = {}) {
+export function decide(input, { runGh = defaultRunGh, runGit = defaultRunGit, here = HOOK_DIR, now = Date.now } = {}) {
   const command = input?.tool_name === 'Bash' ? input.tool_input?.command : null;
   if (typeof command !== 'string' || !command.includes('gh')) return {};
   let calls;
@@ -790,10 +807,16 @@ export function decide(input, { runGh = defaultRunGh, runGit = defaultRunGit, he
   const elsewhere = otherRepository(runGit, here);
   const ours = checked.filter((call) => !elsewhere(call));
   if (ours.some((call) => call.kind === 'create')) return { deny: CREATE_MESSAGE };
-  const timeout = Math.floor(GH_BUDGET_MS / Math.max(ours.length, 1));
+  // Each lookup may use what is left of the budget. Once too little is left
+  // the remaining calls are refused: letting them through unread would turn a
+  // long list of `gh pr ready` into a way past the check. The first call
+  // always has the whole budget, so one `gh pr ready` is never refused for time.
+  const deadline = now() + GH_BUDGET_MS;
   const notes = [];
-  for (const call of ours) {
-    const { deny, note } = checkReady(call, runGh, timeout);
+  for (const [index, call] of ours.entries()) {
+    const left = deadline - now();
+    if (left < GH_MIN_CALL_MS) return { deny: outOfTimeMessage(ours.length - index) };
+    const { deny, note } = checkReady(call, runGh, left);
     if (deny) return { deny };
     if (note) notes.push(note);
   }
