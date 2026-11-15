@@ -1,5 +1,6 @@
 import { stringify } from 'yaml';
 import type { DuckDBClient, RawRow } from '../duckdb-client.js';
+import type { SupervisedDuckDBClient } from '../duckdb-supervisor.js';
 import { LRUCache } from '../lru-cache.js';
 import { QueryLog } from '../query-log.js';
 import { awaitWithTimeout } from '../async-timeout.js';
@@ -79,6 +80,9 @@ export interface IpcContext {
   /** The built DuckDB worker bundle — the MCP server spawns its own sandboxed
    *  instance from it (the shared `db` above is never used for MCP SQL). */
   readonly duckdbWorkerPath: string;
+  /** The supervisor of the process `db` runs in. Absent where `db` is not a
+   *  supervised process (the handler tests' in-process DuckDB). */
+  readonly engine?: QueryEngineControl;
   /** "Now" for every window anchored on today: default query ranges, the
    *  Cost Scope preview, tag discovery, baselines, retention cutoffs. Pinned
    *  by COSTGOBLIN_NOW (e2e) so main agrees with the renderer's patched Date.
@@ -90,6 +94,10 @@ export interface IpcContext {
    *  lower it to exercise a rollup that leaves pairs out. */
   readonly resourceRollupPairsPerMonth?: number;
 }
+
+/** What the handlers need of the DuckDB process's supervisor
+ *  (`duckdb-supervisor.ts`): its state, and how to start it again. */
+export type QueryEngineControl = Pick<SupervisedDuckDBClient, 'getState' | 'onStateChanged' | 'onRestarted' | 'restart'>;
 
 export interface OrgTreeConfig {
   readonly tree: readonly OrgNode[];
@@ -171,6 +179,16 @@ export interface AppContext {
   readonly warmupBase: () => void;
   /** Re-roll the rollup partitions for the periods a sync changed. */
   readonly maintainRollup: (changedPeriods: readonly string[]) => void;
+  /** Stop starting rollup builds, the resource rollup's included: a warmup
+   *  then serves the partitions that are built and valid and builds none, and
+   *  a sync drops the months it changed instead of re-rolling them. For when
+   *  the DuckDB process keeps dying: the builds are the heaviest work the app
+   *  starts on its own, so they wait until the user asks for them. Not saved:
+   *  a relaunch builds again. */
+  readonly pauseRollupBuilds: () => void;
+  /** Build on its own again, starting with what was held back. */
+  readonly resumeRollupBuilds: () => void;
+  readonly rollupBuildsPaused: () => boolean;
   /** Resolve once the latest cost_base warmup settles (true if the base is
    *  ready, false if it timed out or no base was built). Lets the renderer
    *  hold the startup prewarm until the in-memory base exists, so those probes
@@ -330,6 +348,8 @@ export function createAppContext(ctx: IpcContext): AppContext {
   // leaves the rollup unloaded or without a sync's months until the next
   // warmup: the first query that can apply the cost scope again starts it.
   let rollupWaitsForCostScope = false;
+  // See AppContext.pauseRollupBuilds.
+  let rollupBuildsPaused = false;
 
   async function getQueryCostScope(): Promise<CostScopeConfig> {
     const costScope = await costScopeForQueries(getCostScope);
@@ -611,6 +631,10 @@ export function createAppContext(ctx: IpcContext): AppContext {
   // Bring the resource rollup in line with the raw files: a no-op when it is
   // already built from them. `changed` months are rebuilt whatever their stamp.
   async function maintainResourceRollup(changed: readonly string[]): Promise<void> {
+    // Paused with the rollup's own builds (see AppContext.pauseRollupBuilds).
+    // The months it holds stay served; one a sync changed stays marked stale,
+    // so it reads raw and is rebuilt by the first build after the pause.
+    if (rollupBuildsPaused) return;
     // What follows reads the dimensions and the cost scope: a drop while it
     // does means they may be the ones just replaced.
     const epoch = resourceRollupStore.currentEpoch();
@@ -665,6 +689,8 @@ export function createAppContext(ctx: IpcContext): AppContext {
         scheduleResourceRollup(Promise.resolve());
         return;
       }
+      // Paused: the months validated above are served, the others read raw.
+      if (rollupBuildsPaused) { rollupStore.markSettled(); return; }
       const buildSql = await buildRollupSqlFor(provider);
       // Wrap the fire-and-forget rebuild in a transaction (the span is tied to the
       // promise, so it stays open until the background builds settle), mirroring
@@ -695,6 +721,13 @@ export function createAppContext(ctx: IpcContext): AppContext {
       const available = await listLocalMonths(ctx.dataDir, provider.name, 'daily');
       const periods = changed.filter(p => available.includes(p));
       if (periods.length === 0) return;
+      if (rollupBuildsPaused) {
+        // Their partitions were built from files the sync replaced, and
+        // nothing rebuilds them now: dropped, so these months read raw.
+        await Promise.all(periods.map(period => rollupStore.deletePeriod(period)));
+        resultCache.clear();
+        return;
+      }
       const shape = await getRollupShape(provider.type);
       // These months' raw files just changed, so they're rebuilt even when the
       // etags can't be read (null) — stamped unverified, which the next warmup
@@ -799,6 +832,13 @@ export function createAppContext(ctx: IpcContext): AppContext {
     },
     warmupBase: () => { resultCache.clear(); triggerWarmup(); },
     maintainRollup: (changedPeriods: readonly string[]) => { void maintainRollupForPeriods(changedPeriods); },
+    pauseRollupBuilds: () => { rollupBuildsPaused = true; },
+    resumeRollupBuilds: () => {
+      rollupBuildsPaused = false;
+      resultCache.clear();
+      triggerWarmup();
+    },
+    rollupBuildsPaused: () => rollupBuildsPaused,
     baselineStore,
     baselineEngineDeps,
     recomputeBaselines: () => { void baselineStore.recompute(baselineEngineDeps); },

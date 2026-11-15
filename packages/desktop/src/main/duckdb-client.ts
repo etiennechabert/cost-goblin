@@ -42,13 +42,15 @@ export const TERMINATE_GRACE_MS = 5_000;
  *  `terminate()` repeats it at this interval while a query is in flight. */
 export const CANCEL_RESEND_MS = 100;
 
-type WorkerResponse =
+export type WorkerResponse =
   | { kind: 'ready'; settled?: unknown }
   | { kind: 'started'; id: number }
   | { kind: 'rows'; id: number; rows: RawRow[] }
   | { kind: 'error'; id: number; message: string };
 
-function isWorkerResponse(msg: unknown): msg is WorkerResponse {
+/** What the DuckDB bundle says to whoever started it, whichever host runs it
+ *  (a worker thread here, a process in `duckdb-supervisor.ts`). */
+export function isWorkerResponse(msg: unknown): msg is WorkerResponse {
   if (typeof msg !== 'object' || msg === null) return false;
   const m = msg as Record<string, unknown>;
   if (m['kind'] === 'ready') return true;

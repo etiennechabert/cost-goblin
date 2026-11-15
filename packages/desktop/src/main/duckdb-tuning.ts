@@ -1,30 +1,50 @@
 import { cpus, totalmem } from 'node:os';
 
-/** DuckDB resource tuning — shared by the worker (to apply SET memory_limit /
- *  SET threads) and the main process (to compute the defaults shown in the UI
- *  and to resolve user overrides). Kept framework-free and side-effect-free so
- *  it bundles cleanly into the worker. */
+/** DuckDB resource tuning — shared by the DuckDB bundle (to apply SET
+ *  memory_limit / SET threads) and the main process (to compute the defaults
+ *  shown in the UI and to resolve user overrides). Kept framework-free and
+ *  side-effect-free so it bundles cleanly into the worker. */
+
+/** Environment variable a process host sets on the DuckDB process it spawns:
+ *  the settings to start with, as JSON (`{ tempDir?, memoryGB?, threads? }`).
+ *  The bundle applies them before it reports ready (`duckdb-worker.ts`). */
+export const DUCKDB_SETTINGS_ENV = 'COSTGOBLIN_DUCKDB_SETTINGS';
+
+/** What a DuckDB instance is configured with: at spawn through
+ *  {@link DUCKDB_SETTINGS_ENV}, later through a `configure` message. A
+ *  setting left out keeps its computed default (or, for `tempDir`, DuckDB's). */
+export interface DuckDBSettings {
+  readonly tempDir?: string | undefined;
+  readonly memoryGB?: number | undefined;
+  readonly threads?: number | undefined;
+}
 
 export const MIN_MEMORY_GB = 1;
 /** The most memory DuckDB may be told to use, whatever the machine has.
  *
- *  DuckDB runs inside the app's main process, where `malloc` is Chromium's
- *  allocator, not the system's. That allocator serves the whole process from
- *  one 16 GiB reservation of address space, never returns what a size class
- *  has used to the others, and ends the process (the app, not the query) when
- *  the reservation runs out. A limit DuckDB cannot reach is therefore not a
- *  limit: it never spills to disk, it takes the app down.
+ *  DuckDB runs in an Electron utility process (`duckdb-utility-process.ts`),
+ *  and in every process Electron hosts `malloc` is Chromium's allocator, not
+ *  the system's. That allocator serves the whole process from one 16 GiB
+ *  reservation of address space, never returns what a size class has used to
+ *  the others, and ends the process when the reservation runs out. A limit
+ *  DuckDB cannot reach is therefore not a limit: it never spills to disk, it
+ *  kills the process. The supervisor starts another, so the app stays up,
+ *  but every query in flight fails and a rollup build starts over.
  *
- *  Measured on a 46 GB workspace (242M daily rows; macOS arm64, Electron 44):
- *  with the limit at 12 GB or more, the rollup build at launch killed the app
- *  at about 9 GB resident, on every launch; at 10 GB and below it finished.
- *  A session then keeps using up the reservation as it runs queries of other
- *  shapes, so the ceiling sits well under the largest limit that survived a
- *  build. It costs the build nothing: the full 12-month rebuild took the same
- *  minute at 4, 6 and 10 GB.
+ *  Measured on a 46 GB workspace (242M daily rows; macOS arm64, Electron 44),
+ *  when DuckDB still ran inside the main process: with the limit at 12 GB or
+ *  more, the rollup build at launch killed the app at about 9 GB resident, on
+ *  every launch; at 10 GB and below it finished. A session then keeps using
+ *  up the reservation as it runs queries of other shapes, so the ceiling sits
+ *  well under the largest limit that survived a build. It costs the build
+ *  nothing: the full 12-month rebuild took the same minute at 4, 6 and 10 GB.
+ *  A process of its own did not move the wall: an allocation probe in a
+ *  utility process died at about 12 GB, as it does in the main process.
  *
- *  The MCP instance (2 GB) and the GCP canonicalizer (2 GB) allocate from the
- *  same reservation. Raise this only with DuckDB in a process of its own. */
+ *  The MCP instance (2 GB) and the GCP canonicalizer (2 GB) are worker
+ *  threads of the main process and allocate from its reservation, not this
+ *  one. Raise this only once DuckDB no longer allocates from Chromium's
+ *  allocator. */
 export const MAX_MEMORY_GB = 4;
 
 export function totalMemoryGB(): number {

@@ -12,14 +12,19 @@ const IO_HEADROOM = 8;
  *  and by every async file, DNS, crypto and zlib call of the main process.
  *  libuv's default is 4. The app allows more DuckDB calls than that at once:
  *  the shared instance's pooled queries and its rollup and resource rollup
- *  builds, plus the MCP
- *  server's sandboxed instance. With 4 threads, the fifth call did not start
- *  until another returned, a cancel sent to it meanwhile was lost (DuckDB
- *  forgets an interrupt that arrives before the query has begun), and the
- *  main process's file reads waited behind multi-second queries.
+ *  builds, plus the MCP server's sandboxed instance. With 4 threads, the
+ *  fifth call did not start until another returned, a cancel sent to it
+ *  meanwhile was lost (DuckDB forgets an interrupt that arrives before the
+ *  query has begun), and the main process's file reads waited behind
+ *  multi-second queries.
  *
  *  A thread that waits for a query costs no CPU, so the size is simply the
- *  most calls there can be, plus the headroom. */
+ *  most calls there can be, plus the headroom.
+ *
+ *  The shared instance now runs in a process of its own, started with this
+ *  same variable (`duckdbProcessEnv` in duckdb-supervisor.ts), so one size
+ *  serves both: that process needs the shared instance's share, this one the
+ *  sandboxed instance's and the headroom, and neither pays for the rest. */
 export function uvThreadpoolSize(): number {
   // The rollup's builds and the resource rollup's each run up to the build
   // concurrency, and overlap when a sync re-rolls months while the resource

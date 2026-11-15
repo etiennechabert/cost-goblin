@@ -1,6 +1,8 @@
 import type {
   BaselineRecomputeStatus,
   BaselinesApi,
+  QueryEngineApi,
+  QueryEngineStatus,
   RollupApi,
   RollupStats,
   RollupStatus,
@@ -106,10 +108,33 @@ export class FakeBaselinesApi implements BaselinesApi {
   reset(): void { Object.assign(this, new FakeBaselinesApi()); }
 }
 
+export class FakeQueryEngineApi implements QueryEngineApi {
+  status: QueryEngineStatus = { state: 'running', restartedAt: null, rollupBuildsPaused: false };
+  statusPushes = new PushChannel<QueryEngineStatus>();
+  restartCalls = 0;
+  resumeCalls = 0;
+  /** What `restart` rejects with, as main does when the engine stops again. */
+  restartError: Error | null = null;
+
+  getStatus(): Promise<QueryEngineStatus> { return Promise.resolve(this.status); }
+  onStatusChanged(callback: (status: QueryEngineStatus) => void): () => void { return this.statusPushes.subscribe(callback); }
+  restart(): Promise<void> {
+    this.restartCalls += 1;
+    return this.restartError === null ? Promise.resolve() : Promise.reject(this.restartError);
+  }
+  resumeRollupBuilds(): Promise<void> {
+    this.resumeCalls += 1;
+    return Promise.resolve();
+  }
+
+  reset(): void { Object.assign(this, new FakeQueryEngineApi()); }
+}
+
 export const fakeDebug = new FakeDebugApi();
 export const fakeUpdate = new FakeUpdateApi();
 export const fakeRollup = new FakeRollupApi();
 export const fakeBaselines = new FakeBaselinesApi();
+export const fakeEngine = new FakeQueryEngineApi();
 
 /** Expose the fakes where the preload exposes the real bridges. Perf mode
  *  stays off: the preload only defines `costgoblinPerf` under
@@ -120,6 +145,7 @@ export function installRendererBridges(): void {
   globalThis.costgoblinUpdate = fakeUpdate;
   globalThis.costgoblinRollup = fakeRollup;
   globalThis.costgoblinBaselines = fakeBaselines;
+  globalThis.costgoblinEngine = fakeEngine;
 }
 
 /** Reset every bridge in place. The singletons are never replaced, because a
@@ -129,5 +155,6 @@ export function resetRendererBridges(): void {
   fakeUpdate.reset();
   fakeRollup.reset();
   fakeBaselines.reset();
+  fakeEngine.reset();
   globalThis.costgoblin = new MockCostApi();
 }

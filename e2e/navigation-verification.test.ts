@@ -138,7 +138,7 @@ test('a foreign document gets no preload bridge and no permissions', async () =>
   const exposed = await page.evaluate(async () => {
     const descriptor: PermissionDescriptor = Object.assign(Object.create(null), { name: 'clipboard-write' });
     return {
-      bridges: ['costgoblin', 'costgoblinBaselines', 'costgoblinUpdate', 'costgoblinRollup', 'costgoblinDebug']
+      bridges: ['costgoblin', 'costgoblinBaselines', 'costgoblinUpdate', 'costgoblinRollup', 'costgoblinEngine', 'costgoblinDebug']
         .filter((key) => Reflect.get(globalThis, key) !== undefined),
       clipboardWrite: (await navigator.permissions.query(descriptor)).state,
     };

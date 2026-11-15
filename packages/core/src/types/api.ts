@@ -791,6 +791,38 @@ export interface RollupApi {
   onStatusChanged(callback: (status: RollupStatus) => void): () => void;
 }
 
+/** The query engine: the DuckDB instance every dashboard and Explorer query
+ *  runs on. It lives in a process of its own, which the main process starts
+ *  again when it ends unexpectedly.
+ *
+ *  `running`: queries are served; `restartedAt` is when the engine last came
+ *  back from an unexpected stop in this session (epoch ms), null if it never
+ *  stopped. `restarting`: it stopped and its replacement is starting; queries
+ *  wait for it. `stopped`: it stopped `deaths` times within `windowMinutes`,
+ *  so it was not started again; every query fails until the user restarts
+ *  it. */
+export type QueryEngineState =
+  | { readonly state: 'running'; readonly restartedAt: number | null }
+  | { readonly state: 'restarting' }
+  | { readonly state: 'stopped'; readonly deaths: number; readonly windowMinutes: number };
+
+/** The engine's state, plus whether the app has stopped building the rollup
+ *  on its own. That starts when the engine is `stopped` (the build is the
+ *  heaviest work the app starts by itself) and lasts until the user asks for
+ *  the rollup again, or the app is relaunched. */
+export type QueryEngineStatus = QueryEngineState & { readonly rollupBuildsPaused: boolean };
+
+/** Exposed as `window.costgoblinEngine`: pull the status on mount, then track
+ *  `onStatusChanged`, like the rollup and update channels. */
+export interface QueryEngineApi {
+  getStatus(): Promise<QueryEngineStatus>;
+  onStatusChanged(callback: (status: QueryEngineStatus) => void): () => void;
+  /** Start a `stopped` engine again. The rollup build stays paused. */
+  restart(): Promise<void>;
+  /** Let the app build the rollup on its own again, and start now. */
+  resumeRollupBuilds(): Promise<void>;
+}
+
 /** Push channel for live baseline recompute/discovery status — model of the
  *  rollup/update status channels. Exposed as `window.costgoblinBaselines`. */
 export interface BaselinesApi {
