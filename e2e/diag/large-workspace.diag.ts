@@ -15,8 +15,10 @@
  *  - it is cloned first (copy-on-write on APFS and on reflink filesystems, so
  *    instant and free; a plain copy elsewhere) and the app runs on the clone,
  *    in workspace mode under a throwaway userData dir;
- *  - the clone loses its LAN-sharing identity and key, so nothing is served
- *    to peers, and its MCP listener is off;
+ *  - a workspace with a symbolic link in it is refused: a copied link still
+ *    points at the real files;
+ *  - the clone loses its LAN-sharing identity, key and source, so nothing is
+ *    served to peers or pulled from one, and its MCP listener is off;
  *  - telemetry is off unless COSTGOBLIN_DIAG_TELEMETRY=1 keeps the workspace's
  *    own opt-ins. An unpackaged build has no DSN: export COSTGOBLIN_SENTRY_DSN
  *    too if crash reports should be sent. Crashpad uploads a native crash on
@@ -36,18 +38,28 @@
  */
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, cpSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, cpSync, createWriteStream, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { parse } from 'yaml';
 import { clickNavButton, closeApp, launchElectron, selectDatePreset } from '../helpers.js';
 
 const WORKSPACE = process.env['COSTGOBLIN_DIAG_WORKSPACE'] ?? '';
-const PASSES = Math.max(1, Number(process.env['COSTGOBLIN_DIAG_PASSES'] ?? '1'));
+/** A numeric option. A value that is not a positive number is a typo: used as
+ *  it is, it gives a walk of no passes, or steps that never wait to settle. */
+function positiveOption(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) throw new Error(`${name} must be a positive number, got "${raw}"`);
+  return value;
+}
+
+const PASSES = Math.max(1, Math.floor(positiveOption('COSTGOBLIN_DIAG_PASSES', 1)));
 const MEMORY_GB = process.env['COSTGOBLIN_DIAG_MEMORY_GB'];
 const REBUILD = process.env['COSTGOBLIN_DIAG_REBUILD'] === '1';
 const TELEMETRY = process.env['COSTGOBLIN_DIAG_TELEMETRY'] === '1';
-const SETTLE_MS = Number(process.env['COSTGOBLIN_DIAG_SETTLE_MS'] ?? '240000');
+const SETTLE_MS = positiveOption('COSTGOBLIN_DIAG_SETTLE_MS', 240_000);
 
 /** Date ranges per pass: each pass misses the app's result cache and reaches
  *  DuckDB with other shapes. "Last 7 days" is the hourly tier (raw Parquet). */
@@ -85,6 +97,17 @@ function cloneTree(source: string, dest: string): void {
     rmSync(dest, { recursive: true, force: true });
   }
   cpSync(source, dest, { recursive: true, preserveTimestamps: true });
+}
+
+/** The first symbolic link under `dir`, or `dir` itself when it is one. Every
+ *  way of copying above keeps a link as a link, and a link copied out of the
+ *  real workspace still points into it. */
+function firstSymlink(dir: string): string | null {
+  if (lstatSync(dir).isSymbolicLink()) return dir;
+  for (const entry of readdirSync(dir, { withFileTypes: true, recursive: true })) {
+    if (entry.isSymbolicLink()) return join(entry.parentPath, entry.name);
+  }
+  return null;
 }
 
 interface Clone {
@@ -133,10 +156,17 @@ function prepareClone(root: string): Clone {
     const source = join(WORKSPACE, part);
     if (existsSync(source)) cloneTree(source, join(workspaceDir, part));
     else mkdirSync(join(workspaceDir, part), { recursive: true });
+    // Through a link the app would read and write the real workspace, and
+    // COSTGOBLIN_DIAG_REBUILD would delete its rollup. Nothing has run yet.
+    const link = firstSymlink(join(workspaceDir, part));
+    if (link !== null) {
+      throw new Error(`${link.replace(workspaceDir, WORKSPACE)} is a symbolic link: the clone would still point at the real workspace. Run the diagnostic on a workspace without links.`);
+    }
   }
   mkdirSync(join(workspaceDir, 'temp'), { recursive: true });
-  // Nothing of this run is served to peers, replayed from an old outbox, or uploaded unasked.
-  for (const file of ['config/peer-sharing.json', 'config/peer-identity.json', 'state/telemetry-outbox.jsonl']) {
+  // Nothing of this run is served to peers, pulled from one, replayed from an
+  // old outbox, or uploaded unasked.
+  for (const file of ['config/peer-sharing.json', 'config/peer-identity.json', 'config/peer-source.json', 'state/telemetry-outbox.jsonl']) {
     rmSync(join(workspaceDir, file), { force: true });
   }
   writePreferences(workspaceDir, MEMORY_GB);
