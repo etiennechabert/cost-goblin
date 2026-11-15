@@ -33,11 +33,10 @@
 // Wired in .claude/settings.json; pinned by scripts/ci/pr-guard.test.mjs.
 
 import { spawnSync } from 'node:child_process';
-import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runGit as defaultRunGit, slugOf } from './git.mjs';
+import { runGit as defaultRunGit, readStdin, slugOf, startedDirectly } from './shared.mjs';
 
 /**
  * What the comment `gh pr ready` waits for opens with (CLAUDE.md, "After
@@ -801,14 +800,6 @@ export function decide(input, { runGh = defaultRunGh, runGit = defaultRunGit, he
 // The hook itself
 // ---------------------------------------------------------------------------
 
-/** Read as a stream: `readFileSync(0)` throws EAGAIN on a pipe that is non-blocking and still empty. */
-async function readStdin() {
-  let text = '';
-  process.stdin.setEncoding('utf8');
-  for await (const chunk of process.stdin) text += chunk;
-  return text;
-}
-
 async function main() {
   let input;
   try {
@@ -847,18 +838,4 @@ async function main() {
   }
 }
 
-/**
- * True when Node was started on this file. Both paths are resolved first:
- * Node gives `import.meta.url` the real path, so behind a symlinked directory
- * a plain comparison with `process.argv[1]` fails, and the hook would exit
- * having checked nothing.
- */
-function startedDirectly() {
-  try {
-    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (startedDirectly()) await main();
+if (startedDirectly(import.meta.url)) await main();
