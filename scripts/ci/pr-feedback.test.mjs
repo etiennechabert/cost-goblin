@@ -227,6 +227,7 @@ describe('owedOnGitHub', () => {
       commentId: first.databaseId,
       url: first.url,
       missing: ['reply', 'reaction'],
+      resolved: false,
     });
     expect(owedOnGitHub(pr)).toHaveLength(1);
   });
@@ -260,6 +261,9 @@ describe('owedOnGitHub', () => {
     const byGitar = { isResolved: true, resolvedBy: 'gitar-bot[bot]' };
     expect(missingOf(pullRequest({ threads: [thread([comment(GITAR, FINDING)], byGitar)] }))).toEqual([['finding', 'Gitar', 'reply+reaction']]);
     expect(missingOf(pullRequest({ threads: [thread([comment(GITAR, FINDING), comment(ME, 'Fixed.')], byGitar)] }))).toEqual([['finding', 'Gitar', 'reaction']]);
+    // and the list says the bot takes it for fixed, so the session does not go looking for the fix again
+    const pr = pullRequest({ threads: [thread([comment(GITAR, FINDING), comment(ME, 'Fixed.')], byGitar)] });
+    expect(stopReason(pr, owedOnGitHub(pr))).toContain('It has no +1 or -1 yet. Gitar has resolved the thread itself, so it takes it for fixed. Comment ');
     // another bot resolving it is nobody's answer either way: only the review bots count
     expect(missingOf(pullRequest({ threads: [thread([comment(GITAR, FINDING)], { isResolved: true, resolvedBy: 'dependabot[bot]' })] }))).toEqual([]);
   });

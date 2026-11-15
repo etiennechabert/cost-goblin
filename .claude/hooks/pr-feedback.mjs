@@ -203,7 +203,7 @@ export function owedOnGitHub(pr) {
     if (!hasVerdict(first)) missing.push('reaction');
     if (missing.length === 0) continue;
     const where = thread.path ? `${thread.path}${thread.line ? `:${thread.line}` : ''}` : '';
-    owed.push({ id: `comment:${first.databaseId}`, kind: 'finding', bot, where, title: titleOf(first.body), commentId: first.databaseId, url: first.url, missing });
+    owed.push({ id: `comment:${first.databaseId}`, kind: 'finding', bot, where, title: titleOf(first.body), commentId: first.databaseId, url: first.url, missing, resolved: thread.isResolved === true });
   }
   // Gitar replaces its summary comment while it reviews, and a reaction goes with the old one
   const summary = checkOf(pr, CHECKS.Gitar) === 'running' ? undefined : gitarComments(pr).at(-1);
@@ -234,7 +234,9 @@ const MISSING = { 'reply,reaction': 'no reply and no +1 or -1 yet', reply: 'no r
 function describe(item) {
   if (item.kind === 'finding') {
     const where = item.where ? ` on ${item.where}` : '';
-    return `- ${item.bot} finding${where}: "${item.title}". It has ${MISSING[item.missing.join(',')]}. Comment ${item.commentId}: ${item.url}`;
+    // the bot resolved it itself: it takes the finding for fixed, and only the answer is missing
+    const resolved = item.resolved ? ` ${item.bot} has resolved the thread itself, so it takes it for fixed.` : '';
+    return `- ${item.bot} finding${where}: "${item.title}". It has ${MISSING[item.missing.join(',')]}.${resolved} Comment ${item.commentId}: ${item.url}`;
   }
   if (item.kind === 'summary') return `- Gitar's summary comment has no +1 or -1 yet. Comment ${item.commentId}: ${item.url}`;
   if (item.kind === 'issue') return `- SonarCloud issue ${item.title}`;
