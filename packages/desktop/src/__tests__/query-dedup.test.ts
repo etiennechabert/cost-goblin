@@ -34,6 +34,7 @@ interface ScriptedDb extends DuckDBClient {
    *  until the test settles it. */
   readonly queries: readonly PendingQuery[];
   readonly cancelPendingQueries: Mock<() => void>;
+  readonly cancelAllQueries: Mock<() => void>;
 }
 
 function createScriptedDb(): ScriptedDb {
@@ -45,6 +46,7 @@ function createScriptedDb(): ScriptedDb {
     runPreparedQuery: () => pending(),
     runBuildQuery: () => Promise.reject(new Error('rollup builds are not part of this test')),
     cancelPendingQueries: vi.fn<() => void>(),
+    cancelAllQueries: vi.fn<() => void>(),
     configure: () => undefined,
     terminate: () => Promise.resolve(),
   };
@@ -154,7 +156,7 @@ describe.each(ENTRY_POINTS)('AppContext.$name in-flight dedup', ({ call }) => {
   it('keeps a newer query joinable when one dropped by clearAllCaches settles late', async () => {
     const stale = call(app);
     await app.clearAllCaches();
-    expect(db.cancelPendingQueries).toHaveBeenCalledTimes(1);
+    expect(db.cancelAllQueries).toHaveBeenCalledTimes(1);
 
     const fresh = call(app);
     expect(fresh).not.toBe(stale);

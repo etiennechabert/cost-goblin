@@ -152,7 +152,8 @@ describe('config:remove-provider', () => {
     expect(await exists(join(h.ws.dataDir, FIXTURE_GCP_PROVIDER))).toBe(false);
     expect(await exists(join(h.ws.dataDir, FIXTURE_AWS_PROVIDER, 'raw'))).toBe(true);
     expect(list(at(parse(await readFile(h.ws.configPath, 'utf-8')), 'providers')).map(p => at(p, 'name'))).toEqual([FIXTURE_AWS_PROVIDER]);
-    expect(h.db.cancelPendingQueries).toHaveBeenCalled();
+    // Builds too: one could hold the tree's Parquet open across the delete.
+    expect(h.db.cancelAllQueries).toHaveBeenCalled();
     expect((await h.app.getConfig()).providers.map(p => String(p.name))).toEqual([FIXTURE_AWS_PROVIDER]);
   });
 

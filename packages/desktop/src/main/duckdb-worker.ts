@@ -6,7 +6,7 @@ import { QUERY_CANCELLED_MESSAGE, buildDuckDbSandboxStatements, isDuckDbSandboxO
 import type { DuckDBConnection, DuckDBInstance } from './duckdb-loader.js';
 import { createResourcePool } from './connection-pool.js';
 import type { ResourcePool } from './connection-pool.js';
-import { computeDefaultMemoryGB, computeDefaultThreads, computeQueryPoolSize } from './duckdb-tuning.js';
+import { computeDefaultThreads, computeQueryPoolSize, resolveMemoryGB } from './duckdb-tuning.js';
 
 interface DuckDBModule {
   DuckDBInstance: { create: () => Promise<DuckDBInstance> };
@@ -28,7 +28,9 @@ async function configureDuckDB(conn: DuckDBConnection, settings: DuckDBSettings)
   // any connection affects the whole instance. Callers pass the resolved
   // effective values (user override or computed default); absent fields fall
   // back to the computed defaults so a partial message never under-provisions.
-  const memGB = settings.memoryGB ?? computeDefaultMemoryGB();
+  // The memory value is held to the ceiling again here, where the limit is
+  // set: one above it ends the app (see MAX_MEMORY_GB), whoever sent it.
+  const memGB = resolveMemoryGB(settings.memoryGB);
   const threads = settings.threads ?? computeDefaultThreads();
   await conn.run(`SET memory_limit = '${String(memGB)}GB'`);
   await conn.run(`SET threads = ${String(threads)}`);
@@ -91,8 +93,9 @@ function isPreparedQueryRequest(msg: unknown): msg is { kind: 'prepared-query'; 
   return msg['kind'] === 'prepared-query' && typeof msg['id'] === 'number' && typeof msg['sql'] === 'string' && Array.isArray(msg['params']);
 }
 
-function isCancelRequest(msg: unknown): msg is { kind: 'cancel-pending' } {
+function isCancelRequest(msg: unknown): msg is { kind: 'cancel-pending'; builds?: boolean } {
   if (!hasProps(msg)) return false;
+  if (msg['builds'] !== undefined && typeof msg['builds'] !== 'boolean') return false;
   return msg['kind'] === 'cancel-pending';
 }
 
@@ -112,6 +115,7 @@ const cancelledIds = new Set<number>();
 const queuedIds = new Set<number>();  // waiting for pool.acquire()
 const runningIds = new Set<number>(); // executing in DuckDB
 const runningConns = new Map<number, DuckDBConnection>(); // id → connection for interrupt()
+const buildIds = new Set<number>();   // `fresh` queries: rollup partition builds
 
 async function fetchAllRows(
   conn: DuckDBConnection,
@@ -285,6 +289,7 @@ async function handleRequest(req: { kind: 'query'; id: number; sql: string; fres
   try {
     queuedIds.add(req.id);
     if (fresh) {
+      buildIds.add(req.id);
       conn = await (await getInstance()).connect();
     } else {
       pool = await getPool();
@@ -320,6 +325,7 @@ async function handleRequest(req: { kind: 'query'; id: number; sql: string; fres
     queuedIds.delete(req.id);
     runningIds.delete(req.id);
     runningConns.delete(req.id);
+    buildIds.delete(req.id);
     if (conn !== undefined) {
       if (fresh) conn.disconnectSync();
       else if (pool !== undefined) pool.release(conn);
@@ -377,12 +383,19 @@ async function handlePreparedRequest(req: { kind: 'prepared-query'; id: number; 
   }
 }
 
-function handleCancelPending(): void {
+/** Cancel what is queued or running. A view's cancel (`includeBuilds` false:
+ *  sent on every navigation and date change) spares the rollup partition
+ *  builds. They are not that view's queries, and a cancelled build is not
+ *  retried: its month stays out of the rollup, so every query over it reads
+ *  the raw export until the next warmup. Clicking around during the build at
+ *  launch used to lose most of a year that way. */
+function handleCancelPending(includeBuilds: boolean): void {
+  const spared = (id: number): boolean => !includeBuilds && buildIds.has(id);
   for (const id of queuedIds) {
-    cancelledIds.add(id);
+    if (!spared(id)) cancelledIds.add(id);
   }
   for (const id of runningIds) {
-    cancelledIds.add(id);
+    if (!spared(id)) cancelledIds.add(id);
   }
   // Actively interrupt running DuckDB queries so they release pool
   // connections immediately instead of running to completion.
@@ -442,6 +455,7 @@ function reportUnexpectedFailure(id: number, err: unknown): void {
   queuedIds.delete(id);
   runningIds.delete(id);
   runningConns.delete(id);
+  buildIds.delete(id);
   send({ kind: 'error', id, message: `DuckDB worker error: ${message}` });
 }
 
@@ -453,7 +467,7 @@ port.on('message', (msg: unknown) => {
     const { id } = msg;
     handlePreparedRequest(msg).catch((err: unknown) => { reportUnexpectedFailure(id, err); });
   } else if (isCancelRequest(msg)) {
-    handleCancelPending();
+    handleCancelPending(msg.builds === true);
   } else if (isConfigureRequest(msg)) {
     handleConfigure(msg).catch(() => undefined);
   }

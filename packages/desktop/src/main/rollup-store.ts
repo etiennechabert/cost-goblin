@@ -58,6 +58,9 @@ interface RollupStoreDeps {
    *  it throws when called with no provider configured, so every store
    *  entry point must run after the config cache is populated. */
   readonly providerName: () => ProviderName;
+  /** Runs the store's own small queries (a built partition's row count). They
+   *  are steps of a build: whatever runs them must not be reachable by a
+   *  view's cancel, or a click costs the rollup the month just built. */
   readonly runQuery: (sql: string) => Promise<RawRow[]>;
   /** Runs a partition-build query on a fresh, disposable DuckDB connection so
    *  per-build time doesn't climb across a batch (buffer/cache accumulation on
