@@ -25,7 +25,8 @@
  *  - telemetry is off unless COSTGOBLIN_DIAG_TELEMETRY=1 keeps the workspace's
  *    own opt-ins. An unpackaged build has no DSN: export COSTGOBLIN_SENTRY_DSN
  *    too if crash reports should be sent. Crashpad uploads a native crash on
- *    the NEXT launch, so a run that died is relaunched briefly to send it;
+ *    the NEXT launch, so a run in which the app or its query engine died is
+ *    relaunched briefly to send it;
  *  - the launch goes through launchElectron, so no cloud credentials reach the
  *    app and nothing syncs.
  *
@@ -45,7 +46,7 @@ import { appendFileSync, cpSync, createWriteStream, existsSync, lstatSync, mkdir
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { parse } from 'yaml';
-import { clickNavButton, closeApp, launchElectron, selectDatePreset } from '../helpers.js';
+import { QUERY_ENGINE_PROCESS_NAME, clickNavButton, closeApp, launchElectron, selectDatePreset } from '../helpers.js';
 
 const WORKSPACE = process.env['COSTGOBLIN_DIAG_WORKSPACE'] ?? '';
 /** A numeric option. A value that is not a positive number is a typo: used as
@@ -292,12 +293,6 @@ async function lagMs(run: () => Promise<unknown>, capMs: number): Promise<number
 
 interface StepStats { peakRssMb: number; peakEngineRssMb: number; maxMainLagMs: number; maxRendererLagMs: number; stalls: number }
 
-/** The name main gives the DuckDB process (QUERY_ENGINE_PROCESS_NAME in
- *  duckdb-utility-process.ts), as `app.getAppMetrics()` lists it. A copy: that
- *  module imports Electron. Under another name no engine is ever seen here,
- *  which the walk reports and fails on rather than calling it healthy. */
-const ENGINE_PROCESS_NAME = 'CostGoblin query engine';
-
 /** Samples in a row without a query engine process (two seconds of them)
  *  after which it is taken for stopped, not for one being replaced: main
  *  starts a replacement in about a tenth of a second, and gives up on the
@@ -322,12 +317,13 @@ class Sampler {
   /** The latest samples in a row in which it listed none. */
   private engineGoneFor = 0;
 
-  /** The pid of the query engine that runs now. Null before the first sample
-   *  saw one, and while main lists none. */
-  enginePid(): number | null { return this.engineGoneFor > 0 ? null : this.enginePids.at(-1) ?? null; }
-
   /** The query engine died and main has not replaced it: it gave up on it. */
   engineStopped(): boolean { return this.enginePids.length > 0 && this.engineGoneFor >= ENGINE_GONE_SAMPLES; }
+
+  /** The query engine's pid as last seen. Null before the first sample saw
+   *  one, and once main has given up on it. One sample that misses it does
+   *  not make it unknown: a process that is gone just measures as nothing. */
+  enginePid(): number | null { return this.engineStopped() ? null : this.enginePids.at(-1) ?? null; }
 
   /** How many times the query engine died: once per replacement, and once
    *  more when the last one was not replaced. */
@@ -359,7 +355,7 @@ class Sampler {
         lagMs(async () => {
           const pid = await this.observed.app.evaluate(
             ({ app }, name) => app.getAppMetrics().find(metric => metric.name === name)?.pid ?? null,
-            ENGINE_PROCESS_NAME,
+            QUERY_ENGINE_PROCESS_NAME,
           );
           if (pid === null) {
             this.engineMissing += 1;
@@ -661,7 +657,9 @@ test('walk every view on a clone of a real workspace', async () => {
     const engineSeen = monitor.enginePids.length > 0;
     const engineDeaths = monitor.engineDeaths();
     let engineVerdict = 'the query engine never died';
-    if (!engineSeen) engineVerdict = `NO "${ENGINE_PROCESS_NAME}" PROCESS WAS EVER SEEN`;
+    // Under another name main's process is never found: said, and failed on
+    // below, rather than reported as an engine that never died.
+    if (!engineSeen) engineVerdict = `NO "${QUERY_ENGINE_PROCESS_NAME}" PROCESS WAS EVER SEEN`;
     else if (engineDeaths > 0) engineVerdict = `THE QUERY ENGINE DIED ${String(engineDeaths)} TIME(S)${monitor.engineStopped() ? ' AND WAS NOT RESTARTED' : ''}`;
     console.log(`[diag] ${exit === null ? 'the app survived' : `THE APP DIED: ${exit.signal ?? String(exit.code)} at ${exit.atS.toFixed(0)} s`} | ${engineVerdict} | peak resident: main ${(monitor.peakRssMb / 1024).toFixed(1)} GB, query engine ${(monitor.peakEngineRssMb / 1024).toFixed(1)} GB | ${String(slow.length)} step(s) over 10 s or unfinished`);
     for (const r of slow) console.log(`[diag]   ${r.name}: ${r.outcome}, ${(r.settleMs / 1000).toFixed(0)} s${r.blockers.length > 0 ? ` (${r.blockers.join('; ').slice(0, 100)})` : ''}`);
@@ -685,7 +683,7 @@ test('walk every view on a clone of a real workspace', async () => {
       console.log('[diag] relaunched for 45 s so the crash report could be uploaded');
     }
     expect(exit, 'the app process ended during the walk').toBeNull();
-    expect(engineSeen, `main never listed a "${ENGINE_PROCESS_NAME}" process: its memory and its deaths went unseen`).toBe(true);
+    expect(engineSeen, `main never listed a "${QUERY_ENGINE_PROCESS_NAME}" process: its memory and its deaths went unseen`).toBe(true);
     expect(engineDeaths, 'the query engine process died during the walk').toBe(0);
   } finally {
     await sampler?.stop();

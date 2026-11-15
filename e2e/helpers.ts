@@ -34,6 +34,11 @@ mkdirSync(V8_DIR, { recursive: true });
 
 export const LOAD_TIMEOUT = 5_000;
 
+/** The name main gives the DuckDB process, as `app.getAppMetrics()` lists it:
+ *  QUERY_ENGINE_PROCESS_NAME in packages/desktop/src/main/duckdb-utility-process.ts.
+ *  A copy, because that module imports Electron. */
+export const QUERY_ENGINE_PROCESS_NAME = 'CostGoblin query engine';
+
 export const FIXTURE_DATA_DIR = join(ROOT, 'packages', 'core', 'src', '__fixtures__', 'synthetic');
 export const FIXTURE_CONFIG_DIR = join(ROOT, 'packages', 'core', 'src', '__fixtures__', 'config');
 /** Same synthetic data tree, but a config listing BOTH provider arms. The
