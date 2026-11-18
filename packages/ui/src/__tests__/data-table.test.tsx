@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { DataTable } from '../components/data-table.js';
@@ -33,10 +33,11 @@ describe('DataTable', () => {
   });
 });
 
-// A row that expands is a focusable <tr>, not a button: the browser's own
-// answer to Space on it is to scroll the page. fireEvent returns false when
-// the handler prevented that default.
-describe('DataTable — an expandable row on the keyboard', () => {
+// A row that expands carries a disclosure button in a leading column of its
+// own. Its state (aria-expanded) and the keyboard go through that button: on
+// the <tr> itself aria-expanded means something only in a tree grid, so the
+// row takes clicks and nothing else.
+describe('DataTable — an expandable row', () => {
   function renderTable(expandable: boolean) {
     const onCellClick = vi.fn();
     render(
@@ -53,32 +54,79 @@ describe('DataTable — an expandable row on the keyboard', () => {
     return { row, cell, onCellClick };
   }
 
-  it('toggles on Space without scrolling the page, and leaves the other keys their default', () => {
+  const toggleOf = (row: HTMLElement): HTMLElement => within(row).getByRole('button', { name: 'Row details' });
+  const detailRow = (): HTMLTableRowElement | null => screen.getByText('detail of eu-central-1').closest('tr');
+
+  it('gives a row that cannot expand no button, no column for one and no tab stop', () => {
+    const { row } = renderTable(false);
+
+    expect(within(row).queryByRole('button', { name: 'Row details' })).toBeNull();
+    expect(screen.getAllByRole('columnheader')).toHaveLength(1);
+    expect(row.hasAttribute('tabindex')).toBe(false);
+  });
+
+  it('gives a row that expands its button in a leading column, under a header of its own', () => {
     const { row } = renderTable(true);
 
-    expect(fireEvent.keyDown(row, { key: ' ' })).toBe(false);
-    expect(screen.getByText('detail of eu-central-1')).toBeDefined();
-    expect(fireEvent.keyDown(row, { key: ' ' })).toBe(false);
+    const headers = screen.getAllByRole('columnheader');
+    expect(headers).toHaveLength(2);
+    expect(headers[0]?.textContent).toBe('Details');
+    expect(row.cells[0]?.contains(toggleOf(row))).toBe(true);
+  });
+
+  // One click toggles once: the row's own click toggles too, and a click
+  // that reached it from the button would put the row back as it was.
+  it('says on the button whether the row is expanded, and which row holds the details', async () => {
+    const user = userEvent.setup();
+    const { row } = renderTable(true);
+    const toggle = toggleOf(row);
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(toggle.hasAttribute('aria-controls')).toBe(false);
+
+    await user.click(toggle);
+    const detail = detailRow();
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(detail?.id).toBeTruthy();
+    expect(toggle.getAttribute('aria-controls')).toBe(detail?.id);
+    // The details run under the button's column too.
+    expect(detail?.cells[0]?.colSpan).toBe(2);
+
+    await user.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(toggle.hasAttribute('aria-controls')).toBe(false);
     expect(screen.queryByText('detail of eu-central-1')).toBeNull();
-
-    expect(fireEvent.keyDown(row, { key: 'Enter' })).toBe(true);
-    expect(screen.getByText('detail of eu-central-1')).toBeDefined();
-    expect(fireEvent.keyDown(row, { key: 'ArrowDown' })).toBe(true);
-    expect(fireEvent.keyDown(row, { key: 'Tab' })).toBe(true);
-    expect(screen.getByText('detail of eu-central-1')).toBeDefined();
   });
 
-  // Space pressed on a button inside the row reaches the row's handler too.
-  // Preventing its default there would cancel the click the button makes of it.
-  it('prevents the default of Space pressed on the row, not on a button inside it', () => {
+  it('toggles on Enter and on Space pressed on the button', async () => {
+    const user = userEvent.setup();
+    const { row } = renderTable(true);
+
+    toggleOf(row).focus();
+    await user.keyboard('{Enter}');
+    expect(detailRow()).not.toBeNull();
+    await user.keyboard(' ');
+    expect(screen.queryByText('detail of eu-central-1')).toBeNull();
+  });
+
+  // The pointer keeps the whole row as its target. The keyboard has the
+  // button: the row is no tab stop and answers no key.
+  it('toggles on a click anywhere else on the row, which takes no focus and no key', async () => {
+    const user = userEvent.setup();
     const { row, cell } = renderTable(true);
+    const td = cell.closest('td');
+    if (td === null) throw new Error('the button has no cell');
 
-    expect(fireEvent.keyDown(cell, { key: ' ' })).toBe(true);
-    expect(fireEvent.keyDown(row, { key: ' ' })).toBe(false);
+    await user.click(td);
+    expect(detailRow()).not.toBeNull();
+    expect(toggleOf(row).getAttribute('aria-expanded')).toBe('true');
+
+    expect(row.hasAttribute('tabindex')).toBe(false);
+    fireEvent.keyDown(row, { key: 'Enter' });
+    fireEvent.keyDown(row, { key: ' ' });
+    expect(detailRow()).not.toBeNull();
   });
 
-  // The cell's click filters and stays out of the row. The key that makes
-  // that click used to reach the row all the same, and expanded it.
+  // The cell's click filters and stays out of the row, however it was made.
   it('filters without toggling the row on Enter or Space pressed on a button inside it', async () => {
     const user = userEvent.setup();
     const { cell, onCellClick } = renderTable(true);
@@ -89,12 +137,5 @@ describe('DataTable — an expandable row on the keyboard', () => {
     await user.keyboard(' ');
     expect(screen.queryByText('detail of eu-central-1')).toBeNull();
     expect(onCellClick).toHaveBeenCalledTimes(2);
-  });
-
-  it('leaves Space alone on a row that cannot expand', () => {
-    const { row } = renderTable(false);
-
-    expect(row.tabIndex).toBe(-1);
-    expect(fireEvent.keyDown(row, { key: ' ' })).toBe(true);
   });
 });

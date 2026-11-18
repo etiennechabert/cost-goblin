@@ -129,11 +129,13 @@ function renderExplorer(api?: ExplorerMockApi) {
   };
 }
 
-/** Table header labels, sort arrows stripped. */
+/** Table header labels, sort arrows stripped, after the leading column of the
+ *  rows' disclosure buttons. */
 function visibleHeaders(): string[] {
   const table = screen.getByRole('table');
   return within(table)
     .getAllByRole('columnheader')
+    .slice(1)
     .map(th => th.textContent.replace(/[↑↓↕]/g, '').trim());
 }
 

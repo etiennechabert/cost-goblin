@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { flexRender, functionalUpdate, useTable } from '@tanstack/react-table';
 import type { Cell, Row, RowData, SortingState, TableOptions } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { ExplorerTagColumn } from '@costgoblin/core/browser';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { CoinRainLoader } from './coin-rain-loader.js';
 import { CsvExportButton } from './table-csv-export.js';
 import type { DataTableFeatures, TableColumn } from '../lib/table-types.js';
@@ -350,6 +351,9 @@ export function DataTable<TData extends RowData>({
           <thead className="sticky top-0 z-10 bg-bg-tertiary/95 backdrop-blur-sm">
             {table.getHeaderGroups().map(headerGroup => (
               <tr key={headerGroup.id} className="text-left text-text-secondary">
+                {renderExpandedRow !== undefined && (
+                  <th className="w-6 p-0"><span className="sr-only">Details</span></th>
+                )}
                 {headerGroup.headers.map(header => {
                   const meta = header.column.columnDef.meta;
                   const isSorted = header.column.getIsSorted();
@@ -484,6 +488,9 @@ function TableRow<TData extends RowData>({ row, expanded, canExpand, onToggle, o
   if (expanded) bgClass = 'bg-bg-tertiary/40';
   else if (canExpand) bgClass = 'hover:bg-bg-tertiary/30';
 
+  const detailId = useId();
+  const Chevron = expanded ? ChevronDown : ChevronRight;
+
   return (
     <>
       <tr
@@ -492,28 +499,34 @@ function TableRow<TData extends RowData>({ row, expanded, canExpand, onToggle, o
           canExpand ? 'cursor-pointer' : '',
           bgClass,
         ].join(' ')}
+        // For the pointer, the whole row is the target. The keyboard and
+        // assistive technology have the button below: the row takes no focus,
+        // and aria-expanded means nothing on a row outside a tree grid.
         onClick={canExpand ? onToggle : undefined}
-        onKeyDown={canExpand ? (e) => {
-          // A key pressed on a button inside the row gets here too, and is
-          // that button's: its click stays out of the row, so its key press
-          // must neither toggle the row nor lose its default, that click.
-          if (e.target !== e.currentTarget) return;
-          if (e.key !== 'Enter' && e.key !== ' ') return;
-          // The row takes the focus but is no button: left to the browser,
-          // Space on it also scrolls the page.
-          if (e.key === ' ') e.preventDefault();
-          onToggle();
-        } : undefined}
-        tabIndex={canExpand ? 0 : undefined}
-        role="row"
       >
+        {canExpand && (
+          <td className="w-6 py-0.5 pl-2 pr-0">
+            <button
+              type="button"
+              aria-label="Row details"
+              aria-expanded={expanded}
+              aria-controls={expanded ? detailId : undefined}
+              // The click stays out of the row, whose own click toggles too:
+              // reaching it would toggle twice and leave the row as it was.
+              onClick={(e) => { e.stopPropagation(); onToggle(); }}
+              className="flex h-5 w-5 items-center justify-center rounded text-text-muted hover:text-text-primary"
+            >
+              <Chevron className="h-3 w-3" aria-hidden="true" />
+            </button>
+          </td>
+        )}
         {row.getAllCells().map(cell => (
           <TableCell key={cell.id} cell={cell} row={row} onCellClick={onCellClick} />
         ))}
       </tr>
       {expanded && renderExpandedRow !== undefined && (
-        <tr className="bg-bg-tertiary/20">
-          <td colSpan={row.getAllCells().length} className="px-3 py-2">
+        <tr id={detailId} className="bg-bg-tertiary/20">
+          <td colSpan={row.getAllCells().length + 1} className="px-3 py-2">
             {renderExpandedRow(row.original)}
           </td>
         </tr>

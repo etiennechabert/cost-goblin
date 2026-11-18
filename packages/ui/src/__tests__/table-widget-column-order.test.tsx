@@ -89,12 +89,13 @@ function holdOverview(api: ColumnsApi): () => Promise<void> {
 }
 
 /** The table's column headers, left to right. */
+/** The table's header labels, after the leading column of the rows' disclosure buttons. */
 function headers(): string[] {
   const table = screen.getAllByRole('table')[0];
   if (table === undefined) throw new Error('no table rendered');
   const head = table.querySelector('thead');
   if (head === null) throw new Error('table has no head');
-  return within(head).getAllByRole('columnheader').map(th => th.textContent.replace(/[↑↓↕]/g, '').trim());
+  return within(head).getAllByRole('columnheader').slice(1).map(th => th.textContent.replace(/[↑↓↕]/g, '').trim());
 }
 
 async function expectHeaders(expected: readonly string[]): Promise<void> {
