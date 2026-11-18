@@ -351,7 +351,7 @@ describe('Savings — states', () => {
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('aws-a, export of 2026-10-13');
     expect(alert.textContent).toContain('aws-b, export of 2026-10-12');
-    expect(alert.textContent).toContain('Their recommendations are missing below.');
+    expect(alert.textContent).toContain('The recommendations below do not include their latest export.');
     expect(rowFor('Downsize to m5.xlarge')).toBeDefined();
   });
 });

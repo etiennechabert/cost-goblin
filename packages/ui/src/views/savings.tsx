@@ -460,7 +460,7 @@ function UnreadSnapshots({ unread, othersShown }: Readonly<{ unread: readonly Un
         ))}
       </ul>
       <p className="text-xs text-text-secondary">
-        {othersShown ? `${unread.length === 1 ? 'Its' : 'Their'} recommendations are missing below. ` : ''}
+        {othersShown ? `The recommendations below do not include ${unread.length === 1 ? 'its' : 'their'} latest export. ` : ''}
         The data was downloaded but could not be read: downloading the cost optimization data again from the Data tab may fix a damaged file.
       </p>
     </div>

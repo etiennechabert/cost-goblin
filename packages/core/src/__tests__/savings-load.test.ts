@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { validateConfig } from '../config/validator.js';
+import { QUERY_CANCELLED_MESSAGE } from '../query/cancellation.js';
 import { loadSavingsRecommendations } from '../savings/snapshots.js';
 import type { ProviderConfig } from '../types/config.js';
 
@@ -127,6 +128,14 @@ describe('loadSavingsRecommendations', () => {
     expect(loaded.unreadSnapshots).toEqual([
       { providerName: 'aws-a', date: '2026-10-12', error: 'Invalid Input Error: No magic bytes found at end of file' },
     ]);
+  });
+
+  it('rejects when a snapshot query is cancelled, so the caller retries it', async () => {
+    await expect(loadSavingsRecommendations(
+      dataDir,
+      providers(provider('aws-a', true), provider('aws-b', true)),
+      runner({ 'aws-a': new Error(QUERY_CANCELLED_MESSAGE), 'aws-b': [row('b1', 5)] }, []),
+    )).rejects.toThrow(QUERY_CANCELLED_MESSAGE);
   });
 
   it('reports an unread snapshot of a shared export unless a newer one of that export was read', async () => {
