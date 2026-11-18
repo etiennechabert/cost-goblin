@@ -179,7 +179,9 @@ describe('list_savings_recommendations', () => {
     await writeFile(join(dir, 'broken.parquet'), 'not parquet');
     const text = resultText(await listSavingsRecommendations(ctx, {}));
     expect(text).not.toMatch(/are synced/);
-    expect(text).toMatch(/^The latest Cost Optimization Hub snapshot could not be read: aws-main 2026-10-14 \(.*broken\.parquet.*\)\./s);
+    expect(text).toMatch(/^The latest Cost Optimization Hub snapshot could not be read: aws-main 2026-10-14 \(.*broken\.parquet.*\)\./);
+    // DuckDB's message spans lines; the tool puts it on one.
+    expect(text).not.toContain('\n');
   });
 
   it('lists the recommendations that were read, with a note naming the snapshot that was not', async () => {
@@ -193,7 +195,7 @@ describe('list_savings_recommendations', () => {
     const withOther = { ...ctx, getConfig: () => Promise.resolve({ ...config, providers: [main, other] }) };
     const result = parseJsonResult(resultText(await listSavingsRecommendations(withOther, { format: 'json' })));
     expect(result.title).toBe('Cost optimization recommendations (3)');
-    expect(result.notes).toContainEqual(expect.stringMatching(/^Not counted, because the latest snapshot could not be read: aws-other 2026-10-13 \(.*broken\.parquet.*\)\./s));
+    expect(result.notes).toContainEqual(expect.stringMatching(/^Not counted, because the latest snapshot could not be read: aws-other 2026-10-13 \(.*broken\.parquet.*\)\./));
   });
 
   it('renders a markdown table by default', async () => {

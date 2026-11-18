@@ -11,6 +11,7 @@ import {
 } from '@costgoblin/core';
 import type { SavingsGroup, SavingsPreferences, UnreadSavingsSnapshot } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
+import { redactHome, toSingleLine } from '../formatters/neutralize.js';
 import type { Cell, Column, MetaField, StructuredResult } from '../formatters/result.js';
 import { resolveFormat, structuredToolResult, toolResult } from './tool-helpers.js';
 
@@ -45,9 +46,11 @@ async function readPreferences(stateDir: string): Promise<SavingsPreferences> {
   }
 }
 
-/** `aws-main 2026-10-13 (<error>)`, for each snapshot that could not be read. */
+/** `aws-main 2026-10-13 (<error>)`, for each snapshot that could not be read.
+ *  A DuckDB error spans lines and names the file under the home directory, so
+ *  each goes on one line with the home directory redacted, as `toolError` does. */
 function unreadList(unread: readonly UnreadSavingsSnapshot[]): string {
-  return unread.map(u => `${u.providerName} ${u.date} (${u.error})`).join('; ');
+  return unread.map(u => `${toSingleLine(u.providerName)} ${u.date} (${toSingleLine(redactHome(u.error))})`).join('; ');
 }
 
 const UNREAD_HINT = 'The data was downloaded but could not be read: downloading the cost optimization data again from the app\'s Data tab may fix a damaged file.';
