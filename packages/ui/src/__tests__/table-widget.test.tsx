@@ -122,9 +122,10 @@ async function expectDelta(chargeCategory: string, text: string): Promise<HTMLTa
   });
 }
 
-/** The charge categories of the table's rows, top to bottom. */
+/** The charge categories of the table's rows, top to bottom: each row's
+ *  first cell after the one of its disclosure button. */
 function shownCategories(): string[] {
-  return [...document.querySelectorAll('tbody tr')].map(tr => tr.querySelector('td')?.textContent ?? '');
+  return [...document.querySelectorAll<HTMLTableRowElement>('tbody tr')].map(tr => tr.cells.item(1)?.textContent ?? '');
 }
 
 function sortByChargeCategory(): void {
