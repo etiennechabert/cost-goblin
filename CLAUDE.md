@@ -36,7 +36,7 @@ costgoblin/
 
 ```bash
 # Verify everything — run after EVERY change
-npm run check              # tsc --noEmit + eslint + vitest run (~10 seconds)
+npm run check              # tsc --noEmit (packages and e2e/) + eslint + vitest run
 
 # Per-package work
 cd packages/core && npm run check     # core only
@@ -158,6 +158,8 @@ Full app launch pinned to fixture data via `COSTGOBLIN_DATA_DIR` / `COSTGOBLIN_C
 Slow (seconds). Run before commits, always in CI.
 
 The window is hidden by default (`COSTGOBLIN_HEADLESS=1`, set by `launchApp`) so a run can't steal focus or be clicked/closed by accident mid-test. Screenshots and every assertion work unchanged. To watch a run: `COSTGOBLIN_HEADLESS=0 npx playwright test e2e/<suite>.test.ts`. **On Linux, never run hidden.** A never-shown window gets ~1-5 frames/s there, so every Playwright click waits 1-2s on animation frames (views-core: 3.4 min hidden vs 28s shown). CI therefore runs with `COSTGOBLIN_HEADLESS=0` under `xvfb-run`, whose virtual display is the isolation. That setting is pinned by `workflow-policy.test.mjs`. On a Linux desktop, do the same: `COSTGOBLIN_HEADLESS=0 xvfb-run npx playwright test …`. The suites' debug screenshots (`screenshot()` in `e2e/helpers.ts`) are opt-in: `COSTGOBLIN_E2E_SCREENSHOTS=1` writes them to `$TMPDIR/costgoblin-e2e`.
+
+**Type-checked, not linted:** `npm run check` type-checks `e2e/` and the Playwright configs through `e2e/tsconfig.json`, which includes the renderer's own declaration of the preload bridges (`packages/desktop/src/renderer/env.d.ts`). A `page.evaluate` callback therefore reads `globalThis.costgoblinDebug` and the other bridges with the app's types: declare no bridge type in an e2e file, where it would hide the methods the other files use.
 
 **No cloud credentials:** every launch goes through `launchElectron` in `e2e/helpers.ts` — the only `_electron` use in `e2e/` — which strips all cloud-SDK env vars from the runner's env, points AWS/GCP credential discovery (SDKs and the gcloud/aws CLIs) at an empty per-launch sandbox, and refuses to spawn if the merged env re-adds a cloud var or overrides a pin. `packages/core/src/e2e-harness/cloud-sandbox.ts` documents which variable blocks which lookup; its rules are keyed on the provider type union, so a new provider type fails `tsc` until its SDK is covered. It covers *ambient* credentials only: a credential a config names itself (a GCP `keyFile`) is used as named, and the fixture configs name none. The policy test in `e2e-cloud-sandbox.test.ts` fails on any other `_electron` use; `expectCloudSandboxed(app)` asserts the live main-process env and the sandbox's contents. Tear down with `closeApp`/`finishCoverage`, which delete the sandbox, not a bare `app.close()`.
 

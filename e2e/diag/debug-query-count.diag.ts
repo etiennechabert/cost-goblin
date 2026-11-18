@@ -56,8 +56,6 @@ test('materialized base: first vs second load', async () => {
     const tableExists = await page.evaluate(async () => {
       try {
         await globalThis.costgoblin.cancelPendingQueries();
-        // If we can get the query log, the IPC works. Check materialized status.
-        const result = await (window as Record<string, unknown>)['electron'];
         return 'cant-check-from-renderer';
       } catch {
         return 'error';
