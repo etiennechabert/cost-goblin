@@ -4,12 +4,18 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
-import { buildSource, buildRollupPartitionQuery } from '../query/builder.js';
+import { buildCostQuery, buildDailyCostsQuery, buildGrainProbeQuery, buildPeriodDaysQuery, buildRollupPartitionQuery, buildSource, buildTrendQuery, sqlStringLiteral } from '../query/builder.js';
+import type { QueryContextOptions } from '../query/builder.js';
+import { periodsForRange } from '../query/period-days.js';
+import type { PeriodDays } from '../query/period-days.js';
+import { rollupGrainColumns } from '../rollup/grain.js';
 import { FIXTURE_PROVIDER_NAME } from '../__fixtures__/layout.js';
 import type { DimensionsConfig } from '../types/config.js';
 import type { CostScopeConfig } from '../types/cost-scope.js';
-import { asDimensionId, asProviderName } from '../types/branded.js';
-import { queryAll } from './helpers/duckdb-rows.js';
+import { asDateString, asDimensionId, asDollars, asProviderName } from '../types/branded.js';
+import type { DateRange } from '../types/query.js';
+import { queryAll, runPrepared } from './helpers/duckdb-rows.js';
+import { costByDay, costIn, filedDays, FILED_PERIODS, FILED_SERVICE, writeFiledRows } from './helpers/filed-rows.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SYNTHETIC_DIR = join(__dirname, '..', '__fixtures__', 'synthetic');
@@ -137,5 +143,127 @@ describe('rollup partitions reading Description', () => {
     expect(plan).toContain('ServiceName');
     expect(plan).not.toContain('ChargeDescription');
     expect(plan).not.toContain('ConsumedQuantity');
+  });
+});
+
+// A billing period's files hold rows of other months too (see period-days.ts).
+// A partition is one period's files, whole, and a range reads every period
+// holding one of its days: from raw Parquet and from the rollup alike, so a
+// day costs the same whichever path answers and whatever range asks for it.
+describe('billing-period files holding rows of other months', () => {
+  const FILED = asProviderName('aws');
+  const service = asDimensionId('service');
+  const range = (start: string, end: string): DateRange => ({ start: asDateString(start), end: asDateString(end) });
+  const RANGES: readonly (readonly [string, DateRange])[] = [
+    ['a month and the days of it filed under another', range('2026-01-01', '2026-01-31')],
+    ['a month with no file of its own', range('2026-02-01', '2026-02-28')],
+    ['days before the first file\'s month', range('2025-12-01', '2025-12-31')],
+    ['days after the last file\'s month', range('2026-04-01', '2026-04-30')],
+    ['a month two files hold days of', range('2026-03-01', '2026-03-31')],
+    ['one day, filed under the month before', range('2026-02-01', '2026-02-01')],
+    ['days of a month only its neighbour holds', range('2026-03-01', '2026-03-10')],
+    ['every day there is', range('2025-12-01', '2026-04-30')],
+  ];
+
+  let db: Awaited<ReturnType<typeof DuckDBInstance.create>>;
+  let conn: Awaited<ReturnType<typeof db.connect>>;
+  let dataDir: string;
+  let periodDays: PeriodDays;
+  const partition = (period: string): string => join(dataDir, 'rollup', `daily-${period}`, 'rollup.parquet').replaceAll('\\', '/');
+
+  const opts = (): QueryContextOptions => ({
+    dataDir, dimensions, costScope,
+    providers: [{ name: FILED, type: 'aws', availablePeriods: [...FILED_PERIODS], periodDays }],
+  });
+  /** The same options, reading the rollup partitions the range needs. */
+  const fromRollup = (dateRange: DateRange): QueryContextOptions => {
+    const periods = periodsForRange({ availablePeriods: [...FILED_PERIODS], periodDays }, dateRange);
+    return { ...opts(), materializedSource: `read_parquet([${periods.map(p => sqlStringLiteral(partition(p))).join(', ')}])` };
+  };
+  const dailyCosts = async (dateRange: DateRange, o: QueryContextOptions, granularity?: 'hourly'): Promise<Record<string, number>> => {
+    const q = buildDailyCostsQuery({ groupBy: service, dateRange, filters: {}, ...(granularity === undefined ? {} : { granularity }) }, o);
+    const out: Record<string, number> = {};
+    for (const r of await runPrepared(conn, q.sql, q.params)) out[String(r['date'])] = (out[String(r['date'])] ?? 0) + Number(r['cost']);
+    return out;
+  };
+
+  beforeAll(async () => {
+    db = await DuckDBInstance.create();
+    conn = await db.connect();
+    dataDir = (await mkdtemp(join(tmpdir(), 'cg-rollup-filed-'))).replaceAll('\\', '/');
+    await writeFiledRows(conn, dataDir, String(FILED), ['daily', 'hourly']);
+    const days: Record<string, string[]> = {};
+    for (const period of FILED_PERIODS) {
+      const rows = await queryAll(conn, buildPeriodDaysQuery(dataDir, { name: FILED, type: 'aws' }, 'daily', period));
+      days[period] = rows.map(r => String(r['day']));
+      await mkdir(dirname(partition(period)), { recursive: true });
+      await conn.run(buildRollupPartitionQuery(period, 'daily', partition(period), { ...opts(), providers: [{ name: FILED, type: 'aws' }] }));
+    }
+    periodDays = days;
+  });
+  afterAll(async () => { await rm(dataDir, { recursive: true, force: true }); });
+
+  it('lists the UTC days each period\'s files hold, as text, oldest first', () => {
+    expect(periodDays).toEqual({ '2026-01': filedDays('2026-01'), '2026-03': filedDays('2026-03') });
+    expect(periodDays['2026-01']).toEqual(['2025-12-30', '2026-01-10', '2026-01-31', '2026-02-01', '2026-02-15', '2026-03-02']);
+  });
+
+  it('keeps every row of a period\'s files in its partition, whatever month it is dated in', async () => {
+    for (const period of FILED_PERIODS) {
+      const rows = await queryAll(conn, `SELECT usage_date::VARCHAR AS day, SUM(cost) AS cost, SUM(line_items)::DOUBLE AS n FROM read_parquet(${sqlStringLiteral(partition(period))}) GROUP BY 1 ORDER BY 1`);
+      expect(rows.map(r => r['day'])).toEqual(filedDays(period));
+      expect(rows.reduce((sum, r) => sum + Number(r['n']), 0)).toBe(period === '2026-01' ? 6 : 4);
+    }
+  });
+
+  it('probes the grain over the rows a partition stores', async () => {
+    const probe = buildGrainProbeQuery('2026-01', rollupGrainColumns(dimensions), { ...opts(), providers: [{ name: FILED, type: 'aws' }] });
+    const [counts] = await queryAll(conn, probe);
+    const [stored] = await queryAll(conn, `SELECT COUNT(*) AS n FROM read_parquet(${sqlStringLiteral(partition('2026-01'))})`);
+    expect(Number(counts?.['line_items'])).toBe(6);
+    expect(Number(counts?.['grain_rows'])).toBe(Number(stored?.['n']));
+  });
+
+  it.each(RANGES)('costs %s the same from the rollup and from raw, day by day', async (_name, dateRange) => {
+    const expected = costByDay(dateRange);
+    expect(await dailyCosts(dateRange, opts())).toEqual(expected);
+    expect(await dailyCosts(dateRange, fromRollup(dateRange))).toEqual(expected);
+  });
+
+  it('gives a day the same cost whatever range asks for it', async () => {
+    // 2026-03-02 is in both files: 32 filed under January, 128 under March.
+    for (const dateRange of [range('2026-03-02', '2026-03-02'), range('2026-03-01', '2026-03-31'), range('2026-01-01', '2026-03-31')]) {
+      expect((await dailyCosts(dateRange, opts()))['2026-03-02']).toBe(160);
+      expect((await dailyCosts(dateRange, fromRollup(dateRange)))['2026-03-02']).toBe(160);
+    }
+  });
+
+  it('totals and trends a range whose previous period has no file of its own', async () => {
+    // March against February (the 28 days before it start on 2026-02-01).
+    const march = range('2026-03-01', '2026-03-28');
+    const both = range('2026-02-01', '2026-03-28');
+    for (const o of [opts(), fromRollup(both)]) {
+      const cost = buildCostQuery({ groupBy: service, dateRange: march, filters: {} }, o);
+      expect((await runPrepared(conn, cost.sql, cost.params)).map(r => [r['entity'], Number(r['total_cost'])])).toEqual([[FILED_SERVICE, costIn(march)]]);
+      const trend = buildTrendQuery({ groupBy: service, dateRange: march, filters: {}, deltaThreshold: asDollars(0), percentThreshold: 0 }, o);
+      expect((await runPrepared(conn, trend.sql, trend.params)).map(r => [Number(r['current_cost']), Number(r['previous_cost'])]))
+        .toEqual([[costIn(march), costIn(range('2026-02-01', '2026-02-28'))]]);
+    }
+    expect(costIn(march)).toBe(32 + 128 + 256);
+    expect(costIn(range('2026-02-01', '2026-02-28'))).toBe(8 + 16 + 64);
+  });
+
+  it('reads the hourly files the same way', async () => {
+    const hourly = await queryAll(conn, buildPeriodDaysQuery(dataDir, { name: FILED, type: 'aws' }, 'hourly', '2026-03'));
+    expect(hourly.map(r => String(r['day']))).toEqual(filedDays('2026-03'));
+    expect(await dailyCosts(range('2026-02-01', '2026-02-28'), opts(), 'hourly')).toEqual({
+      '2026-02-01 00:00': 8, '2026-02-15 12:00': 16, '2026-02-27 00:00': 64,
+    });
+  });
+
+  it('refuses a period, a tier or a provider path that is not one', () => {
+    expect(() => buildPeriodDaysQuery(dataDir, { name: FILED, type: 'aws' }, 'daily', '2026-1')).toThrow();
+    expect(() => buildPeriodDaysQuery(dataDir, { name: FILED, type: 'aws' }, 'weekly', '2026-01')).toThrow();
+    expect(buildPeriodDaysQuery("/tmp/o'brien", { name: FILED, type: 'aws' }, 'daily', '2026-01')).toContain("'/tmp/o''brien/aws/raw/daily-2026-01/*.parquet'");
   });
 });

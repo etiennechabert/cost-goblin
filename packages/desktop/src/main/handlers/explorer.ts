@@ -5,10 +5,10 @@ import {
   dimensionIdSet,
   buildExclusionClauses,
   buildSource,
-  computePeriodsInRange,
   freshnessCutoff,
   isStringRecord,
   logger,
+  providerBranchesForRange,
   resolveField,
   SecurityError,
   tagDimColumn,
@@ -30,6 +30,7 @@ import type {
   ExplorerDailyRow,
   ExplorerTagColumn,
   DimensionsConfig,
+  ProviderSourceBranch,
   ProviderSourceSpec,
   AggregatedGroupCountParams,
   AggregatedTableParams,
@@ -81,15 +82,14 @@ interface BuildFreshSourceOptions {
   readonly startHour?: string;
   readonly endHour?: string;
   readonly tier: 'daily' | 'hourly';
-  readonly periods: readonly string[];
-  readonly providers: readonly ProviderSourceSpec[];
+  readonly branches: readonly ProviderSourceBranch[];
   readonly dimensions: DimensionsConfig;
   readonly filterPredicate: string | null;
   readonly accountReverseMap: ReadonlyMap<string, readonly string[]>;
 }
 
 async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source: string; whereStr: string }> {
-  const { app, params, startStr, endStr, startHour, endHour, tier, periods, providers, dimensions, filterPredicate, accountReverseMap } = opts;
+  const { app, params, startStr, endStr, startHour, endHour, tier, branches, dimensions, filterPredicate, accountReverseMap } = opts;
   const { ctx, getQueryCostScope, getOrgAccountsPath } = app;
   const orgPath = await getOrgAccountsPath();
   const applyCostScope = params.applyCostScope === true;
@@ -104,17 +104,6 @@ async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source
   // inherit it from the global scope instead of silently defaulting.
   const metric = resolveScopeMetric(params.costMetric, applyCostScope, scopeForExclusions);
 
-  // Per-provider month intersection: a shared list would hand providers
-  // globs for months they don't have on disk, and one zero-match glob fails
-  // the whole union (DuckDB IO error). Providers with nothing in range are
-  // dropped; the caller already early-returned when NO provider has months.
-  const branches = providers
-    .map(p => ({
-      name: p.name,
-      type: p.type,
-      periods: periods.filter(m => p.availablePeriods?.includes(m) ?? false),
-    }))
-    .filter(b => b.periods.length > 0);
   const source = buildSource({
     dataDir: ctx.dataDir, tier, dimensions, orgAccountsPath: orgPath,
     providers: branches,
@@ -156,13 +145,13 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
   const tier: 'daily' | 'hourly' = (startHour !== undefined && endHour !== undefined) ? 'hourly' : requestedTier;
 
   // Empty while onboarding (no provider configured) — falls into the same
-  // zero-period early return as "no months on disk". Months are resolved
-  // ACROSS providers (the union proceeds when any provider has data in
-  // range); buildFreshSource re-intersects per provider before building
-  // globs.
+  // zero-period early return as "no months on disk". The billing periods
+  // holding a day of the range are worked out PER provider: a shared list
+  // would hand a provider globs for months it doesn't have on disk, and one
+  // zero-match glob fails the whole union (DuckDB IO error). Providers with
+  // nothing in range are dropped; the union proceeds when any has data.
   const providers = await getQueryProviders(tier);
-  const required = computePeriodsInRange({ start: startStr, end: endStr });
-  const periods = required.filter(m => providers.some(p => p.availablePeriods?.includes(m) ?? false));
+  const branches = providerBranchesForRange(providers, { start: startStr, end: endStr });
 
   const dimensions = await getQueryDimensions();
   const accountMap = await getAccountMap();
@@ -174,7 +163,7 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
   const tagSqlColumns = tagSqlColumnsById(dimensions.tags);
   const shared = { providers, startStr, endStr, windowDays, tier, tagColumns, tagSqlColumns, dimensions, accountMap } as const;
 
-  if (resolved === null || periods.length === 0) {
+  if (resolved === null || branches.length === 0) {
     return { empty: true, source: '', whereStr: '', ...shared };
   }
 
@@ -188,7 +177,7 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
     app, params, startStr, endStr,
     ...(startHour === undefined ? {} : { startHour }),
     ...(endHour === undefined ? {} : { endHour }),
-    tier, periods, providers, dimensions, filterPredicate, accountReverseMap,
+    tier, branches, dimensions, filterPredicate, accountReverseMap,
   });
   return { empty: false, source, whereStr, ...shared };
 }

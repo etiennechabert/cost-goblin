@@ -6,6 +6,7 @@ import {
   capDateRange,
   CHARGE_PERIOD_START_UTC_SQL,
   computePeriodsInRange,
+  providerBranchesForRange,
   daysBefore,
   DEFAULT_LAG_DAYS,
   freshnessCutoff,
@@ -102,12 +103,14 @@ export function toDollars(n: number): Dollars {
 }
 
 /** ProviderSourceSpec list for QueryContextOptions: EVERY configured
- *  provider with its own on-disk months (mirrors desktop getQueryProviders),
- *  or [] when none is configured. */
+ *  provider with its own on-disk months (the host's own list when it gives
+ *  one, which also says which days each month holds), or [] when none is
+ *  configured. */
 export async function getQueryProviders(
   ctx: McpContext,
   tier: 'daily' | 'hourly',
 ): Promise<readonly ProviderSourceSpec[]> {
+  if (ctx.getQueryProviders !== undefined) return ctx.getQueryProviders(tier);
   const config = await ctx.getConfig().catch(() => null);
   if (config === null) return [];
   return Promise.all(config.providers.map(async provider => {
@@ -127,12 +130,11 @@ export async function buildQueryContextOpts(
   const costScope = await ctx.getCostScope();
   const providers = await getQueryProviders(ctx, tier);
 
-  // Empty only when NO provider has a month intersecting the range.
-  const required = computePeriodsInRange(dateRange);
-  const anyData = providers.some(p => required.some(m => p.availablePeriods?.includes(m) ?? false));
+  // Empty only when NO provider has a billing period holding a day of the range.
+  const anyData = providerBranchesForRange(providers, dateRange).length > 0;
 
   if (!anyData) {
-    logger.debug('query:plan', { tier, mode: 'empty', requestedMonths: required.length, providers: providers.length });
+    logger.debug('query:plan', { tier, mode: 'empty', requestedMonths: computePeriodsInRange(dateRange).length, providers: providers.length });
     return {
       opts: { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, providers, accountReverseMap, costScope },
       empty: true,

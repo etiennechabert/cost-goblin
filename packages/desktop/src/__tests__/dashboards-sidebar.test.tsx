@@ -195,6 +195,9 @@ describe('DashboardsSidebar — unpinned', () => {
     expect(tab.style.top).toBe('96px');
     expect(tab.getAttribute('aria-controls')).toBe('dashboards-sidebar');
     expect(tab.getAttribute('aria-expanded')).toBe('false');
+    // The pointer is on the tab or off it, never on its icon: the tab reads
+    // each pointerover as the pointer arriving.
+    expect(tab.querySelector('svg')?.getAttribute('class')).toContain('pointer-events-none');
 
     await user.click(tab);
     expect(shownSidebar()).not.toBeNull();
@@ -371,6 +374,56 @@ describe('DashboardsSidebar — unpinned', () => {
       fireEvent.pointerLeave(edge());
       advance(HIDE_DELAY_MS);
       expect(shownSidebar()).toBeNull();
+    });
+
+    // What Chromium sends when the element under the pointer has left the
+    // page (a widget swapping its loading state, the splash, the docked
+    // sidebar) and the pointer is next seen somewhere else: no pointerout,
+    // and a pointerover that names an element still on the page. React fires
+    // no onPointerEnter for that pointerover.
+    describe('coming from an element the page removed', () => {
+      it('shows for a pointer that reaches the edge', () => {
+        renderUnpinned();
+        fireEvent.pointerOver(edge(), { relatedTarget: screen.getByText('Dashboard content') });
+        advance(REVEAL_DELAY_MS - 1);
+        expect(shownSidebar()).toBeNull();
+        advance(1);
+        expect(shownSidebar()).not.toBeNull();
+      });
+
+      it('shows for a pointer that reaches the edge tab', () => {
+        renderUnpinned();
+        fireEvent.pointerOver(edgeTab(), { relatedTarget: screen.getByText('Dashboard content') });
+        advance(REVEAL_DELAY_MS);
+        expect(shownSidebar()).not.toBeNull();
+      });
+
+      it('stays for a pointer that left the edge and comes onto it', () => {
+        renderUnpinned();
+        fireEvent.pointerEnter(edge());
+        advance(REVEAL_DELAY_MS);
+        fireEvent.pointerLeave(edge());
+        advance(HIDE_DELAY_MS - 1);
+        fireEvent.pointerOver(sidebar(), { relatedTarget: screen.getByText('Dashboard content') });
+        advance(HIDE_DELAY_MS);
+        expect(shownSidebar()).not.toBeNull();
+      });
+
+      // A click on the sidebar's padding drops focus: with the pointer on
+      // the sidebar, that is not leaving it.
+      it('stays when focus drops while the pointer is on it', () => {
+        renderUnpinned();
+        const trigger = screen.getByRole('button', { name: 'Show dashboards' });
+        act(() => { trigger.focus(); });
+        fireEvent.click(trigger);
+        const nav = sidebar();
+        const row = within(nav).getByRole('button', { name: 'Team costs' });
+        expect(document.activeElement).toBe(row);
+
+        fireEvent.pointerOver(nav, { relatedTarget: screen.getByText('Dashboard content') });
+        act(() => { row.blur(); });
+        expect(shownSidebar()).not.toBeNull();
+      });
     });
   });
 });
