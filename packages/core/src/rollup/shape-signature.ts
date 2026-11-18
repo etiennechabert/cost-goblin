@@ -16,8 +16,11 @@ import { canonicalJson, sha256Hex } from './digest.js';
  *  dimension id, which DuckDB could not tell apart from a case variant.
  *  v4: `usage_date` is the UTC day of ChargePeriodStart. Earlier builds took
  *  the machine's local day of AWS's tz-aware timestamps, and a partition
- *  dropped the rows that day put in another month. */
-export const ROLLUP_SCHEMA_VERSION = 4;
+ *  dropped the rows that day put in another month.
+ *  v5: a partition holds every row of its billing period's files. Earlier
+ *  builds kept the rows dated in the period's own month only, and the others
+ *  (see query/period-days.ts) were in no partition at all. */
+export const ROLLUP_SCHEMA_VERSION = 5;
 
 function isEnabled(d: { readonly enabled?: boolean | undefined }): boolean {
   return d.enabled !== false;

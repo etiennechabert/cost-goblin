@@ -15,6 +15,10 @@ import { RESOURCE_ROLLUP_KEY_COLUMNS, resourceRollupDimensionColumns } from '../
 import { sqlEscapeString, sqlStringLiteral } from './sql-escape.js';
 import { previousTrendPeriod, trendPercentChangeSql } from './trend-change.js';
 import { providerColumnExprs, withOptionalSourceColumns } from './provider-projection.js';
+import { computePeriodsInRange, periodsForRange } from './period-days.js';
+import type { PeriodDays } from './period-days.js';
+
+export { computePeriodsInRange };
 
 /** Label for rows whose SubAccountId is NULL. FOCUS allows a null SubAccountId
  *  and GCP emits it for charges not tied to a project (account-level taxes,
@@ -51,34 +55,6 @@ function buildSqlList(values: readonly string[], qb?: QueryBuilder): string {
     return values.map(v => qb.addParam(v)).join(', ');
   }
   return values.map(v => `'${sqlEscapeString(v)}'`).join(', ');
-}
-
-/**
- * YYYY-MM month strings that a date range touches, inclusive. The data layout
- * is one directory per billing period (e.g. `daily-2026-03/`), so a 30-day
- * window ending 2026-04-18 only needs 2026-03 and 2026-04 — skipping the other
- * 11+ months of data avoids the Parquet footer reads for those files and is
- * the biggest single perf win for short-window queries over a year of data.
- *
- * Inputs are YYYY-MM-DD strings (as produced by asDateString). Output is sorted
- * ascending and de-duplicated.
- */
-export function computePeriodsInRange(dateRange: { readonly start: string; readonly end: string }): string[] {
-  const start = new Date(`${dateRange.start}T00:00:00Z`);
-  const end = new Date(`${dateRange.end}T00:00:00Z`);
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) {
-    return [];
-  }
-  const periods: string[] = [];
-  const cursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
-  const endMonth = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), 1));
-  while (cursor.getTime() <= endMonth.getTime()) {
-    const y = cursor.getUTCFullYear();
-    const m = cursor.getUTCMonth() + 1;
-    periods.push(`${String(y)}-${String(m).padStart(2, '0')}`);
-    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
-  }
-  return periods;
 }
 
 export interface ResolvedDimension {
@@ -409,13 +385,18 @@ export interface ProviderSourceBranch {
 }
 
 /** One provider's query-time context: its type and what's on disk for the
- *  queried tier. The month intersection with a query's date range happens per
- *  provider — DuckDB errors on globs matching zero files, and providers sync
- *  independently. */
+ *  queried tier. Which billing periods a query's date range reads is worked
+ *  out per provider (`periodsForRange`) — DuckDB errors on globs matching zero
+ *  files, and providers sync independently. */
 export interface ProviderSourceSpec {
   readonly name: ProviderName;
   readonly type: ProviderType;
   readonly availablePeriods?: readonly string[] | undefined;
+  /** The UTC days each month of `availablePeriods` holds rows of. A period's
+   *  files hold days of other months too, so a range reads by these, not by
+   *  the months it touches. Without them a range reads the months it touches
+   *  only (see `periodsForRange`). */
+  readonly periodDays?: PeriodDays | undefined;
 }
 
 export interface BuildSourceOptions {
@@ -652,29 +633,42 @@ export function buildSource(opts: BuildSourceOptions): string {
 }
 
 /** Resolve which providers contribute to a query and with which month globs.
- *  Per provider: intersect the required months with what that provider has
- *  on disk (`availablePeriods`), preserving the single-provider contract —
- *  an undefined `availablePeriods` passes the required months through, and
- *  an empty intersection over a non-empty disk falls back to the wildcard
+ *  Per provider: the billing periods on disk that hold a day of the range
+ *  (`periodsForRange`), preserving the single-provider contract — an
+ *  undefined `availablePeriods` passes the range's months through, and a
+ *  range no period on a non-empty disk holds falls back to the wildcard
  *  glob (empty `periods`). Providers with NO data on disk for the tier are
  *  dropped so their zero-match wildcard can't fail the whole union — unless
  *  every provider is dropped, in which case all are kept so the query fails
  *  (or wildcard-scans) exactly like the pre-#516 single-provider code. */
 function resolveProviderBranches(
   providers: readonly ProviderSourceSpec[],
-  requiredPeriods: readonly string[],
+  dateRange: { readonly start: string; readonly end: string },
 ): ProviderSourceBranch[] {
   const branches = providers.map((p): { branch: ProviderSourceBranch; hasData: boolean } => {
-    const periods = p.availablePeriods === undefined
-      ? [...requiredPeriods]
-      : requiredPeriods.filter(m => p.availablePeriods?.includes(m));
     return {
-      branch: { name: p.name, type: p.type, periods },
+      branch: { name: p.name, type: p.type, periods: periodsForRange(p, dateRange) },
       hasData: p.availablePeriods === undefined || p.availablePeriods.length > 0,
     };
   });
   const withData = branches.filter(b => b.hasData);
   return (withData.length > 0 ? withData : branches).map(b => b.branch);
+}
+
+/** One raw-source branch per provider with a billing period on disk holding
+ *  a day of the range, each with those periods (`periodsForRange`), for a
+ *  caller that builds its own source. Worked out PER provider: a shared list
+ *  would hand a provider globs for months it doesn't have, and one zero-match
+ *  glob fails the whole union (DuckDB IO error). A provider with nothing in
+ *  range, or whose months on disk are not known, is dropped: an empty list
+ *  means there is nothing to read. */
+export function providerBranchesForRange(
+  providers: readonly ProviderSourceSpec[],
+  dateRange: { readonly start: string; readonly end: string },
+): ProviderSourceBranch[] {
+  return providers
+    .map(p => ({ name: p.name, type: p.type, periods: p.availablePeriods === undefined ? [] : periodsForRange(p, dateRange) }))
+    .filter(b => b.periods.length > 0);
 }
 
 interface DateRangeLike {
@@ -759,7 +753,7 @@ function setupQuery(
   }
 
   const exclusionClauses = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap, qb);
-  const branches = resolveProviderBranches(providers, computePeriodsInRange(params.dateRange));
+  const branches = resolveProviderBranches(providers, params.dateRange);
   const resolvedTier = effectiveTier(tier, params.dateRange);
   const source = buildSource({ dataDir, tier: resolvedTier, dimensions, orgAccountsPath, providers: branches, costMetric, marketplaceAttribution: costScope?.marketplaceAttribution, ...extraSourceOpts });
   return { qb, filterClauses, exclusionClauses, source, costMetric };
@@ -845,12 +839,9 @@ export function buildTrendQuery(
     exclusionClauses = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap, qb);
 
     // Trend reads both the current period and the previous (same-duration)
-    // period, so the source needs to cover months from both spans. The previous
-    // span ends the day before `startDate`.
-    const currentPeriods = computePeriodsInRange(params.dateRange);
-    const previousPeriods = computePeriodsInRange(previousTrendPeriod(params.dateRange));
-    const required = [...new Set([...currentPeriods, ...previousPeriods])].sort((a, b) => a.localeCompare(b));
-    const branches = resolveProviderBranches(providers, required);
+    // period, so the source needs to cover the days of both spans. The previous
+    // span ends the day before `startDate`: the two make one range.
+    const branches = resolveProviderBranches(providers, { start: previousTrendPeriod(params.dateRange).start, end: endDate });
     source = buildSource({ dataDir, tier: 'daily', dimensions, orgAccountsPath, providers: branches, costMetric, marketplaceAttribution: costScope?.marketplaceAttribution });
   } else {
     source = materializedSource;
@@ -1294,7 +1285,7 @@ export function buildMaterializeBaseQuery(
   const { dataDir, dimensions, orgAccountsPath, providers, accountReverseMap, costScope } = opts;
   const exclusionClauses = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap);
   const costMetric = costScope?.costMetric ?? DEFAULT_COST_METRIC;
-  const branches = resolveProviderBranches(providers, computePeriodsInRange(dateRange));
+  const branches = resolveProviderBranches(providers, dateRange);
   const source = buildSource({ dataDir, tier, dimensions, orgAccountsPath, providers: branches, costMetric, marketplaceAttribution: costScope?.marketplaceAttribution, includeRawTags: true, slim: true });
 
   assertDateString(dateRange.start);
@@ -1308,22 +1299,15 @@ export function buildMaterializeBaseQuery(
   return `CREATE OR REPLACE TABLE cost_base AS SELECT * FROM ${source} WHERE ${whereConditions.join(' AND ')}`;
 }
 
-/** First day of the month after `period` (YYYY-MM), as a YYYY-MM-DD upper bound
- *  (exclusive) for that period's day range. */
-function periodUpperBound(period: string): string {
-  const y = Number(period.slice(0, 4));
-  const m = Number(period.slice(5, 7));
-  const year = m === 12 ? y + 1 : y;
-  const month = m === 12 ? 1 : m + 1;
-  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-01`;
-}
-
-/** Build the DDL that materializes ONE month's PRE-AGGREGATED rollup partition
- *  to Parquet. Grain = usage_date + enabled dimension columns (see
+/** Build the DDL that materializes ONE billing period's PRE-AGGREGATED rollup
+ *  partition to Parquet. Grain = usage_date + enabled dimension columns (see
  *  `rollupGrainColumns`); measures = SUM(cost) + COUNT(*) AS line_items. The
  *  active cost metric is baked into `cost`, exclusion rows are
  *  dropped at build time, and ALL days are ingested (lagDays stays a query-time
  *  filter). Dimension values are stored RAW — aliasing remains query-time.
+ *
+ *  The partition holds every row of the period's files, whatever month it is
+ *  dated in (`rollupPeriodScope`).
  *
  *  `buildSource` runs over the FULL dimensions (so exclusion rules referencing
  *  a disabled dim such as charge_category still resolve); the GROUP BY is what
@@ -1338,22 +1322,27 @@ export function buildRollupPartitionQuery(
   outPath: string,
   opts: QueryContextOptions,
 ): string {
-  const { source, where } = rollupMonthScope(period, tier, opts);
+  const { source, where } = rollupPeriodScope(period, tier, opts);
   const groupBy = rollupGrainColumns(opts.dimensions).join(', ');
   const select =
     `SELECT ${groupBy}, CAST(SUM(cost) AS DOUBLE) AS cost, CAST(COUNT(*) AS BIGINT) AS line_items ` +
-    `FROM ${source} WHERE ${where} GROUP BY ${groupBy}`;
+    `FROM ${source}${where} GROUP BY ${groupBy}`;
   return `COPY (${select}) TO ${sqlStringLiteral(outPath)} (FORMAT PARQUET)`;
 }
 
-/** What a month's rollup build reads: the provider's raw source for that one
- *  period, and the WHERE keeping the month's days that the cost scope keeps.
- *  Shared by the rollup and the resource rollup, so the two always agree on
- *  which line items exist. */
-function rollupMonthScope(period: string, tier: string, opts: QueryContextOptions): { source: string; where: string } {
+/** What a billing period's rollup build reads: the provider's raw source for
+ *  that one period, and the WHERE (with its keyword, or empty) keeping the
+ *  rows the cost scope keeps. Shared by the rollup, the resource rollup and
+ *  the grain probe, so the three always agree on which line items exist.
+ *
+ *  Every row of the period's files, whatever its date: the files hold days of
+ *  other months too (see period-days.ts), and a row dropped here for its date
+ *  would be in no partition at all, since the partition of its own month is
+ *  built from that month's files. A reader asks `periodsForRange` which
+ *  partitions hold its days, and filters on `usage_date` itself. */
+function rollupPeriodScope(period: string, tier: string, opts: QueryContextOptions): { source: string; where: string; conditions: readonly string[] } {
   // Same canonical period check the read_parquet glob applies downstream
-  // (buildParquetSource → assertBillingPeriod); kept here to fail fast before
-  // the surrounding date-bound math runs.
+  // (buildParquetSource → assertBillingPeriod); kept here to fail fast.
   assertBillingPeriod(period);
   const { dataDir, dimensions, orgAccountsPath, providers, accountReverseMap, costScope } = opts;
   const costMetric = costScope?.costMetric ?? DEFAULT_COST_METRIC;
@@ -1370,14 +1359,8 @@ function rollupMonthScope(period: string, tier: string, opts: QueryContextOption
     includeRawTags: false,
   });
 
-  const exclusionClauses = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap);
-
-  const start = `${period}-01`;
-  const end = periodUpperBound(period);
-  assertDateString(start);
-  assertDateString(end);
-
-  return { source, where: [`usage_date >= '${start}'`, `usage_date < '${end}'`, ...exclusionClauses].join(' AND ') };
+  const conditions = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap);
+  return { source, conditions, where: conditions.length === 0 ? '' : ` WHERE ${conditions.join(' AND ')}` };
 }
 
 const RESOURCE_KEY = RESOURCE_ROLLUP_KEY_COLUMNS.join(', ');
@@ -1390,7 +1373,8 @@ const RESOURCE_KEY = RESOURCE_ROLLUP_KEY_COLUMNS.join(', ');
  *  bound; without it the month has no pair left out.
  *
  *  Same source, cost metric and exclusions as the rollup partition of that
- *  month (`rollupMonthScope`).
+ *  period (`rollupPeriodScope`): a pair's weight is over every row of the
+ *  period's files, so it bounds whatever part of the pair a range reads there.
  *  @throws {SecurityError} when `pairs` is not a positive integer */
 export function buildResourceTopQuery(
   period: string,
@@ -1402,14 +1386,14 @@ export function buildResourceTopQuery(
   if (!Number.isSafeInteger(pairs) || pairs < 1) {
     throw new SecurityError(`resource rollup pair count must be a positive integer, got ${String(pairs)}`);
   }
-  const { source, where } = rollupMonthScope(period, tier, opts);
+  const { source, where } = rollupPeriodScope(period, tier, opts);
   const order = `weight DESC, ${RESOURCE_KEY}`;
   // Top-N first, so only the kept rows are numbered: a window over every
   // pair of the month would sort millions of them.
   const select =
     `SELECT *, row_number() OVER (ORDER BY ${order}) AS rank FROM (` +
     `SELECT ${RESOURCE_KEY}, CAST(SUM(ABS(cost)) AS DOUBLE) AS weight ` +
-    `FROM ${source} WHERE ${where} GROUP BY ${RESOURCE_KEY} ` +
+    `FROM ${source}${where} GROUP BY ${RESOURCE_KEY} ` +
     `ORDER BY ${order} LIMIT ${String(pairs + 1)})`;
   return `COPY (${select}) TO ${sqlStringLiteral(outPath)} (FORMAT PARQUET)`;
 }
@@ -1426,13 +1410,13 @@ export function buildResourceRowsQuery(
   heavyPath: string,
   opts: QueryContextOptions,
 ): string {
-  const { source, where } = rollupMonthScope(period, tier, opts);
+  const { source, conditions } = rollupPeriodScope(period, tier, opts);
+  const heavy = `(${RESOURCE_KEY}) IN (SELECT ${RESOURCE_KEY} FROM read_parquet(${sqlStringLiteral(heavyPath)}))`;
   const groupBy = resourceRollupDimensionColumns(opts.dimensions).join(', ');
   const select =
     `SELECT ${groupBy}, CAST(SUM(cost) AS DOUBLE) AS cost, CAST(SUM(list_cost) AS DOUBLE) AS list_cost, ` +
     `CAST(SUM(usage_amount) AS DOUBLE) AS usage_amount, CAST(COUNT(*) AS BIGINT) AS line_items ` +
-    `FROM ${source} WHERE ${where} ` +
-    `AND (${RESOURCE_KEY}) IN (SELECT ${RESOURCE_KEY} FROM read_parquet(${sqlStringLiteral(heavyPath)})) ` +
+    `FROM ${source} WHERE ${[...conditions, heavy].join(' AND ')} ` +
     `GROUP BY ${groupBy}`;
   return `COPY (${select}) TO ${sqlStringLiteral(outPath)} (FORMAT PARQUET)`;
 }
@@ -1472,29 +1456,12 @@ export function buildGrainProbeQuery(
   grainColumns: readonly string[],
   opts: QueryContextOptions,
 ): string {
-  // Canonical period check (matches buildParquetSource → assertBillingPeriod),
-  // run up front so a bad period fails before the probe SQL is assembled.
-  assertBillingPeriod(period);
+  // The period is checked by rollupPeriodScope, before any SQL is assembled.
   for (const col of grainColumns) assertSafeColumnIdentifier(col, 'grain probe column');
-  const { dataDir, dimensions, orgAccountsPath, providers, accountReverseMap, costScope } = opts;
-  const costMetric = costScope?.costMetric ?? DEFAULT_COST_METRIC;
-
-  // Not slim, for the same reason as buildRollupPartitionQuery.
-  const source = buildSource({
-    dataDir, tier: 'daily', dimensions, orgAccountsPath,
-    providers: providers.map(pr => ({ name: pr.name, type: pr.type, periods: [period] })),
-    costMetric,
-    marketplaceAttribution: costScope?.marketplaceAttribution,
-    includeRawTags: false,
-  });
-
-  const exclusionClauses = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap);
-
-  const start = `${period}-01`;
-  const end = periodUpperBound(period);
-  assertDateString(start);
-  assertDateString(end);
-  const whereConditions = [`usage_date >= '${start}'`, `usage_date < '${end}'`, ...exclusionClauses];
+  // The rows the period's partition is built from, so the counts are the
+  // partition's.
+  const { source, where } = rollupPeriodScope(period, 'daily', opts);
+  const { dimensions } = opts;
 
   // Distinct grain rows. We count distinct 64-bit HASHES of the grain tuple, not
   // the concatenated strings themselves: COUNT(DISTINCT) over a string key
@@ -1535,5 +1502,25 @@ export function buildGrainProbeQuery(
     ...cardSelects,
     ...looSelects,
   ];
-  return `SELECT ${selects.join(', ')} FROM ${source} WHERE ${whereConditions.join(' AND ')}`;
+  return `SELECT ${selects.join(', ')} FROM ${source}${where}`;
+}
+
+/** The UTC days (`day`, `YYYY-MM-DD` text, oldest first) that one billing
+ *  period's files of a provider hold rows of: an entry of `PeriodDays`, which
+ *  tells `periodsForRange` which periods a date range reads. Every row counts,
+ *  in or out of the cost scope: a query with the scope off reads them too.
+ *
+ *  The day is the one `buildSource` dates a row by. One period of one
+ *  provider per query: read together, two providers' timestamp types would be
+ *  unified to the first file's.
+ *  @throws {SecurityError} when `tier` or `period` is not one */
+export function buildPeriodDaysQuery(
+  dataDir: string,
+  provider: { readonly name: ProviderName; readonly type: ProviderType },
+  tier: string,
+  period: string,
+): string {
+  const source = buildParquetSource(dataDir, { name: provider.name, type: provider.type, periods: [period] }, tier);
+  return `SELECT DISTINCT CAST(${CHARGE_PERIOD_START_UTC_SQL}::DATE AS VARCHAR) AS day FROM ${source} ` +
+    `WHERE ChargePeriodStart IS NOT NULL ORDER BY day`;
 }

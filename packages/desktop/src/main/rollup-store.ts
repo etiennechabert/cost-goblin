@@ -42,8 +42,8 @@ export interface RollupShape {
 }
 
 export interface ResolveSourceArgs {
-  /** The YYYY-MM periods the query's date range touches (already intersected
-   *  with months on disk by the caller). */
+  /** The YYYY-MM billing periods the query's date range reads: those on disk
+   *  holding a day of it (`periodsForRange`). */
   readonly requiredPeriods: readonly string[];
   readonly tier: 'daily' | 'hourly';
   /** Columns the query references (group-by dim, service, account_id, etc.).
@@ -82,6 +82,11 @@ const PROVIDER_COLUMN = 'provider';
  * partitions under `{dataDir}/{provider}/rollup/daily-YYYY-MM/rollup.parquet` with a
  * `manifest.json` recording the shape-signature and each partition's raw-etag
  * watermark.
+ *
+ * A partition is one billing period's raw files, whole: it holds the days of
+ * other months those files hold. A caller asks for the periods its date range
+ * reads (`periodsForRange`), not the months the range touches, and applies
+ * its own date filter.
  *
  * Correctness invariants:
  *  - All mutations are serialized through a single-writer queue.

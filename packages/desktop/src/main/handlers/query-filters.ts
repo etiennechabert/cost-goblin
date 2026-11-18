@@ -6,7 +6,7 @@ import {
   buildFilterClauses,
   buildSource,
   capDateRange,
-  computePeriodsInRange,
+  periodsForRange,
   freshnessCutoff,
   resolveField,
   QueryBuilder,
@@ -94,13 +94,14 @@ export function registerFilterHandlers(app: AppContext): void {
       const active = providers.filter(p => (p.availablePeriods ?? []).length > 0);
       if (active.length === 0) return [];
       const orgPath = await getOrgAccountsPath();
-      const required = range === undefined ? undefined : computePeriodsInRange(range);
       source = buildSource({
         dataDir: ctx.dataDir, tier: 'daily', dimensions, orgAccountsPath: orgPath,
+        // The billing periods holding a day of the range; every period
+        // without one (no `periods`: the tier wildcard).
         providers: active.map(p => ({
           name: p.name,
           type: p.type,
-          periods: required?.filter(m => p.availablePeriods?.includes(m) ?? false),
+          periods: range === undefined ? undefined : periodsForRange(p, range),
         })),
         costMetric: 'billed',
       });

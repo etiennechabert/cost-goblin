@@ -14,10 +14,12 @@ export {
   buildResourceTopQuery,
   buildResourceRowsQuery,
   buildGrainProbeQuery,
+  buildPeriodDaysQuery,
   buildExclusionClauses,
   buildFilterClauses,
   buildRuleMatchExpr,
   computePeriodsInRange,
+  providerBranchesForRange,
   resolveField,
   tryResolveField,
   sqlEscapeString,
@@ -27,6 +29,9 @@ export {
   NO_ACCOUNT_SENTINEL,
 } from './builder.js';
 export type { QueryContextOptions, BuildSourceOptions, ProviderSourceSpec, ProviderSourceBranch, BaselineDiscoveryParams, ResolvedDimension } from './builder.js';
+
+export { periodsForRange } from './period-days.js';
+export type { PeriodDays, PeriodSelection } from './period-days.js';
 
 export { costExprFor } from './cost-metric.js';
 

@@ -7,6 +7,8 @@ import { awaitWithTimeout } from '../async-timeout.js';
 import { DEFAULT_ROLLUP_CONCURRENCY } from '../duckdb-tuning.js';
 import { RollupStore, type BuildPartitionSql, type RollupShape } from '../rollup-store.js';
 import { ResourceRollupStore, type ResourceBuildSql } from '../resource-rollup-store.js';
+import { PeriodDayIndex } from '../period-day-index.js';
+import { isQueryEngineUnavailable } from '../query-engine-errors.js';
 import { traceSpan, SPAN_OP, type SpanOptions } from '../telemetry/tracing.js';
 import { BaselineStore, type BaselineEngineDeps } from '../baselines-store.js';
 import {
@@ -464,16 +466,28 @@ export function createAppContext(ctx: IpcContext): AppContext {
     return (await getFirstProvider())?.name ?? null;
   }
 
+  // Which days each billing period's files hold: a period holds days of other
+  // months too, so a range reads by these (`periodsForRange`). The day-list
+  // queries run as builds do: every query waits on them, so a view's cancel
+  // must not reach them.
+  const periodDayIndex = new PeriodDayIndex({
+    dataDir: ctx.dataDir,
+    runQuery: (sql) => ctx.db.runBuildQuery(sql),
+    isEngineFailure: isQueryEngineUnavailable,
+  });
+
   // ProviderSourceSpec list for QueryContextOptions: EVERY configured
-  // provider with its own on-disk months, in config order. [] while
-  // onboarding (queries against an empty list throw in buildSource, but
-  // every handler already early-returns on empty period availability).
+  // provider with its own on-disk months and the days they hold, in config
+  // order. [] while onboarding (queries against an empty list throw in
+  // buildSource, but every handler already early-returns on empty period
+  // availability).
   async function getQueryProviders(tier: 'daily' | 'hourly'): Promise<readonly ProviderSourceSpec[]> {
     const config = await getConfig().catch(() => null);
     if (config === null) return [];
     return Promise.all(config.providers.map(async provider => {
       const availablePeriods = await listLocalMonths(ctx.dataDir, provider.name, tier);
-      return { name: provider.name, type: provider.type, availablePeriods };
+      const periodDays = await periodDayIndex.daysFor(provider, tier, availablePeriods);
+      return { name: provider.name, type: provider.type, availablePeriods, periodDays };
     }));
   }
 

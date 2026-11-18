@@ -160,6 +160,19 @@ describe('buildQueryContextOpts', () => {
     await expect(buildQueryContextOpts(ctx, JAN)).rejects.toThrow("Couldn't load cost-scope.yaml");
   });
 
+  // The host knows which days each month's files hold: a month's files hold
+  // days of other months too, so a range is not empty for touching no month.
+  it('takes the providers from the host when it gives them, with the days their months hold', async () => {
+    const tiers: string[] = [];
+    const hosted = [{ name: asProviderName('aws'), type: 'aws' as const, availablePeriods: ['2026-02'], periodDays: { '2026-02': ['2026-01-31', '2026-02-01'] } }];
+    const ctx = ctxWith(janFeb, { getQueryProviders: (tier) => { tiers.push(tier); return Promise.resolve(hosted); } });
+    const { opts, empty } = await buildQueryContextOpts(ctx, JAN);
+    expect(opts.providers).toBe(hosted);
+    expect(empty).toBe(false);
+    expect((await buildQueryContextOpts(ctx, { start: asDateString('2026-01-01'), end: asDateString('2026-01-30') })).empty).toBe(true);
+    expect(tiers).toEqual(['daily', 'daily']);
+  });
+
   it('reads the hourly tier when asked and is empty when that tier has no month in range', async () => {
     const { opts, empty } = await buildQueryContextOpts(ctxWith(janFeb), JAN, 'hourly');
     expect(empty).toBe(true);

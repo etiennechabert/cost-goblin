@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildCostQuery, buildDailyCostsQuery, buildTrendQuery, buildMissingTagsQuery, buildNonResourceCostQuery, buildEntityDetailQuery, buildSource, computePeriodsInRange } from '../query/builder.js';
+import { periodsForRange } from '../query/period-days.js';
 import type { ProviderSourceSpec } from '../query/builder.js';
 import type { DimensionsConfig } from '../types/config.js';
 import { asDimensionId, asDateString, asDollars, asEntityRef, asHourString, asProviderName, asTagValue, tagSqlColumn } from '../types/branded.js';
@@ -120,6 +121,55 @@ describe('computePeriodsInRange', () => {
 
   it('returns empty for invalid inputs', () => {
     expect(computePeriodsInRange({ start: 'not-a-date', end: '2026-04-01' })).toEqual([]);
+  });
+});
+
+describe('periodsForRange', () => {
+  // October's files also hold the first of November and a late day of
+  // September; December's hold one day of October, two months back.
+  const provider = {
+    availablePeriods: ['2026-09', '2026-10', '2026-12'],
+    periodDays: {
+      '2026-09': ['2026-09-01', '2026-09-30'],
+      '2026-10': ['2026-09-28', '2026-10-01', '2026-10-31', '2026-11-01'],
+      '2026-12': ['2026-10-15', '2026-12-01', '2026-12-31'],
+    },
+  };
+
+  it('reads every period holding a day of the range, whatever month it is filed under', () => {
+    expect(periodsForRange(provider, { start: '2026-10-10', end: '2026-10-20' })).toEqual(['2026-12']);
+    expect(periodsForRange(provider, { start: '2026-10-01', end: '2026-10-31' })).toEqual(['2026-10', '2026-12']);
+    expect(periodsForRange(provider, { start: '2026-09-25', end: '2026-09-29' })).toEqual(['2026-10']);
+    expect(periodsForRange(provider, { start: '2026-09-28', end: '2026-10-15' })).toEqual(['2026-09', '2026-10', '2026-12']);
+  });
+
+  it('reads the neighbours of a month that has no files of its own', () => {
+    expect(periodsForRange(provider, { start: '2026-11-01', end: '2026-11-30' })).toEqual(['2026-10']);
+  });
+
+  it('skips a period the range touches when none of its days is in the range', () => {
+    expect(periodsForRange(provider, { start: '2026-09-02', end: '2026-09-27' })).toEqual([]);
+    expect(periodsForRange(provider, { start: '2026-11-02', end: '2026-11-30' })).toEqual([]);
+  });
+
+  it('takes a month with no day list by the months the range touches', () => {
+    const partial = { availablePeriods: provider.availablePeriods, periodDays: { '2026-12': provider.periodDays['2026-12'] } };
+    expect(periodsForRange(partial, { start: '2026-10-10', end: '2026-10-20' })).toEqual(['2026-10', '2026-12']);
+    expect(periodsForRange(partial, { start: '2026-11-01', end: '2026-11-30' })).toEqual([]);
+    expect(periodsForRange({ availablePeriods: provider.availablePeriods }, { start: '2026-09-28', end: '2026-10-15' })).toEqual(['2026-09', '2026-10']);
+  });
+
+  it('returns the months the range touches when nothing says what is on disk', () => {
+    expect(periodsForRange({}, { start: '2026-03-19', end: '2026-04-18' })).toEqual(['2026-03', '2026-04']);
+    expect(periodsForRange({ periodDays: provider.periodDays }, { start: '2026-03-19', end: '2026-04-18' })).toEqual(['2026-03', '2026-04']);
+  });
+
+  it('reads nothing for a range that ends before it starts', () => {
+    expect(periodsForRange(provider, { start: '2026-10-31', end: '2026-10-01' })).toEqual([]);
+  });
+
+  it('looks a period up as its own key only', () => {
+    expect(periodsForRange({ availablePeriods: ['constructor'], periodDays: {} }, { start: '2026-10-01', end: '2026-10-31' })).toEqual([]);
   });
 });
 
