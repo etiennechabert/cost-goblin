@@ -88,8 +88,7 @@ function holdOverview(api: ColumnsApi): () => Promise<void> {
   return () => act(async () => { resolve(OVERVIEW); await Promise.resolve(); });
 }
 
-/** The table's column headers, left to right. */
-/** The table's header labels, after the leading column of the rows' disclosure buttons. */
+/** The table's column headers, left to right, after the leading column of the rows' disclosure buttons. */
 function headers(): string[] {
   const table = screen.getAllByRole('table')[0];
   if (table === undefined) throw new Error('no table rendered');

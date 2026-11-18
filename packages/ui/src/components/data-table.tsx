@@ -352,7 +352,7 @@ export function DataTable<TData extends RowData>({
             {table.getHeaderGroups().map(headerGroup => (
               <tr key={headerGroup.id} className="text-left text-text-secondary">
                 {renderExpandedRow !== undefined && (
-                  <th className="w-6 p-0"><span className="sr-only">Details</span></th>
+                  <th className="w-7 p-0"><span className="sr-only">Details</span></th>
                 )}
                 {headerGroup.headers.map(header => {
                   const meta = header.column.columnDef.meta;
@@ -505,7 +505,7 @@ function TableRow<TData extends RowData>({ row, expanded, canExpand, onToggle, o
         onClick={canExpand ? onToggle : undefined}
       >
         {canExpand && (
-          <td className="w-6 py-0.5 pl-2 pr-0">
+          <td className="w-7 py-0.5 pl-2 pr-0">
             <button
               type="button"
               aria-label="Row details"

@@ -506,11 +506,10 @@ test.describe('Findings', () => {
     await rows.first().click();
   });
 
-  // The row is a pointer target only. From the keyboard the row's disclosure
-  // button expands it, and says so: Space on it is a click, not a page scroll.
+  // The row is a pointer target only. From the keyboard, the row's disclosure
+  // button expands it and says whether it is expanded.
   test('the row\'s disclosure button expands and collapses it from the keyboard', async () => {
-    const row = page.locator('table tbody tr.cursor-pointer').first();
-    const toggle = row.getByRole('button', { name: 'Row details' });
+    const toggle = page.getByRole('button', { name: 'Row details' }).first();
     await expect(toggle).toHaveAttribute('aria-expanded', 'false');
 
     await toggle.focus();

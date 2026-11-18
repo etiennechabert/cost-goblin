@@ -121,7 +121,9 @@ describe('DataTable — an expandable row', () => {
     expect(toggleOf(row).getAttribute('aria-expanded')).toBe('true');
 
     expect(row.hasAttribute('tabindex')).toBe(false);
+    // One key at a time: two toggles in a row would cancel each other out.
     fireEvent.keyDown(row, { key: 'Enter' });
+    expect(detailRow()).not.toBeNull();
     fireEvent.keyDown(row, { key: ' ' });
     expect(detailRow()).not.toBeNull();
   });
