@@ -398,6 +398,17 @@ describe('DashboardsSidebar — unpinned', () => {
         expect(shownSidebar()).not.toBeNull();
       });
 
+      it('stays for a pointer that left the edge and comes onto it', () => {
+        renderUnpinned();
+        fireEvent.pointerEnter(edge());
+        advance(REVEAL_DELAY_MS);
+        fireEvent.pointerLeave(edge());
+        advance(HIDE_DELAY_MS - 1);
+        fireEvent.pointerOver(sidebar(), { relatedTarget: screen.getByText('Dashboard content') });
+        advance(HIDE_DELAY_MS);
+        expect(shownSidebar()).not.toBeNull();
+      });
+
       // A click on the sidebar's padding drops focus: with the pointer on
       // the sidebar, that is not leaving it.
       it('stays when focus drops while the pointer is on it', () => {

@@ -586,13 +586,18 @@ test.describe('Clickability (workspace mode)', () => {
       await p.mouse.move(2, 400);
       await pin.focus();
       await p.keyboard.press('Enter');
+      // Saved before it is pinned again, so the `true` read below is the new one.
+      await expect.poll(savedPin).toBe(false);
       await expectClickable(p, sidebar.getByRole('button', { name: 'Cost Overview', exact: true }));
       await pin.click();
       await expect(pin).toHaveAttribute('aria-pressed', 'true');
       await expect.poll(savedPin).toBe(true);
     } finally {
       // A failure part-way must not leave the tests after this one an
-      // unpinned sidebar: pin it on disk and reload.
+      // unpinned sidebar: pin it on disk and reload. Main may be halfway
+      // through a save: wait for a file that parses, without replacing the
+      // failure that led here.
+      await expect.poll(savedState).not.toBeNull().catch(() => undefined);
       const state = savedState();
       if (state?.['dashboardsSidebarPinned'] === false && !p.isClosed()) {
         writeFileSync(statePath, JSON.stringify({ ...state, dashboardsSidebarPinned: true }));
