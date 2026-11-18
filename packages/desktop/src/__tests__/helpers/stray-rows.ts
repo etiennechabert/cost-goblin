@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { sqlStringLiteral } from '@costgoblin/core';
 import { FIXTURE_AWS_PROVIDER, type Harness } from './ipc-harness.js';
 
 /**
@@ -61,9 +62,9 @@ export async function addStrayRows(h: Harness): Promise<void> {
         '${STRAY_SERVICE}' AS ServiceName,
         'arn:test:stray-' || CAST(stray.cost AS INTEGER) AS ResourceId, 'stray ' || CAST(stray.cost AS INTEGER) AS ChargeDescription,
         stray.cost AS EffectiveCost, stray.cost AS BilledCost, stray.cost AS ListCost, stray.cost AS ContractedCost)
-      FROM (SELECT * FROM read_parquet('${join(dir, 'data.parquet')}')
+      FROM (SELECT * FROM read_parquet(${sqlStringLiteral(join(dir, 'data.parquet'))})
             WHERE ServiceName = '${TEMPLATE_SERVICE}' AND PricingCategory = 'Standard' ORDER BY ChargePeriodStart, ResourceId LIMIT 1) AS template,
            (VALUES ${rows}) AS stray(day, cost)
-    ) TO '${join(dir, 'stray.parquet')}' (FORMAT PARQUET)`);
+    ) TO ${sqlStringLiteral(join(dir, 'stray.parquet'))} (FORMAT PARQUET)`);
   }));
 }

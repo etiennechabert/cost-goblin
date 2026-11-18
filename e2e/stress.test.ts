@@ -440,6 +440,10 @@ test.describe('Query engine death', () => {
     await clickNavButton(page, 'Trends');
     await expectVisibleData(page);
     const first = await runningEnginePid();
+    // Main's log ids grow, so an entry above this one was asked for after it.
+    // A query of the Trends load still unstarted at the freeze would
+    // otherwise pass the poll below before the next one is sent.
+    const lastLogged = Math.max(-1, ...(await page.evaluate(() => globalThis.costgoblinDebug.getQueryLog())).map(entry => entry.id));
 
     // Freeze it, so the query the view sends next is surely still running
     // when it dies.
@@ -453,7 +457,7 @@ test.describe('Query engine death', () => {
       // was handed it.
       await expect.poll(async () => {
         const entries = await page.evaluate(() => globalThis.costgoblinDebug.getQueryLog());
-        return entries.filter(entry => entry.status === 'queued').length;
+        return entries.filter(entry => entry.id > lastLogged && entry.status === 'queued').length;
       }, { message: 'the engine was handed a query of the view' }).toBeGreaterThan(0);
     } finally {
       // Whatever happened above: a stopped process does not act on the
