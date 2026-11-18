@@ -71,10 +71,10 @@ export function registerRecommendationHandlers(app: AppContext): void {
   }));
 
   ipcMain.handle('query:savings', (): Promise<SavingsResult> => originStore.run('savings', async () => {
-    const config = await getConfig();
+    const [config, accountMap] = await Promise.all([getConfig(), getAccountMap()]);
     // Each provider's latest Cost Optimization Hub snapshot only: an older
     // day still lists what has since been implemented or superseded.
-    const { recommendations, snapshots } = await loadSavingsRecommendations(ctx.dataDir, config.providers, runQuery, await getAccountMap());
+    const { recommendations, snapshots } = await loadSavingsRecommendations(ctx.dataDir, config.providers, runQuery, accountMap);
     return { recommendations, snapshots, totalMonthlySavings: countSavings(recommendations).totalMonthlySavings };
   }));
 }

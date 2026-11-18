@@ -158,11 +158,28 @@ describe('query:savings', () => {
     expect(new Set(list(at(result, 'recommendations')).map(r => at(r, 'accountName')))).toEqual(new Set(['123456789012']));
   });
 
-  it('names the account as the export does when the account map does not know it', async () => {
+  it('names the account as the account map does', async () => {
     const h = await savingsApp();
     await writeSnapshot(h, 'cost-opt-2026-10-13', OCT_13);
+    await mkdir(join(h.ws.stateDir, 'raw'), { recursive: true });
+    await writeFile(join(h.ws.stateDir, 'raw', 'accounts.csv'), 'Account ID,a,b,c,Account Name\n123456789012,,,,Payer\n');
     const result = await h.ipc.invoke('query:savings');
-    expect(new Set(list(at(result, 'recommendations')).map(r => at(r, 'accountName')))).toEqual(new Set(['Demo']));
+    expect(new Set(list(at(result, 'recommendations')).map(r => at(r, 'accountName')))).toEqual(new Set(['Payer']));
+  });
+
+  it('reads an export that picked only some of the columns', async () => {
+    const h = await savingsApp();
+    const dir = join(h.ws.dataDir, FIXTURE_AWS_PROVIDER, 'raw', 'cost-opt-2026-10-13');
+    await mkdir(dir, { recursive: true });
+    await h.db.runQuery(`
+      COPY (SELECT 'vol-delete' AS recommendation_id, 'Delete' AS action_type, 'EbsVolume' AS current_resource_type,
+        ${sqlText(VOLUME)} AS resource_arn, 1.62::DOUBLE AS estimated_monthly_savings_after_discount)
+      TO ${sqlText(join(dir, 'cost_optimization-00001.snappy.parquet'))} (FORMAT PARQUET)`);
+    const result = await h.ipc.invoke('query:savings');
+    expect(ids(result)).toEqual(['vol-delete']);
+    expect(num(at(result, 'totalMonthlySavings'))).toBeCloseTo(1.62, 6);
+    const [rec] = list(at(result, 'recommendations'));
+    expect([at(rec, 'accountId'), at(rec, 'region'), at(rec, 'restartNeeded')]).toEqual(['', '', false]);
   });
 
   it('is empty, not failed, when the latest snapshot cannot be read', async () => {
