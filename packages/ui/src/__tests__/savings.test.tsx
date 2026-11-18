@@ -146,8 +146,9 @@ class SyncingApi extends MockCostApi {
 
 const NO_RECOMMENDATIONS: SavingsResult = { recommendations: [], totalMonthlySavings: asDollars(0), snapshots: [] };
 
-function completed(at: string, filesDownloaded: number): SyncStatus {
-  return { status: 'completed', lastSync: new Date(at), filesDownloaded };
+/** A completed sync that finished `agoMs` before now (the fake clock's). */
+function completed(agoMs: number, filesDownloaded: number): SyncStatus {
+  return { status: 'completed', lastSync: new Date(Date.now() - agoMs), filesDownloaded };
 }
 
 async function nextPoll(): Promise<void> {
@@ -174,7 +175,7 @@ describe('Savings — a cost optimization sync finishing while the page is open'
     expect(await screen.findByText(/No cost optimization data available/)).toBeDefined();
     await waitFor(() => { expect(api.polled).toContain('aws-main:cost-optimization'); });
 
-    api.costOptStatus = completed('2026-11-19T10:00:00.000Z', 1);
+    api.costOptStatus = completed(0, 1);
     await nextPoll();
 
     expect(await screen.findByText(/\$4\.0k\/mo potential savings/)).toBeDefined();
@@ -184,7 +185,7 @@ describe('Savings — a cost optimization sync finishing while the page is open'
   it('keeps showing the current recommendations while the new ones load', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const api = new SyncingApi();
-    api.costOptStatus = completed('2026-11-19T09:00:00.000Z', 2);
+    api.costOptStatus = completed(3_600_000, 2);
     const original = api.querySavings.bind(api);
     const spy = vi.spyOn(api, 'querySavings');
     renderWith(api);
@@ -193,7 +194,7 @@ describe('Savings — a cost optimization sync finishing while the page is open'
 
     const next = deferred<SavingsResult>();
     spy.mockReturnValueOnce(next.promise);
-    api.costOptStatus = completed('2026-11-19T10:00:00.000Z', 1);
+    api.costOptStatus = completed(0, 1);
     await nextPoll();
     await waitFor(() => { expect(spy).toHaveBeenCalledTimes(2); });
     // Still the table, not the loader.
@@ -211,17 +212,35 @@ describe('Savings — a cost optimization sync finishing while the page is open'
   it('does not refetch for a sync that finished before the page opened, or one that downloaded nothing', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const api = new SyncingApi();
-    api.costOptStatus = completed('2026-11-19T09:00:00.000Z', 3);
+    api.costOptStatus = completed(3_600_000, 3);
     const spy = vi.spyOn(api, 'querySavings');
     renderWith(api);
     expect(await screen.findByText(/Detach and delete/)).toBeDefined();
     await waitFor(() => { expect(api.polled.length).toBeGreaterThan(0); });
     await nextPoll();
 
-    api.costOptStatus = completed('2026-11-19T10:00:00.000Z', 0);
+    api.costOptStatus = completed(0, 0);
     await nextPoll();
     await nextPoll();
     expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('refetches for a sync that finished after the page opened, though every poll before failed', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = new SyncingApi();
+    const poll = vi.fn<(syncId?: string) => Promise<SyncStatus>>().mockRejectedValue(new Error('ipc closed'));
+    api.getSyncStatus = poll;
+    const spy = vi.spyOn(api, 'querySavings').mockResolvedValueOnce(NO_RECOMMENDATIONS);
+    renderWith(api);
+    expect(await screen.findByText(/No cost optimization data available/)).toBeDefined();
+    await waitFor(() => { expect(poll).toHaveBeenCalled(); });
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    poll.mockResolvedValue(completed(0, 1));
+    await nextPoll();
+
+    expect(await screen.findByText(/\$4\.0k\/mo potential savings/)).toBeDefined();
+    expect(spy).toHaveBeenCalledTimes(2);
   });
 
   it('waits for a slow status answer instead of asking again', async () => {
