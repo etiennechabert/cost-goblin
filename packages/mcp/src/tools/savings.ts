@@ -9,7 +9,7 @@ import {
   preferredCommitmentLabel,
   SAVINGS_PREFERENCES_DEFAULTS,
 } from '@costgoblin/core';
-import type { SavingsGroup, SavingsPreferences } from '@costgoblin/core';
+import type { SavingsGroup, SavingsPreferences, UnreadSavingsSnapshot } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
 import type { Cell, Column, MetaField, StructuredResult } from '../formatters/result.js';
 import { resolveFormat, structuredToolResult, toolResult } from './tool-helpers.js';
@@ -45,6 +45,13 @@ async function readPreferences(stateDir: string): Promise<SavingsPreferences> {
   }
 }
 
+/** `aws-main 2026-10-13 (<error>)`, for each snapshot that could not be read. */
+function unreadList(unread: readonly UnreadSavingsSnapshot[]): string {
+  return unread.map(u => `${u.providerName} ${u.date} (${u.error})`).join('; ');
+}
+
+const UNREAD_HINT = 'The data was downloaded but could not be read: downloading the cost optimization data again from the app\'s Data tab may fix a damaged file.';
+
 function row(group: SavingsGroup): Cell[] {
   const rec = group.counted;
   return [
@@ -66,7 +73,11 @@ export async function listSavingsRecommendations(
   params: { actionType?: string | undefined; limit?: number | undefined; format?: string | undefined },
 ): Promise<{ content: [{ type: 'text'; text: string }] }> {
   const [config, accountMap] = await Promise.all([ctx.getConfig(), ctx.getAccountMap()]);
-  const { recommendations, snapshots } = await loadSavingsRecommendations(ctx.dataDir, config.providers, ctx.runQuery, accountMap);
+  const { recommendations, snapshots, unreadSnapshots } = await loadSavingsRecommendations(ctx.dataDir, config.providers, ctx.runQuery, accountMap);
+  if (recommendations.length === 0 && unreadSnapshots.length > 0) {
+    const what = unreadSnapshots.length === 1 ? 'The latest Cost Optimization Hub snapshot' : 'The latest Cost Optimization Hub snapshots';
+    return toolResult(`${what} could not be read: ${unreadList(unreadSnapshots)}. ${UNREAD_HINT}`);
+  }
   if (recommendations.length === 0) {
     return toolResult('No Cost Optimization Hub recommendations are synced. AWS providers sync them from a Cost Optimization Hub data export: ask the user to set up and sync the cost optimization tier in the app\'s Data tab.');
   }
@@ -94,6 +105,10 @@ export async function listSavingsRecommendations(
       + 'other terms, and the EC2 Instance Savings Plans and EC2 Reserved Instances a Compute Savings Plan covers, are alternatives, not extra savings. '
       + 'A commitment is scaled down by the eligible spend the counted resource actions remove; "COH estimate/mo" is its unscaled figure.',
   ];
+  if (unreadSnapshots.length > 0) {
+    const which = unreadSnapshots.length === 1 ? 'the latest snapshot' : 'the latest snapshots';
+    notes.push(`Not counted, because ${which} could not be read: ${unreadList(unreadSnapshots)}. ${UNREAD_HINT}`);
+  }
   if (shown.length < groups.length) notes.push(`Showing ${String(shown.length)} of ${String(groups.length)} actions, highest savings first; pass a larger limit to see more.`);
 
   const filterSuffix = params.actionType === undefined ? '' : ` — ${params.actionType}`;

@@ -6,7 +6,7 @@ import { sqlStringLiteral } from '../query/sql-escape.js';
 import { providerRawDir } from '../sync/provider-paths.js';
 import type { ProviderName } from '../types/branded.js';
 import type { ProviderConfig } from '../types/config.js';
-import type { SavingsRecommendation, SavingsSnapshot } from '../types/query.js';
+import type { SavingsRecommendation, SavingsSnapshot, UnreadSavingsSnapshot } from '../types/query.js';
 import { parseSavingsRow } from './coh-rows.js';
 
 // The Cost Optimization Hub export writes a complete list of current
@@ -105,14 +105,19 @@ export function buildSavingsQuery(dataDir: string, provider: ProviderName, date:
 export interface LoadedSavings {
   readonly recommendations: readonly SavingsRecommendation[];
   readonly snapshots: readonly SavingsSnapshot[];
+  /** Latest snapshots on disk that could not be read. */
+  readonly unreadSnapshots: readonly UnreadSavingsSnapshot[];
 }
 
-interface ProviderSnapshot {
+/** A provider's latest snapshot: its recommendations, or why they couldn't be read. */
+type ProviderSnapshot = {
   readonly snapshot: SavingsSnapshot;
-  readonly recommendations: readonly SavingsRecommendation[];
   /** The COH export the provider syncs: its cost-optimization bucket path. */
   readonly exportKey: string;
-}
+} & (
+  | { readonly status: 'read'; readonly recommendations: readonly SavingsRecommendation[] }
+  | { readonly status: 'unread'; readonly error: string }
+);
 
 /** `s3://bucket/prefix` with no trailing slash, so `prefix/` and `prefix` match. */
 function exportKeyOf(bucket: string): string {
@@ -131,10 +136,11 @@ async function readProviderSnapshot(
   if (snapshot === null) return null;
   try {
     const rows = await runQuery(buildSavingsQuery(dataDir, provider, snapshot.date));
-    return { snapshot, recommendations: rows.map(row => parseSavingsRow(row, String(provider))), exportKey };
+    return { status: 'read', snapshot, recommendations: rows.map(row => parseSavingsRow(row, String(provider))), exportKey };
   } catch (err: unknown) {
-    logger.warn(`savings: cannot read ${String(provider)} cost-opt-${snapshot.date}: ${err instanceof Error ? err.message : String(err)}`);
-    return null;
+    const error = err instanceof Error ? err.message : String(err);
+    logger.warn(`savings: cannot read ${String(provider)} cost-opt-${snapshot.date}: ${error}`);
+    return { status: 'unread', snapshot, error, exportKey };
   }
 }
 
@@ -147,8 +153,9 @@ function namedAccount(rec: SavingsRecommendation, accountNames: ReadonlyMap<stri
 }
 
 /** Every recommendation of each provider's latest snapshot. A provider whose
- *  snapshot can't be read is left out (and logged) rather than failing the
- *  others. Two providers whose cost-optimization tier points at the same
+ *  snapshot can't be read is reported in `unreadSnapshots` rather than failing
+ *  the others, unless another provider read a snapshot of the same export at
+ *  least as new: then nothing is missing. Two providers whose cost-optimization tier points at the same
  *  bucket path sync the same export: only the newest snapshot is read, or the
  *  older one would bring back what has since been implemented. Different
  *  exports can still share recommendations (a member account's own export
@@ -168,20 +175,35 @@ export async function loadSavingsRecommendations(
     .filter((r): r is ProviderSnapshot => r !== null)
     .sort((a, b) => newestFirst(a.snapshot.date, b.snapshot.date));
 
+  // The newest date each export was read at: an unread snapshot no newer
+  // than it is superseded, so nothing the view shows is missing from it.
+  const readAt = new Map<string, string>();
+  for (const r of newestFirstRead) {
+    if (r.status === 'read' && !readAt.has(r.exportKey)) readAt.set(r.exportKey, r.snapshot.date);
+  }
+
   const recommendations: SavingsRecommendation[] = [];
   const snapshots: SavingsSnapshot[] = [];
+  const unreadSnapshots: UnreadSavingsSnapshot[] = [];
   const seenExports = new Set<string>();
   const seen = new Set<string>();
-  for (const { snapshot, recommendations: recs, exportKey } of newestFirstRead) {
+  for (const entry of newestFirstRead) {
+    const { snapshot, exportKey } = entry;
+    if (entry.status === 'unread') {
+      const read = readAt.get(exportKey);
+      if (read === undefined || read < snapshot.date) unreadSnapshots.push({ ...snapshot, error: entry.error });
+      continue;
+    }
     if (seenExports.has(exportKey)) {
       logger.info(`savings: ${snapshot.providerName} syncs the same Cost Optimization Hub export as a provider with a newer snapshot; skipping its cost-opt-${snapshot.date}`);
       continue;
     }
     seenExports.add(exportKey);
+    const recs = entry.recommendations;
     const fresh = recs.filter(r => r.recommendationId === '' || !seen.has(r.recommendationId));
     for (const rec of recs) if (rec.recommendationId !== '') seen.add(rec.recommendationId);
     snapshots.push(snapshot);
     recommendations.push(...fresh.map(r => namedAccount(r, accountNames)));
   }
-  return { recommendations, snapshots };
+  return { recommendations, snapshots, unreadSnapshots };
 }

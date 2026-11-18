@@ -80,6 +80,7 @@ export type {
   SavingsRecommendation,
   SavingsResult,
   SavingsSnapshot,
+  UnreadSavingsSnapshot,
   SyncStatus,
   SyncLogLevel,
   SyncLogLine,

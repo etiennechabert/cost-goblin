@@ -99,7 +99,7 @@ describe('loadSavingsRecommendations', () => {
       providers(provider('aws-a', true, SHARED_EXPORT), provider('aws-b', true, SHARED_EXPORT)),
       runner({ 'aws-a': [row('done-1', 4)], 'aws-b': [] }, []),
     );
-    expect(allDone).toEqual({ recommendations: [], snapshots: [{ providerName: 'aws-b', date: '2026-10-13' }] });
+    expect(allDone).toEqual({ recommendations: [], snapshots: [{ providerName: 'aws-b', date: '2026-10-13' }], unreadSnapshots: [] });
   });
 
   it('keeps a provider whose different export shares recommendations with a newer one, listing each once', async () => {
@@ -116,7 +116,7 @@ describe('loadSavingsRecommendations', () => {
     ]);
   });
 
-  it('leaves out a provider whose snapshot cannot be read, not the others', async () => {
+  it('reports a provider whose snapshot cannot be read, and still reads the others', async () => {
     const loaded = await loadSavingsRecommendations(
       dataDir,
       providers(provider('aws-a', true), provider('aws-b', true)),
@@ -124,6 +124,21 @@ describe('loadSavingsRecommendations', () => {
     );
     expect(loaded.snapshots).toEqual([{ providerName: 'aws-b', date: '2026-10-13' }]);
     expect(loaded.recommendations.map(r => r.recommendationId)).toEqual(['b1']);
+    expect(loaded.unreadSnapshots).toEqual([
+      { providerName: 'aws-a', date: '2026-10-12', error: 'Invalid Input Error: No magic bytes found at end of file' },
+    ]);
+  });
+
+  it('reports an unread snapshot of a shared export unless a newer one of that export was read', async () => {
+    const shared = providers(provider('aws-a', true, SHARED_EXPORT), provider('aws-b', true, SHARED_EXPORT));
+    // aws-a's older copy of the export is superseded by aws-b's: nothing to report.
+    const olderFailed = await loadSavingsRecommendations(dataDir, shared, runner({ 'aws-a': new Error('corrupt'), 'aws-b': [row('b1', 5)] }, []));
+    expect(olderFailed.unreadSnapshots).toEqual([]);
+    expect(olderFailed.recommendations.map(r => r.recommendationId)).toEqual(['b1']);
+    // The newest copy is the one that failed: what is shown is out of date.
+    const newerFailed = await loadSavingsRecommendations(dataDir, shared, runner({ 'aws-a': [row('a1', 3)], 'aws-b': new Error('corrupt') }, []));
+    expect(newerFailed.unreadSnapshots).toEqual([{ providerName: 'aws-b', date: '2026-10-13', error: 'corrupt' }]);
+    expect(newerFailed.snapshots).toEqual([{ providerName: 'aws-a', date: '2026-10-12' }]);
   });
 
   it('names each account as the account map does, else as the export does, else by its id', async () => {
@@ -142,7 +157,7 @@ describe('loadSavingsRecommendations', () => {
   it('is empty when no provider has synced a snapshot', async () => {
     const asked: string[] = [];
     const loaded = await loadSavingsRecommendations(dataDir, providers(provider('aws-z', true)), runner({}, asked));
-    expect(loaded).toEqual({ recommendations: [], snapshots: [] });
+    expect(loaded).toEqual({ recommendations: [], snapshots: [], unreadSnapshots: [] });
     expect(asked).toEqual([]);
   });
 });

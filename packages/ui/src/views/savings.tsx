@@ -4,6 +4,7 @@ import type {
   SavingsRecommendation,
   SavingsResult,
   SavingsSnapshot,
+  UnreadSavingsSnapshot,
 } from '@costgoblin/core/browser';
 import {
   COMMITMENT_PAYMENT_LABELS,
@@ -418,6 +419,10 @@ export function Savings() {
         </div>
       )}
 
+      {data !== null && data.unreadSnapshots.length > 0 && (
+        <UnreadSnapshots unread={data.unreadSnapshots} othersShown={data.recommendations.length > 0} />
+      )}
+
       {filtered.length > 0 && (
         <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-hidden p-4">
           <DataTable<SavingsGroup>
@@ -431,11 +436,33 @@ export function Savings() {
         </div>
       )}
 
-      {data !== null && data.recommendations.length === 0 && (
+      {data !== null && data.recommendations.length === 0 && data.unreadSnapshots.length === 0 && (
         <div className="rounded-xl border border-border bg-bg-secondary/50 p-12 text-center text-text-secondary">
           No cost optimization data available. Download cost optimization data from the Data tab.
         </div>
       )}
+    </div>
+  );
+}
+
+/** The latest snapshots that are on disk but could not be read: their
+ *  recommendations are missing, which is not the same as having none. */
+function UnreadSnapshots({ unread, othersShown }: Readonly<{ unread: readonly UnreadSavingsSnapshot[]; othersShown: boolean }>) {
+  return (
+    <div role="alert" className="flex flex-col gap-2 rounded-lg border border-negative/50 bg-negative-muted px-4 py-3 text-sm">
+      <p className="font-medium text-negative">Cost optimization data could not be read</p>
+      <ul className="flex flex-col gap-1.5">
+        {unread.map(u => (
+          <li key={`${u.providerName} ${u.date}`} className="flex flex-col gap-0.5">
+            <span className="text-text-primary">{`${u.providerName}, export of ${u.date}`}</span>
+            <span className="text-xs text-text-secondary font-mono whitespace-pre-wrap break-words">{u.error}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="text-xs text-text-secondary">
+        {othersShown ? `${unread.length === 1 ? 'Its' : 'Their'} recommendations are missing below. ` : ''}
+        The data was downloaded but could not be read: downloading the cost optimization data again from the Data tab may fix a damaged file.
+      </p>
     </div>
   );
 }

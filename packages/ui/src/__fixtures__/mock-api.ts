@@ -328,6 +328,7 @@ export class MockCostApi implements CostApi {
       ],
       totalMonthlySavings: asDollars(3950),
       snapshots: [{ providerName: 'aws-main', date: '2026-06-14' }],
+      unreadSnapshots: [],
     });
   }
   queryEntityDetail(): Promise<EntityDetailResult> { return Promise.resolve(entityDetailResult); }
