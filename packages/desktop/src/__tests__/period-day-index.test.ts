@@ -151,8 +151,18 @@ describe('PeriodDayIndex', () => {
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('could not read the days of daily 2026-01 (aws-main)'));
 
+    // A file still being written changes on every call: still one warning.
+    await writeMonth('2026-01', { 'a.parquet': 'january, half written' });
+    expect(await index.daysFor(PROVIDER, 'daily', ['2026-01'])).toEqual({});
+    expect(warn).toHaveBeenCalledTimes(1);
+
     answers.set('2026-01', () => Promise.resolve(dayRows(JANUARY)));
     expect(await index.daysFor(PROVIDER, 'daily', ['2026-01', '2026-03'])).toEqual({ '2026-01': JANUARY, '2026-03': MARCH });
+    // Unreadable again, after it read: that is news.
+    answers.set('2026-01', () => Promise.reject(new Error('IO Error: truncated')));
+    await writeMonth('2026-01', { 'a.parquet': 'january, replaced by a broken download' });
+    expect(await index.daysFor(PROVIDER, 'daily', ['2026-01'])).toEqual({});
+    expect(warn).toHaveBeenCalledTimes(2);
   });
 
   it('rejects with a cancellation or an engine failure, and keeps neither', async () => {
@@ -167,10 +177,11 @@ describe('PeriodDayIndex', () => {
     expect(await index.daysFor(PROVIDER, 'daily', ['2026-01'])).toEqual({ '2026-01': JANUARY });
   });
 
-  it('skips a period whose directory is gone, and a row that names no day', async () => {
+  it('skips a period whose directory is gone or holds no Parquet file, and a row that names no day', async () => {
     answers.set('2026-03', () => Promise.resolve([{ day: '2026-03-02' }, { day: null }, { other: 'x' }]));
+    await writeMonth('2026-04', { 'download.tmp': 'not yet a Parquet file' });
     const index = newIndex();
-    expect(await index.daysFor(PROVIDER, 'daily', ['2026-02', '2026-03'])).toEqual({ '2026-03': ['2026-03-02'] });
+    expect(await index.daysFor(PROVIDER, 'daily', ['2026-02', '2026-03', '2026-04'])).toEqual({ '2026-03': ['2026-03-02'] });
     expect(asked).toEqual(['2026-03']);
   });
 });
@@ -178,6 +189,7 @@ describe('PeriodDayIndex', () => {
 describe('isQueryEngineUnavailable', () => {
   it('is true for the supervisor\'s own rejections only', () => {
     expect(isQueryEngineUnavailable(new Error('The query engine was shut down.'))).toBe(true);
+    expect(isQueryEngineUnavailable(new Error('The query engine could not start: spawn failed'))).toBe(true);
     expect(isQueryEngineUnavailable(new Error('IO Error: the query engine of this car'))).toBe(false);
     expect(isQueryEngineUnavailable('The query engine was shut down.')).toBe(false);
   });

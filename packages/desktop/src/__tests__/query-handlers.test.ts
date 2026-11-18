@@ -353,6 +353,13 @@ describe('query:filter-values', () => {
     expect(at(one[0], 'label')).toBe(at(one[0], 'value'));
   });
 
+  it('lists nothing, without a query, for a range no period holds a day of', async () => {
+    const h = await queryApp();
+    expect(await h.ipc.invoke('query:filter-values', 'service', {}, NO_DATA)).toEqual([]);
+    expect(await h.ipc.invoke('query:filter-values', 'service', {}, NO_DATA, { bypassCostScope: true })).toEqual([]);
+    expect(queryStatements(h.db)).toEqual([]);
+  });
+
   it('resolves an account-name filter to every id carrying it, and names account values', async () => {
     const h = await queryApp();
     await withOrgNames(h);

@@ -48,6 +48,15 @@ export interface PeriodSelection {
   readonly periodDays?: PeriodDays | undefined;
 }
 
+/** True when the days of every month the provider has on disk are known:
+ *  `periodsForRange` then names every period holding a day of a range, and an
+ *  empty answer means the provider has nothing in it. */
+export function periodDaysKnown(provider: PeriodSelection): boolean {
+  const { availablePeriods, periodDays } = provider;
+  if (availablePeriods === undefined || periodDays === undefined) return false;
+  return availablePeriods.every(period => Object.hasOwn(periodDays, period));
+}
+
 /** The billing-period months of a provider that a query over `dateRange`
  *  reads, oldest first: every month on disk holding a row of one of the
  *  range's days. The raw path and both rollups ask this one function, so they

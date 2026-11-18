@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildCostQuery, buildDailyCostsQuery, buildTrendQuery, buildMissingTagsQuery, buildNonResourceCostQuery, buildEntityDetailQuery, buildSource, computePeriodsInRange } from '../query/builder.js';
-import { periodsForRange } from '../query/period-days.js';
+import { periodDaysKnown, periodsForRange } from '../query/period-days.js';
 import type { ProviderSourceSpec } from '../query/builder.js';
 import type { DimensionsConfig } from '../types/config.js';
 import { asDimensionId, asDateString, asDollars, asEntityRef, asHourString, asProviderName, asTagValue, tagSqlColumn } from '../types/branded.js';
@@ -170,6 +170,37 @@ describe('periodsForRange', () => {
 
   it('looks a period up as its own key only', () => {
     expect(periodsForRange({ availablePeriods: ['constructor'], periodDays: {} }, { start: '2026-10-01', end: '2026-10-31' })).toEqual([]);
+  });
+
+  it('knows a provider\'s days only when every month on disk has its list', () => {
+    expect(periodDaysKnown(provider)).toBe(true);
+    expect(periodDaysKnown({ availablePeriods: [], periodDays: {} })).toBe(true);
+    expect(periodDaysKnown({ availablePeriods: provider.availablePeriods, periodDays: { '2026-09': [] } })).toBe(false);
+    expect(periodDaysKnown({ availablePeriods: provider.availablePeriods })).toBe(false);
+    expect(periodDaysKnown({ periodDays: provider.periodDays })).toBe(false);
+  });
+});
+
+// A provider's branch with no period is the tier wildcard: every file it has.
+describe('the providers a range reads', () => {
+  const dims: DimensionsConfig = { builtIn: [{ name: asDimensionId('service'), label: 'Service', field: 'service' }], tags: [] };
+  const aws = { name: asProviderName('aws-main'), type: 'aws' as const, availablePeriods: ['2026-10', '2026-11'], periodDays: { '2026-10': ['2026-10-31'], '2026-11': ['2026-11-01', '2026-11-16'] } };
+  const gcp = { name: asProviderName('gcp-main'), type: 'gcp' as const, availablePeriods: ['2026-10', '2026-11'], periodDays: { '2026-10': ['2026-10-31'], '2026-11': ['2026-11-01', '2026-11-14'] } };
+  const sqlFor = (providers: readonly ProviderSourceSpec[], day: string): string =>
+    buildCostQuery({ groupBy: asDimensionId('service'), dateRange: { start: asDateString(day), end: asDateString(day) }, filters: {} }, { dataDir: '/data', dimensions: dims, providers }).sql;
+
+  it('leaves out a provider whose files hold no day of the range, rather than read all of them', () => {
+    const sql = sqlFor([aws, gcp], '2026-11-16');
+    expect(sql).toContain('/data/aws-main/raw/daily-2026-11/*.parquet');
+    expect(sql).not.toContain('gcp-main');
+  });
+
+  it('still reads a provider by wildcard when its days are not all known, or when no provider holds the range', () => {
+    const unknown = { ...gcp, periodDays: { '2026-11': gcp.periodDays['2026-11'] } };
+    expect(sqlFor([aws, unknown], '2026-09-30')).toContain('/data/gcp-main/raw/daily-*/*.parquet');
+    const nothing = sqlFor([aws, gcp], '2026-12-25');
+    expect(nothing).toContain('/data/aws-main/raw/daily-*/*.parquet');
+    expect(nothing).toContain('/data/gcp-main/raw/daily-*/*.parquet');
   });
 });
 

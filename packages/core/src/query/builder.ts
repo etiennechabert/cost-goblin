@@ -15,7 +15,7 @@ import { RESOURCE_ROLLUP_KEY_COLUMNS, resourceRollupDimensionColumns } from '../
 import { sqlEscapeString, sqlStringLiteral } from './sql-escape.js';
 import { previousTrendPeriod, trendPercentChangeSql } from './trend-change.js';
 import { providerColumnExprs, withOptionalSourceColumns } from './provider-projection.js';
-import { computePeriodsInRange, periodsForRange } from './period-days.js';
+import { computePeriodsInRange, periodDaysKnown, periodsForRange } from './period-days.js';
 import type { PeriodDays } from './period-days.js';
 
 export { computePeriodsInRange };
@@ -638,17 +638,21 @@ export function buildSource(opts: BuildSourceOptions): string {
  *  undefined `availablePeriods` passes the range's months through, and a
  *  range no period on a non-empty disk holds falls back to the wildcard
  *  glob (empty `periods`). Providers with NO data on disk for the tier are
- *  dropped so their zero-match wildcard can't fail the whole union — unless
- *  every provider is dropped, in which case all are kept so the query fails
- *  (or wildcard-scans) exactly like the pre-#516 single-provider code. */
+ *  dropped so their zero-match wildcard can't fail the whole union, and so
+ *  are those whose day lists say they hold no day of the range: the wildcard
+ *  would read every file they have, for nothing. Unless every provider is
+ *  dropped, in which case all are kept so the query fails (or
+ *  wildcard-scans) exactly like the pre-#516 single-provider code. */
 function resolveProviderBranches(
   providers: readonly ProviderSourceSpec[],
   dateRange: { readonly start: string; readonly end: string },
 ): ProviderSourceBranch[] {
   const branches = providers.map((p): { branch: ProviderSourceBranch; hasData: boolean } => {
+    const periods = periodsForRange(p, dateRange);
+    const onDisk = p.availablePeriods === undefined || p.availablePeriods.length > 0;
     return {
-      branch: { name: p.name, type: p.type, periods: periodsForRange(p, dateRange) },
-      hasData: p.availablePeriods === undefined || p.availablePeriods.length > 0,
+      branch: { name: p.name, type: p.type, periods },
+      hasData: onDisk && !(periods.length === 0 && periodDaysKnown(p)),
     };
   });
   const withData = branches.filter(b => b.hasData);
@@ -1322,25 +1326,25 @@ export function buildRollupPartitionQuery(
   outPath: string,
   opts: QueryContextOptions,
 ): string {
-  const { source, where } = rollupPeriodScope(period, tier, opts);
+  const { source, conditions } = rollupPeriodScope(period, tier, opts);
   const groupBy = rollupGrainColumns(opts.dimensions).join(', ');
   const select =
     `SELECT ${groupBy}, CAST(SUM(cost) AS DOUBLE) AS cost, CAST(COUNT(*) AS BIGINT) AS line_items ` +
-    `FROM ${source}${where} GROUP BY ${groupBy}`;
+    `FROM ${source}${whereSql(conditions)} GROUP BY ${groupBy}`;
   return `COPY (${select}) TO ${sqlStringLiteral(outPath)} (FORMAT PARQUET)`;
 }
 
 /** What a billing period's rollup build reads: the provider's raw source for
- *  that one period, and the WHERE (with its keyword, or empty) keeping the
- *  rows the cost scope keeps. Shared by the rollup, the resource rollup and
- *  the grain probe, so the three always agree on which line items exist.
+ *  that one period, and the conditions keeping the rows the cost scope keeps.
+ *  Shared by the rollup, the resource rollup and the grain probe, so the
+ *  three always agree on which line items exist.
  *
  *  Every row of the period's files, whatever its date: the files hold days of
  *  other months too (see period-days.ts), and a row dropped here for its date
  *  would be in no partition at all, since the partition of its own month is
  *  built from that month's files. A reader asks `periodsForRange` which
  *  partitions hold its days, and filters on `usage_date` itself. */
-function rollupPeriodScope(period: string, tier: string, opts: QueryContextOptions): { source: string; where: string; conditions: readonly string[] } {
+function rollupPeriodScope(period: string, tier: string, opts: QueryContextOptions): { source: string; conditions: readonly string[] } {
   // Same canonical period check the read_parquet glob applies downstream
   // (buildParquetSource → assertBillingPeriod); kept here to fail fast.
   assertBillingPeriod(period);
@@ -1359,8 +1363,12 @@ function rollupPeriodScope(period: string, tier: string, opts: QueryContextOptio
     includeRawTags: false,
   });
 
-  const conditions = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap);
-  return { source, conditions, where: conditions.length === 0 ? '' : ` WHERE ${conditions.join(' AND ')}` };
+  return { source, conditions: costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap) };
+}
+
+/** ` WHERE a AND b` for the conditions, or nothing when there are none. */
+function whereSql(conditions: readonly string[]): string {
+  return conditions.length === 0 ? '' : ` WHERE ${conditions.join(' AND ')}`;
 }
 
 const RESOURCE_KEY = RESOURCE_ROLLUP_KEY_COLUMNS.join(', ');
@@ -1386,14 +1394,14 @@ export function buildResourceTopQuery(
   if (!Number.isSafeInteger(pairs) || pairs < 1) {
     throw new SecurityError(`resource rollup pair count must be a positive integer, got ${String(pairs)}`);
   }
-  const { source, where } = rollupPeriodScope(period, tier, opts);
+  const { source, conditions } = rollupPeriodScope(period, tier, opts);
   const order = `weight DESC, ${RESOURCE_KEY}`;
   // Top-N first, so only the kept rows are numbered: a window over every
   // pair of the month would sort millions of them.
   const select =
     `SELECT *, row_number() OVER (ORDER BY ${order}) AS rank FROM (` +
     `SELECT ${RESOURCE_KEY}, CAST(SUM(ABS(cost)) AS DOUBLE) AS weight ` +
-    `FROM ${source}${where} GROUP BY ${RESOURCE_KEY} ` +
+    `FROM ${source}${whereSql(conditions)} GROUP BY ${RESOURCE_KEY} ` +
     `ORDER BY ${order} LIMIT ${String(pairs + 1)})`;
   return `COPY (${select}) TO ${sqlStringLiteral(outPath)} (FORMAT PARQUET)`;
 }
@@ -1416,7 +1424,7 @@ export function buildResourceRowsQuery(
   const select =
     `SELECT ${groupBy}, CAST(SUM(cost) AS DOUBLE) AS cost, CAST(SUM(list_cost) AS DOUBLE) AS list_cost, ` +
     `CAST(SUM(usage_amount) AS DOUBLE) AS usage_amount, CAST(COUNT(*) AS BIGINT) AS line_items ` +
-    `FROM ${source} WHERE ${[...conditions, heavy].join(' AND ')} ` +
+    `FROM ${source}${whereSql([...conditions, heavy])} ` +
     `GROUP BY ${groupBy}`;
   return `COPY (${select}) TO ${sqlStringLiteral(outPath)} (FORMAT PARQUET)`;
 }
@@ -1460,7 +1468,7 @@ export function buildGrainProbeQuery(
   for (const col of grainColumns) assertSafeColumnIdentifier(col, 'grain probe column');
   // The rows the period's partition is built from, so the counts are the
   // partition's.
-  const { source, where } = rollupPeriodScope(period, 'daily', opts);
+  const { source, conditions } = rollupPeriodScope(period, 'daily', opts);
   const { dimensions } = opts;
 
   // Distinct grain rows. We count distinct 64-bit HASHES of the grain tuple, not
@@ -1502,7 +1510,7 @@ export function buildGrainProbeQuery(
     ...cardSelects,
     ...looSelects,
   ];
-  return `SELECT ${selects.join(', ')} FROM ${source}${where}`;
+  return `SELECT ${selects.join(', ')} FROM ${source}${whereSql(conditions)}`;
 }
 
 /** The UTC days (`day`, `YYYY-MM-DD` text, oldest first) that one billing

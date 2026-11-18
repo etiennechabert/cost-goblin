@@ -479,7 +479,7 @@ class DuckDBSupervisor implements SupervisedDuckDBClient {
     const starting = this.firstStart;
     this.firstStart = null;
     this.phase = 'terminated';
-    starting?.reject(new Error(`The query engine could not start: ${reason}`));
+    starting?.reject(new Error(`${ENGINE_MESSAGE_PREFIX}could not start: ${reason}`));
   }
 
   private onExit(inc: Incarnation, exit: DuckDBProcessExit): void {

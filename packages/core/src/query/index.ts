@@ -30,7 +30,7 @@ export {
 } from './builder.js';
 export type { QueryContextOptions, BuildSourceOptions, ProviderSourceSpec, ProviderSourceBranch, BaselineDiscoveryParams, ResolvedDimension } from './builder.js';
 
-export { periodsForRange } from './period-days.js';
+export { periodDaysKnown, periodsForRange } from './period-days.js';
 export type { PeriodDays, PeriodSelection } from './period-days.js';
 
 export { costExprFor } from './cost-metric.js';

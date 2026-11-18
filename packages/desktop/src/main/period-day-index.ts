@@ -62,8 +62,9 @@ export class PeriodDayIndex {
   private readonly indexed = new Map<string, IndexedPeriod>();
   /** Day-list queries in flight, by period and fingerprint. */
   private readonly reading = new Map<string, Promise<readonly string[]>>();
-  /** The failed reads already logged, by period and fingerprint. */
-  private readonly warned = new Set<string>();
+  /** The periods whose last read failed: logged when they start failing, not
+   *  on every query that finds them still unreadable. */
+  private readonly failing = new Set<string>();
   private running = 0;
   private readonly waiting: (() => void)[] = [];
 
@@ -109,12 +110,14 @@ export class PeriodDayIndex {
     try {
       const days = await reading;
       this.indexed.set(key, { fingerprint, days });
+      this.failing.delete(key);
       return days;
     } catch (err: unknown) {
       if (isQueryCancelled(err) || this.isEngineFailure(err)) throw err;
-      // Once per state of the files: every query asks again until they read.
-      if (!this.warned.has(readingKey)) {
-        this.warned.add(readingKey);
+      // Every query asks again until the files read; a file still being
+      // downloaded changes on each, so the log says it once, not each time.
+      if (!this.failing.has(key)) {
+        this.failing.add(key);
         logger.warn(`period-days: could not read the days of ${tier} ${period} (${String(provider.name)}); `
           + `ranges read it by its own month only — ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -123,11 +126,13 @@ export class PeriodDayIndex {
   }
 
   /** What changes when the period's files do: each Parquet file's name, size
-   *  and modification time. Null when the directory can't be listed. */
+   *  and modification time. Null when the directory can't be listed, or holds
+   *  no Parquet file: there is nothing to read the days of. */
   private async fingerprint(provider: ProviderName, tier: string, period: string): Promise<string | null> {
     const dir = join(providerRawDir(this.dataDir, provider), `${tier}-${period}`);
     try {
       const files = (await readdir(dir)).filter(name => name.endsWith('.parquet')).sort((a, b) => a.localeCompare(b));
+      if (files.length === 0) return null;
       const stamps = await Promise.all(files.map(async (name) => {
         const { size, mtimeMs } = await stat(join(dir, name));
         return `${name}\0${String(size)}\0${String(mtimeMs)}`;

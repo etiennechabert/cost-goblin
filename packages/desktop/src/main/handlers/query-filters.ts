@@ -6,7 +6,7 @@ import {
   buildFilterClauses,
   buildSource,
   capDateRange,
-  periodsForRange,
+  providerBranchesForRange,
   freshnessCutoff,
   resolveField,
   QueryBuilder,
@@ -94,15 +94,16 @@ export function registerFilterHandlers(app: AppContext): void {
       const active = providers.filter(p => (p.availablePeriods ?? []).length > 0);
       if (active.length === 0) return [];
       const orgPath = await getOrgAccountsPath();
+      // The billing periods holding a day of the range, or every period
+      // without one (no `periods`: the tier wildcard). A provider with
+      // nothing in the range is left out: its wildcard would read all it has.
+      const branches = range === undefined
+        ? active.map(p => ({ name: p.name, type: p.type }))
+        : providerBranchesForRange(active, range);
+      if (branches.length === 0) return [];
       source = buildSource({
         dataDir: ctx.dataDir, tier: 'daily', dimensions, orgAccountsPath: orgPath,
-        // The billing periods holding a day of the range; every period
-        // without one (no `periods`: the tier wildcard).
-        providers: active.map(p => ({
-          name: p.name,
-          type: p.type,
-          periods: range === undefined ? undefined : periodsForRange(p, range),
-        })),
+        providers: branches,
         costMetric: 'billed',
       });
     } else {

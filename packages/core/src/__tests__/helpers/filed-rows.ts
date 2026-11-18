@@ -60,9 +60,37 @@ export function costIn(range: { readonly start: string; readonly end: string }):
   return Object.values(costByDay(range)).reduce((sum, cost) => sum + cost, 0);
 }
 
-/** Writes `FILED_ROWS` as `{dataDir}/{provider}/raw/{tier}-{period}/data.parquet`,
- *  AWS-shaped: a tz-aware ChargePeriodStart, written with an explicit offset
- *  so the instant does not depend on the connection's zone. */
+/** One EC2 usage line item, as AWS's FOCUS export shapes it. */
+export interface AwsUsageRow {
+  /** ChargePeriodStart, UTC. */
+  readonly start: string;
+  /** The row's list, effective and billed cost. */
+  readonly cost: number;
+  readonly resource: string;
+  readonly description: string;
+}
+
+/** Writes `rows` to `{dir}/data.parquet`, AWS-shaped: a tz-aware
+ *  ChargePeriodStart, written with an explicit offset so the instant does not
+ *  depend on the connection's zone, and every column `buildSource` reads. */
+export async function writeAwsUsageRows(conn: DuckDBConnection, dir: string, rows: readonly AwsUsageRow[]): Promise<void> {
+  await mkdir(dir, { recursive: true });
+  const values = rows.map(r =>
+    `(TIMESTAMPTZ '${r.start}+00', '111', 'Prod', 'eu-west-1', '${FILED_SERVICE}', 'AmazonEC2', 'Compute', '${r.description}',
+      1.0, ${String(r.cost)}::DOUBLE, '${r.resource}', ${String(r.cost)}::DOUBLE, ${String(r.cost)}::DOUBLE,
+      'Usage', 'Standard', '', 'RunInstances', 'BoxUsage', MAP {'team': 'core'})`);
+  await conn.run(`
+    COPY (
+      SELECT * FROM (VALUES ${values.join(',\n')}) AS t(ChargePeriodStart, SubAccountId, SubAccountName, RegionId,
+             ServiceName, x_ServiceCode, ServiceCategory, ChargeDescription,
+             ConsumedQuantity, ListCost, ResourceId, EffectiveCost, BilledCost,
+             ChargeCategory, PricingCategory, CommitmentDiscountStatus,
+             x_Operation, SkuMeter, Tags)
+    ) TO ${sqlStringLiteral(join(dir, 'data.parquet').replaceAll('\\', '/'))} (FORMAT PARQUET)
+  `);
+}
+
+/** Writes `FILED_ROWS` as `{dataDir}/{provider}/raw/{tier}-{period}/data.parquet`. */
 export async function writeFiledRows(
   conn: DuckDBConnection,
   dataDir: string,
@@ -71,21 +99,9 @@ export async function writeFiledRows(
 ): Promise<void> {
   for (const tier of tiers) {
     for (const period of FILED_PERIODS) {
-      const dir = join(dataDir, provider, 'raw', `${tier}-${period}`);
-      await mkdir(dir, { recursive: true });
-      const values = FILED_ROWS.filter(r => r.period === period).map(r =>
-        `(TIMESTAMPTZ '${r.start}+00', '111', 'Prod', 'eu-west-1', '${FILED_SERVICE}', 'AmazonEC2', 'Compute', '${r.pair} usage',
-          1.0, ${String(r.cost)}::DOUBLE, 'arn:${r.pair}', ${String(r.cost)}::DOUBLE, ${String(r.cost)}::DOUBLE,
-          'Usage', 'Standard', '', 'RunInstances', 'BoxUsage', MAP {'team': 'core'})`);
-      await conn.run(`
-        COPY (
-          SELECT * FROM (VALUES ${values.join(',\n')}) AS t(ChargePeriodStart, SubAccountId, SubAccountName, RegionId,
-                 ServiceName, x_ServiceCode, ServiceCategory, ChargeDescription,
-                 ConsumedQuantity, ListCost, ResourceId, EffectiveCost, BilledCost,
-                 ChargeCategory, PricingCategory, CommitmentDiscountStatus,
-                 x_Operation, SkuMeter, Tags)
-        ) TO ${sqlStringLiteral(join(dir, 'data.parquet').replaceAll('\\', '/'))} (FORMAT PARQUET)
-      `);
+      const rows = FILED_ROWS.filter(r => r.period === period)
+        .map(r => ({ start: r.start, cost: r.cost, resource: `arn:${r.pair}`, description: `${r.pair} usage` }));
+      await writeAwsUsageRows(conn, join(dataDir, provider, 'raw', `${tier}-${period}`), rows);
     }
   }
 }
