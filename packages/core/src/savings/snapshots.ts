@@ -51,10 +51,20 @@ export async function latestCostOptSnapshot(dataDir: string, provider: ProviderN
   return date === undefined ? null : { providerName: String(provider), date };
 }
 
+/** Columns the query reads that an export may not have. The export's SQL
+ *  picks its columns, and the one our CloudFormation stack writes (every
+ *  column AWS documents) has no `account_name`: a column missing from every
+ *  file is a binder error, which left the whole snapshot unread. */
+const OPTIONAL_COLUMNS: readonly string[] = ['account_name'];
+
 /** SELECT one snapshot's recommendations, aliased for `parseSavingsRow`. */
 export function buildSavingsQuery(dataDir: string, provider: ProviderName, date: string): string {
   if (!SNAPSHOT_DATE.test(date)) throw new Error(`Not a cost optimization snapshot date: ${date}`);
   const glob = sqlStringLiteral(`${dataDir}/${String(provider)}/raw/cost-opt-${date}/*.parquet`);
+  // A union BY NAME with an empty row that has the optional columns: a file
+  // without one reads NULL.
+  const nulls = OPTIONAL_COLUMNS.map(c => `CAST(NULL AS VARCHAR) AS ${c}`).join(', ');
+  const source = `(SELECT * FROM read_parquet(${glob}, union_by_name=true, filename=true) UNION ALL BY NAME SELECT ${nulls} WHERE FALSE)`;
   return `
     SELECT
       COALESCE(recommendation_id, '') AS recommendation_id,
@@ -75,7 +85,7 @@ export function buildSavingsQuery(dataDir: string, provider: ProviderName, date:
       COALESCE(restart_needed, false) AS restart_needed,
       COALESCE(rollback_possible, false) AS rollback_possible,
       COALESCE(recommendation_source, '') AS recommendation_source
-    FROM read_parquet(${glob}, union_by_name=true, filename=true)
+    FROM ${source}
     QUALIFY recommendation_id IS NULL OR ROW_NUMBER() OVER (PARTITION BY recommendation_id ORDER BY filename DESC) = 1
     ORDER BY monthly_savings DESC, recommendation_id
   `;
@@ -117,6 +127,14 @@ async function readProviderSnapshot(
   }
 }
 
+/** The name an account shows under: the account map's (org accounts or the
+ *  account CSV, as every other view names it), else the export's own, else
+ *  the id. An export without `account_name` leaves only the id. */
+function namedAccount(rec: SavingsRecommendation, accountNames: ReadonlyMap<string, string>): SavingsRecommendation {
+  const name = accountNames.get(rec.accountId) ?? (rec.accountName === '' ? rec.accountId : rec.accountName);
+  return name === rec.accountName ? rec : { ...rec, accountName: name };
+}
+
 /** Every recommendation of each provider's latest snapshot. A provider whose
  *  snapshot can't be read is left out (and logged) rather than failing the
  *  others. Two providers whose cost-optimization tier points at the same
@@ -128,6 +146,7 @@ export async function loadSavingsRecommendations(
   dataDir: string,
   providers: readonly ProviderConfig[],
   runQuery: (sql: string) => Promise<readonly Row[]>,
+  accountNames: ReadonlyMap<string, string> = new Map(),
 ): Promise<LoadedSavings> {
   const read = await Promise.all(providers.flatMap(provider => {
     const tier = provider.sync.costOptimization;
@@ -151,7 +170,7 @@ export async function loadSavingsRecommendations(
     const fresh = recs.filter(r => r.recommendationId === '' || !seen.has(r.recommendationId));
     for (const rec of recs) if (rec.recommendationId !== '') seen.add(rec.recommendationId);
     snapshots.push(snapshot);
-    recommendations.push(...fresh);
+    recommendations.push(...fresh.map(r => namedAccount(r, accountNames)));
   }
   return { recommendations, snapshots };
 }

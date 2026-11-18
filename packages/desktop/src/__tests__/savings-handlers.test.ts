@@ -43,19 +43,20 @@ function sqlText(value: string): string {
   return `'${sqlEscapeString(value)}'`;
 }
 
-/** One COH export file at raw/cost-opt-<date>/. */
-async function writeSnapshot(h: Harness, dirName: string, rows: readonly CohRow[]): Promise<void> {
+/** One COH export file at raw/cost-opt-<date>/. `accountName: false` writes
+ *  no `account_name` column, as the export our CloudFormation stack creates. */
+async function writeSnapshot(h: Harness, dirName: string, rows: readonly CohRow[], { accountName = true } = {}): Promise<void> {
   const dir = join(h.ws.dataDir, FIXTURE_AWS_PROVIDER, 'raw', dirName);
   await mkdir(dir, { recursive: true });
   const values = rows.map(r => `(${[
-    sqlText(r.id), sqlText('123456789012'), sqlText('Demo'), sqlText(r.action), sqlText(r.type), sqlText(`${r.action} ${r.id}`),
+    sqlText(r.id), sqlText('123456789012'), ...(accountName ? [sqlText('Demo')] : []), sqlText(r.action), sqlText(r.type), sqlText(`${r.action} ${r.id}`),
     sqlText('eu-west-1'), String(r.savings), String(r.cost), String(r.cost > 0 ? (r.savings / r.cost) * 100 : 0), sqlText('VeryLow'),
     r.arn === undefined ? NULL_TEXT : sqlText(r.arn), NULL_TEXT, r.recommended === undefined ? NULL_TEXT : sqlText(JSON.stringify(r.recommended)),
     NULL_TEXT, 'false', 'true', sqlText('CostExplorer'),
   ].join(', ')})`).join(',\n');
   await h.db.runQuery(`
     COPY (SELECT * FROM (VALUES ${values}) t(
-      recommendation_id, account_id, account_name, action_type, current_resource_type, recommended_resource_summary,
+      recommendation_id, account_id,${accountName ? ' account_name,' : ''} action_type, current_resource_type, recommended_resource_summary,
       region, estimated_monthly_savings_after_discount, estimated_monthly_cost_after_discount,
       estimated_savings_percentage_after_discount, implementation_effort, resource_arn, current_resource_details,
       recommended_resource_details, current_resource_summary, restart_needed, rollback_possible, recommendation_source
@@ -147,6 +148,21 @@ describe('query:savings', () => {
     const h = await savingsApp();
     await writeSnapshot(h, 'cost-opt-2026-02', OCT_12);
     expect(at(await h.ipc.invoke('query:savings'), 'snapshots')).toEqual([{ providerName: FIXTURE_AWS_PROVIDER, date: '2026-02' }]);
+  });
+
+  it('reads an export with no account_name column, naming the account by its id', async () => {
+    const h = await savingsApp();
+    await writeSnapshot(h, 'cost-opt-2026-10-13', OCT_13, { accountName: false });
+    const result = await h.ipc.invoke('query:savings');
+    expect(ids(result)).toEqual(['ri-1y', 'sp-1y', 'sp-3y', 'vol-delete', 'vol-upgrade']);
+    expect(new Set(list(at(result, 'recommendations')).map(r => at(r, 'accountName')))).toEqual(new Set(['123456789012']));
+  });
+
+  it('names the account as the export does when the account map does not know it', async () => {
+    const h = await savingsApp();
+    await writeSnapshot(h, 'cost-opt-2026-10-13', OCT_13);
+    const result = await h.ipc.invoke('query:savings');
+    expect(new Set(list(at(result, 'recommendations')).map(r => at(r, 'accountName')))).toEqual(new Set(['Demo']));
   });
 
   it('is empty, not failed, when the latest snapshot cannot be read', async () => {
