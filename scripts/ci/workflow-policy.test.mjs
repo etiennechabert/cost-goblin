@@ -482,6 +482,19 @@ describe('workflow policy (.github/workflows)', () => {
     }
   });
 
+  it('ci.yml type-checks every project `npm run check` does, e2e/ included', () => {
+    // The list of projects is written twice, and e2e/ was in neither: a suite
+    // could call a preload bridge method that no longer exists and only fail
+    // at run time. A project in one list only is checked locally or in CI,
+    // not both.
+    const tscProjects = (text) => [...text.matchAll(/\btsc --noEmit -p (\S+)/g)].map((m) => m[1]).sort();
+    const pkg = JSON.parse(readFileSync(new URL('package.json', repoRoot), 'utf8'));
+    const local = tscProjects(pkg.scripts.check);
+    const inCi = tscProjects(stepsOf(ci.jobs.lint).map(runBody).join('\n'));
+    expect(local).toContain('e2e/tsconfig.json');
+    expect(inCi).toEqual(local);
+  });
+
   it('ci.yml security-audit asserts the npm guards before npm ci', () => {
     const steps = stepsOf(ci.jobs['security-audit']);
     const assertAt = steps.findIndex((s) => runBody(s).includes(ASSERT_SCRIPT));
