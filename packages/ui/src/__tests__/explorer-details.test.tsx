@@ -125,9 +125,12 @@ function renderExplorer(api: ExplorerApi) {
   };
 }
 
+/** Table header labels, sort arrows stripped, after the leading column of the
+ *  rows' disclosure buttons. */
 function visibleHeaders(): string[] {
   return within(screen.getByRole('table'))
     .getAllByRole('columnheader')
+    .slice(1)
     .map(th => th.textContent.replace(/[↑↓↕]/g, '').trim());
 }
 
@@ -141,7 +144,9 @@ function bodyRows(): HTMLTableRowElement[] {
 
 function cell(row: number, header: string): HTMLTableCellElement {
   const idx = visibleHeaders().indexOf(header);
-  const found = bodyRows()[row]?.cells.item(idx);
+  if (idx === -1) throw new Error(`no column ${header}`);
+  // The row's first cell holds its disclosure button, which visibleHeaders leaves out.
+  const found = bodyRows()[row]?.cells.item(idx + 1);
   if (found === null || found === undefined) throw new Error(`no cell ${header} in row ${String(row)}`);
   return found;
 }

@@ -19,7 +19,7 @@ The other files in this directory hold the checks for each area.
 
 ## Do flag: bans that no lint rule enforces
 
-CLAUDE.md bans `as` assertions and `eslint-disable` comments, but no lint rule enforces either, and dozens of `as` already exist. Nothing under `e2e/` is type-checked or linted at all. Flag new instances in the diff; leave existing ones alone.
+CLAUDE.md bans `as` assertions and `eslint-disable` comments, but no lint rule enforces either, and dozens of `as` already exist. `e2e/` is type-checked, not linted. Flag new instances in the diff; leave existing ones alone.
 
 ## How to report
 
