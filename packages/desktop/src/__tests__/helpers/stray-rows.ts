@@ -50,12 +50,12 @@ export function strayCostByDay(range: { readonly start: string; readonly end: st
 /** Writes `STRAY_ROWS` as a `stray.parquet` beside each month's data, shaped
  *  like one of that month's own line items. */
 export async function addStrayRows(h: Harness): Promise<void> {
-  for (const period of new Set(STRAY_ROWS.map(r => r.period))) {
+  await Promise.all([...new Set(STRAY_ROWS.map(r => r.period))].map((period) => {
     const dir = join(h.ws.dataDir, FIXTURE_AWS_PROVIDER, 'raw', `daily-${period}`);
     const rows = STRAY_ROWS.filter(r => r.period === period)
       .map(r => `(TIMESTAMP '${r.day} 00:00:00', ${String(r.cost)}::DOUBLE)`)
       .join(', ');
-    await h.db.runQuery(`COPY (
+    return h.db.runQuery(`COPY (
       SELECT template.* REPLACE (
         stray.day AS ChargePeriodStart,
         '${STRAY_SERVICE}' AS ServiceName,
@@ -65,5 +65,5 @@ export async function addStrayRows(h: Harness): Promise<void> {
             WHERE ServiceName = '${TEMPLATE_SERVICE}' AND PricingCategory = 'Standard' ORDER BY ChargePeriodStart, ResourceId LIMIT 1) AS template,
            (VALUES ${rows}) AS stray(day, cost)
     ) TO '${join(dir, 'stray.parquet')}' (FORMAT PARQUET)`);
-  }
+  }));
 }

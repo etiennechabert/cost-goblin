@@ -15,10 +15,10 @@ import { RESOURCE_ROLLUP_KEY_COLUMNS, resourceRollupDimensionColumns } from '../
 import { sqlEscapeString, sqlStringLiteral } from './sql-escape.js';
 import { previousTrendPeriod, trendPercentChangeSql } from './trend-change.js';
 import { providerColumnExprs, withOptionalSourceColumns } from './provider-projection.js';
-import { computePeriodsInRange, periodDaysKnown, periodsForRange } from './period-days.js';
+import { periodDaysKnown, periodsForRange } from './period-days.js';
 import type { PeriodDays } from './period-days.js';
 
-export { computePeriodsInRange };
+export { computePeriodsInRange } from './period-days.js';
 
 /** Label for rows whose SubAccountId is NULL. FOCUS allows a null SubAccountId
  *  and GCP emits it for charges not tied to a project (account-level taxes,

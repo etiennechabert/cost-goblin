@@ -97,11 +97,9 @@ export async function writeFiledRows(
   provider: string,
   tiers: readonly ('daily' | 'hourly')[] = ['daily'],
 ): Promise<void> {
-  for (const tier of tiers) {
-    for (const period of FILED_PERIODS) {
-      const rows = FILED_ROWS.filter(r => r.period === period)
-        .map(r => ({ start: r.start, cost: r.cost, resource: `arn:${r.pair}`, description: `${r.pair} usage` }));
-      await writeAwsUsageRows(conn, join(dataDir, provider, 'raw', `${tier}-${period}`), rows);
-    }
-  }
+  await Promise.all(tiers.flatMap(tier => FILED_PERIODS.map((period) => {
+    const rows = FILED_ROWS.filter(r => r.period === period)
+      .map(r => ({ start: r.start, cost: r.cost, resource: `arn:${r.pair}`, description: `${r.pair} usage` }));
+    return writeAwsUsageRows(conn, join(dataDir, provider, 'raw', `${tier}-${period}`), rows);
+  })));
 }

@@ -432,16 +432,29 @@ test.describe('Query engine death', () => {
   test('killed in the middle of a query, it is replaced and the view loads again', async () => {
     test.setTimeout(90_000);
     const page = enginePage;
+    // Load the view once, on a running engine. A query first waits for the
+    // days each month's files hold, which main reads with the engine on the
+    // first query after launch, then keeps. An engine frozen under that read
+    // fails the view as it should, but leaves nothing in main's query log,
+    // which is where this test looks.
+    await clickNavButton(page, 'Trends');
+    await expectVisibleData(page);
     const first = await runningEnginePid();
 
-    // Freeze it, so the queries the next view sends are surely still running
+    // Freeze it, so the query the view sends next is surely still running
     // when it dies.
     process.kill(first, 'SIGSTOP');
     try {
-      await clickNavButton(page, 'Trends');
-      await expect.poll(() => page.evaluate(() => globalThis.costgoblinDebug.getInFlightCount()), {
-        message: 'the view has queries in flight',
-      }).toBeGreaterThan(0);
+      // Another grouping: a query main has no answer to yet.
+      await page.getByRole('button', { name: 'Region', exact: true }).click();
+      // The renderer counts a query from the moment it asks for it, and one
+      // that reaches the supervisor after the death is held for the next
+      // process and succeeds. Main's log has it, `queued`, once the engine
+      // was handed it.
+      await expect.poll(async () => {
+        const entries = await page.evaluate(() => globalThis.costgoblinDebug.getQueryLog());
+        return entries.filter(entry => entry.status === 'queued').length;
+      }, { message: 'the engine was handed a query of the view' }).toBeGreaterThan(0);
     } finally {
       // Whatever happened above: a stopped process does not act on the
       // SIGTERM the app's quit sends it, and would outlive the run.
