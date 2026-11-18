@@ -25,6 +25,7 @@ function adaptAppContext(app: AppContext, mcpDb: DuckDBClient): McpContext {
     getAccountMap: () => app.getAccountMap(),
     getAccountReverseMap: () => app.getAccountReverseMap(),
     getOrgAccountsPath: () => app.getOrgAccountsPath(),
+    getQueryProviders: (tier) => app.getQueryProviders(tier),
     // The rollup is daily/dashboard-shaped; MCP queries are arbitrary SQL, so
     // they always read raw. (McpContext wants a structural getSource provider.)
     materializedBase: { getSource: () => undefined },

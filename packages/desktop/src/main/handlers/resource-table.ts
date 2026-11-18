@@ -1,4 +1,4 @@
-import { computePeriodsInRange, isQueryCancelled, logger, QueryBuilder, RESOURCE_ROLLUP_KEY_COLUMNS } from '@costgoblin/core';
+import { isQueryCancelled, logger, periodsForRange, QueryBuilder, RESOURCE_ROLLUP_KEY_COLUMNS } from '@costgoblin/core';
 import type { AggregatedTableRow, ExplorerSort, ProviderSourceSpec } from '@costgoblin/core';
 import type { ResourceRollupSource, ResourceRollupStore } from '../resource-rollup-store.js';
 import { queryAggregatedRows } from './aggregated-table.js';
@@ -87,17 +87,17 @@ async function allHeavy(run: RunSql, served: ResourceRollupSource, pairs: readon
 
 /** Where the query reads the resource rollup, or undefined when it can't:
  *  only a daily table of one provider, in the saved cost scope, grouped by
- *  the resource and its description at least, over months the rollup has. */
+ *  the resource and its description at least, over billing periods the rollup
+ *  has. */
 function resolveServed(q: ResourceTableQuery): ResourceRollupSource | undefined {
   const [provider, ...others] = q.providers;
   if (q.tier !== 'daily' || !q.usesSavedScope || provider === undefined || others.length > 0) return undefined;
   const grouped = new Set(q.groupBy.map(g => g.column));
   if (RESOURCE_ROLLUP_KEY_COLUMNS.some(c => !grouped.has(c))) return undefined;
-  // The months the provider has, as on the raw path, which reads no others.
-  const inRange = computePeriodsInRange(q.dateRange);
-  const onDisk = provider.availablePeriods;
+  // The billing periods holding a day of the range, as on the raw path, which
+  // reads no others: the tail bounds added up are theirs.
   return q.store.resolveSource({
-    requiredPeriods: onDisk === undefined ? inRange : inRange.filter(period => onDisk.includes(period)),
+    requiredPeriods: periodsForRange(provider, q.dateRange),
     neededColumns: [...grouped, ...q.rowFilters.map(f => f.column), ...q.filterColumns],
   });
 }

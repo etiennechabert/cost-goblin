@@ -7,6 +7,7 @@ import {
   listLocalMonths,
   logger,
   meetsTrendThresholds,
+  periodsForRange,
   sqlStringLiteral,
   tagDimColumn,
   tagSqlColumnsById,
@@ -77,12 +78,15 @@ export function columnForDimension(dimensions: DimensionsConfig, dimId: string):
  *  spans all months, so it is NOT pre-windowed like the old in-memory
  *  base.
  *
- *  Only the months the provider has on disk have to be valid, as on the raw
- *  path (`resolveProviderBranches`), which reads no others either. A month with
- *  nothing synced has no partition to build, so requiring one sent every range
- *  that touches it back to raw Parquet: "Last 365 days" over a history with a
- *  one-month gap, or over less than a year of exports, scanned every raw file
- *  once per widget. */
+ *  The partitions that have to be valid are those of the billing periods the
+ *  range reads (`periodsForRange`): the same ones the raw path reads, so the
+ *  rollup's answer is raw's. A period's files hold days of other months, so
+ *  these are not the months the range touches: a range can need a neighbour's
+ *  partition, and a month with nothing synced still gets the days its
+ *  neighbours hold. No partition is required for a month that has none to
+ *  build: "Last 365 days" over a history with a one-month gap, or over less
+ *  than a year of exports, would otherwise scan every raw file once per
+ *  widget. */
 export function resolveRollupSource(
   rollupStore: Pick<RollupStore, 'resolveSource'>,
   providers: readonly ProviderSourceSpec[],
@@ -92,21 +96,17 @@ export function resolveRollupSource(
 ): string | undefined {
   const [provider, ...others] = providers;
   if (provider === undefined || others.length > 0) return undefined;
-  const inRange = computePeriodsInRange(dateRange);
-  const onDisk = provider.availablePeriods;
-  const requiredPeriods = onDisk === undefined ? inRange : inRange.filter(period => onDisk.includes(period));
-  return rollupStore.resolveSource({ requiredPeriods, tier, neededColumns });
+  return rollupStore.resolveSource({ requiredPeriods: periodsForRange(provider, dateRange), tier, neededColumns });
 }
 
-/** True when NO configured provider has a month on disk intersecting the
- *  range — the multi-provider replacement for the old single-provider
- *  "resolveAvailablePeriods(...).empty" early-return. */
+/** True when NO configured provider has a billing period on disk holding a
+ *  day of the range — the multi-provider replacement for the old
+ *  single-provider "resolveAvailablePeriods(...).empty" early-return. */
 export function providersEmptyForRange(
   providers: readonly ProviderSourceSpec[],
   dateRange: { readonly start: string; readonly end: string },
 ): boolean {
-  const required = computePeriodsInRange(dateRange);
-  return !providers.some(p => p.availablePeriods === undefined || required.some(m => p.availablePeriods?.includes(m)));
+  return !providers.some(p => p.availablePeriods === undefined || periodsForRange(p, dateRange).length > 0);
 }
 
 export function toNum(v: unknown): number {

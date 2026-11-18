@@ -3,6 +3,7 @@ import type {
   CostGoblinConfig,
   CostScopeConfig,
   DimensionsConfig,
+  ProviderSourceSpec,
 } from '@costgoblin/core';
 
 export type RawRow = Readonly<Record<string, unknown>>;
@@ -23,6 +24,11 @@ export interface McpContext {
   readonly getAccountMap: () => Promise<Map<string, string>>;
   readonly getAccountReverseMap: () => Promise<Map<string, readonly string[]>>;
   readonly getOrgAccountsPath: () => Promise<string | undefined>;
+  /** Every configured provider with its months on disk and the days they
+   *  hold, as the host's own queries get them. Without it the tools list the
+   *  months themselves and a range reads the months it touches only (see
+   *  `periodsForRange` in core). */
+  readonly getQueryProviders?: (tier: 'daily' | 'hourly') => Promise<readonly ProviderSourceSpec[]>;
   readonly materializedBase: { getSource(dateRange: { readonly start: string; readonly end: string }, tier: string): string | undefined };
   readonly warmup: () => Promise<void>;
   /** The host app's clock: default date ranges and the data-lag figure anchor

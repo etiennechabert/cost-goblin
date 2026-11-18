@@ -174,17 +174,18 @@ describe('computeShapeSignature', () => {
       expect(sig({ rules: teamRule({ matchMissing: false }) })).toBe(sig({ rules: teamRule() }));
     });
 
-    // Digests of these exact inputs as computed before rule conditions became
-    // NULL-safe, at the current ROLLUP_SCHEMA_VERSION (4: the version is part
-    // of every digest). A built-in column is never NULL, so those partitions
-    // are byte-identical and must keep their digest; a rule on a tag also
-    // dropped the untagged rows, so those partitions must re-roll.
+    // Digests of these exact inputs as the code from before rule conditions
+    // became NULL-safe computes them, at the current ROLLUP_SCHEMA_VERSION (5:
+    // the version is part of every digest, so a bump moves these). A built-in
+    // column is never NULL, so those partitions are byte-identical and must
+    // keep their digest; a rule on a tag also dropped the untagged rows, so
+    // those partitions must re-roll.
     it('keeps the earlier digest for rules on built-in columns (no re-roll)', () => {
-      expect(sig({ rules: serviceRule() })).toBe('233df2068a2cac4780a68e64eb1a32897332e47a472f7a150da9434c1ed4cdd4');
+      expect(sig({ rules: serviceRule() })).toBe('ccdcba0cad335aa814b7d0292ae300f4f242e76ca0b48e1a90f09994e6890fb3');
     });
 
     it('moves the digest of rules on tags, whose partitions dropped untagged rows', () => {
-      expect(sig({ rules: teamRule() })).not.toBe('83acf0a17fa8d6f73b68b342e39e4aaed74ac2e52005c3729863781fc37b6677');
+      expect(sig({ rules: teamRule() })).not.toBe('93b85653494442167f6cb14bdbdefe6d1335ffbe5e546677b95be12455180583');
     });
   });
 
@@ -192,7 +193,7 @@ describe('computeShapeSignature', () => {
     // The base input's digest from before the provider type entered the
     // signature. AWS columns are read as they were, so an AWS rollup keeps it.
     it('keeps the earlier digest for an AWS rollup (no re-roll)', () => {
-      expect(sig()).toBe('233df2068a2cac4780a68e64eb1a32897332e47a472f7a150da9434c1ed4cdd4');
+      expect(sig()).toBe('ccdcba0cad335aa814b7d0292ae300f4f242e76ca0b48e1a90f09994e6890fb3');
     });
 
     it('CHANGES for a GCP rollup, whose region and pricing_category are read differently', () => {

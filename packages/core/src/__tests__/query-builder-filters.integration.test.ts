@@ -190,9 +190,9 @@ describe('query builders on DuckDB', () => {
       return { total: Number(r?.['total']), lineItems: Number(r?.['n']) };
     }
 
-    it('bounds a December partition at the next year\'s first day', async () => {
-      // The late 2026-01-01 row in December's file belongs to January.
-      expect(await partition('2025-12')).toEqual({ total: 16, lineItems: 1 });
+    it('keeps the row of December\'s file that is dated in January', async () => {
+      // No other partition would hold it: January's is built from January's file.
+      expect(await partition('2025-12')).toEqual({ total: 48, lineItems: 2 });
     });
 
     it('takes every row of an ordinary month', async () => {

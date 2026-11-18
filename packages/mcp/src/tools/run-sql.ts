@@ -1,7 +1,7 @@
 import {
   assertDateString,
   buildSource,
-  computePeriodsInRange,
+  providerBranchesForRange,
   logger,
 } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
@@ -234,16 +234,9 @@ async function buildCostsCte(ctx: McpContext, dateRange: { start: string; end: s
     return `costs AS (SELECT * FROM ${matSource} WHERE usage_date BETWEEN '${dateRange.start}' AND '${dateRange.end}')`;
   }
   const allProviders = await getQueryProviders(ctx, 'daily');
-  const required = computePeriodsInRange(dateRange);
-  // Per-provider month intersection; providers with nothing in range are
-  // dropped (a zero-match glob fails the whole union).
-  const branches = allProviders
-    .map(pr => ({
-      name: pr.name,
-      type: pr.type,
-      periods: required.filter(m => pr.availablePeriods?.includes(m) ?? false),
-    }))
-    .filter(b => b.periods.length > 0);
+  // The billing periods holding a day of the range, per provider; providers
+  // with nothing in range are dropped (a zero-match glob fails the whole union).
+  const branches = providerBranchesForRange(allProviders, dateRange);
   if (branches.length === 0) return null;
   // Mirror the dashboards: the active Cost Scope's metric backs `cost`.
   const scopeMetric = (await ctx.getCostScope()).costMetric;

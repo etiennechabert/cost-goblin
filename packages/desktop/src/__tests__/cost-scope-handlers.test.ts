@@ -4,7 +4,7 @@ import { parse } from 'yaml';
 import { DEFAULT_COST_SCOPE } from '@costgoblin/core';
 import { registerCostScopeHandlers } from '../main/handlers/cost-scope.js';
 import { resetElectronFakes, shell } from './helpers/electron-fake.js';
-import { at, configYaml, createHarness, FEBRUARY_READABLE_NOW_MS, gcpProviderYaml, list, num, type Harness, type HarnessOptions } from './helpers/ipc-harness.js';
+import { at, configYaml, createHarness, FEBRUARY_READABLE_NOW_MS, gcpProviderYaml, list, num, queryStatements, type Harness, type HarnessOptions } from './helpers/ipc-harness.js';
 
 /** The Cost Scope editor's IPC surface: seeding a missing config, validated
  *  saves (including the dangling-dimension guard), and the live preview —
@@ -215,7 +215,7 @@ describe('cost-scope:preview', () => {
       combined: { excludedCost: 0, excludedRows: 0 },
       unscopedTotalCost: 0, scopedTotalCost: 0, dailyTotals: [], sampleRows: [], sampleTotalRowCount: 0, tagColumns: [],
     });
-    expect(h.db.statements).toEqual([]);
+    expect(queryStatements(h.db)).toEqual([]);
   });
 
   it('defaults to the trailing window before the lag when no valid period is picked', async () => {

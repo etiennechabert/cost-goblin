@@ -10,8 +10,8 @@ import {
   validateCostScope,
   buildSource,
   buildRuleMatchExpr,
-  computePeriodsInRange,
   logger,
+  providerBranchesForRange,
   QueryBuilder,
   tagDimColumn,
   tagSqlColumnsById,
@@ -145,19 +145,9 @@ export function registerCostScopeHandlers(app: AppContext): void {
     };
 
     // Empty while onboarding (no provider configured) — same zero-period
-    // early return as "no months on disk". Months are intersected PER
-    // provider: a shared list would hand a provider globs for months it
-    // doesn't have, and one zero-match glob fails the whole union.
+    // early return as "no months on disk".
     if (window === null) return zero;
-    const providers = await getQueryProviders('daily');
-    const required = computePeriodsInRange({ start: startStr, end: endStr });
-    const branches = providers
-      .map(p => ({
-        name: p.name,
-        type: p.type,
-        periods: required.filter(m => p.availablePeriods?.includes(m) ?? false),
-      }))
-      .filter(b => b.periods.length > 0);
+    const branches = providerBranchesForRange(await getQueryProviders('daily'), { start: startStr, end: endStr });
     if (branches.length === 0) return zero;
 
     const orgPath = await getOrgAccountsPath();
