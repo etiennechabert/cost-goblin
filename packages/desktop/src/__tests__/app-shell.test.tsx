@@ -1001,6 +1001,29 @@ describe('App shell — sync status', () => {
     await waitFor(() => { expect(syncErrorAnnouncement()).toBe(''); });
   });
 
+  it('takes a check out for over a minute for hung, and checks again', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = new AppApi();
+    const inventory = vi.spyOn(api, 'getDataInventory').mockRejectedValue(new Error(GCP_SIGN_IN));
+    await bootApp(api);
+    await waitFor(() => { expect(syncErrorAnnouncement()).toBe(SIGN_IN_ERROR); });
+
+    // The next listing never settles: the bucket listing has no timeout of its own.
+    inventory.mockReturnValueOnce(new Promise<DataInventoryResult>(() => undefined));
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    const calls = inventory.mock.calls.length;
+    // Signed in again meanwhile. Within the minute the retry waits for the hung check.
+    inventory.mockResolvedValue(inventoryOf([]));
+    await act(async () => { await vi.advanceTimersByTimeAsync(50_000); });
+    expect(inventory.mock.calls.length).toBe(calls);
+    expect(syncErrorAnnouncement()).toBe(SIGN_IN_ERROR);
+
+    // Past it, the retry checks again, and that check clears the error.
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    await waitFor(() => { expect(syncErrorAnnouncement()).toBe(''); });
+    expect(inventory.mock.calls.length).toBeGreaterThan(calls);
+  });
+
   it('checks again once a sync starts, so a sign-in renewed outside the app clears', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const api = new AppApi();

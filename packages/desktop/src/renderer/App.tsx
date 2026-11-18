@@ -341,6 +341,10 @@ function countFilesRemaining(statuses: readonly SyncStatus[]): number {
   return remaining;
 }
 
+/** How long the shell's missing-periods check can be out before its retry
+ *  takes it for hung and starts another. */
+const INVENTORY_CHECK_HUNG_MS = 60_000;
+
 const SYNC_TIER_LABELS: readonly { readonly id: string; readonly label: string }[] = [
   { id: 'daily', label: 'Daily' },
   { id: 'hourly', label: 'Hourly' },
@@ -867,14 +871,16 @@ function AppShell(): React.JSX.Element {
   // Numbers each missing-periods check so that only the latest one writes: a
   // slow check started before a sign-in must not overwrite a newer result.
   const inventoryCheckRef = useRef(0);
-  // How many checks are out, for the retry below.
-  const inventoryChecksOutRef = useRef(0);
+  // When the latest check started, while it is out (null once it settled),
+  // for the retry below. An older check that is still out does not count:
+  // its result will be dropped anyway.
+  const latestCheckOutSinceRef = useRef<number | null>(null);
 
   const checkMissingPeriods = useCallback(async (): Promise<void> => {
     if (setupCheck.status !== 'ready') return;
     inventoryCheckRef.current += 1;
     const check = inventoryCheckRef.current;
-    inventoryChecksOutRef.current += 1;
+    latestCheckOutSinceRef.current = Date.now();
     try {
       const [inv, config] = await Promise.all([api.getDataInventory(), api.getConfig()]);
       if (check !== inventoryCheckRef.current) return;
@@ -901,7 +907,7 @@ function AppShell(): React.JSX.Element {
       // screen that looked fine while sync was completely broken.
       setInventoryError(err instanceof Error ? err.message : String(err));
     } finally {
-      inventoryChecksOutRef.current -= 1;
+      if (check === inventoryCheckRef.current) latestCheckOutSinceRef.current = null;
     }
   }, [api, setupCheck]);
 
@@ -915,14 +921,16 @@ function AppShell(): React.JSX.Element {
   // While the check's error stands, run it again at the poller's idle pace:
   // a sign-in renewed elsewhere (a terminal, the Data & Sync tab's own
   // sign-in) then clears without a Retry, and a one-off failure doesn't stick.
-  // Never under a check that is still out. Each one lists the whole bucket,
-  // and a newer check makes an older one's result stale: started every 10 s
-  // under checks that take longer, every result would be dropped and the
-  // error would never clear.
+  // Never under the latest check while it is out. Each one lists the whole
+  // bucket, and a newer check makes an older one's result stale: started every
+  // 10 s under checks that take longer, every result would be dropped and the
+  // error would never clear. A check out for longer than a minute is taken for
+  // hung (the listing has no timeout of its own), so the retry goes on.
   useEffect(() => {
     if (inventoryError === null) return undefined;
     const timer = setInterval(() => {
-      if (inventoryChecksOutRef.current > 0) return;
+      const outSince = latestCheckOutSinceRef.current;
+      if (outSince !== null && Date.now() - outSince < INVENTORY_CHECK_HUNG_MS) return;
       checkMissingPeriods().catch(() => undefined);
     }, 10_000);
     return () => { clearInterval(timer); };
