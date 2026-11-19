@@ -315,6 +315,11 @@ export interface SavingsSnapshot {
   readonly date: string;
 }
 
+/** A provider's latest snapshot that is on disk but could not be read. */
+export interface UnreadSavingsSnapshot extends SavingsSnapshot {
+  readonly error: string;
+}
+
 export interface SavingsResult {
   /** Every recommendation of each provider's latest snapshot, alternatives included. */
   readonly recommendations: readonly SavingsRecommendation[];
@@ -322,6 +327,9 @@ export interface SavingsResult {
    *  each commitment pool. The Savings view recounts with the user's settings. */
   readonly totalMonthlySavings: Dollars;
   readonly snapshots: readonly SavingsSnapshot[];
+  /** Latest snapshots that could not be read: their providers' recommendations
+   *  are missing from `recommendations`, which is not the same as having none. */
+  readonly unreadSnapshots: readonly UnreadSavingsSnapshot[];
 }
 
 export type SyncPhase = 'downloading' | 'repartitioning';

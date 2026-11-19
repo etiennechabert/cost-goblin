@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DuckDBInstance } from '@duckdb/node-api';
 import type { DuckDBConnection } from '@duckdb/node-api';
-import { loadConfig, sqlEscapeString } from '@costgoblin/core';
+import { asBucketPath, asProviderName, loadConfig, sqlEscapeString } from '@costgoblin/core';
 import type { CostGoblinConfig } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
 import { listSavingsRecommendations } from '../tools/savings.js';
@@ -78,8 +78,9 @@ async function writeSnapshot(dataDir: string, date: string, rows: readonly CohRo
 
 const unused = (): never => { throw new Error('not used by list_savings_recommendations'); };
 
-/** A workspace with both snapshots and, when given, a saved preferences file. */
-async function workspace(prefs?: unknown): Promise<McpContext> {
+/** A workspace with both snapshots and, when given, a saved preferences file
+ *  and the account map's names. */
+async function workspace(prefs?: unknown, accountMap: ReadonlyMap<string, string> = new Map()): Promise<McpContext> {
   counter += 1;
   const dir = join(root, `ws-${String(counter)}`);
   const dataDir = join(dir, 'data');
@@ -97,7 +98,7 @@ async function workspace(prefs?: unknown): Promise<McpContext> {
     getDimensions: unused,
     getQueryDimensions: unused,
     getCostScope: unused,
-    getAccountMap: unused,
+    getAccountMap: () => Promise.resolve(new Map(accountMap)),
     getAccountReverseMap: unused,
     getOrgAccountsPath: unused,
     materializedBase: { getSource: () => undefined },
@@ -157,9 +158,44 @@ describe('list_savings_recommendations', () => {
     expect(limited.notes).toContain('Showing 1 of 3 actions, highest savings first; pass a larger limit to see more.');
   });
 
+  it('names accounts as the account map does, else as the export does', async () => {
+    const accounts = async (map?: ReadonlyMap<string, string>): Promise<unknown[]> => {
+      const result = parseJsonResult(resultText(await listSavingsRecommendations(await workspace(undefined, map), { format: 'json' })));
+      return [...new Set(result.tables[0]?.rows.map(r => r['account']))];
+    };
+    expect(await accounts()).toEqual(['Demo']);
+    expect(await accounts(new Map([['123456789012', 'Payer']]))).toEqual(['Payer']);
+  });
+
   it('says how to get recommendations when none are synced', async () => {
     const ctx = { ...(await workspace()), dataDir: join(root, 'empty') };
     expect(resultText(await listSavingsRecommendations(ctx, {}))).toMatch(/^No Cost Optimization Hub recommendations are synced\./);
+  });
+
+  it('says which snapshot could not be read instead of saying none are synced', async () => {
+    const ctx = await workspace();
+    const dir = join(ctx.dataDir, PROVIDER, 'raw', 'cost-opt-2026-10-14');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'broken.parquet'), 'not parquet');
+    const text = resultText(await listSavingsRecommendations(ctx, {}));
+    expect(text).not.toMatch(/are synced/);
+    expect(text).toMatch(/^The latest Cost Optimization Hub snapshot could not be read: aws-main 2026-10-14 \(.*broken\.parquet.*\)\./);
+    // DuckDB's message spans lines; the tool puts it on one.
+    expect(text).not.toContain('\n');
+  });
+
+  it('lists the recommendations that were read, with a note naming the snapshot that was not', async () => {
+    const [main] = config.providers;
+    if (main?.type !== 'aws' || main.sync.costOptimization === undefined) throw new Error('fixture config has no AWS cost optimization tier');
+    const other = { ...main, name: asProviderName('aws-other'), sync: { ...main.sync, costOptimization: { ...main.sync.costOptimization, bucket: asBucketPath('s3://other/cost-optimization/') } } };
+    const ctx = await workspace();
+    const dir = join(ctx.dataDir, 'aws-other', 'raw', 'cost-opt-2026-10-13');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'broken.parquet'), 'not parquet');
+    const withOther = { ...ctx, getConfig: () => Promise.resolve({ ...config, providers: [main, other] }) };
+    const result = parseJsonResult(resultText(await listSavingsRecommendations(withOther, { format: 'json' })));
+    expect(result.title).toBe('Cost optimization recommendations (3)');
+    expect(result.notes).toContainEqual(expect.stringMatching(/^Not counted, because the latest snapshot could not be read: aws-other 2026-10-13 \(.*broken\.parquet.*\)\./));
   });
 
   it('renders a markdown table by default', async () => {

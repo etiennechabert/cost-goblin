@@ -4,6 +4,7 @@ import type {
   SavingsRecommendation,
   SavingsResult,
   SavingsSnapshot,
+  UnreadSavingsSnapshot,
 } from '@costgoblin/core/browser';
 import {
   COMMITMENT_PAYMENT_LABELS,
@@ -20,6 +21,7 @@ import {
 import type { SortingState } from '@tanstack/react-table';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
+import { useCostOptimizationSyncs } from '../hooks/use-cost-optimization-syncs.js';
 import { formatDollars } from '../components/format.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { DataTable } from '../components/data-table.js';
@@ -253,9 +255,14 @@ function listedTypes(recommendations: readonly SavingsRecommendation[]): { type:
   return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([type, count]) => ({ type, count }));
 }
 
+/** How often the view checks whether a cost-optimization sync has finished. */
+export const SAVINGS_SYNC_POLL_MS = 5_000;
+
 export function Savings() {
   const api = useCostApi();
-  const savingsQuery = useQuery(() => api.querySavings(), [api]);
+  // A sync that finishes while the page is open brings a new snapshot: read it.
+  const syncRevision = useCostOptimizationSyncs(api, SAVINGS_SYNC_POLL_MS);
+  const savingsQuery = useQuery(() => api.querySavings(), [api, syncRevision]);
   const prefsQuery = useQuery(() => api.getSavingsPreferences(), [api]);
   const [sorting, setSorting] = useState<SortingState>([{ id: 'monthlySavings', desc: true }]);
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
@@ -264,8 +271,14 @@ export function Savings() {
   const [preferred, setPreferred] = useState<PreferredCommitment>(SAVINGS_PREFERENCES_DEFAULTS.preferredCommitment);
   const [prefsLoaded, setPrefsLoaded] = useState(false);
 
+  // While a refetch loads, the last recommendations stay on screen, so the
+  // table keeps its expanded rows instead of turning back into the loader.
+  const [shown, setShown] = useState<SavingsResult | null>(null);
+  if (savingsQuery.status === 'success' && savingsQuery.data !== shown) {
+    setShown(savingsQuery.data);
+  }
   const data: SavingsResult | null =
-    savingsQuery.status === 'success' ? savingsQuery.data : null;
+    savingsQuery.status === 'success' ? savingsQuery.data : shown;
 
   // Load saved preferences once
   if (!prefsLoaded && prefsQuery.status === 'success') {
@@ -407,7 +420,7 @@ export function Savings() {
         </div>
       )}
 
-      {savingsQuery.status === 'loading' && (
+      {savingsQuery.status === 'loading' && data === null && (
         <div className="flex-1">
           <CoinRainLoader height={500} count={10} />
         </div>
@@ -416,6 +429,10 @@ export function Savings() {
         <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3 text-sm text-negative break-words">
           {savingsQuery.error.message}
         </div>
+      )}
+
+      {data !== null && data.unreadSnapshots.length > 0 && (
+        <UnreadSnapshots unread={data.unreadSnapshots} othersShown={data.recommendations.length > 0} />
       )}
 
       {filtered.length > 0 && (
@@ -431,11 +448,34 @@ export function Savings() {
         </div>
       )}
 
-      {data !== null && data.recommendations.length === 0 && (
+      {data !== null && data.recommendations.length === 0 && data.unreadSnapshots.length === 0 && (
         <div className="rounded-xl border border-border bg-bg-secondary/50 p-12 text-center text-text-secondary">
           No cost optimization data available. Download cost optimization data from the Data tab.
         </div>
       )}
+    </div>
+  );
+}
+
+/** The latest snapshots that are on disk but could not be read: their
+ *  recommendations are missing, which is not the same as having none. */
+function UnreadSnapshots({ unread, othersShown }: Readonly<{ unread: readonly UnreadSavingsSnapshot[]; othersShown: boolean }>) {
+  const whose = unread.length === 1 ? 'its' : 'their';
+  return (
+    <div role="alert" className="flex flex-col gap-2 rounded-lg border border-negative/50 bg-negative-muted px-4 py-3 text-sm">
+      <p className="font-medium text-negative">Cost optimization data could not be read</p>
+      <ul className="flex flex-col gap-1.5">
+        {unread.map(u => (
+          <li key={`${u.providerName} ${u.date}`} className="flex flex-col gap-0.5">
+            <span className="text-text-primary">{`${u.providerName}, export of ${u.date}`}</span>
+            <span className="text-xs text-text-secondary font-mono whitespace-pre-wrap break-words">{u.error}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="text-xs text-text-secondary">
+        {othersShown ? `The recommendations below do not include ${whose} latest export. ` : ''}
+        The data was downloaded but could not be read: downloading the cost optimization data again from the Data tab may fix a damaged file.
+      </p>
     </div>
   );
 }

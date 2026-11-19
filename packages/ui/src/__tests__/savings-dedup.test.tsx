@@ -65,6 +65,7 @@ class SavingsApi extends MockCostApi {
       recommendations: this.recommendations,
       totalMonthlySavings: asDollars(0),
       snapshots: [{ providerName: 'aws-main', date: '2026-10-13' }],
+      unreadSnapshots: [],
     });
   }
 

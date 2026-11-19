@@ -1,7 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { SavingsPreferences, SavingsPreferencesUpdate, SavingsRecommendation, SavingsResult } from '@costgoblin/core/browser';
+import type { SavingsPreferences, SavingsPreferencesUpdate, SavingsRecommendation, SavingsResult, UnreadSavingsSnapshot } from '@costgoblin/core/browser';
 import { asDollars } from '@costgoblin/core/browser';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
@@ -99,11 +99,12 @@ const RECS: readonly SavingsRecommendation[] = [RIGHTSIZE_BIG, RIGHTSIZE_SMALL, 
 class SavingsApi extends MockCostApi {
   recommendations: readonly SavingsRecommendation[] = RECS;
   hidden: readonly string[] = [];
+  unread: readonly UnreadSavingsSnapshot[] = [];
   readonly saved: SavingsPreferencesUpdate[] = [];
 
   override querySavings(): Promise<SavingsResult> {
     const total = this.recommendations.reduce((s, r) => s + r.monthlySavings, 0);
-    return Promise.resolve({ recommendations: this.recommendations, totalMonthlySavings: asDollars(total), snapshots: [] });
+    return Promise.resolve({ recommendations: this.recommendations, totalMonthlySavings: asDollars(total), snapshots: [], unreadSnapshots: this.unread });
   }
 
   override getSavingsPreferences(): Promise<SavingsPreferences> {
@@ -324,5 +325,33 @@ describe('Savings — states', () => {
     await user.click(settingsButton());
     await waitFor(() => { expect(settingsButton().className.split(' ')).toContain('bg-bg-tertiary'); });
     expect(screen.queryByText('Visible recommendation types')).toBeNull();
+  });
+
+  it('says which snapshot could not be read, not that there is no data', async () => {
+    const api = new SavingsApi();
+    api.recommendations = [];
+    api.unread = [{ providerName: 'aws-main', date: '2026-10-13', error: 'Invalid Input Error: File too small to be a Parquet file' }];
+    renderSavings(api);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('Cost optimization data could not be read');
+    expect(within(alert).getByText('aws-main, export of 2026-10-13')).toBeDefined();
+    expect(within(alert).getByText('Invalid Input Error: File too small to be a Parquet file')).toBeDefined();
+    expect(screen.queryByText(/No cost optimization data available/)).toBeNull();
+  });
+
+  it('lists the recommendations that were read next to the snapshots that were not', async () => {
+    const api = new SavingsApi();
+    api.unread = [
+      { providerName: 'aws-a', date: '2026-10-13', error: 'first failure' },
+      { providerName: 'aws-b', date: '2026-10-12', error: 'second failure' },
+    ];
+    renderSavings(api);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('aws-a, export of 2026-10-13');
+    expect(alert.textContent).toContain('aws-b, export of 2026-10-12');
+    expect(alert.textContent).toContain('The recommendations below do not include their latest export.');
+    expect(rowFor('Downsize to m5.xlarge')).toBeDefined();
   });
 });
