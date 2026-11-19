@@ -17,8 +17,9 @@ import { PaletteProvider } from '../hooks/use-palette.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CustomView } from '../views/custom-view.js';
 import { setReducedMotion } from './setup.js';
+import { pinDate } from './helpers/pin-date.js';
 
-// The clock is pinned (see beforeEach), so the default "last 30 days" range is
+// The clock is pinned (see pinDate below), so the default "last 30 days" range is
 // 2026-02-11 → 2026-03-13 (lag 2 days).
 const DEFAULT_START = '2026-02-11';
 const DEFAULT_END = '2026-03-13';
@@ -127,9 +128,9 @@ async function dragBars(fromX: number, toX: number): Promise<void> {
   fireEvent.mouseUp(window);
 }
 
+pinDate('2026-03-15T12:00:00Z');
+
 beforeEach(() => {
-  vi.useFakeTimers({ toFake: ['Date'] });
-  vi.setSystemTime(new Date('2026-03-15T12:00:00Z'));
   // Hold the widgets' coin-rain loaders still. Animated, each sets state on
   // every frame, and those urgent updates keep restarting the transition
   // useQuery commits a widget's result in; on a loaded CI runner the chart
@@ -139,7 +140,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 

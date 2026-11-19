@@ -1,12 +1,13 @@
 import { render, screen, cleanup, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { asDateString, asHourString } from '@costgoblin/core/browser';
 import type { DataInventoryResult } from '@costgoblin/core/browser';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { DateRangePicker, getDefaultDateRange, lastNDaysRange, switchGranularity } from '../components/date-range-picker.js';
 import type { DateRange, Granularity } from '../components/date-range-picker.js';
+import { pinDate } from './helpers/pin-date.js';
 
 function renderPicker(overrides?: Partial<{
   value: DateRange;
@@ -27,6 +28,12 @@ function renderPicker(overrides?: Partial<{
 }
 
 afterEach(cleanup);
+
+// Today is 2026-10-21 unless a test sets another day. The picker labels a
+// range "Last 30 days" only while it equals that preset recomputed from the
+// clock, so a range built here before a UTC midnight loses its label after it
+// (see pinDate).
+pinDate('2026-10-21T12:00:00Z');
 
 describe('DateRangePicker', () => {
   it('shows active preset label on trigger button', () => {
@@ -159,11 +166,7 @@ describe('DateRangePicker', () => {
 });
 
 describe('DateRangePicker calendar periods and the freshness lag', () => {
-  afterEach(() => { vi.useRealTimers(); });
-
-  // Fake only Date so userEvent's timers keep running.
   function renderOn(isoNow: string, lagDays: number) {
-    vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date(isoNow));
     const onChange = vi.fn();
     render(<DateRangePicker value={getDefaultDateRange(lagDays)} granularity="daily" onChange={onChange} hideHourly lagDays={lagDays} />);
@@ -209,15 +212,7 @@ class InventoryApi extends MockCostApi {
 const MARCH_TO_OCT_2026: DateRange = { start: asDateString('2026-03-01'), end: asDateString('2026-10-31') };
 
 describe('DateRangePicker monthly and weekly modes', () => {
-  // Fake only Date so userEvent's timers keep running. Today is 2026-10-21 and
-  // the lag is 2 days, so the newest day is 2026-10-19. Pinned before each test
-  // rather than inside renderMode, so a range built in the test's arguments
-  // (getDefaultDateRange) is computed on the same day the picker sees.
-  beforeEach(() => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date('2026-10-21T12:00:00Z'));
-  });
-  afterEach(() => { vi.useRealTimers(); });
+  // Today is 2026-10-21 and the lag is 2 days, so the newest day is 2026-10-19.
 
   type OnChange = (range: DateRange, granularity: Granularity, lastNDays?: number) => void;
 
@@ -244,8 +239,6 @@ describe('DateRangePicker monthly and weekly modes', () => {
   });
 
   it('renders no toggle at all with hideHourly', () => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date('2026-10-21T12:00:00Z'));
     render(<DateRangePicker value={getDefaultDateRange(2)} granularity="daily" onChange={vi.fn()} hideHourly lagDays={2} />);
     for (const name of ['Monthly', 'Weekly', 'Daily', 'Hourly']) {
       expect(screen.queryByRole('button', { name })).toBeNull();
@@ -416,11 +409,6 @@ describe('switchGranularity', () => {
 
   // Today is 2026-10-21: with 30 days of hourly retention, hourly data reaches
   // back to the first day of the month of 2026-09-21, i.e. 2026-09-01.
-  beforeEach(() => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date('2026-10-21T12:00:00Z'));
-  });
-  afterEach(() => { vi.useRealTimers(); });
 
   it('widens daily and hourly ranges to the periods covering them', () => {
     expect(switchGranularity(march15, 'daily', 'monthly', ctx)).toEqual({ start: '2026-03-01', end: '2026-10-31' });

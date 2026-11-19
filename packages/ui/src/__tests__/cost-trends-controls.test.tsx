@@ -9,6 +9,7 @@ import { CostTrends } from '../views/cost-trends.js';
 import { getDefaultDateRange } from '../components/date-range-picker.js';
 import { monthsInRange } from '../lib/dates.js';
 import { setReducedMotion } from './setup.js';
+import { pinDate } from './helpers/pin-date.js';
 
 function row(entity: string, currentCost: number, previousCost: number): TrendRow {
   const delta = currentCost - previousCost;
@@ -79,6 +80,10 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
 });
+
+// The view's window is captured at mount; the picker's "Last 30 days" label
+// and the ranges built here are recomputed from the clock (see pinDate).
+pinDate('2026-10-20T12:00:00Z');
 
 describe('CostTrends — netting and totals', () => {
   it('nets an entity reported in both buckets and rates brand-new spend at +100%', async () => {

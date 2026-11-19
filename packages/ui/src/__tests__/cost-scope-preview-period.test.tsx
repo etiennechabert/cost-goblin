@@ -5,6 +5,7 @@ import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostScopeView } from '../views/cost-scope.js';
 import { daysAgo, getLastMonth } from '../lib/dates.js';
+import { pinDate } from './helpers/pin-date.js';
 
 function renderView() {
   const api = new MockCostApi();
@@ -21,6 +22,11 @@ function renderView() {
 }
 
 afterEach(cleanup);
+
+// The ranges asserted here are recomputed from the clock when the assertion
+// runs, after the preview queried its own: on the real clock a UTC midnight
+// in between puts them a day apart (see pinDate).
+pinDate('2026-10-20T12:00:00Z');
 
 /** Picks a preset from the preview card's date picker, which shows once
  *  cost-scope.yaml has loaded. */
