@@ -30,10 +30,12 @@ export const SENTRY_DATA_COLLECTION: Required<NonNullable<ElectronMainOptions['d
 };
 
 /**
- * Sentry 11 streams spans by default, and a streamed span skips
- * `beforeSendTransaction`: our channel gate, scrub and audit-outbox copy. The
- * static lifecycle keeps every trace a transaction event that goes through
- * them. Sentry 12 removes `beforeSendTransaction`; moving the gate to
- * `beforeSendSpan` has to land before that major.
+ * Sentry 11 streams spans by default, and a streamed span is no event: it
+ * skips the main process's transaction gate (an event processor, see
+ * `TelemetryController.transactionGate`), so it would leave without the
+ * channel gate, scrub and audit-outbox copy. The static lifecycle keeps every
+ * trace a transaction event that goes through them. If a later major drops
+ * the static lifecycle, the gate has to move to the span stream first: span
+ * hooks (`beforeSendSpan`) see spans one at a time and cannot drop them.
  */
 export const SENTRY_TRACE_LIFECYCLE = 'static';

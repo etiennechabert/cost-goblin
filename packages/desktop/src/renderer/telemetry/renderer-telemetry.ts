@@ -7,7 +7,7 @@ let initialized = false;
  * Lazily initialise the renderer-side Sentry SDK once the user has armed crash
  * reports or performance tracing and the main-process reporter is active.
  * Renderer events are forwarded over IPC to the main process, where the
- * `beforeSend` / `beforeSendTransaction` scrub and the channel gate apply — so
+ * `beforeSend` / transaction-gate scrub and the channel gate apply — so
  * the renderer never holds a DSN and never sends anything on its own; turning a
  * channel back off makes the main process drop whatever the renderer forwards.
  *
