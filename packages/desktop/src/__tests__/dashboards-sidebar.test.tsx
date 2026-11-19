@@ -155,7 +155,11 @@ describe('DashboardsSidebar', () => {
   it('sticks below the header and scrolls on its own', () => {
     renderSidebar({ topOffset: 80 });
     expect(sidebar().style.top).toBe('80px');
-    expect(sidebar().style.maxHeight).toBe('calc(100vh - 80px)');
+    // Compared as the DOM serializes it (`calc(-80px + 100vh)` since jsdom 31).
+    const expected = document.createElement('div');
+    expected.style.maxHeight = 'calc(100vh - 80px)';
+    expect(expected.style.maxHeight).not.toBe('');
+    expect(sidebar().style.maxHeight).toBe(expected.style.maxHeight);
     expect(sidebar().className).toContain('overflow-y-auto');
   });
 

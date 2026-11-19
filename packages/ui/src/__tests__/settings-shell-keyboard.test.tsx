@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SettingsShell } from '../components/settings-shell.js';
 import { SETTINGS_TABS } from '../settings/registry.js';
+import { normalizeCss } from './helpers/css.js';
 import type { SettingsTabId } from '../settings/registry.js';
 
 afterEach(cleanup);
@@ -141,6 +142,6 @@ describe('SettingsShell — focus follows the active tab', () => {
     );
     const rail = screen.getByRole('navigation', { name: 'Settings sections' });
     expect(rail.style.top).toBe('64px');
-    expect(rail.style.minHeight).toBe('calc(100vh - 64px)');
+    expect(rail.style.minHeight).toBe(normalizeCss('min-height', 'calc(100vh - 64px)'));
   });
 });

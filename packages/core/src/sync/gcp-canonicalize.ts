@@ -197,7 +197,7 @@ function timestampExpr(column: string, sourceType: string): string {
  *  rather than a NULL. */
 function tagEntriesExpr(present: readonly string[]): string {
   const parts = present.map(col =>
-    `COALESCE(list_transform(${quoteIdent(col)}, t -> struct_pack(k := t."Key", v := t."Value")), CAST([] AS STRUCT(k VARCHAR, v VARCHAR)[]))`,
+    `COALESCE(list_transform(${quoteIdent(col)}, lambda t: struct_pack(k := t."Key", v := t."Value")), CAST([] AS STRUCT(k VARCHAR, v VARCHAR)[]))`,
   );
   if (parts.length === 0) return `CAST([] AS STRUCT(k VARCHAR, v VARCHAR)[])`;
   if (parts.length === 1) return parts[0] ?? `CAST([] AS STRUCT(k VARCHAR, v VARCHAR)[])`;
@@ -226,8 +226,8 @@ const RESERVED_TAG_PREFIX = 'goog-';
  *  rule. Quadratic in tags-per-row, which is fine at the handful of tags a
  *  billing row actually carries. */
 const TAGS_EXPR = `map_from_entries(list_transform(
-      list_distinct(list_transform(list_filter(__tag_entries, e -> e.k IS NOT NULL AND NOT starts_with(e.k, ${quoteLiteral(RESERVED_TAG_PREFIX)})), e -> e.k)),
-      k -> struct_pack(k := k, v := list_filter(__tag_entries, e -> e.k = k)[1].v)))`;
+      list_distinct(list_transform(list_filter(__tag_entries, lambda e: e.k IS NOT NULL AND NOT starts_with(e.k, ${quoteLiteral(RESERVED_TAG_PREFIX)})), lambda e: e.k)),
+      lambda k: struct_pack(k := k, v := list_filter(__tag_entries, lambda e: e.k = k)[1].v)))`;
 
 interface Projection {
   readonly selectList: readonly string[];

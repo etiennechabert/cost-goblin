@@ -225,7 +225,7 @@ COPY (
   SELECT
     ChargePeriodStart, SubAccountId, SubAccountName,
     CAST(BilledCost AS DOUBLE) AS BilledCost, … ,
-    map_from_entries(list_transform(Tags, t -> struct_pack(k := t.Key, v := t.Value))) AS Tags,
+    map_from_entries(list_transform(Tags, lambda t: struct_pack(k := t.Key, v := t.Value))) AS Tags,
     COALESCE(x_ServiceId, ServiceName)         AS x_ServiceCode,   -- synthesized, see §5
     CAST(NULL AS VARCHAR)                      AS x_Operation,     -- synthesized
     COALESCE(SkuMeter, SkuId)                  AS SkuMeter,        -- synthesized fallback
