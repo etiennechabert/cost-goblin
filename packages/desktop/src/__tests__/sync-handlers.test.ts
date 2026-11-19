@@ -14,7 +14,7 @@ import type { DataInventory, ManifestFileEntry, ProviderName, SyncProgress } fro
 import { triggerAutoSyncNow } from '../main/auto-sync.js';
 import { changedRollupMonths, deleteLocalPeriodFiles, resolveDataType, registerSyncHandlers } from '../main/handlers/sync.js';
 import { SYNC_ALREADY_RUNNING } from '../main/sync-client.js';
-import { resetElectronFakes, shell } from './helpers/electron-fake.js';
+import { resetElectronFakes, shell, startedSpans } from './helpers/electron-fake.js';
 import {
   FIXTURE_AWS_PROVIDER,
   FIXTURE_GCP_PROVIDER,
@@ -23,6 +23,7 @@ import {
   type FixtureConfigSet,
   type Harness,
 } from './helpers/ipc-harness.js';
+import { armTracing } from './helpers/tracing.js';
 
 /** The sync / data-management IPC channels: status backfill, inventory and
  *  its local-only fallback, delete + prune cascades into the rollup, the
@@ -65,6 +66,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
   for (const h of harnesses.splice(0)) await h.dispose();
 });
 
@@ -397,6 +399,29 @@ describe('data:sync-periods', () => {
     await h.ipc.invoke('data:sync-periods', DAILY_FILES);
     expect(maintain).not.toHaveBeenCalled();
     expect(warmup).toHaveBeenCalledTimes(2);
+  });
+
+  it('traces a sync as a transaction of its own, with what it downloaded', async () => {
+    const h = await syncApp();
+    stubMaintenance(h);
+    armTracing();
+    h.sync.syncPeriods.mockResolvedValueOnce({ filesDownloaded: 2, rowsProcessed: 42 });
+
+    await h.ipc.invoke('data:sync-periods', DAILY_FILES);
+
+    // A root span whatever span the SDK has active, so it is never nested
+    // under (and, in the static trace lifecycle, cut off with) a caller's span.
+    expect(startedSpans.filter(s => s.name === 'sync.s3')).toEqual([expect.objectContaining({
+      op: 'sync.s3',
+      parent: null,
+      attributes: {
+        'sync.tier': 'daily',
+        'sync.provider': AWS,
+        'sync.files_requested': 2,
+        'sync.files_downloaded': 2,
+        'sync.rows_processed': 42,
+      },
+    })]);
   });
 
   it('still completes when the cosmetic timestamp cannot be written', async () => {
