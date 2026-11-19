@@ -241,13 +241,14 @@ describe('telemetry start', () => {
     expect(integrationNames(initOptions(), defaults)).toEqual(['SentryMinidump', 'OnUncaughtException', native.transactionGate.name]);
   });
 
-  it('has no scope event processor in the main process, which would run after the transaction gate', async () => {
+  it('registers no event processor in the main process that would run after the transaction gate', async () => {
     // The SDK runs scope event processors after every integration's, so what
     // one adds to a transaction would leave unscrubbed. Sentry's own that
-    // register one: captureConsole, pino and supabase.
+    // register one: captureConsole, pino and supabase. An integration added
+    // after init (addIntegration) puts its processor after the gate's too.
     const mainDir = fileURLToPath(new URL('../main', import.meta.url));
     const sources = (await readdir(mainDir, { recursive: true })).filter(f => /\.tsx?$/.test(f));
-    const registering = /\baddEventProcessor\s*\(|\b(?:captureConsole|pino|supabase)Integration\s*\(/;
+    const registering = /\b(?:addEventProcessor|addIntegration)\s*\(|\b(?:captureConsole|pino|supabase)Integration\s*\(/;
     const offenders: string[] = [];
     for (const file of sources) {
       if (registering.test(await readFile(join(mainDir, file), 'utf-8'))) offenders.push(file);
