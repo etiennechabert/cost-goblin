@@ -26,9 +26,11 @@ responsibilities and therefore the bug surface.
 
 It is a **per-period, pre-aggregated Parquet partition set**:
 
-- **Per-period**: one partition per month, mirroring the raw layout
+- **Per-period**: one partition per billing period, mirroring the raw layout
   (`aws/raw/daily-YYYY-MM/` → `aws/rollup/daily-YYYY-MM/`). Each partition is
-  built independently. This is the single most important decision — see §3.
+  built independently, from its own period's files, and holds every row of
+  them. This is the single most important decision — see §3 and "A partition
+  is a billing period's files, whole" below.
 - **Pre-aggregated**: grouped to `(usage_date × enabled dashboard dimensions)`,
   with the active cost metric/perspective **baked into a `cost` column** and
   exclusion rows already dropped. Not line-item grain.
@@ -54,6 +56,57 @@ aliasing stays query-time (§7).
 - `resource_id`-class ultra-high-cardinality dims are **raw-only** (§6): never in
   the rollup; widgets grouping by them fall back to raw. Enforced by the
   estimator threshold (§8), not a hardcoded list.
+
+### A partition is a billing period's files, whole
+
+A raw directory is a **billing period**, not a calendar month: its files hold
+days of other months too. Measured on real exports (November 2026):
+
+| Export | Days a period's files hold, besides its own month |
+|---|---|
+| Google Cloud (the exporter selects on `BillingPeriodStart`) | the month before, up to all of it (usage reported late), and the 1st of the month after (Google invoices by Pacific time, so the first hours of the 1st, UTC, are billed with the month before) |
+| AWS FOCUS 1.2 | up to two months after (charges for a term that starts later), and now and then the month before (credits) |
+
+In a Google month 1.2 to 2.7% of the rows are dated outside it, and the 1st of
+a month has up to a quarter of its cost in the file of the month before. On
+AWS it is a few rows in a million, a few thousandths of a percent of the cost.
+
+So:
+
+- **A partition holds every row of its period's files, whatever its date.**
+  Earlier builds kept the rows dated in the period's own month, and the others
+  were in no partition at all: the partition of the month they are dated in is
+  built from that month's files.
+- **A date range reads every period holding one of its days**, not the months
+  it touches. `periodsForRange` (core, `query/period-days.ts`) answers from
+  `PeriodDays`: for each period on disk, the UTC days its files hold.
+- **The raw path asks the same function.** Both paths read the same periods
+  and filter on `usage_date`, so a rollup-served answer is raw's, day by day,
+  and a day costs the same whatever range asks for it. A month with no files
+  of its own shows the days its neighbours hold.
+
+The day lists come from the files themselves (`buildPeriodDaysQuery`: about
+30 ms for a month of 30 million line items, the column is dictionary-encoded)
+and the desktop's `PeriodDayIndex` keeps each for as long as its period's
+files keep their names, sizes and modification times. A period whose days
+can't be read is taken by its own month, as every period was before.
+
+Two alternatives were set aside:
+
+- **Build partition M from every file's rows dated in M.** A sync of the
+  current period would then re-roll two or three partitions, each reading
+  several periods' files, instead of one reading one; a month with no files
+  would still have a partition, so the partition set would stop mirroring the
+  raw directories; and the raw path would need the day lists anyway. One
+  partition per period keeps §3 as it is: a build reads one period, a sync
+  re-rolls one partition.
+- **Read a fixed number of months around the range.** No number is safe (two
+  months on AWS, further back for a Google correction), and reading
+  neighbours a range has no day in undoes the month pruning. With the day
+  lists a range reads a neighbour only when it holds one of its days, and
+  that read costs a scan of its date column: DuckDB applies the day filter
+  there before it reads any other column (4 ms more for a third month on a
+  46 GB workspace, where the two months of the range take 67 ms).
 
 ## 3. Why per-period (the load-bearing decision)
 
@@ -88,7 +141,7 @@ data/processed/aws/
 
 ```jsonc
 {
-  "schemaVersion": 1,                  // code-owned; bump invalidates all
+  "schemaVersion": 5,                  // code-owned; bump invalidates all
   "shapeSignature": "<digest>",        // see below
   "partitions": {
     "2026-05": { "rawEtagHash": "<hash of that month's raw etag-set>",
@@ -126,7 +179,7 @@ friendly-names. One carve-out: an alias/normalize value referenced by an
 | **Warm-load** | restart with manifest present | **validate** (shape-signature + per-partition `rawEtagHash`); match → serve instantly, no rebuild; mismatch → flag for background re-roll |
 | **Incremental** | sync changes month M | re-roll **only** M's partition (file replace), update its watermark, invalidate the dashboard query cache for that range → widgets re-render |
 | **Config/metric regen** | shape-signature change | background re-roll all partitions; serve old/stale meanwhile |
-| **Serving** | any dashboard query | route to rollup glob if covered + signature valid + columns present; else raw (§6) |
+| **Serving** | any dashboard query | route to the rollup if every period holding a day of the range has a valid partition (§2) + signature valid + columns present; else raw (§6) |
 | **Eviction** | new signature / startup sweep | keep current signature's partitions; delete orphans |
 
 **No app block, ever.** Normal restart globs existing partitions and serves
@@ -226,6 +279,10 @@ second rollup per provider, `{provider}/resource-rollup/`, keeps only the pairs
 that can reach a page, and enough to **prove** when a page read from it is the
 one raw Parquet gives.
 
+- **Month.** A month here is a billing period: the files of one raw
+  directory, whole, with the days of other months they hold (§2). A range
+  reads the months `periodsForRange` gives it, as the rollup does, and the
+  tail bounds it adds up are theirs.
 - **Weight.** A pair's weight in a month is `SUM(ABS(cost))` over its line
   items. No subset of them (some days, a filter, a finer group-by) can sum
   beyond it, in either direction.

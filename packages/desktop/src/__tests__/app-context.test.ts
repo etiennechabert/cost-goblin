@@ -219,14 +219,23 @@ describe('createAppContext: config caches', () => {
   it('lists every provider with its type and its own months per tier', async () => {
     const h = await harness({ config: 'multi', data: 'synthetic' });
     expect(await h.app.getFirstProviderName()).toBe(AWS);
-    expect(await h.app.getQueryProviders('daily')).toEqual([
+    const daily = await h.app.getQueryProviders('daily');
+    expect(daily.map(({ name, type, availablePeriods }) => ({ name, type, availablePeriods }))).toEqual([
       { name: AWS, type: 'aws', availablePeriods: ['2026-01', '2026-02'] },
       { name: FIXTURE_GCP_PROVIDER, type: 'gcp', availablePeriods: ['2026-01', '2026-02'] },
     ]);
-    expect(await h.app.getQueryProviders('hourly')).toEqual([
+    const hourly = await h.app.getQueryProviders('hourly');
+    expect(hourly.map(({ name, type, availablePeriods }) => ({ name, type, availablePeriods }))).toEqual([
       { name: AWS, type: 'aws', availablePeriods: ['2026-02'] },
       { name: FIXTURE_GCP_PROVIDER, type: 'gcp', availablePeriods: [] },
     ]);
+    // Each month comes with the days its files hold, read from the files.
+    for (const provider of daily) {
+      expect(Object.keys(provider.periodDays ?? {})).toEqual(['2026-01', '2026-02']);
+      expect(provider.periodDays?.['2026-02']?.at(0)).toBe('2026-02-01');
+      expect(provider.periodDays?.['2026-02']?.at(-1)).toBe('2026-02-28');
+    }
+    expect(hourly.map(p => Object.keys(p.periodDays ?? {}))).toEqual([['2026-02'], []]);
   });
 
   it('back-fills default built-in dimensions, except those every provider lacks', async () => {

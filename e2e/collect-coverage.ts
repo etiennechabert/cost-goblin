@@ -13,8 +13,8 @@
  * This file is I/O only. Everything that can be decided without touching the
  * filesystem — shard selection, the istanbul→lcov conversion and the
  * fail-closed report audit — lives in `packages/core/src/e2e-coverage/`, which
- * `npm run check` type-checks, lints and tests; `e2e/` is covered by none of
- * the three. Keep it that way: new logic belongs on the other side.
+ * `npm run check` type-checks, lints and tests; `e2e/` is type-checked only.
+ * New logic belongs on the other side.
  */
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join, resolve, relative } from 'node:path';

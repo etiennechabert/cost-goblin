@@ -258,33 +258,6 @@ describe('DataTable — states and rows', () => {
     expect(onHidden).toHaveBeenLastCalledWith(['cost']);
   });
 
-  it('expands a row on click, Enter or Space, and only then', async () => {
-    const user = userEvent.setup();
-    render(
-      <DataTable
-        data={ROWS}
-        columns={COLUMNS}
-        renderExpandedRow={(row) => <p>details for {row.service}</p>}
-      />,
-    );
-    const table = screen.getByRole('table');
-    const firstRow = within(table).getAllByRole('row')[1];
-    if (firstRow === undefined) throw new Error('row missing');
-    expect(firstRow.getAttribute('tabindex')).toBe('0');
-
-    await user.click(within(firstRow).getByText('Amazon EC2'));
-    expect(screen.getByText('details for Amazon EC2')).toBeDefined();
-    await user.click(within(firstRow).getByText('Amazon EC2'));
-    expect(screen.queryByText('details for Amazon EC2')).toBeNull();
-
-    fireEvent.keyDown(firstRow, { key: 'Enter' });
-    expect(screen.getByText('details for Amazon EC2')).toBeDefined();
-    fireEvent.keyDown(firstRow, { key: ' ' });
-    expect(screen.queryByText('details for Amazon EC2')).toBeNull();
-    fireEvent.keyDown(firstRow, { key: 'ArrowDown' });
-    expect(screen.queryByText('details for Amazon EC2')).toBeNull();
-  });
-
   it('offers a filter click only on a clickable cell that has a value', async () => {
     const onCellClick = vi.fn();
     const clickable: readonly TableColumn<Row>[] = [

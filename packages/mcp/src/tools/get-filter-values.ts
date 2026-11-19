@@ -1,7 +1,7 @@
 import {
   asDimensionId,
   buildSource,
-  computePeriodsInRange,
+  providerBranchesForRange,
   QueryBuilder,
   resolveField,
   logger,
@@ -60,16 +60,9 @@ export async function getFilterValues(
   const endParam = qb.addParam(dateRange.end);
 
   const allProviders = await getQueryProviders(ctx, 'daily');
-  const required = computePeriodsInRange(dateRange);
-  // Per-provider month intersection; providers with nothing in range are
-  // dropped (a zero-match glob fails the whole union).
-  const branches = allProviders
-    .map(pr => ({
-      name: pr.name,
-      type: pr.type,
-      periods: required.filter(m => pr.availablePeriods?.includes(m) ?? false),
-    }))
-    .filter(b => b.periods.length > 0);
+  // The billing periods holding a day of the range, per provider; providers
+  // with nothing in range are dropped (a zero-match glob fails the whole union).
+  const branches = providerBranchesForRange(allProviders, dateRange);
   if (branches.length === 0) {
     return emptyRangeResult(ctx, dateRange, format, `${dimLabel} Values (${dateRange.start} to ${dateRange.end})`);
   }

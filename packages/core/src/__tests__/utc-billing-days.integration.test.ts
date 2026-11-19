@@ -18,6 +18,7 @@ import type { DimensionsConfig } from '../types/config.js';
 import type { CostScopeConfig } from '../types/cost-scope.js';
 import type { DateRange } from '../types/query.js';
 import { runPrepared } from './helpers/duckdb-rows.js';
+import { FILED_SERVICE, writeAwsUsageRows } from './helpers/filed-rows.js';
 
 /**
  * Billing days are UTC days, whatever time zone the machine runs in.
@@ -36,7 +37,7 @@ import { runPrepared } from './helpers/duckdb-rows.js';
  */
 
 const PROVIDER = asProviderName('aws');
-const EC2 = 'Amazon Elastic Compute Cloud';
+const EC2 = FILED_SERVICE;
 const ZONES = ['America/Los_Angeles', 'Europe/Berlin', 'Asia/Tokyo', 'UTC'] as const;
 
 // One power of two per row, so every total names exactly the rows it counts.
@@ -92,23 +93,10 @@ beforeAll(async () => {
   try {
     for (const tier of ['daily', 'hourly'] as const) {
       for (const month of MONTHS) {
-        const dir = join(dataDir, String(PROVIDER), 'raw', `${tier}-${month}`);
-        await mkdir(dir, { recursive: true });
-        // Written with an explicit +00 offset, so the instant does not depend
-        // on this instance's zone; the column is tz-aware, as AWS writes it.
-        const values = ROWS.filter(r => r.month === month).map(r =>
-          `(TIMESTAMPTZ '${r.start}+00', '111', 'Prod', 'eu-west-1', '${EC2}', 'AmazonEC2', 'Compute', 'usage',
-            1.0, ${String(r.cost)}::DOUBLE, 'arn:res', ${String(r.cost)}::DOUBLE, ${String(r.cost)}::DOUBLE,
-            'Usage', 'Standard', '', 'RunInstances', 'BoxUsage', MAP {'team': 'core'})`);
-        await conn.run(`
-          COPY (
-            SELECT * FROM (VALUES ${values.join(',\n')}) AS t(ChargePeriodStart, SubAccountId, SubAccountName, RegionId,
-                   ServiceName, x_ServiceCode, ServiceCategory, ChargeDescription,
-                   ConsumedQuantity, ListCost, ResourceId, EffectiveCost, BilledCost,
-                   ChargeCategory, PricingCategory, CommitmentDiscountStatus,
-                   x_Operation, SkuMeter, Tags)
-          ) TO ${sqlStringLiteral(join(dir, 'data.parquet').replaceAll('\\', '/'))} (FORMAT PARQUET)
-        `);
+        // The column is tz-aware, as AWS writes it, and each instant is
+        // written with its offset, so it does not depend on this instance's zone.
+        const rows = ROWS.filter(r => r.month === month).map(r => ({ start: r.start, cost: r.cost, resource: 'arn:res', description: 'usage' }));
+        await writeAwsUsageRows(conn, join(dataDir, String(PROVIDER), 'raw', `${tier}-${month}`), rows);
       }
     }
   } finally {

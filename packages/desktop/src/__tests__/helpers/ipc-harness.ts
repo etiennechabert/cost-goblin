@@ -24,9 +24,9 @@ import { newIpcScope, type IpcScope } from './electron-fake.js';
  *   shared tree is read by other suites.
  * - DuckDB: an in-process `@duckdb/node-api` instance standing in for the
  *   worker-backed client, rows drained exactly as the worker does. Rollup
- *   partition builds are refused unless asked for, so the background warmups
- *   a handler kicks stay cheap; when they are asked for, `dispose` waits for
- *   them before it deletes the workspace.
+ *   partition builds (the COPY statements) are refused unless asked for, so
+ *   the background warmups a handler kicks stay cheap; when they are asked
+ *   for, `dispose` waits for them before it deletes the workspace.
  * - Sync: a fake `SyncClient` whose calls each test scripts.
  */
 
@@ -151,7 +151,12 @@ export function createHarnessDb(options: { readonly rollupBuilds?: boolean } = {
     },
     runBuildQuery(sql: string, onStarted?: () => void): Promise<RawRow[]> {
       statements.push(sql);
-      if (options.rollupBuilds !== true) return Promise.reject(new Error('rollup builds are disabled in this harness'));
+      // A partition build writes its file with COPY. The other statements run
+      // as builds are small reads many queries wait on (which days a month's
+      // files hold), so they always run.
+      if (options.rollupBuilds !== true && /^\s*COPY\b/i.test(sql)) {
+        return Promise.reject(new Error('rollup builds are disabled in this harness'));
+      }
       return serial(async () => {
         const { instance: db } = await connection();
         const fresh = await db.connect();
@@ -175,6 +180,13 @@ export function createHarnessDb(options: { readonly rollupBuilds?: boolean } = {
       instance = null;
     },
   };
+}
+
+/** The statements a request ran, without the reads of which days each month's
+ *  files hold (`PeriodDayIndex`): those run once per month whatever is asked,
+ *  the first time anything asks for the providers. */
+export function queryStatements(db: HarnessDb): string[] {
+  return db.statements.filter(sql => !sql.includes(' AS day FROM '));
 }
 
 export interface FakeSyncClient extends SyncClient {

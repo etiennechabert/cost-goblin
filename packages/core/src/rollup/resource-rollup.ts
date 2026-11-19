@@ -23,11 +23,20 @@ import { rollupGrainColumns } from './grain.js';
  * its last row costs more than the tail bounds of the range's months add up
  * to: nothing left out can reach it. A month with no pair left out is
  * COMPLETE, and answers any question about its pairs.
+ *
+ * A MONTH here is a billing period: the files of one raw directory, whole.
+ * They hold days of other months too (query/period-days.ts), so a pair's
+ * weight in a month is over every row of its files, and the months of a range
+ * are the periods holding one of its days (`periodsForRange`), which are the
+ * ones a query reads. An unstored pair's rows in a range all come from those
+ * periods, and in each of them they weigh no more than its tail bound.
  */
 
 /** Bump to invalidate every persisted resource rollup: its stored columns, or
- *  what a weight or a tail bound means, changed. */
-export const RESOURCE_ROLLUP_SCHEMA_VERSION = 1;
+ *  what a weight or a tail bound means, changed.
+ *  v2: a month is a billing period's files, whole: its weights and rows count
+ *  the rows dated in other months too (see the rollup's v5). */
+export const RESOURCE_ROLLUP_SCHEMA_VERSION = 2;
 
 /** How many pairs each month adds to the heavy set. Twenty thousand pairs are
  *  about 700,000 rows and 25 MB a month on a bill with nine million pairs a

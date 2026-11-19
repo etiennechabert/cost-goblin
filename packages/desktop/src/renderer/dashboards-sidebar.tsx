@@ -133,7 +133,15 @@ interface PeekProps extends DockedProps {
 /** The unpinned sidebar: a thin strip along the window's left edge, marked
  *  by a tab level with the dashboard's title, reveals it, and it slides in over the dashboard instead of taking a column, so the
  *  widgets keep the full width. It hides again shortly after the pointer
- *  leaves it, once a dashboard is picked, on Escape, or when focus moves out. */
+ *  leaves it, once a dashboard is picked, on Escape, or when focus moves out.
+ *
+ *  The pointer arriving is read from `onPointerOver`, never `onPointerEnter`.
+ *  React builds its enter from a pointerout / pointerover pair, and Chromium
+ *  sends no pointerout when the element the pointer was on has left the page
+ *  (a widget swapping its loading state, the splash, the docked sidebar): the
+ *  pointerover alone names an element React manages, React takes the pair as
+ *  handled, and the enter never fires. The strip has no children and the
+ *  tab's icon takes no pointer events, so for them an over is an enter. */
 function PeekSidebar({ id, rows, topOffset, onPinnedChange, open, onOpenChange, toggleRef }: PeekProps): React.JSX.Element {
   const navRef = useRef<HTMLElement>(null);
   const revealTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -221,7 +229,7 @@ function PeekSidebar({ id, rows, topOffset, onPinnedChange, open, onOpenChange, 
         aria-hidden="true"
         className="fixed bottom-0 left-0 z-40 w-2"
         style={{ top: topOffset }}
-        onPointerEnter={revealSoon}
+        onPointerOver={revealSoon}
         onPointerLeave={leaveEdge}
       />
       {/* The edge strip is invisible: this tab shows the sidebar is there.
@@ -237,14 +245,14 @@ function PeekSidebar({ id, rows, topOffset, onPinnedChange, open, onOpenChange, 
           'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-primary',
         ].join(' ')}
         style={{ top: topOffset + VIEW_PADDING_PX }}
-        onPointerEnter={revealSoon}
+        onPointerOver={revealSoon}
         onPointerLeave={leaveEdge}
         onClick={() => {
           cancel(revealTimer);
           onOpenChangeRef.current(true);
         }}
       >
-        <PanelLeftOpen size={14} />
+        <PanelLeftOpen size={14} className="pointer-events-none" />
       </button>
       <nav
         ref={navRef}
@@ -259,7 +267,8 @@ function PeekSidebar({ id, rows, topOffset, onPinnedChange, open, onOpenChange, 
           open ? 'translate-x-0' : '-translate-x-full',
         ].join(' ')}
         style={{ top: topOffset, visibility: open ? 'visible' : 'hidden' }}
-        onPointerEnter={() => {
+        // Runs again for each element the pointer crosses inside the sidebar.
+        onPointerOver={() => {
           pointerInside.current = true;
           cancel(hideTimer);
         }}
