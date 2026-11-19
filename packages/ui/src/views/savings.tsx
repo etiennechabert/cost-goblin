@@ -460,6 +460,7 @@ export function Savings() {
 /** The latest snapshots that are on disk but could not be read: their
  *  recommendations are missing, which is not the same as having none. */
 function UnreadSnapshots({ unread, othersShown }: Readonly<{ unread: readonly UnreadSavingsSnapshot[]; othersShown: boolean }>) {
+  const whose = unread.length === 1 ? 'its' : 'their';
   return (
     <div role="alert" className="flex flex-col gap-2 rounded-lg border border-negative/50 bg-negative-muted px-4 py-3 text-sm">
       <p className="font-medium text-negative">Cost optimization data could not be read</p>
@@ -472,7 +473,7 @@ function UnreadSnapshots({ unread, othersShown }: Readonly<{ unread: readonly Un
         ))}
       </ul>
       <p className="text-xs text-text-secondary">
-        {othersShown ? `The recommendations below do not include ${unread.length === 1 ? 'its' : 'their'} latest export. ` : ''}
+        {othersShown ? `The recommendations below do not include ${whose} latest export. ` : ''}
         The data was downloaded but could not be read: downloading the cost optimization data again from the Data tab may fix a damaged file.
       </p>
     </div>
