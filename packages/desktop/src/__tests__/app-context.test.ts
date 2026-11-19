@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { listLocalMonths, loadConfig, logger, providerEtagPath } from '@costgoblin/core';
 import type { ProviderAuth, ProviderName } from '@costgoblin/core';
 import { isAnyCredentialError, loadOrgAccountsMap, prefsPath, toUserFriendlyError } from '../main/handlers/context.js';
+import { telemetry } from '../main/telemetry/controller.js';
+import { startedSpans } from './helpers/electron-fake.js';
 import {
   FIXTURE_AWS_PROVIDER,
   FIXTURE_GCP_PROVIDER,
@@ -479,6 +481,28 @@ describe('createAppContext: rollup lifecycle', () => {
     const readsResourceRollup = (sql: string): boolean => sql.includes('resource-rollup');
     expect(builds.mock.calls.filter(([sql]) => readsResourceRollup(sql)).length).toBeGreaterThan(0);
     expect(pooled.mock.calls.filter(([sql]) => readsResourceRollup(sql))).toEqual([]);
+  });
+
+  it('traces a warm-up and a re-roll each as a transaction of its own, with its partition builds under it', async () => {
+    vi.spyOn(telemetry, 'isTracingActive').mockReturnValue(true);
+    startedSpans.splice(0);
+    const h = await built();
+
+    // Root spans whatever span the SDK has active: the warm-up outlives the
+    // call that starts it, so under a caller's span it would be cut off.
+    const warmups = startedSpans.filter(s => s.name === 'rollup.warmup');
+    expect(warmups).toEqual([expect.objectContaining({ op: 'rollup.warmup', parent: null, attributes: { 'rollup.periods': 2 } })]);
+    expect(startedSpans.filter(s => s.name === 'rollup.build' && s.parent === warmups[0])).toHaveLength(2);
+
+    startedSpans.splice(0);
+    const maintain = vi.spyOn(h.app.rollupStore, 'maintainPeriods');
+    h.app.maintainRollup(['2026-02']);
+    await vi.waitFor(() => { expect(maintain).toHaveBeenCalled(); });
+    await settled(maintain.mock.results[0]?.value);
+
+    const rerolls = startedSpans.filter(s => s.name === 'rollup.maintain');
+    expect(rerolls).toEqual([expect.objectContaining({ op: 'rollup.maintain', parent: null, attributes: { 'rollup.periods': 1 } })]);
+    expect(startedSpans.filter(s => s.name === 'rollup.build' && s.parent === rerolls[0])).toHaveLength(1);
   });
 
   it('settles without building when nothing is configured', async () => {

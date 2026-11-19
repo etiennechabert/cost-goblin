@@ -9,7 +9,7 @@ import { RollupStore, type BuildPartitionSql, type RollupShape } from '../rollup
 import { ResourceRollupStore, type ResourceBuildSql } from '../resource-rollup-store.js';
 import { PeriodDayIndex } from '../period-day-index.js';
 import { isQueryEngineUnavailable } from '../query-engine-errors.js';
-import { traceSpan, SPAN_OP, type SpanOptions } from '../telemetry/tracing.js';
+import { traceRootSpan, traceSpan, SPAN_OP, type SpanOptions } from '../telemetry/tracing.js';
 import { BaselineStore, type BaselineEngineDeps } from '../baselines-store.js';
 import {
   applyRegionFriendlyNames,
@@ -706,11 +706,12 @@ export function createAppContext(ctx: IpcContext): AppContext {
       // Paused: the months validated above are served, the others read raw.
       if (rollupBuildsPaused) { rollupStore.markSettled(); return; }
       const buildSql = await buildRollupSqlFor(provider);
-      // Wrap the fire-and-forget rebuild in a transaction (the span is tied to the
-      // promise, so it stays open until the background builds settle), mirroring
-      // rollup.maintain — the rollup.build child spans nest under it.
-      const built = traceSpan(
-        { name: 'rollup.warmup', op: SPAN_OP.rollupWarmup, forceTransaction: true, attributes: { 'rollup.periods': toBuild.length } },
+      // Wrap the fire-and-forget rebuild in a transaction of its own (the span is
+      // tied to the promise, so it stays open until the background builds
+      // settle), mirroring rollup.maintain — the rollup.build child spans nest
+      // under it.
+      const built = traceRootSpan(
+        { name: 'rollup.warmup', op: SPAN_OP.rollupWarmup, attributes: { 'rollup.periods': toBuild.length } },
         () => rollupStore.maintainPeriods(toBuild, buildSql, etags, shape),
       ).then(() => { resultCache.clear(); });
       scheduleResourceRollup(built);
@@ -756,8 +757,8 @@ export function createAppContext(ctx: IpcContext): AppContext {
         await rollupStore.loadAndValidate(shape, etags);
       }
       const buildSql = await buildRollupSqlFor(provider);
-      await traceSpan(
-        { name: 'rollup.maintain', op: SPAN_OP.rollupMaintain, forceTransaction: true, attributes: { 'rollup.periods': periods.length } },
+      await traceRootSpan(
+        { name: 'rollup.maintain', op: SPAN_OP.rollupMaintain, attributes: { 'rollup.periods': periods.length } },
         () => rollupStore.maintainPeriods(periods, buildSql, etags, shape, { force: true }),
       );
       resultCache.clear();

@@ -26,6 +26,14 @@ const DSN_ENV = 'COSTGOBLIN_SENTRY_DSN';
 /** Optional self-hosted tunnel/relay endpoint (Sentry `tunnel` option). */
 const TUNNEL_ENV = 'COSTGOBLIN_SENTRY_TUNNEL';
 
+/** An integration whose only part is an event processor. The SDK runs each
+ *  integration's processor on every event it builds, in the order the
+ *  integrations are listed; this one reads only the event. */
+interface EventGateIntegration {
+  readonly name: string;
+  processEvent(event: Event): Event | null;
+}
+
 /**
  * Owns the opt-in Sentry SDK lifecycle in the main process. `Sentry.init` only
  * runs — and nothing is captured or sent — when the user has enabled a channel
@@ -47,6 +55,19 @@ class TelemetryController {
   // not what Crashpad/tracing are doing until the next launch.
   private initSnapshot: TelemetryPreferences | null = null;
   private outbox: TelemetryOutbox | null = null;
+
+  /**
+   * The channel gate, scrub and audit-outbox copy for transactions, run by
+   * the SDK as an event processor. It is installed after every other
+   * integration, so it sees each transaction last, once every other processor
+   * has added what it adds, as `beforeSendTransaction` did: Sentry 11.10
+   * deprecates that hook, which span streaming ignores (sentry-privacy.ts).
+   * Every other event passes through it untouched: `beforeSend` handles errors.
+   */
+  readonly transactionGate: EventGateIntegration = {
+    name: 'CostGoblinTransactionGate',
+    processEvent: (event) => (event.type === 'transaction' ? this.scrubAndRecord(event) : event),
+  };
 
   /** Called once at startup with the directory that holds the audit log. */
   initialize(outboxDir: string): void {
@@ -160,8 +181,11 @@ class TelemetryController {
         // separate opt-in: keep every default integration only when the native
         // channel is on; otherwise drop SentryMinidump — the first default, which
         // arms the native crash handler. Scrubbed JS error capture flows either way.
-        integrations: (defaults) =>
-          this.prefs.nativeCrashReports ? defaults : defaults.filter((i) => i.name !== 'SentryMinidump'),
+        // The transaction gate goes last, so its event processor runs last.
+        integrations: (defaults) => [
+          ...(this.prefs.nativeCrashReports ? defaults : defaults.filter((i) => i.name !== 'SentryMinidump')),
+          this.transactionGate,
+        ],
         // Tracing only when the performance channel is on. Dev (unpackaged, with
         // a DSN set) samples everything; packaged releases sample at the prod rate.
         tracesSampleRate: this.prefs.performance ? this.tracesSampleRate() : 0,
@@ -169,11 +193,10 @@ class TelemetryController {
         // variables — our scrub is the backstop, but default-off is the first
         // line of defence.
         dataCollection: SENTRY_DATA_COLLECTION,
-        // Every trace stays a transaction event, so beforeSendTransaction below
+        // Every trace stays a transaction event, so the transaction gate above
         // gates, scrubs and records it.
         traceLifecycle: SENTRY_TRACE_LIFECYCLE,
         beforeSend: (event) => this.scrubAndRecord(event),
-        beforeSendTransaction: (event) => this.scrubAndRecord(event),
       });
       this.active = true;
       this.initSnapshot = this.prefs;
@@ -201,9 +224,9 @@ class TelemetryController {
     }
   }
 
-  /** beforeSend / beforeSendTransaction hook: gate by channel, scrub PII, and
+  /** beforeSend hook and transaction gate: gate by channel, scrub PII, and
    *  mirror to the audit outbox. Returning null drops the event. Generic so the
-   *  SDK's ErrorEvent / TransactionEvent return types are preserved. */
+   *  SDK's ErrorEvent return type is preserved. */
   private scrubAndRecord<T extends Event>(event: T): T | null {
     // Gate by channel. Native crash events (Crashpad minidumps, which
     // @sentry/electron emits with platform: 'native' via captureEvent) belong to
