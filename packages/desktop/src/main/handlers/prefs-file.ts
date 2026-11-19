@@ -52,7 +52,7 @@ export async function updatePrefsFile(
 async function readCurrent(filePath: string): Promise<Readonly<Record<string, unknown>>> {
   let raw: string;
   try {
-    raw = await readFile(filePath, 'utf-8');
+    raw = await retryRefused(() => readFile(filePath, 'utf-8'));
   } catch (err: unknown) {
     if (isEnoent(err)) return {};
     throw err;
@@ -64,26 +64,27 @@ async function readCurrent(filePath: string): Promise<Readonly<Record<string, un
   return {};
 }
 
-// What Windows fails a rename with while another handle is open on the target
-// or on the temp file: antivirus or the indexer looking at the file just
-// written, or one of this app's own readers in the middle of a read. Each lets
-// go within milliseconds.
-const RENAME_REFUSED_CODES: readonly string[] = ['EPERM', 'EACCES', 'EBUSY'];
-const RENAME_RETRY_DELAYS_MS: readonly number[] = [25, 50, 100];
+// What Windows fails a read or a rename with while another handle is open on
+// the file: antivirus or the indexer looking at the file just written, or one
+// of this app's own readers in the middle of a read. Each lets go within
+// milliseconds. A read can also briefly find no descriptor free (EMFILE).
+const REFUSED_CODES: readonly string[] = ['EPERM', 'EACCES', 'EBUSY', 'EMFILE'];
+const RETRY_DELAYS_MS: readonly number[] = [25, 50, 100];
 
-/** Renames `tempPath` over `filePath`, waiting out a refusal. Resolves null
- *  once renamed, or the code the last refusal carried when the retries ran
- *  out. Any other failure rejects. */
-async function renameOver(tempPath: string, filePath: string): Promise<string | null> {
+function isRefusal(err: unknown): boolean {
+  const code = errnoCode(err);
+  return code !== undefined && REFUSED_CODES.includes(code);
+}
+
+/** Runs `op`, waiting out a refusal (`REFUSED_CODES`). The last refusal, or
+ *  any other failure, rejects. */
+async function retryRefused<T>(op: () => Promise<T>): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     try {
-      await rename(tempPath, filePath);
-      return null;
+      return await op();
     } catch (err: unknown) {
-      const code = errnoCode(err);
-      if (code === undefined || !RENAME_REFUSED_CODES.includes(code)) throw err;
-      const delayMs = RENAME_RETRY_DELAYS_MS[attempt];
-      if (delayMs === undefined) return code;
+      const delayMs = RETRY_DELAYS_MS[attempt];
+      if (delayMs === undefined || !isRefusal(err)) throw err;
       await sleep(delayMs);
     }
   }
@@ -94,26 +95,32 @@ async function renameOver(tempPath: string, filePath: string): Promise<string | 
  *  file.
  *
  *  The one exception is a rename the system keeps refusing (Windows, see
- *  `RENAME_REFUSED_CODES`): after the retries the file is written in place,
- *  which is what every save did before, so a held file costs that save its
- *  atomicity rather than the preference. The codes are not checked against the
+ *  `REFUSED_CODES`): after the retries the file is written in place, which is
+ *  what every save did before, so a held file costs that save its atomicity
+ *  rather than the preference. The codes are not checked against the
  *  platform: elsewhere they mean a file or directory this process may not
  *  replace, where the in-place write fails the same way and rejects. */
 async function replaceFile(filePath: string, contents: string): Promise<void> {
   // Beside the target, so the rename never crosses a filesystem; unique, so no
   // two writers (another path's chain, another process) ever share one.
   const tempPath = `${filePath}.${randomUUID()}.tmp`;
+  let renamed = false;
   try {
     // Flushed, so the rename can't reach the disk before the data does and
     // leave a power cut with a renamed but empty file.
     await writeFile(tempPath, contents, { flush: true });
-    const refusedWith = await renameOver(tempPath, filePath);
-    if (refusedWith === null) return;
-    logger.warn(`prefs: could not rename over ${basename(filePath)} (${refusedWith}); writing it in place`);
+    try {
+      await retryRefused(() => rename(tempPath, filePath));
+      renamed = true;
+      return;
+    } catch (err: unknown) {
+      if (!isRefusal(err)) throw err;
+      logger.warn(`prefs: could not rename over ${basename(filePath)} (${String(errnoCode(err))}); writing it in place`);
+    }
     await writeFile(filePath, contents);
   } finally {
-    // Already gone after a rename. Best effort otherwise: a temp file something
-    // still holds stays behind, and nothing reads it.
-    await rm(tempPath, { force: true }).catch(() => undefined);
+    // Best effort: a temp file something still holds stays behind, and
+    // nothing reads it.
+    if (!renamed) await rm(tempPath, { force: true }).catch(() => undefined);
   }
 }

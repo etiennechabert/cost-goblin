@@ -1,5 +1,5 @@
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { readFile, rename, writeFile } from 'node:fs/promises';
+import { readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -17,6 +17,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     ...actual,
     readFile: vi.fn(actual.readFile),
     rename: vi.fn(actual.rename),
+    rm: vi.fn(actual.rm),
     writeFile: vi.fn(actual.writeFile),
   };
 });
@@ -48,6 +49,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.mocked(readFile).mockReset();
   vi.mocked(rename).mockReset();
+  vi.mocked(rm).mockReset();
   vi.mocked(writeFile).mockReset();
   vi.mocked(sleep).mockReset();
   vi.restoreAllMocks();
@@ -71,8 +73,10 @@ describe('updatePrefsFile — atomic replace', () => {
     // so the rename never crosses a filesystem.
     expect(atRename).toStrictEqual([{ to: prefsFile, tempDir: dir, target: OLD_TEXT, temp: { ...OLD, theme: 'light' } }]);
     expect(onDisk()).toStrictEqual({ ...OLD, theme: 'light' });
-    // Nothing ever wrote to the target itself.
+    // Nothing ever wrote to the target itself, and the renamed temp file
+    // needs no removal.
     expect(writtenPaths()).not.toContain(prefsFile);
+    expect(rm).not.toHaveBeenCalled();
   });
 
   it('leaves no temp file behind, whether it replaces the file or creates it', async () => {
@@ -175,18 +179,29 @@ describe('updatePrefsFile — a rename the system refuses', () => {
 describe('updatePrefsFile — what the update starts from', () => {
   it('rejects and leaves alone a file that is there but cannot be read', async () => {
     writeFileSync(prefsFile, OLD_TEXT);
-    vi.mocked(readFile).mockRejectedValueOnce(errno('EACCES'));
+    vi.mocked(readFile).mockRejectedValue(errno('EACCES'));
     const mutate = vi.fn(setLight);
 
     await expect(updatePrefsFile(prefsFile, mutate)).rejects.toMatchObject({ code: 'EACCES' });
 
     // Read as "no file yet", this save would have replaced every other slice
     // with its own: a rename needs no access to the file it replaces.
+    expect(sleptMs()).toStrictEqual(RETRY_DELAYS_MS);
     expect(mutate).not.toHaveBeenCalled();
     expect(writeFile).not.toHaveBeenCalled();
     expect(rename).not.toHaveBeenCalled();
     expect(readFileSync(prefsFile, 'utf-8')).toBe(OLD_TEXT);
     expect(readdirSync(dir)).toStrictEqual([FILE_NAME]);
+  });
+
+  it('waits out a read the system refuses for a moment, and keeps the other slices', async () => {
+    writeFileSync(prefsFile, OLD_TEXT);
+    vi.mocked(readFile).mockRejectedValueOnce(errno('EBUSY'));
+
+    await updatePrefsFile(prefsFile, setLight);
+
+    expect(sleptMs()).toStrictEqual(RETRY_DELAYS_MS.slice(0, 1));
+    expect(onDisk()).toStrictEqual({ ...OLD, theme: 'light' });
   });
 
   it.each([
