@@ -1,15 +1,36 @@
-import { parseJsonObject } from '@costgoblin/core';
+import { randomUUID } from 'node:crypto';
+import { readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { basename } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
+import { logger, parseJsonObject } from '@costgoblin/core';
+import { errnoCode, isEnoent } from '../fs-errors.js';
 
 /**
- * Serializes read-modify-write cycles on a shared preferences JSON file.
+ * Read-modify-write of a shared preferences JSON file: the workspace's
+ * ui-preferences.json, explorer-preferences.json and savings-preferences.json,
+ * and the machine's app-state.json.
  *
- * Four IPC handlers persist into ui-preferences.json — `ui:save-preferences`,
- * `perf:set`, `telemetry:set-preferences` and `mcp:set-running` — each merging
- * only its own slice.
- * Run concurrently, two of them both read the old file and the later write drops
- * the earlier slice (e.g. saving a theme could clobber a just-enabled telemetry
- * opt-in). A per-path promise chain makes each read-modify-write atomic against
- * the others.
+ *  - Serialized per path. Several IPC handlers persist into one file, each
+ *    merging only its own slice (`ui:save-preferences`, `perf:set`,
+ *    `telemetry:set-preferences`, `mcp:set-running`, ...). Run concurrently,
+ *    two of them both read the old file and the later write drops the earlier
+ *    slice (saving a theme could clobber a just-enabled telemetry opt-in). A
+ *    per-path promise chain makes each read-modify-write atomic against the
+ *    others.
+ *  - Replaced, never rewritten. The readers of these files don't go through
+ *    the chain (`ui:get-preferences`, the launch-time reads in main.ts,
+ *    `readAppStateSync`, ...) and take a file that doesn't parse for one with
+ *    no preferences. The new contents therefore go to a temp file that is
+ *    renamed over the target, so a reader, or the next launch after a crash
+ *    mid-save, finds the old file or the new one, never a truncated one. See
+ *    `replaceFile` for what Windows does to that rename.
+ *  - Only a missing file is "no file yet". One that is there but can't be read
+ *    (EACCES, EISDIR, EMFILE) rejects the update: read as empty, this save
+ *    would replace every other slice with its own, and a rename needs no
+ *    access to the file it replaces. One that reads but holds no JSON object
+ *    (empty or cut short by a save from before the rename, hand-edited) has
+ *    nothing to merge and no reader that takes it for anything but defaults,
+ *    so the save starts it over, and logs that it did.
  */
 const chains = new Map<string, Promise<unknown>>();
 
@@ -19,18 +40,86 @@ export async function updatePrefsFile(
 ): Promise<void> {
   const prev = chains.get(filePath) ?? Promise.resolve();
   const next = prev.then(async () => {
-    const fs = await import('node:fs/promises');
-    let current: Readonly<Record<string, unknown>> = {};
-    try {
-      current = parseJsonObject(await fs.readFile(filePath, 'utf-8')) ?? {};
-    } catch {
-      // No file yet — start from an empty object.
-    }
-    const merged = mutate(current);
-    await fs.writeFile(filePath, JSON.stringify(merged, null, 2));
+    const merged = mutate(await readCurrent(filePath));
+    await replaceFile(filePath, JSON.stringify(merged, null, 2));
   });
   // Swallow failures on the stored chain so one failed write doesn't wedge every
   // later write on this file; the caller still observes its own rejection.
   chains.set(filePath, next.catch(() => undefined));
   return next;
+}
+
+async function readCurrent(filePath: string): Promise<Readonly<Record<string, unknown>>> {
+  let raw: string;
+  try {
+    raw = await retryRefused(() => readFile(filePath, 'utf-8'));
+  } catch (err: unknown) {
+    if (isEnoent(err)) return {};
+    throw err;
+  }
+  const parsed = parseJsonObject(raw);
+  if (parsed !== null) return parsed;
+  // The name only: the path holds the user's home directory.
+  logger.warn(`prefs: ${basename(filePath)} holds no JSON object; this save starts it over`);
+  return {};
+}
+
+// What Windows fails a read or a rename with while another handle is open on
+// the file: antivirus or the indexer looking at the file just written, or one
+// of this app's own readers in the middle of a read. Each lets go within
+// milliseconds. A read can also briefly find no descriptor free (EMFILE).
+const REFUSED_CODES: ReadonlySet<string> = new Set(['EPERM', 'EACCES', 'EBUSY', 'EMFILE']);
+const RETRY_DELAYS_MS: readonly number[] = [25, 50, 100];
+
+function isRefusal(err: unknown): boolean {
+  const code = errnoCode(err);
+  return code !== undefined && REFUSED_CODES.has(code);
+}
+
+/** Runs `op`, waiting out a refusal (`REFUSED_CODES`). The last refusal, or
+ *  any other failure, rejects. */
+async function retryRefused<T>(op: () => Promise<T>, attempt = 0): Promise<T> {
+  try {
+    return await op();
+  } catch (err: unknown) {
+    const delayMs = RETRY_DELAYS_MS[attempt];
+    if (delayMs === undefined || !isRefusal(err)) throw err;
+    await sleep(delayMs);
+    return retryRefused(op, attempt + 1);
+  }
+}
+
+/** Replaces `filePath` with `contents` by renaming a finished temp file over
+ *  it. A failed write or rename leaves the file as it was and removes the temp
+ *  file.
+ *
+ *  The one exception is a rename the system keeps refusing (Windows, see
+ *  `REFUSED_CODES`): after the retries the file is written in place, which is
+ *  what every save did before, so a held file costs that save its atomicity
+ *  rather than the preference. The codes are not checked against the
+ *  platform: elsewhere they mean a file or directory this process may not
+ *  replace, where the in-place write fails the same way and rejects. */
+async function replaceFile(filePath: string, contents: string): Promise<void> {
+  // Beside the target, so the rename never crosses a filesystem; unique, so no
+  // two writers (another path's chain, another process) ever share one.
+  const tempPath = `${filePath}.${randomUUID()}.tmp`;
+  let renamed = false;
+  try {
+    // Flushed, so the rename can't reach the disk before the data does and
+    // leave a power cut with a renamed but empty file.
+    await writeFile(tempPath, contents, { flush: true });
+    try {
+      await retryRefused(() => rename(tempPath, filePath));
+      renamed = true;
+      return;
+    } catch (err: unknown) {
+      if (!isRefusal(err)) throw err;
+      logger.warn(`prefs: could not rename over ${basename(filePath)} (${String(errnoCode(err))}); writing it in place`);
+    }
+    await writeFile(filePath, contents);
+  } finally {
+    // Best effort: a temp file something still holds stays behind, and
+    // nothing reads it.
+    if (!renamed) await rm(tempPath, { force: true }).catch(() => undefined);
+  }
 }

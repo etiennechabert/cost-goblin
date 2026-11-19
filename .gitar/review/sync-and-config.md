@@ -25,7 +25,7 @@ Covers `packages/core/src/sync/`, `packages/core/src/config/`, `packages/core/sr
 - Making a load strict (rethrowing a failure that used to fall back) changes every caller: check each one.
 - The dimensions merge drops dims on load (retired ones, ones no provider fills). A save validated against the merged dims, like cost-scope rule dimensions, must still accept them: every save carries the built-in rules. The LAN data share keeps serving and skips a broken views.yaml (`buildCurrentBundle`'s `brokenViews`).
 - Read-modify-writes of shared JSON go through `updatePrefsFile` (`packages/desktop/src/main/handlers/prefs-file.ts`), and each writer sends only its own fields.
-- Only etag sidecars, the rollup manifest, boot-time app state and the views migration use temp-file-plus-rename. Ask for it where truncation is costly, e.g. an unprompted config rewrite.
+- Only `updatePrefsFile`, etag sidecars, the rollup manifest, boot-time app state and the views migration use temp-file-plus-rename. Ask for it where truncation is costly, e.g. an unprompted config rewrite.
 - Migrations run synchronously at boot, before any worker opens a file. They are idempotent and resumable, and they touch nothing when both the old and new layout exist.
 
 ## Time
