@@ -74,7 +74,7 @@ export function registerRecommendationHandlers(app: AppContext): void {
     const [config, accountMap] = await Promise.all([getConfig(), getAccountMap()]);
     // Each provider's latest Cost Optimization Hub snapshot only: an older
     // day still lists what has since been implemented or superseded.
-    const { recommendations, snapshots } = await loadSavingsRecommendations(ctx.dataDir, config.providers, runQuery, accountMap);
-    return { recommendations, snapshots, totalMonthlySavings: countSavings(recommendations).totalMonthlySavings };
+    const { recommendations, snapshots, unreadSnapshots } = await loadSavingsRecommendations(ctx.dataDir, config.providers, runQuery, accountMap);
+    return { recommendations, snapshots, unreadSnapshots, totalMonthlySavings: countSavings(recommendations).totalMonthlySavings };
   }));
 }

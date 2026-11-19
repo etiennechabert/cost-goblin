@@ -182,11 +182,16 @@ describe('query:savings', () => {
     expect([at(rec, 'accountId'), at(rec, 'region'), at(rec, 'restartNeeded')]).toEqual(['', '', false]);
   });
 
-  it('is empty, not failed, when the latest snapshot cannot be read', async () => {
+  it('reports the latest snapshot as unread, rather than failing, when it cannot be read', async () => {
     const h = await savingsApp();
     const dir = join(h.ws.dataDir, FIXTURE_AWS_PROVIDER, 'raw', 'cost-opt-2026-10-13');
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, 'broken.parquet'), 'not parquet');
-    expect(await h.ipc.invoke('query:savings')).toEqual({ recommendations: [], totalMonthlySavings: 0, snapshots: [] });
+    expect(await h.ipc.invoke('query:savings')).toEqual({
+      recommendations: [],
+      totalMonthlySavings: 0,
+      snapshots: [],
+      unreadSnapshots: [{ providerName: FIXTURE_AWS_PROVIDER, date: '2026-10-13', error: expect.stringContaining('broken.parquet') }],
+    });
   });
 });
