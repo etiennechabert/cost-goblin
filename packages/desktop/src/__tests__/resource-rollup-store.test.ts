@@ -117,10 +117,11 @@ describe('ResourceRollupStore', () => {
     // The stores here stand for runs of the app, but share one DuckDB, as no
     // two runs do: a store that starts over writes heavy-1.parquet again, in
     // the same second, where an earlier store wrote it. On Linux the new file
-    // often gets the deleted one's inode, and DuckDB 1.5 knew a cached local
+    // can get the deleted one's inode, and DuckDB 1.5 knew a cached local
     // file by device, inode, size and mtime second, so it read the new file
     // through the old one's cached bytes ("Snappy decompression failure").
-    // DuckDB 2.0 caches no local file by default; keep it so here.
+    // DuckDB 2.0 caches no local file by default; turn the cache off here
+    // rather than depend on that default.
     await conn.run('SET enable_external_file_cache = false');
 
     // The fixture months, plus the shifting pair: one $5,000 line in January,
@@ -156,7 +157,7 @@ describe('ResourceRollupStore', () => {
   // step that failed, named here rather than as a source that is undefined.
   const warnings: string[] = [];
   logger.addHandler((entry) => { if (entry.level === 'warn') warnings.push(entry.message); });
-  afterEach(() => { expect(warnings.splice(0)).toEqual([]); });
+  afterEach(() => { expect(warnings.splice(0), 'warnings the store logged that no test expected').toEqual([]); });
 
   it('builds every month as one generation and serves the range from it', async () => {
     const dataDir = await newDataDir();
