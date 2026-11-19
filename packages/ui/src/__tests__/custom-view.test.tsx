@@ -53,6 +53,7 @@ const LAYOUT_SPEC: ViewSpec = {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -61,6 +62,17 @@ afterEach(() => {
 // and on a loaded CI runner the result only lands after ~5 s, the whole test
 // budget. setup.ts restores the preference after each test.
 beforeEach(() => { setReducedMotion(true); });
+
+// Pin Date. The view captures its default window at mount, and the picker
+// names it "Last 30 days" only while it equals that preset recomputed from
+// the clock at each render: a render after a UTC midnight shows the dates
+// instead, and the window asserted below would be a day off the one queried.
+// Fake only Date, so real timers still drive the save debounce, waitFor and
+// userEvent.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-10-20T12:00:00Z'));
+});
 
 function renderView(spec: ViewSpec = SPEC) {
   return render(
@@ -201,14 +213,6 @@ describe('CustomView', () => {
   });
 
   describe('with a cost scope lag of 7 days', () => {
-    // Pin Date so the window captured at mount and the one asserted fall on
-    // the same day even across a UTC midnight.
-    beforeEach(() => {
-      vi.useFakeTimers({ toFake: ['Date'] });
-      vi.setSystemTime(new Date('2026-10-20T12:00:00Z'));
-    });
-    afterEach(() => { vi.useRealTimers(); });
-
     function renderWithLag() {
       const api = new MockCostApi();
       vi.spyOn(api, 'getCostScope').mockResolvedValue({ ...DEFAULT_COST_SCOPE, lagDays: 7 });
