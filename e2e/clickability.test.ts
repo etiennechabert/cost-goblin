@@ -530,8 +530,10 @@ test.describe('Clickability (workspace mode)', () => {
     const heading = p.getByRole('heading', { name: 'Cost Overview' });
     const leftOf = async (l: Locator): Promise<number> => (await l.boundingBox())?.x ?? Number.NaN;
     const statePath = join(userDataDir, 'app-state.json');
-    // Main saves app-state.json in place (truncate, then write), so a read
-    // can land on an empty or half-written file: that is no answer yet.
+    // Main renames a finished file over app-state.json, except on Windows
+    // when the rename keeps being refused (this read holding the file is one
+    // reason), where it writes in place: a read can then land on an empty or
+    // half-written file, which is no answer yet.
     const savedState = (): Record<string, unknown> | null => {
       try {
         const state: unknown = JSON.parse(readFileSync(statePath, 'utf-8'));
@@ -594,9 +596,9 @@ test.describe('Clickability (workspace mode)', () => {
       await expect.poll(savedPin).toBe(true);
     } finally {
       // A failure part-way must not leave the tests after this one an
-      // unpinned sidebar: pin it on disk and reload. Main may be halfway
-      // through a save: wait for a file that parses, without replacing the
-      // failure that led here.
+      // unpinned sidebar: pin it on disk and reload. A save written in place
+      // (see `savedState`) may be halfway: wait for a file that parses,
+      // without replacing the failure that led here.
       await expect.poll(savedState).not.toBeNull().catch(() => undefined);
       const state = savedState();
       if (state?.['dashboardsSidebarPinned'] === false && !p.isClosed()) {
