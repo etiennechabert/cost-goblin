@@ -1015,7 +1015,7 @@ describe('App shell — sync status', () => {
     // Signed in again meanwhile. Within the minute the retry waits for the hung check.
     inventory.mockResolvedValue(inventoryOf([]));
     await act(async () => { await vi.advanceTimersByTimeAsync(50_000); });
-    expect(inventory.mock.calls.length).toBe(calls);
+    expect(inventory.mock.calls).toHaveLength(calls);
     expect(syncErrorAnnouncement()).toBe(SIGN_IN_ERROR);
 
     // Past it, the retry checks again, and that check clears the error.
