@@ -444,22 +444,9 @@ async function settle(page: Page, timeoutMs: number): Promise<{ ms: number; bloc
 // The query log
 // ---------------------------------------------------------------------------
 
-interface LogEntry {
-  readonly sql: string;
-  readonly status: string;
-  readonly durationMs: number | null;
-  readonly rowCount: number | null;
-  readonly error: string | null;
-  readonly cached: boolean;
-  readonly origin: string | null;
-}
-
-interface DebugBridge { getQueryLog(): Promise<LogEntry[]>; clearLog(): Promise<void> }
-
-declare global {
-  /** The preload's debug bridge, as the page.evaluate callbacks below read it. */
-  var costgoblinDebug: DebugBridge;
-}
+/** One entry of the app's query log, as the preload's debug bridge returns it
+ *  (declared in the renderer's env.d.ts, which e2e/tsconfig.json includes). */
+type LogEntry = DebugQueryLogEntry;
 
 /** A query that reads the provider's raw export rather than rollup partitions.
  *  Told from the SQL: the log's own `materialized` flag is not set by every handler. */

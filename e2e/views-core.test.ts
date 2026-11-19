@@ -505,6 +505,22 @@ test.describe('Findings', () => {
     // collapse
     await rows.first().click();
   });
+
+  // The row is a pointer target only. From the keyboard, the row's disclosure
+  // button expands it and says whether it is expanded.
+  test('the row\'s disclosure button expands and collapses it from the keyboard', async () => {
+    const toggle = page.getByRole('button', { name: 'Row details' }).first();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+
+    await toggle.focus();
+    await page.keyboard.press('Space');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.getByText('Current', { exact: true }).first()).toBeVisible({ timeout: 3000 });
+
+    await page.keyboard.press('Enter');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.getByText('Recommended', { exact: true })).toHaveCount(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -106,6 +106,38 @@ describe('resolveRollupSource', () => {
       expect(resolveRollupSource(store, unknown, { start: '2026-01-01', end: '2026-01-31' }, 'daily', columns)).toContain('daily-2026-01/rollup.parquet');
       expect(resolveRollupSource(store, unknown, { start: '2026-01-01', end: '2026-03-31' }, 'daily', columns)).toBeUndefined();
     });
+
+    // A period's files hold days of other months: January's a day of February,
+    // March's the last of February, April's (stale) one day of mid-March.
+    describe('when the days each period holds are known', () => {
+      const withDays: ProviderSourceSpec[] = [{
+        ...onDisk[0] ?? { name: provider, type: 'aws' },
+        periodDays: {
+          '2026-01': ['2026-01-01', '2026-01-31', '2026-02-01'],
+          '2026-03': ['2026-02-28', '2026-03-01', '2026-03-31'],
+          '2026-04': ['2026-03-15', '2026-04-01', '2026-04-30'],
+        },
+      }];
+
+      it('reads the partitions of the periods holding a day of the range, not of the months it touches', () => {
+        const february = resolveRollupSource(store, withDays, { start: '2026-02-01', end: '2026-02-28' }, 'daily', columns);
+        expect(february).toContain('daily-2026-01/rollup.parquet');
+        expect(february).toContain('daily-2026-03/rollup.parquet');
+        const lateFebruary = resolveRollupSource(store, withDays, { start: '2026-02-10', end: '2026-02-28' }, 'daily', columns);
+        expect(lateFebruary).toContain('daily-2026-03/rollup.parquet');
+        expect(lateFebruary).not.toContain('daily-2026-01');
+      });
+      it('falls back to raw when a period holding a day of the range has no valid partition, whatever its month', () => {
+        // April's stale partition holds 2026-03-15.
+        expect(resolveRollupSource(store, withDays, { start: '2026-03-01', end: '2026-03-31' }, 'daily', columns)).toBeUndefined();
+        expect(resolveRollupSource(store, withDays, { start: '2026-03-16', end: '2026-03-31' }, 'daily', columns)).toContain('daily-2026-03/rollup.parquet');
+      });
+      it('falls back to raw when no period holds a day of the range', () => {
+        expect(resolveRollupSource(store, withDays, { start: '2026-02-02', end: '2026-02-27' }, 'daily', columns)).toBeUndefined();
+        expect(providersEmptyForRange(withDays, { start: '2026-02-02', end: '2026-02-27' })).toBe(true);
+        expect(providersEmptyForRange(withDays, { start: '2026-02-01', end: '2026-02-01' })).toBe(false);
+      });
+    });
   });
 });
 

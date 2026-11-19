@@ -529,10 +529,19 @@ test.describe('Clickability (workspace mode)', () => {
     const sidebar = p.getByRole('navigation', { name: 'Dashboards', exact: true });
     const heading = p.getByRole('heading', { name: 'Cost Overview' });
     const leftOf = async (l: Locator): Promise<number> => (await l.boundingBox())?.x ?? Number.NaN;
-    const savedPin = (): unknown => {
-      const state: unknown = JSON.parse(readFileSync(join(userDataDir, 'app-state.json'), 'utf-8'));
-      return typeof state === 'object' && state !== null && 'dashboardsSidebarPinned' in state ? state.dashboardsSidebarPinned : undefined;
+    const statePath = join(userDataDir, 'app-state.json');
+    // Main saves app-state.json in place (truncate, then write), so a read
+    // can land on an empty or half-written file: that is no answer yet.
+    const savedState = (): Record<string, unknown> | null => {
+      try {
+        const state: unknown = JSON.parse(readFileSync(statePath, 'utf-8'));
+        return typeof state === 'object' && state !== null ? { ...state } : null;
+      } catch (err) {
+        if (err instanceof SyntaxError) return null;
+        throw err;
+      }
     };
+    const savedPin = (): unknown => savedState()?.['dashboardsSidebarPinned'];
     await expect(sidebar).toBeVisible();
     const pinnedLeft = await leftOf(heading);
 
@@ -568,13 +577,30 @@ test.describe('Clickability (workspace mode)', () => {
       await expect(pin).toHaveAttribute('aria-pressed', 'true');
       await expect.poll(() => leftOf(heading)).toBeCloseTo(pinnedLeft, 0);
       await expect.poll(savedPin).toBe(true);
+
+      // Unpinned from the keyboard under a pointer already resting on the
+      // left edge: the docked list is removed from under it, and the edge
+      // strip takes its place. The pointer never moves, and never left
+      // anything: Chromium sends the strip a pointerover with no pointerout
+      // before it, the one React fires no onPointerEnter for.
+      await p.mouse.move(2, 400);
+      await pin.focus();
+      await p.keyboard.press('Enter');
+      // Saved before it is pinned again, so the `true` read below is the new one.
+      await expect.poll(savedPin).toBe(false);
+      await expectClickable(p, sidebar.getByRole('button', { name: 'Cost Overview', exact: true }));
+      await pin.click();
+      await expect(pin).toHaveAttribute('aria-pressed', 'true');
+      await expect.poll(savedPin).toBe(true);
     } finally {
       // A failure part-way must not leave the tests after this one an
-      // unpinned sidebar: pin it on disk and reload.
-      if (savedPin() === false && !p.isClosed()) {
-        const path = join(userDataDir, 'app-state.json');
-        const state: unknown = JSON.parse(readFileSync(path, 'utf-8'));
-        writeFileSync(path, JSON.stringify({ ...(typeof state === 'object' && state !== null ? state : {}), dashboardsSidebarPinned: true }));
+      // unpinned sidebar: pin it on disk and reload. Main may be halfway
+      // through a save: wait for a file that parses, without replacing the
+      // failure that led here.
+      await expect.poll(savedState).not.toBeNull().catch(() => undefined);
+      const state = savedState();
+      if (state?.['dashboardsSidebarPinned'] === false && !p.isClosed()) {
+        writeFileSync(statePath, JSON.stringify({ ...state, dashboardsSidebarPinned: true }));
         await p.reload();
         await expect(heading).toBeVisible({ timeout: 15_000 });
       }

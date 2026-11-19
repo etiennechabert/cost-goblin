@@ -150,28 +150,27 @@ async function mainTable(): Promise<HTMLElement> {
   return first;
 }
 
+/** The main table's header labels, after the leading column of the rows' disclosure buttons. */
 async function headers(): Promise<string[]> {
   const table = await mainTable();
   const head = table.querySelector('thead');
   if (head === null) throw new Error('table has no head');
-  return within(head).getAllByRole('columnheader').map(th => th.textContent.replace(/[↑↓↕]/g, '').trim());
+  return within(head).getAllByRole('columnheader').slice(1).map(th => th.textContent.replace(/[↑↓↕]/g, '').trim());
 }
 
-/** The data row whose cells include `text`, as its cells' text. */
+/** The data row whose cells include `text`, as its cells' text, after the
+ *  cell of its disclosure button. */
 function rowCells(text: string): string[] {
   const row = screen.getByText(text).closest('tr');
   if (row === null) throw new Error(`no row containing ${text}`);
-  return within(row).getAllByRole('cell').map(td => td.textContent);
+  return within(row).getAllByRole('cell').slice(1).map(td => td.textContent);
 }
 
-/** Click a plain (non-filter) cell of the row containing `text`: the Cost
- *  cell, column 1 in the spec's column order. Expands the row. */
+/** Expand the row containing `text` with its disclosure button. */
 async function expandRow(user: ReturnType<typeof userEvent.setup>, text: string): Promise<void> {
   const row = (await screen.findByText(text)).closest('tr');
   if (row === null) throw new Error(`no row containing ${text}`);
-  const costCell = within(row).getAllByRole('cell')[1];
-  if (costCell === undefined) throw new Error('row has no cost cell');
-  await user.click(costCell);
+  await user.click(within(row).getByRole('button', { name: 'Row details' }));
 }
 
 describe('TableWidget — rows and formatting', () => {

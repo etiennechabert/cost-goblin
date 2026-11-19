@@ -3,6 +3,7 @@ import type { QueryEngineState } from '@costgoblin/core';
 import { isWorkerResponse } from './duckdb-client.js';
 import type { DuckDBClient, RawRow } from './duckdb-client.js';
 import { DUCKDB_SETTINGS_ENV } from './duckdb-tuning.js';
+import { ENGINE_MESSAGE_PREFIX } from './query-engine-errors.js';
 import { ensureUvThreadpoolSize } from './uv-threadpool.js';
 
 /**
@@ -43,8 +44,8 @@ export const START_TIMEOUT_MS = 30_000;
 /** How long `terminate` waits for the killed process to report its exit. */
 export const TERMINATE_TIMEOUT_MS = 5_000;
 
-const RESTARTING_MESSAGE = 'The query engine stopped unexpectedly and is restarting. Run the query again.';
-const SHUT_DOWN_MESSAGE = 'The query engine was shut down.';
+const RESTARTING_MESSAGE = `${ENGINE_MESSAGE_PREFIX}stopped unexpectedly and is restarting. Run the query again.`;
+const SHUT_DOWN_MESSAGE = `${ENGINE_MESSAGE_PREFIX}was shut down.`;
 
 export interface DuckDBProcessExit {
   /** The exit code, when the host reports one: a signal number for a process
@@ -344,7 +345,7 @@ class DuckDBSupervisor implements SupervisedDuckDBClient {
   private stoppedError(): Error {
     const minutes = String(DEATH_WINDOW_MS / 60_000);
     return new Error(
-      `The query engine stopped ${String(this.deaths.length)} times in ${minutes} minutes and was not restarted. `
+      `${ENGINE_MESSAGE_PREFIX}stopped ${String(this.deaths.length)} times in ${minutes} minutes and was not restarted. `
       + 'Restart it from the notice at the top of the window.',
     );
   }
@@ -478,7 +479,7 @@ class DuckDBSupervisor implements SupervisedDuckDBClient {
     const starting = this.firstStart;
     this.firstStart = null;
     this.phase = 'terminated';
-    starting?.reject(new Error(`The query engine could not start: ${reason}`));
+    starting?.reject(new Error(`${ENGINE_MESSAGE_PREFIX}could not start: ${reason}`));
   }
 
   private onExit(inc: Incarnation, exit: DuckDBProcessExit): void {

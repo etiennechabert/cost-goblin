@@ -145,6 +145,10 @@ function errorMessage(err: unknown): string {
  *   daily-YYYY-MM/top.parquet         the month's ranked pairs
  *   daily-YYYY-MM/rows-{generation}.parquet   the month's rows of the heavy set
  *
+ * A month is a billing period: one raw directory's files, whole, with the
+ * days of other months they hold. A caller asks for the months its date range
+ * reads (`periodsForRange`), and filters on the date itself.
+ *
  * A month's top list depends on its raw files only. The heavy set is the
  * union of every month's top list, and every month's rows are extracted
  * against it, so one month's raw files changing rebuilds every month's rows:

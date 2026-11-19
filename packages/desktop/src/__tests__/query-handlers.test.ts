@@ -4,7 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { sqlStringLiteral } from '@costgoblin/core';
 import { registerDimensionsHandlers } from '../main/handlers/dimensions.js';
 import { registerQueryHandlers } from '../main/handlers/query.js';
-import { at, configYaml, createHarness, FEBRUARY_READABLE_NOW_MS, FIXTURE_AWS_PROVIDER, FIXTURE_GCP_PROVIDER, gcpProviderYaml, list, num, setCostScopeLag, str, type Harness, type HarnessOptions } from './helpers/ipc-harness.js';
+import { addStrayRows, STRAY_SERVICE, strayCostByDay } from './helpers/stray-rows.js';
+import { at, configYaml, createHarness, FEBRUARY_READABLE_NOW_MS, FIXTURE_AWS_PROVIDER, FIXTURE_GCP_PROVIDER, gcpProviderYaml, list, num, queryStatements, setCostScopeLag, str, type Harness, type HarnessOptions } from './helpers/ipc-harness.js';
 
 /** The dashboard query channels — costs, daily costs, entity detail, trends,
  *  filter values, missing tags and savings — run end to end against a real
@@ -84,7 +85,7 @@ describe('query:costs', () => {
     expect(await h.ipc.invoke('query:costs', { groupBy: 'service', dateRange: NO_DATA, filters: {} })).toEqual({
       rows: [], totalCost: 0, topServices: [], dateRange: NO_DATA,
     });
-    expect(h.db.statements).toEqual([]);
+    expect(queryStatements(h.db)).toEqual([]);
   });
 
   it('names accounts and merges ids that share a name', async () => {
@@ -179,6 +180,76 @@ describe('query:daily-costs', () => {
   it('is empty when no provider has data in range', async () => {
     const h = await queryApp();
     expect(await h.ipc.invoke('query:daily-costs', { groupBy: 'service', dateRange: NO_DATA, filters: {} })).toEqual({ days: [], groups: [], totalCost: 0 });
+  });
+});
+
+// A billing period's files hold days of other months (see period-days.ts in
+// core). Every range reads each period holding one of its days, from raw
+// Parquet and from the rollup alike, so a day costs the same on both paths
+// and whatever range asks for it.
+describe('days filed under another month than their own', () => {
+  const RANGES = [
+    { start: '2025-12-01', end: '2025-12-31' }, // no file of its own
+    { start: '2026-01-01', end: '2026-01-31' },
+    { start: '2026-02-01', end: '2026-02-28' },
+    { start: '2026-01-15', end: '2026-01-15' }, // one day, filed under February
+    { start: '2025-12-15', end: '2026-02-20' },
+  ];
+  const dayTotals = (result: unknown): [string, number][] => list(at(result, 'days')).map(d => [str(at(d, 'date')), num(at(d, 'total'))]);
+  const readsRollup = (sql: string): boolean => sql.includes('/rollup/daily-');
+
+  async function ask(h: Harness): Promise<{ all: [string, number][]; strays: [string, number][]; costs: unknown; trends: unknown; values: unknown }[]> {
+    const answers = [];
+    for (const dateRange of RANGES) {
+      answers.push({
+        all: dayTotals(await h.ipc.invoke('query:daily-costs', { groupBy: 'service', dateRange, filters: {} })),
+        strays: dayTotals(await h.ipc.invoke('query:daily-costs', { groupBy: 'service', dateRange, filters: { service: [STRAY_SERVICE] } })),
+        costs: await h.ipc.invoke('query:costs', { groupBy: 'service', dateRange, filters: { service: [STRAY_SERVICE] } }),
+        trends: await h.ipc.invoke('query:trends', { groupBy: 'service', dateRange, filters: { service: [STRAY_SERVICE] }, deltaThreshold: 0, percentThreshold: 0 }),
+        values: await h.ipc.invoke('query:filter-values', 'service', { service: [STRAY_SERVICE] }, dateRange),
+      });
+    }
+    return answers;
+  }
+
+  it('costs them the same from raw Parquet and from the rollup, whatever range asks', async () => {
+    const h = await queryApp({ data: 'synthetic', rollupBuilds: true, now: () => FEBRUARY_READABLE_NOW_MS });
+    await addStrayRows(h);
+
+    const raw = await ask(h);
+    expect(queryStatements(h.db).some(readsRollup)).toBe(false);
+
+    h.app.warmupBase();
+    await h.app.awaitWarmup(10_000);
+    await h.app.awaitResourceRollup();
+    expect([...h.app.rollupStore.getValidPeriods()].sort((a, b) => a.localeCompare(b))).toEqual(['2026-01', '2026-02']);
+    const built = queryStatements(h.db).length;
+    const rolled = await ask(h);
+    const asked = queryStatements(h.db).slice(built);
+    expect(asked.length).toBeGreaterThan(0);
+    expect(asked.filter(sql => !readsRollup(sql))).toEqual([]);
+
+    RANGES.forEach((dateRange, i) => {
+      const fromRaw = raw[i];
+      const fromRollup = rolled[i];
+      // What the rows written say, read from no file.
+      const expected = Object.entries(strayCostByDay(dateRange)).sort(([a], [b]) => a.localeCompare(b));
+      expect(fromRaw?.strays).toEqual(expected);
+      expect(fromRollup?.strays).toEqual(expected);
+      expect(fromRollup?.costs).toEqual(fromRaw?.costs);
+      expect(fromRollup?.trends).toEqual(fromRaw?.trends);
+      expect(fromRollup?.values).toEqual(fromRaw?.values);
+      // Every service: the same days, and the same total on each.
+      expect(fromRollup?.all.map(([day]) => day)).toEqual(fromRaw?.all.map(([day]) => day));
+      fromRollup?.all.forEach(([, total], d) => { expect(total).toBeCloseTo(fromRaw?.all[d]?.[1] ?? Number.NaN, 6); });
+    });
+
+    // December has no file: both of its neighbours hold a row of its 30th.
+    expect(raw[0]?.all).toEqual([['2025-12-30', 17]]);
+    expect(at(raw[0]?.costs, 'rows')).toEqual([{ entity: STRAY_SERVICE, totalCost: 17, serviceCosts: { [STRAY_SERVICE]: 17 } }]);
+    // The day filed under February costs the same asked alone and within a longer range.
+    expect(raw[3]?.strays).toEqual([['2026-01-15', 4]]);
+    expect(raw[4]?.strays).toContainEqual(['2026-01-15', 4]);
   });
 });
 
@@ -282,6 +353,13 @@ describe('query:filter-values', () => {
     expect(at(one[0], 'label')).toBe(at(one[0], 'value'));
   });
 
+  it('lists nothing, without a query, for a range no period holds a day of', async () => {
+    const h = await queryApp();
+    expect(await h.ipc.invoke('query:filter-values', 'service', {}, NO_DATA)).toEqual([]);
+    expect(await h.ipc.invoke('query:filter-values', 'service', {}, NO_DATA, { bypassCostScope: true })).toEqual([]);
+    expect(queryStatements(h.db)).toEqual([]);
+  });
+
   it('resolves an account-name filter to every id carrying it, and names account values', async () => {
     const h = await queryApp();
     await withOrgNames(h);
@@ -379,7 +457,7 @@ describe('the cost scope freshness lag', () => {
 
   it('answers a range entirely within the lag with nothing, without querying', async () => {
     const h = await laggedApp();
-    const before = h.db.statements.length;
+    const before = queryStatements(h.db).length;
     expect(await h.ipc.invoke('query:costs', { groupBy: 'service', dateRange: WITHIN_LAG, filters: {} })).toEqual({
       rows: [], totalCost: 0, topServices: [], dateRange: WITHIN_LAG,
     });
@@ -393,7 +471,7 @@ describe('the cost scope freshness lag', () => {
     expect(await h.ipc.invoke('query:filter-values', 'service', {}, WITHIN_LAG)).toEqual([]);
     // The dimension allow-list still runs first.
     await expect(h.ipc.invoke('query:filter-values', 'service; DROP TABLE x', {}, WITHIN_LAG)).rejects.toThrow('Unknown dimension "service; DROP TABLE x"');
-    expect(h.db.statements).toHaveLength(before);
+    expect(queryStatements(h.db)).toHaveLength(before);
   });
 
   it('leaves the newest days to filter values that bypass the cost scope', async () => {

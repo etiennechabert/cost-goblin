@@ -1,7 +1,7 @@
 import {
   buildFilterClauses,
   buildSource,
-  computePeriodsInRange,
+  providerBranchesForRange,
   logger,
   QueryBuilder,
   tagSqlColumn,
@@ -99,16 +99,9 @@ export async function exploreData(
   // Mirror the dashboards: the active Cost Scope's metric backs `cost`.
   const scopeMetric = (await ctx.getCostScope()).costMetric;
   const allProviders = await getQueryProviders(ctx, 'daily');
-  const required = computePeriodsInRange(dateRange);
-  // Per-provider month intersection; providers with nothing in range are
-  // dropped (a zero-match glob fails the whole union).
-  const branches = allProviders
-    .map(p => ({
-      name: p.name,
-      type: p.type,
-      periods: required.filter(m => p.availablePeriods?.includes(m) ?? false),
-    }))
-    .filter(b => b.periods.length > 0);
+  // The billing periods holding a day of the range, per provider; providers
+  // with nothing in range are dropped (a zero-match glob fails the whole union).
+  const branches = providerBranchesForRange(allProviders, dateRange);
   if (branches.length === 0) return emptyRangeResult(ctx, dateRange, format, `Explore Data (${dateRange.start} to ${dateRange.end})`);
 
   const matSource = ctx.materializedBase.getSource(dateRange, 'daily');

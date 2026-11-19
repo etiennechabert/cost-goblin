@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { logger } from '@costgoblin/core';
 import { registerExplorerHandlers } from '../main/handlers/explorer.js';
 import { at, createHarness, FEBRUARY_READABLE_NOW_MS, FIXTURE_AWS_PROVIDER, list, num, str, type Harness } from './helpers/ipc-harness.js';
+import { addStrayRows, STRAY_SERVICE, strayResource } from './helpers/stray-rows.js';
 
 /** The dashboard's breakdown table (grouped by resource and description)
  *  through `explorer:query-aggregated-table`, over a real in-process DuckDB
@@ -114,7 +115,7 @@ async function addHeavyPairs(h: Harness): Promise<void> {
   }
 }
 
-async function builtApp(pairsPerMonth?: number): Promise<Harness> {
+async function builtApp(pairsPerMonth?: number, addRows?: (h: Harness) => Promise<void>): Promise<Harness> {
   const h = await createHarness({
     data: 'synthetic',
     rollupBuilds: true,
@@ -123,6 +124,7 @@ async function builtApp(pairsPerMonth?: number): Promise<Harness> {
   });
   registerExplorerHandlers(h.app);
   await addHeavyPairs(h);
+  await addRows?.(h);
   h.app.warmupBase();
   await h.app.awaitWarmup(10_000);
   await h.app.awaitResourceRollup();
@@ -377,5 +379,58 @@ describe('the breakdown table over a resource rollup that leaves pairs out', () 
     await expectRawOnly(h, { dateRange: JANUARY, rowLimit: 9, deferTotalRows: true });
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('resource-rollup: read failed, reading raw'));
     warn.mockRestore();
+  });
+});
+
+// A billing period's files hold days of other months (see period-days.ts in
+// core). The table reads each period holding a day of its range, from the
+// rollup as from raw Parquet, and the bound that proves a page is theirs.
+describe('the breakdown table over months whose files hold days of other months', () => {
+  const DECEMBER = { start: '2025-12-01', end: '2025-12-31' };
+  const strays = (result: unknown): [string | undefined, number][] => tableRows(result)
+    .filter(r => r.values['resource_id']?.startsWith('arn:test:stray-') === true)
+    .map(r => [r.values['resource_id'], r.cost]);
+
+  describe('with every pair stored', () => {
+    let h: Harness;
+    beforeAll(async () => { h = await builtApp(undefined, addStrayRows); }, 60_000);
+    afterAll(async () => { await h.dispose(); });
+
+    it('reads a month with no file of its own from the periods that hold its days', async () => {
+      const { result } = await expectRolledLikeRaw(h, { dateRange: DECEMBER });
+      // The same day, filed under January and under February.
+      expect(strays(result)).toEqual([[strayResource(16), 16], [strayResource(1), 1]]);
+      expect(at(result, 'totalRows')).toBe(2);
+    });
+
+    it('counts a row in the month it is dated in, whichever month it is filed under', async () => {
+      const january = await expectRolledLikeRaw(h, { dateRange: JANUARY, filters: { service: [STRAY_SERVICE] } });
+      expect(strays(january.result)).toEqual([[strayResource(8), 8], [strayResource(4), 4]]);
+      const february = await expectRolledLikeRaw(h, { dateRange: FEBRUARY, filters: { service: [STRAY_SERVICE] } });
+      expect(strays(february.result)).toEqual([[strayResource(2), 2]]);
+    });
+  });
+
+  describe('with pairs left out', () => {
+    let h: Harness;
+    beforeAll(async () => { h = await builtApp(60, addStrayRows); }, 60_000);
+    afterAll(async () => { await h.dispose(); });
+
+    it('reads raw Parquet for days only pairs left out are dated in', async () => {
+      // December's rows are in January's and February's files, where they are
+      // far too light to be stored: the rollup has nothing to prove a page with.
+      const result = await expectRawOnly(h, { dateRange: DECEMBER, rowLimit: 2, deferTotalRows: true });
+      expect(strays(result)).toEqual([[strayResource(16), 16], [strayResource(1), 1]]);
+    });
+
+    it('proves a page of one month against the bounds of every period that holds its days', async () => {
+      // January's days are in February's files too, so both bounds count.
+      const both = h.app.resourceRollupStore.resolveSource({ requiredPeriods: ['2026-01', '2026-02'], neededColumns: ['cost'] });
+      const { result } = await expectRolledLikeRaw(h, { dateRange: JANUARY, rowLimit: 5, deferTotalRows: true });
+      expect(tableRows(result)[4]?.cost).toBeGreaterThan(both?.tailBound ?? Number.POSITIVE_INFINITY);
+      const statement = h.db.statements.filter(readsResourceRollup).at(-1) ?? '';
+      expect(statement).toContain('daily-2026-01');
+      expect(statement).toContain('daily-2026-02');
+    });
   });
 });

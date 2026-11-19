@@ -21,6 +21,7 @@ import {
 import type { SortingState } from '@tanstack/react-table';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
+import { useCostOptimizationSyncs } from '../hooks/use-cost-optimization-syncs.js';
 import { formatDollars } from '../components/format.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { DataTable } from '../components/data-table.js';
@@ -254,9 +255,14 @@ function listedTypes(recommendations: readonly SavingsRecommendation[]): { type:
   return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([type, count]) => ({ type, count }));
 }
 
+/** How often the view checks whether a cost-optimization sync has finished. */
+export const SAVINGS_SYNC_POLL_MS = 5_000;
+
 export function Savings() {
   const api = useCostApi();
-  const savingsQuery = useQuery(() => api.querySavings(), [api]);
+  // A sync that finishes while the page is open brings a new snapshot: read it.
+  const syncRevision = useCostOptimizationSyncs(api, SAVINGS_SYNC_POLL_MS);
+  const savingsQuery = useQuery(() => api.querySavings(), [api, syncRevision]);
   const prefsQuery = useQuery(() => api.getSavingsPreferences(), [api]);
   const [sorting, setSorting] = useState<SortingState>([{ id: 'monthlySavings', desc: true }]);
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
@@ -265,8 +271,14 @@ export function Savings() {
   const [preferred, setPreferred] = useState<PreferredCommitment>(SAVINGS_PREFERENCES_DEFAULTS.preferredCommitment);
   const [prefsLoaded, setPrefsLoaded] = useState(false);
 
+  // While a refetch loads, the last recommendations stay on screen, so the
+  // table keeps its expanded rows instead of turning back into the loader.
+  const [shown, setShown] = useState<SavingsResult | null>(null);
+  if (savingsQuery.status === 'success' && savingsQuery.data !== shown) {
+    setShown(savingsQuery.data);
+  }
   const data: SavingsResult | null =
-    savingsQuery.status === 'success' ? savingsQuery.data : null;
+    savingsQuery.status === 'success' ? savingsQuery.data : shown;
 
   // Load saved preferences once
   if (!prefsLoaded && prefsQuery.status === 'success') {
@@ -408,7 +420,7 @@ export function Savings() {
         </div>
       )}
 
-      {savingsQuery.status === 'loading' && (
+      {savingsQuery.status === 'loading' && data === null && (
         <div className="flex-1">
           <CoinRainLoader height={500} count={10} />
         </div>

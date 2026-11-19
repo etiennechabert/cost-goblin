@@ -13,6 +13,7 @@ import {
   computePartitionEtagHash,
   logger,
   QUERY_CANCELLED_MESSAGE,
+  RESOURCE_ROLLUP_SCHEMA_VERSION,
   resourceRollupDimensionColumns,
   type CostScopeConfig,
   type DimensionsConfig,
@@ -406,7 +407,7 @@ describe('ResourceRollupStore', () => {
 
     // A partition entry without a numeric bound bounds nothing; one that is not an entry is dropped.
     await writeFile(join(rollupDir(dataDir), 'manifest.json'), JSON.stringify({
-      schemaVersion: 1, shapeSignature: 'SIG-1', pairsPerMonth: PAIRS, generation: 4, dimensionColumns: ['usage_date'],
+      schemaVersion: RESOURCE_ROLLUP_SCHEMA_VERSION, shapeSignature: 'SIG-1', pairsPerMonth: PAIRS, generation: 4, dimensionColumns: ['usage_date'],
       partitions: { '2026-01': { rawEtagHash: computePartitionEtagHash(etags['2026-01']), tailBound: null, complete: false, rows: 1, bytes: 1 }, '2026-02': 'nope' },
     }));
     const store = newStore(dataDir);

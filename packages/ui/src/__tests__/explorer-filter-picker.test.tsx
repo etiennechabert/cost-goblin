@@ -101,9 +101,12 @@ function searchBox(): HTMLElement | null {
   return screen.queryByPlaceholderText('Search values…');
 }
 
+/** Table header labels, sort arrows stripped, after the leading column of the
+ *  rows' disclosure buttons. */
 function visibleHeaders(): string[] {
   return within(screen.getByRole('table'))
     .getAllByRole('columnheader')
+    .slice(1)
     .map(th => th.textContent.replace(/[↑↓↕]/g, '').trim());
 }
 
