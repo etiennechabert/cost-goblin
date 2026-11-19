@@ -65,8 +65,8 @@ export async function listSavingsRecommendations(
   ctx: McpContext,
   params: { actionType?: string | undefined; limit?: number | undefined; format?: string | undefined },
 ): Promise<{ content: [{ type: 'text'; text: string }] }> {
-  const config = await ctx.getConfig();
-  const { recommendations, snapshots } = await loadSavingsRecommendations(ctx.dataDir, config.providers, ctx.runQuery);
+  const [config, accountMap] = await Promise.all([ctx.getConfig(), ctx.getAccountMap()]);
+  const { recommendations, snapshots } = await loadSavingsRecommendations(ctx.dataDir, config.providers, ctx.runQuery, accountMap);
   if (recommendations.length === 0) {
     return toolResult('No Cost Optimization Hub recommendations are synced. AWS providers sync them from a Cost Optimization Hub data export: ask the user to set up and sync the cost optimization tier in the app\'s Data tab.');
   }
