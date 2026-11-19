@@ -1,6 +1,7 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ElectronMainOptions, ErrorEvent, Event } from '@sentry/electron/main';
 import { TELEMETRY_DEFAULTS } from '@costgoblin/core';
@@ -238,6 +239,21 @@ describe('telemetry start', () => {
     const native = await loadController();
     native.start({ ...OFF, nativeCrashReports: true });
     expect(integrationNames(initOptions(), defaults)).toEqual(['SentryMinidump', 'OnUncaughtException', native.transactionGate.name]);
+  });
+
+  it('has no scope event processor in the main process, which would run after the transaction gate', async () => {
+    // The SDK runs scope event processors after every integration's, so what
+    // one adds to a transaction would leave unscrubbed. Sentry's own that
+    // register one: captureConsole, pino and supabase.
+    const mainDir = fileURLToPath(new URL('../main', import.meta.url));
+    const sources = (await readdir(mainDir, { recursive: true })).filter(f => /\.tsx?$/.test(f));
+    const registering = /\baddEventProcessor\s*\(|\b(?:captureConsole|pino|supabase)Integration\s*\(/;
+    const offenders: string[] = [];
+    for (const file of sources) {
+      if (registering.test(await readFile(join(mainDir, file), 'utf-8'))) offenders.push(file);
+    }
+    expect(sources.length).toBeGreaterThan(10);
+    expect(offenders).toEqual([]);
   });
 
   it('installs the transaction gate after every other integration, so its event processor runs last', async () => {
