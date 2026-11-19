@@ -17,6 +17,7 @@ import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { ExplorerView } from '../views/explorer.js';
 import { daysAgo } from '../lib/dates.js';
+import { pinDate } from './helpers/pin-date.js';
 
 /** The default hidden set, served as *saved* preferences. The prefs response
  *  is authoritative (the view overwrites its initial hidden state with it),
@@ -203,18 +204,10 @@ async function headerLabels(): Promise<string[]> {
 // Pin the clock so the wall-clock-derived default range (daysAgo(...)) is
 // identical when the view captures it at mount and when the assertions
 // recompute it. Otherwise a UTC-midnight rollover mid-test shifts the range
-// payloads by a day and drops the "Last 30 days" trigger label. Fake only
-// Date so real setTimeout/interval still drive the 250ms debounce, waitFor,
-// and userEvent.
-beforeEach(() => {
-  vi.useFakeTimers({ toFake: ['Date'] });
-  vi.setSystemTime(new Date('2026-03-15T12:00:00Z'));
-});
+// payloads by a day and drops the "Last 30 days" trigger label.
+pinDate('2026-03-15T12:00:00Z');
 
-afterEach(() => {
-  cleanup();
-  vi.useRealTimers();
-});
+afterEach(cleanup);
 
 describe('ExplorerView', () => {
   describe('initial load', () => {

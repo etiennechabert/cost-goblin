@@ -9,6 +9,7 @@ import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CustomView } from '../views/custom-view.js';
 import { daysAgo, daysBetween } from '../lib/dates.js';
 import { setReducedMotion } from './setup.js';
+import { pinDate } from './helpers/pin-date.js';
 
 
 const SPEC: ViewSpec = {
@@ -53,7 +54,6 @@ const LAYOUT_SPEC: ViewSpec = {
 
 afterEach(() => {
   cleanup();
-  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -63,16 +63,10 @@ afterEach(() => {
 // budget. setup.ts restores the preference after each test.
 beforeEach(() => { setReducedMotion(true); });
 
-// Pin Date. The view captures its default window at mount, and the picker
-// names it "Last 30 days" only while it equals that preset recomputed from
-// the clock at each render: a render after a UTC midnight shows the dates
-// instead, and the window asserted below would be a day off the one queried.
-// Fake only Date, so real timers still drive the save debounce, waitFor and
-// userEvent.
-beforeEach(() => {
-  vi.useFakeTimers({ toFake: ['Date'] });
-  vi.setSystemTime(new Date('2026-10-20T12:00:00Z'));
-});
+// The view captures its default window at mount; the picker's "Last 30 days"
+// label and the window asserted below are recomputed from the clock (see
+// pinDate).
+pinDate('2026-10-20T12:00:00Z');
 
 function renderView(spec: ViewSpec = SPEC) {
   return render(

@@ -30,6 +30,7 @@ import { PaletteProvider } from '../hooks/use-palette.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { daysAgo } from '../lib/dates.js';
 import { EntityDetail } from '../views/entity-detail.js';
+import { pinDate } from './helpers/pin-date.js';
 
 const DETAIL: EntityDetailResult = {
   entity: asEntityRef('platform'),
@@ -140,6 +141,11 @@ async function waitForBars(): Promise<void> {
 afterEach(() => {
   vi.restoreAllMocks();
 });
+
+// Today is 2026-10-21 and the lag is 2 days: the newest day is 2026-10-19.
+// The view's window is captured at mount; the picker's "Last 30 days" label
+// and the ranges built here are recomputed from the clock (see pinDate).
+pinDate('2026-10-21T12:00:00Z');
 
 describe('EntityDetail — CSV export', () => {
   let exported: Blob | undefined;
@@ -613,14 +619,6 @@ describe('EntityDetail — baselines panel', () => {
 });
 
 describe('EntityDetail — Weekly', () => {
-  // Today is 2026-10-21 and the lag is 2 days: the newest day is 2026-10-19.
-  // Only Date is faked, so the view's debounce and waitFor keep real timers.
-  beforeEach(() => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date('2026-10-21T12:00:00Z'));
-  });
-  afterEach(() => { vi.useRealTimers(); });
-
   const WEEK_KEYS = ['2026-08-31', '2026-09-07', '2026-09-14', '2026-09-21', '2026-09-28', '2026-10-05', '2026-10-12', '2026-10-19'];
 
   /** Saved Weekly prefs over eight whole weeks, the last one the current week, and one bar per week for any weekly request. */

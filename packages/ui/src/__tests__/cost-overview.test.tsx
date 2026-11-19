@@ -6,6 +6,7 @@ import { PaletteProvider } from '../hooks/use-palette.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostOverview } from '../views/cost-overview.js';
 import { setReducedMotion } from './setup.js';
+import { pinDate } from './helpers/pin-date.js';
 
 function renderOverview() {
   const api = new MockCostApi();
@@ -30,6 +31,10 @@ afterEach(cleanup);
 // and on a loaded CI runner the result only lands after ~5 s, the whole test
 // budget. setup.ts restores the preference after each test.
 beforeEach(() => { setReducedMotion(true); });
+
+// The view's window is captured at mount; the picker's "Last 30 days" label
+// is recomputed from the clock (see pinDate).
+pinDate('2026-10-20T12:00:00Z');
 
 describe('CostOverview', () => {
   it('shows loading state initially', () => {

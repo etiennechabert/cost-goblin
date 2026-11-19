@@ -1,12 +1,13 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Dimension, MissingTagsParams, MissingTagsResult } from '@costgoblin/core/browser';
 import { asDimensionId, asDollars, asEntityRef } from '@costgoblin/core/browser';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { MissingTags } from '../views/missing-tags.js';
 import { daysAgo } from '../lib/dates.js';
+import { pinDate } from './helpers/pin-date.js';
 
 /** Three actionable rows (two owned by `platform`, one with no fallback
  *  owner), two likely-untaggable ones, and non-resource spend. The counts are
@@ -96,6 +97,11 @@ function cellButton(name: string): HTMLElement {
 afterEach(() => {
   vi.restoreAllMocks();
 });
+
+// Today is 2026-10-21. The view's window is captured at mount; the picker's
+// "Last 30 days" label and the ranges built here are recomputed from the
+// clock (see pinDate).
+pinDate('2026-10-21T12:00:00Z');
 
 describe('MissingTags — buckets', () => {
   it('summarises each bucket against its unfiltered total', async () => {
@@ -250,13 +256,6 @@ describe('MissingTags — narrowing', () => {
   });
 
   describe('in Weekly and Monthly', () => {
-    // Today is 2026-10-21. Only Date is faked, so waitFor and userEvent keep real timers.
-    beforeEach(() => {
-      vi.useFakeTimers({ toFake: ['Date'] });
-      vi.setSystemTime(new Date('2026-10-21T12:00:00Z'));
-    });
-    afterEach(() => { vi.useRealTimers(); });
-
     it('queries the whole months of a Monthly range and still lists the resources', async () => {
       const { api, user } = renderView();
       await screen.findByText('3 out of 7 untagged resources in taggable categories');

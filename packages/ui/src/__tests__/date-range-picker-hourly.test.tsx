@@ -1,12 +1,13 @@
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_LAG_DAYS, asBucketPath, asDateString, asHourString } from '@costgoblin/core/browser';
 import type { CostGoblinConfig } from '@costgoblin/core/browser';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { DateRangePicker, getDefaultDateRange, lastNDaysRange } from '../components/date-range-picker.js';
 import type { DateRange, Granularity } from '../components/date-range-picker.js';
+import { pinDate } from './helpers/pin-date.js';
 
 /** A mock whose provider has the hourly tier, which lights up the toggle. */
 class HourlyApi extends MockCostApi {
@@ -66,6 +67,11 @@ async function hourlyEnabled(): Promise<HTMLElement> {
 
 afterEach(cleanup);
 
+// Today is 2026-10-21. The picker labels a range "Last 30 days" only while it
+// equals that preset recomputed from the clock, so a range built here before
+// a UTC midnight loses its label after it (see pinDate).
+pinDate('2026-10-21T12:00:00Z');
+
 describe('DateRangePicker — hour bounds', () => {
   it('labels a drag-zoomed hour range by its hours', () => {
     renderPicker({ value: HOUR_RANGE, granularity: 'hourly' });
@@ -98,13 +104,7 @@ describe('DateRangePicker — hour bounds', () => {
 
 describe('DateRangePicker — with the hourly tier configured', () => {
   // Hourly data reaches back to the first day of the month `retentionDays` ago,
-  // so whether a range fits depends on today's date: pin it (Date only, so
-  // waitFor and userEvent keep their timers).
-  beforeEach(() => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date('2026-10-21T12:00:00Z'));
-  });
-  afterEach(() => { vi.useRealTimers(); });
+  // so whether a range fits depends on today's date, pinned above.
 
   it('enables the Hourly toggle and switches granularity, keeping the day range', async () => {
     const value = getDefaultDateRange();

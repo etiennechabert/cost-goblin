@@ -1,24 +1,21 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_COST_SCOPE, DEFAULT_LAG_DAYS, asDateString } from '@costgoblin/core/browser';
 import type { CostScopeConfig } from '@costgoblin/core/browser';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { useViewDateRange } from '../hooks/use-view-date-range.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { daysAgo } from '../lib/dates.js';
+import { pinDate } from './helpers/pin-date.js';
 
 // Pin Date so the range captured at mount and the one the assertions compute
 // fall on the same day even across a UTC midnight.
-beforeEach(() => {
-  vi.useFakeTimers({ toFake: ['Date'] });
-  vi.setSystemTime(new Date('2026-10-20T12:00:00Z'));
-});
+pinDate('2026-10-20T12:00:00Z');
 
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
-  vi.useRealTimers();
 });
 
 const LAG = 7;
