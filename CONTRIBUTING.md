@@ -40,3 +40,10 @@ has signed:
 
 Found a security problem? Please don't open a public issue: use the contact
 details on [costgoblin.com/imprint.html](https://costgoblin.com/imprint.html).
+
+## Updating the Nix flake
+
+The flake reads the version from `package.json` and the npm dependencies from
+`package-lock.json`, so a release needs no flake change. After a dependency
+change, run `nix build --no-link` to confirm the flake still builds. Run `nix
+flake update` to move the nixpkgs pin.
