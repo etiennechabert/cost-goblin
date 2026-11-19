@@ -27,15 +27,25 @@ const OPTIONAL_SOURCE_COLUMNS: Readonly<Record<ProviderType, readonly string[]>>
   gcp: ['x_Location'],
 };
 
-/** `read` (a `read_parquet(...)` call) widened with the provider's optional
- *  columns: a union BY NAME with an empty row that has them, so a file
- *  without one reads NULL. DuckDB prunes the unused columns through the
- *  union as it does for the bare read. */
-export function withOptionalSourceColumns(read: string, type: ProviderType): string {
-  const columns = OPTIONAL_SOURCE_COLUMNS[type];
+/** A column a read may lack, and the SQL type it reads as when it does. */
+export interface NullableColumn {
+  readonly name: string;
+  readonly type: 'VARCHAR' | 'DOUBLE' | 'BOOLEAN';
+}
+
+/** `read` (a `read_parquet(...)` call) widened with `columns`: a union BY
+ *  NAME with an empty row that has them, so a file without one reads a NULL
+ *  of its type. DuckDB prunes the unused columns through the union as it
+ *  does for the bare read. `columns` are trusted identifiers, never config. */
+export function withNullableColumns(read: string, columns: readonly NullableColumn[]): string {
   if (columns.length === 0) return read;
-  const nulls = columns.map(c => `CAST(NULL AS VARCHAR) AS ${c}`).join(', ');
+  const nulls = columns.map(c => `CAST(NULL AS ${c.type}) AS ${c.name}`).join(', ');
   return `(SELECT * FROM ${read} UNION ALL BY NAME SELECT ${nulls} WHERE FALSE)`;
+}
+
+/** `read` widened with the provider's optional columns. */
+export function withOptionalSourceColumns(read: string, type: ProviderType): string {
+  return withNullableColumns(read, OPTIONAL_SOURCE_COLUMNS[type].map((name): NullableColumn => ({ name, type: 'VARCHAR' })));
 }
 
 /** FOCUS's PricingCategory values, in the spec's casing. */

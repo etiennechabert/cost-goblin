@@ -126,6 +126,19 @@ describe('loadSavingsRecommendations', () => {
     expect(loaded.recommendations.map(r => r.recommendationId)).toEqual(['b1']);
   });
 
+  it('names each account as the account map does, else as the export does, else by its id', async () => {
+    const named = (id: string, accountId: string, accountName: string): Row => ({ ...row(id, 1), account_id: accountId, account_name: accountName });
+    const loaded = await loadSavingsRecommendations(
+      dataDir,
+      providers(provider('aws-a', true)),
+      runner({ 'aws-a': [named('mapped', '111', 'Export name'), named('exported', '222', 'Export name'), named('bare', '333', '')] }, []),
+      new Map([['111', 'Map name']]),
+    );
+    expect(loaded.recommendations.map(r => [r.recommendationId, r.accountName])).toEqual([
+      ['mapped', 'Map name'], ['exported', 'Export name'], ['bare', '333'],
+    ]);
+  });
+
   it('is empty when no provider has synced a snapshot', async () => {
     const asked: string[] = [];
     const loaded = await loadSavingsRecommendations(dataDir, providers(provider('aws-z', true)), runner({}, asked));

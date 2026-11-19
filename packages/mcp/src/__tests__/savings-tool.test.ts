@@ -78,8 +78,9 @@ async function writeSnapshot(dataDir: string, date: string, rows: readonly CohRo
 
 const unused = (): never => { throw new Error('not used by list_savings_recommendations'); };
 
-/** A workspace with both snapshots and, when given, a saved preferences file. */
-async function workspace(prefs?: unknown): Promise<McpContext> {
+/** A workspace with both snapshots and, when given, a saved preferences file
+ *  and the account map's names. */
+async function workspace(prefs?: unknown, accountMap: ReadonlyMap<string, string> = new Map()): Promise<McpContext> {
   counter += 1;
   const dir = join(root, `ws-${String(counter)}`);
   const dataDir = join(dir, 'data');
@@ -97,7 +98,7 @@ async function workspace(prefs?: unknown): Promise<McpContext> {
     getDimensions: unused,
     getQueryDimensions: unused,
     getCostScope: unused,
-    getAccountMap: unused,
+    getAccountMap: () => Promise.resolve(new Map(accountMap)),
     getAccountReverseMap: unused,
     getOrgAccountsPath: unused,
     materializedBase: { getSource: () => undefined },
@@ -155,6 +156,15 @@ describe('list_savings_recommendations', () => {
     const limited = parseJsonResult(resultText(await listSavingsRecommendations(ctx, { limit: 1, format: 'json' })));
     expect(limited.tables[0]?.rows).toHaveLength(1);
     expect(limited.notes).toContain('Showing 1 of 3 actions, highest savings first; pass a larger limit to see more.');
+  });
+
+  it('names accounts as the account map does, else as the export does', async () => {
+    const accounts = async (map?: ReadonlyMap<string, string>): Promise<unknown[]> => {
+      const result = parseJsonResult(resultText(await listSavingsRecommendations(await workspace(undefined, map), { format: 'json' })));
+      return [...new Set(result.tables[0]?.rows.map(r => r['account']))];
+    };
+    expect(await accounts()).toEqual(['Demo']);
+    expect(await accounts(new Map([['123456789012', 'Payer']]))).toEqual(['Payer']);
   });
 
   it('says how to get recommendations when none are synced', async () => {
