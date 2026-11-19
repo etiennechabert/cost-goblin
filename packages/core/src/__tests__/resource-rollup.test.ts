@@ -11,6 +11,7 @@ import { FIXTURE_PROVIDER_NAME } from '../__fixtures__/layout.js';
 import type { DimensionsConfig } from '../types/config.js';
 import type { CostScopeConfig } from '../types/cost-scope.js';
 import { asDimensionId, asProviderName, tagSqlColumn } from '../types/branded.js';
+import { FILED_ROWS, filedDays, writeFiledRows } from './helpers/filed-rows.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SYNTHETIC_DIR = join(__dirname, '..', '__fixtures__', 'synthetic');
@@ -182,5 +183,40 @@ describe('resource rollup build queries', () => {
     const sql = buildResourceRowsQuery(JANUARY, 'daily', "/tmp/o'brien/rows.parquet", "/tmp/o'brien/heavy.parquet", opts);
     expect(sql).toContain("'/tmp/o''brien/rows.parquet'");
     expect(sql).toContain("'/tmp/o''brien/heavy.parquet'");
+  });
+});
+
+// A period's files hold rows of other months too (see period-days.ts), and a
+// range reads every period holding one of its days. So a pair's weight in a
+// period is over every row of its files: the tail bound then covers whatever
+// part of the pair a range reads from that period.
+describe('resource rollup of a period whose files hold rows of other months', () => {
+  const FILED = asProviderName('aws');
+  let db: Awaited<ReturnType<typeof DuckDBInstance.create>>;
+  let conn: Connection;
+  let dataDir: string;
+
+  beforeAll(async () => {
+    db = await DuckDBInstance.create();
+    conn = await db.connect();
+    dataDir = (await mkdtemp(join(tmpdir(), 'cg-resource-filed-'))).replaceAll('\\', '/');
+    await writeFiledRows(conn, dataDir, String(FILED));
+  });
+  afterAll(async () => { await rm(dataDir, { recursive: true, force: true }); });
+
+  const filedOpts = () => ({ dataDir, dimensions, providers: [{ name: FILED, type: 'aws' as const }], costScope });
+
+  it('weighs a pair by every row the period\'s files hold, and stores each of them', async () => {
+    const topPath = join(dataDir, 'top.parquet');
+    const rowsPath = join(dataDir, 'rows.parquet');
+    await conn.run(buildResourceTopQuery(JANUARY, 'daily', topPath, filedOpts(), 10));
+    const top = await queryAll(conn, `SELECT resource_id, weight FROM read_parquet('${topPath}') ORDER BY rank`);
+    // 'shared' is dated in January, February and March; 'early' in December.
+    expect(top.map(r => [r['resource_id'], num(r['weight'])])).toEqual([['arn:shared', 2 + 16 + 32], ['arn:january', 4 + 8], ['arn:early', 1]]);
+
+    await conn.run(buildResourceRowsQuery(JANUARY, 'daily', rowsPath, topPath, filedOpts()));
+    const rows = await queryAll(conn, `SELECT usage_date::VARCHAR AS day, SUM(cost) AS cost FROM read_parquet('${rowsPath}') GROUP BY 1 ORDER BY 1`);
+    expect(rows.map(r => r['day'])).toEqual(filedDays(JANUARY));
+    expect(rows.reduce((sum, r) => sum + num(r['cost']), 0)).toBe(FILED_ROWS.filter(r => r.period === JANUARY).reduce((sum, r) => sum + r.cost, 0));
   });
 });

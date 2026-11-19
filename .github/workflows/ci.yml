@@ -35,6 +35,7 @@ jobs:
           npx tsc --noEmit -p packages/ui/tsconfig.json
           npx tsc --noEmit -p packages/desktop/tsconfig.json
           npx tsc --noEmit -p packages/mcp/tsconfig.json
+          npx tsc --noEmit -p e2e/tsconfig.json
 
       - name: Lint
         run: npx eslint packages/*/src/
