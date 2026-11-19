@@ -144,7 +144,7 @@ class SyncingApi extends MockCostApi {
   };
 }
 
-const NO_RECOMMENDATIONS: SavingsResult = { recommendations: [], totalMonthlySavings: asDollars(0), snapshots: [] };
+const NO_RECOMMENDATIONS: SavingsResult = { recommendations: [], totalMonthlySavings: asDollars(0), snapshots: [], unreadSnapshots: [] };
 
 /** A completed sync that finished `agoMs` before now (the fake clock's). */
 function completed(agoMs: number, filesDownloaded: number): SyncStatus {
