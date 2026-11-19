@@ -342,7 +342,7 @@ describe('GCP FOCUS 1.2 BigQuery export (canonicalized locally by the shipped ad
     const native = sample('gcp', 'native').parquetPath;
     const [row] = await rowsOf(`
       SELECT COUNT(*) AS n FROM read_parquet('${native}')
-      WHERE len(list_filter(x_Credits, c -> c."Type" = 'COMMITTED_USAGE_DISCOUNT')) > 0`);
+      WHERE len(list_filter(x_Credits, lambda c: c."Type" = 'COMMITTED_USAGE_DISCOUNT')) > 0`);
     expect(Number(row?.['n'])).toBeGreaterThan(0);
   });
 

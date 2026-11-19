@@ -75,7 +75,7 @@ describe('merge-update-manifests', () => {
 // docs/breaking-changes.md for a "Removed: macOS N support" entry, raise
 // --minimum-system-version in release.yml to N's Darwin version if so (macOS
 // 13 = 22, 14 = 23, 15 = 24, 26 = 25), then record both here.
-const REVIEWED_MAC_FLOOR = { electronMajor: 44, darwin: '22.0.0' };
+const REVIEWED_MAC_FLOOR = { electronMajor: 45, darwin: '22.0.0' };
 
 describe('release.yml macOS update floor', () => {
   it('was reviewed for the Electron major the lockfile ships', () => {

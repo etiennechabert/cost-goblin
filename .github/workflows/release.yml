@@ -307,7 +307,7 @@ jobs:
           cp artifacts/dist-linux-x64/latest-linux.yml upload/
           cp artifacts/dist-linux-arm64/latest-linux-arm64.yml upload/
 
-          # Electron 44 needs macOS 13 (its LSMinimumSystemVersion is 13.0), and
+          # Electron 45 needs macOS 13 (its LSMinimumSystemVersion is 13.0), and
           # electron-updater compares minimumSystemVersion with the Darwin kernel
           # version (macOS 13 = Darwin 22). This keeps macOS 12 installs on the
           # build they can run instead of updating them to one that won't launch.

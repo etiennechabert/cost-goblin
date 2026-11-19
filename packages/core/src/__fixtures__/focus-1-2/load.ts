@@ -32,9 +32,9 @@ const GCP_KEY_VALUE = 'STRUCT(Key VARCHAR, Value VARCHAR)[]';
  *  resource labels, then project labels. Each is a differently-shaped
  *  repeated record, so they are normalized to (Key, Value) before merging. */
 const GCP_TAG_SOURCES = `list_concat(list_concat(
-  list_transform(x_Tags,          t -> struct_pack("Key" := t."Key", "Value" := t."Value")),
-  list_transform(x_Labels,        t -> struct_pack("Key" := t."Key", "Value" := t."Value"))),
-  list_transform(x_ProjectLabels, t -> struct_pack("Key" := t."Key", "Value" := t."Value")))`;
+  list_transform(x_Tags,          lambda t: struct_pack("Key" := t."Key", "Value" := t."Value")),
+  list_transform(x_Labels,        lambda t: struct_pack("Key" := t."Key", "Value" := t."Value"))),
+  list_transform(x_ProjectLabels, lambda t: struct_pack("Key" := t."Key", "Value" := t."Value")))`;
 
 const TIMESTAMPTZ = 'TIMESTAMP WITH TIME ZONE';
 
@@ -198,7 +198,7 @@ export function contractProjection(provider: SampleProvider, table: string): str
         -- Keying on the credit type alone labels both 'Used' and loses the
         -- unused commitment — the population AWS and Azure report explicitly.
         CASE
-          WHEN len(list_filter(_credits, c -> c."Type" = 'COMMITTED_USAGE_DISCOUNT' AND c."Amount" < 0)) > 0 THEN 'Used'
+          WHEN len(list_filter(_credits, lambda c: c."Type" = 'COMMITTED_USAGE_DISCOUNT' AND c."Amount" < 0)) > 0 THEN 'Used'
           WHEN len(_credits) > 0 THEN 'Unused'
           ELSE ''
         END AS CommitmentDiscountStatus,
@@ -215,14 +215,14 @@ export function contractProjection(provider: SampleProvider, table: string): str
         -- strongest source, which is the FIRST match in the concatenation.
         -- A NULL key would fail the same way, hence the filter.
         map_from_entries(list_transform(
-          list_distinct(list_transform(_tags, e -> e."Key")),
-          k -> struct_pack(k := k, v := list_filter(_tags, e -> e."Key" = k)[1]."Value"))) AS Tags,
+          list_distinct(list_transform(_tags, lambda e: e."Key")),
+          lambda k: struct_pack(k := k, v := list_filter(_tags, lambda e: e."Key" = k)[1]."Value"))) AS Tags,
         COALESCE(NULLIF(x_ServiceId, ''), ServiceName) AS x_ServiceCode,
         CAST(NULL AS VARCHAR) AS x_Operation
       FROM (
         SELECT *,
-          list_filter(${GCP_TAG_SOURCES}, e -> e."Key" IS NOT NULL) AS _tags,
-          list_filter(x_Credits, c -> c."Type" = 'COMMITTED_USAGE_DISCOUNT') AS _credits
+          list_filter(${GCP_TAG_SOURCES}, lambda e: e."Key" IS NOT NULL) AS _tags,
+          list_filter(x_Credits, lambda c: c."Type" = 'COMMITTED_USAGE_DISCOUNT') AS _credits
         FROM ${table}
       )`;
   }

@@ -145,7 +145,7 @@ function camelCaseSql(expr: string): string {
     `array_to_string(` +
       `list_transform(` +
         `regexp_split_to_array(${expr}, '[-_ ]+'), ` +
-        `(w, i) -> CASE WHEN i = 1 OR length(w) = 0 THEN w ` +
+        `lambda w, i: CASE WHEN i = 1 OR length(w) = 0 THEN w ` +
                        `ELSE upper(substr(w, 1, 1)) || substr(w, 2) END` +
       `), ''` +
     `)`;

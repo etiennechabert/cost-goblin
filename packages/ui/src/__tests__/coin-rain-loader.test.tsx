@@ -2,6 +2,7 @@ import { Profiler } from 'react';
 import { render, screen, act, within } from '@testing-library/react';
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { CoinRainLoader, COIN_SIZE, coinRandom } from '../components/coin-rain-loader.js';
+import { normalizeCss } from './helpers/css.js';
 import { setReducedMotion } from './setup.js';
 
 const HEIGHT = 200;
@@ -262,8 +263,10 @@ describe('CoinRainLoader', () => {
       const target = animation.target;
       expect(target).toBeInstanceOf(HTMLElement);
       if (!(target instanceof HTMLElement)) continue;
-      expect(target.style.transform).toBe(animation.keyframes[0]?.['transform']);
-      const parked = parsePose(target.style.transform);
+      const first = animation.keyframes[0]?.['transform'];
+      if (typeof first !== 'string') throw new Error('first keyframe has no transform');
+      expect(target.style.transform).toBe(normalizeCss('transform', first));
+      const parked = parsePose(first);
       expect(discSpan(parked.y, parked.scale).end).toBeLessThanOrEqual(0);
     }
   });

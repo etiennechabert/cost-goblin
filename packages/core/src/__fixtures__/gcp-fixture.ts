@@ -67,7 +67,7 @@ export async function writeGcpProvider(
       lower(PricingCategory) AS PricingCategory,
       ChargeDescription,
       CAST(ConsumedQuantity AS DECIMAL(38,9)) AS ConsumedQuantity,
-      list_transform(map_entries(Tags), e -> struct_pack(
+      list_transform(map_entries(Tags), lambda e: struct_pack(
         "Key" := e.key, "Value" := e.value, x_Inherited := false)) AS x_Tags,
       CAST([] AS STRUCT("Key" VARCHAR, "Value" VARCHAR)[]) AS x_Labels,
       'compute.googleapis.com' AS x_ServiceId,

@@ -19,6 +19,9 @@ export const SENTRY_DATA_COLLECTION: Required<NonNullable<ElectronMainOptions['d
   urlQueryParams: false,
   graphQL: { document: false, variables: false },
   genAI: { inputs: false, outputs: false },
+  // Sentry's MCP server instrumentation (the bundled MCP server): tool
+  // arguments and results are cost queries and their answers.
+  mcp: { inputs: false, outputs: false },
   databaseQueryData: false,
   queues: false,
   // Local variables can hold cost rows, account ids and file paths.

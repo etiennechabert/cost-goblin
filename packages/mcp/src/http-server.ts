@@ -3,7 +3,6 @@ import { createServer } from 'node:http';
 import type { Server, IncomingMessage, ServerResponse } from 'node:http';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { logger } from '@costgoblin/core';
 import type { McpContext } from './context.js';
 import { SERVER_INSTRUCTIONS } from './server-instructions.js';
@@ -114,7 +113,7 @@ export async function createMcpHttpServer(ctx: McpContext, options: McpHttpServe
       { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS },
     );
     registerTools(mcpServer, ctx);
-    await mcpServer.connect(transport as unknown as Transport);
+    await mcpServer.connect(transport);
   }
 
   // Only loopback Host headers are accepted. The server binds 127.0.0.1/::1, but

@@ -6,6 +6,7 @@ import type { BuiltInDimension, CostApi, DimensionsConfig, TagDimension } from '
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { DimensionsView } from '../views/dimensions.js';
+import { normalizeCss } from './helpers/css.js';
 
 /** The enabled-dimensions list is one ordered list of built-in and tag
  *  dimensions: reordered with the arrows or by dragging a row by its grip,
@@ -129,7 +130,7 @@ describe('Enabled dimensions — reordering', () => {
     const target = rowAt(2);
     expect(fireEvent.dragOver(target, { dataTransfer: transfer })).toBe(false);
     expect(transfer.dropEffect).toBe('move');
-    expect(target.style.boxShadow).toBe(DROP_BELOW);
+    expect(target.style.boxShadow).toBe(normalizeCss('box-shadow', DROP_BELOW));
 
     // Leaving some other row keeps the marker; leaving the target clears it.
     fireEvent.dragLeave(rowAt(1));
@@ -167,11 +168,11 @@ describe('Enabled dimensions — reordering', () => {
     fireEvent.mouseDown(within(rowAt(2)).getByTitle('Drag to reorder'));
     fireEvent.dragStart(rowAt(2), { dataTransfer: transfer });
     fireEvent.dragOver(rowAt(1), { dataTransfer: transfer });
-    expect(rowAt(1).style.boxShadow).toBe(DROP_ABOVE);
+    expect(rowAt(1).style.boxShadow).toBe(normalizeCss('box-shadow', DROP_ABOVE));
     // Moving on to a row above clears the first marker.
     fireEvent.dragLeave(rowAt(1));
     fireEvent.dragOver(rowAt(0), { dataTransfer: transfer });
-    expect(rowAt(0).style.boxShadow).toBe(DROP_ABOVE);
+    expect(rowAt(0).style.boxShadow).toBe(normalizeCss('box-shadow', DROP_ABOVE));
     expect(rowAt(1).style.boxShadow).toBe('');
     fireEvent.drop(rowAt(0), { dataTransfer: transfer });
     expect(rowLabels()).toEqual(['Team', 'Service', 'Charge Category']);
