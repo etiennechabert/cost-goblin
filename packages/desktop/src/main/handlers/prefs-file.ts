@@ -68,25 +68,24 @@ async function readCurrent(filePath: string): Promise<Readonly<Record<string, un
 // the file: antivirus or the indexer looking at the file just written, or one
 // of this app's own readers in the middle of a read. Each lets go within
 // milliseconds. A read can also briefly find no descriptor free (EMFILE).
-const REFUSED_CODES: readonly string[] = ['EPERM', 'EACCES', 'EBUSY', 'EMFILE'];
+const REFUSED_CODES: ReadonlySet<string> = new Set(['EPERM', 'EACCES', 'EBUSY', 'EMFILE']);
 const RETRY_DELAYS_MS: readonly number[] = [25, 50, 100];
 
 function isRefusal(err: unknown): boolean {
   const code = errnoCode(err);
-  return code !== undefined && REFUSED_CODES.includes(code);
+  return code !== undefined && REFUSED_CODES.has(code);
 }
 
 /** Runs `op`, waiting out a refusal (`REFUSED_CODES`). The last refusal, or
  *  any other failure, rejects. */
-async function retryRefused<T>(op: () => Promise<T>): Promise<T> {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await op();
-    } catch (err: unknown) {
-      const delayMs = RETRY_DELAYS_MS[attempt];
-      if (delayMs === undefined || !isRefusal(err)) throw err;
-      await sleep(delayMs);
-    }
+async function retryRefused<T>(op: () => Promise<T>, attempt = 0): Promise<T> {
+  try {
+    return await op();
+  } catch (err: unknown) {
+    const delayMs = RETRY_DELAYS_MS[attempt];
+    if (delayMs === undefined || !isRefusal(err)) throw err;
+    await sleep(delayMs);
+    return retryRefused(op, attempt + 1);
   }
 }
 
