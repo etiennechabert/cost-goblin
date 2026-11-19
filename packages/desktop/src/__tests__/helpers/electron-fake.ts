@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { vi, type Mock } from 'vitest';
 import type {
   MessageBoxOptions,
@@ -160,12 +161,61 @@ export function resetElectronFakes(): void {
 
 export const fakeElectronModule = { ipcMain, dialog, shell, app, BrowserWindow };
 
+/** A span the fake Sentry SDK started. */
+export interface FakeSpan {
+  readonly name: string;
+  readonly op: string | undefined;
+  /** The span that was active where this one started. `null`: it started as
+   *  a root span, which Sentry sends as a transaction of its own. */
+  readonly parent: FakeSpan | null;
+  /** Those it started with, then those set on it. */
+  readonly attributes: Record<string, unknown>;
+  setAttribute(key: string, value: unknown): FakeSpan;
+}
+
+/** What the fake reads of the `startSpan` options. */
+interface FakeSpanOptions {
+  readonly name: string;
+  readonly op?: string;
+  readonly attributes?: Readonly<Record<string, unknown>>;
+}
+
+function fakeSpan(options: FakeSpanOptions, parent: FakeSpan | null): FakeSpan {
+  const span: FakeSpan = {
+    name: options.name,
+    op: options.op,
+    parent,
+    attributes: { ...options.attributes },
+    setAttribute(key, value) { span.attributes[key] = value; return span; },
+  };
+  return span;
+}
+
+/** Stands for whatever span the real SDK may have active where the code runs
+ *  (an instrumented request, a caller's own span): a span the code starts
+ *  nests under it unless the code clears the active span first. */
+export const AMBIENT_SPAN = fakeSpan({ name: 'ambient' }, null);
+
+/** The active span follows the async flow, as the SDK's OpenTelemetry context
+ *  does: a span started after an `await` inside another span's callback is
+ *  still its child. `undefined` (outside any `run`) reads as the ambient span. */
+const activeSpan = new AsyncLocalStorage<FakeSpan | null>();
+
+/** Every span started while tracing was armed, in start order. */
+export const startedSpans: FakeSpan[] = [];
+
 /** `@sentry/electron/main` cannot load outside Electron (it imports `app`
  *  from the real package), and the handlers reach it through the tracing
- *  helper. Tracing is never armed in a test, so the span helper is a
- *  pass-through and the lifecycle calls are inert. */
+ *  helper. The span helpers only reach the SDK once a test arms tracing
+ *  (`telemetry.isTracingActive`); the lifecycle calls are inert. */
 export const fakeSentryModule = {
-  startSpan: <T>(_options: unknown, fn: (span: undefined) => T): T => fn(undefined),
+  startSpan: <T>(options: FakeSpanOptions, fn: (span: FakeSpan) => T): T => {
+    const store = activeSpan.getStore();
+    const span = fakeSpan(options, store === undefined ? AMBIENT_SPAN : store);
+    startedSpans.push(span);
+    return activeSpan.run(span, () => fn(span));
+  },
+  withActiveSpan: <T>(span: FakeSpan | null, fn: () => T): T => activeSpan.run(span, fn),
   init: vi.fn<(options: unknown) => void>(),
   flush: vi.fn<(timeout?: number) => Promise<boolean>>(() => Promise.resolve(true)),
   close: vi.fn<(timeout?: number) => Promise<boolean>>(() => Promise.resolve(true)),

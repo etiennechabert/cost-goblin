@@ -46,7 +46,7 @@ import { adcImpersonationToKeep, gcloudLoginArgs, gcloudLoginEnv } from '../gclo
 import { SYNC_ALREADY_RUNNING } from '../sync-client.js';
 import { parseSyncId, resolveProvider, resolveSyncId } from '../sync-id.js';
 import { recordSyncLog } from '../sync-log.js';
-import { traceSpan, SPAN_OP } from '../telemetry/tracing.js';
+import { traceRootSpan, SPAN_OP } from '../telemetry/tracing.js';
 
 type ExpectedDataType = 'daily' | 'hourly' | 'cost-optimization';
 
@@ -288,11 +288,10 @@ export function registerSyncHandlers(app: AppContext): void {
     recordSyncLog('info', `Sync started: ${provider.name}/${tier} (${String(fileEntries.length)} file(s))`);
 
     try {
-      const result = await traceSpan(
+      const result = await traceRootSpan(
         {
           name: 'sync.s3',
           op: SPAN_OP.sync,
-          forceTransaction: true,
           attributes: { 'sync.tier': tier, 'sync.provider': provider.name, 'sync.files_requested': fileEntries.length },
         },
         async (span) => {

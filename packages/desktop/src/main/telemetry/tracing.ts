@@ -40,3 +40,18 @@ export function traceSpan<T>(options: SpanOptions, fn: (span: Span | undefined) 
   if (!telemetry.isTracingActive()) return fn(undefined);
   return Sentry.startSpan(options, (span) => fn(span));
 }
+
+/**
+ * {@link traceSpan} for a unit of work of its own (a sync, a rollup warm-up or
+ * re-roll): the span starts as a root span whatever span is active, so Sentry
+ * sends it as a transaction of its own. Nested under a caller's span it would
+ * be only a child, and in the static trace lifecycle a child that ends after
+ * its transaction (a warm-up outlives the call that starts it) is never sent.
+ * Clearing the active span first is what Sentry 11.10 recommends in place of
+ * the deprecated `forceTransaction` start option. Spans started inside `fn`
+ * still nest under this one.
+ */
+export function traceRootSpan<T>(options: SpanOptions, fn: (span: Span | undefined) => T): T {
+  if (!telemetry.isTracingActive()) return fn(undefined);
+  return Sentry.withActiveSpan(null, () => Sentry.startSpan(options, (span) => fn(span)));
+}

@@ -1,8 +1,9 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ElectronMainOptions, ErrorEvent } from '@sentry/electron/main';
+import type { ElectronMainOptions, ErrorEvent, Event } from '@sentry/electron/main';
 import { TELEMETRY_DEFAULTS } from '@costgoblin/core';
 import type { TelemetryPreferences } from '@costgoblin/core';
 
@@ -34,7 +35,6 @@ vi.mock('@sentry/electron/main', () => ({ init: fake.init, flush: fake.flush, cl
 
 vi.mock('../main/telemetry/dev-tags.js', () => ({ readDevTagsSync: fake.readDevTagsSync }));
 
-type TransactionEvent = Parameters<NonNullable<ElectronMainOptions['beforeSendTransaction']>>[0];
 type IntegrationsFn = Extract<NonNullable<ElectronMainOptions['integrations']>, (defaults: never) => unknown>;
 type Integration = Parameters<IntegrationsFn>[0][number];
 
@@ -58,7 +58,9 @@ const COLLECT_NOTHING = {
   frameContextLines: 5,
 };
 
-async function loadController(): Promise<typeof import('../main/telemetry/controller.js')['telemetry']> {
+type Controller = typeof import('../main/telemetry/controller.js')['telemetry'];
+
+async function loadController(): Promise<Controller> {
   vi.resetModules();
   return (await import('../main/telemetry/controller.js')).telemetry;
 }
@@ -76,22 +78,20 @@ async function sendError(options: ElectronMainOptions, event: ErrorEvent): Promi
   return options.beforeSend(event, {});
 }
 
-/** The transaction hook the controller keeps under the static trace lifecycle.
- *  Sentry 11 deprecates the option because span streaming ignores it; the
- *  controller opts out of streaming, so the hook is read through this shape. */
-interface StaticTraceHooks {
-  readonly beforeSendTransaction?: ElectronMainOptions['beforeSendTransaction'];
-}
-
-async function sendTransaction(options: StaticTraceHooks, event: TransactionEvent): Promise<TransactionEvent | null> {
-  if (options.beforeSendTransaction === undefined) throw new Error('no beforeSendTransaction hook');
-  return options.beforeSendTransaction(event, {});
+function integrationList(options: ElectronMainOptions, defaults: Integration[]): Integration[] {
+  const { integrations } = options;
+  if (typeof integrations !== 'function') throw new Error('expected an integrations callback');
+  return integrations(defaults);
 }
 
 function integrationNames(options: ElectronMainOptions, defaults: Integration[]): string[] {
-  const { integrations } = options;
-  if (typeof integrations !== 'function') throw new Error('expected an integrations callback');
-  return integrations(defaults).map(i => i.name);
+  return integrationList(options, defaults).map(i => i.name);
+}
+
+/** Passes an event through the transaction gate, the event processor the
+ *  controller installs after every other integration's (pinned below). */
+function throughTransactionGate(telemetry: Controller, event: Event): Event | null {
+  return telemetry.transactionGate.processEvent(event);
 }
 
 let outboxDir = '';
@@ -190,7 +190,7 @@ describe('telemetry start', () => {
     expect(options.initialScope).toEqual({ tags: { branch: 'feature/x', commit: 'abc1234' } });
     // Never let the SDK collect user info, headers, cookies, bodies or local
     // variables on its own (Sentry 11 defaults every category on), and keep
-    // traces as transactions, which beforeSendTransaction gates and scrubs.
+    // traces as transaction events, which the transaction gate gates and scrubs.
     expect(options).toMatchObject({ dataCollection: COLLECT_NOTHING, traceLifecycle: 'static', tracesSampleRate: 0 });
     expect('tunnel' in options).toBe(false);
     expect(telemetry.getStatus()).toMatchObject({
@@ -233,12 +233,40 @@ describe('telemetry start', () => {
 
     const errorsOnly = await loadController();
     errorsOnly.start(ERRORS_ONLY);
-    expect(integrationNames(initOptions(), defaults)).toEqual(['OnUncaughtException']);
+    expect(integrationNames(initOptions(), defaults)).toEqual(['OnUncaughtException', errorsOnly.transactionGate.name]);
 
     fake.init.mockReset();
     const native = await loadController();
     native.start({ ...OFF, nativeCrashReports: true });
-    expect(integrationNames(initOptions(), defaults)).toEqual(['SentryMinidump', 'OnUncaughtException']);
+    expect(integrationNames(initOptions(), defaults)).toEqual(['SentryMinidump', 'OnUncaughtException', native.transactionGate.name]);
+  });
+
+  it('registers no event processor in the main process that would run after the transaction gate', async () => {
+    // The SDK runs scope event processors after every integration's, so what
+    // one adds to a transaction would leave unscrubbed. Sentry's own that
+    // register one: captureConsole, pino and supabase. An integration added
+    // after init (addIntegration) puts its processor after the gate's too.
+    const mainDir = fileURLToPath(new URL('../main', import.meta.url));
+    const sources = (await readdir(mainDir, { recursive: true })).filter(f => /\.tsx?$/.test(f));
+    const registering = /\b(?:addEventProcessor|addIntegration)\s*\(|\b(?:captureConsole|pino|supabase)Integration\s*\(/;
+    const offenders: string[] = [];
+    for (const file of sources) {
+      if (registering.test(await readFile(join(mainDir, file), 'utf-8'))) offenders.push(file);
+    }
+    expect(sources.length).toBeGreaterThan(10);
+    expect(offenders).toEqual([]);
+  });
+
+  it('installs the transaction gate after every other integration, so its event processor runs last', async () => {
+    const defaults: Integration[] = [{ name: 'SentryMinidump' }, { name: 'ElectronContext', processEvent: (event) => event }];
+    const telemetry = await loadController();
+    telemetry.start(EVERYTHING);
+
+    const options = initOptions();
+    expect(integrationList(options, defaults).at(-1)).toBe(telemetry.transactionGate);
+    // The SDK's own transaction hook stays unset: span streaming ignores it,
+    // and Sentry 11.10 deprecates it for that reason.
+    expect('beforeSendTransaction' in options).toBe(false);
   });
 
   it('stays inactive when the SDK fails to initialise', async () => {
@@ -321,7 +349,7 @@ describe('telemetry preference changes', () => {
   });
 });
 
-describe('telemetry beforeSend gate', () => {
+describe('telemetry channel gates', () => {
   beforeEach(() => {
     vi.stubEnv('COSTGOBLIN_SENTRY_DSN', DSN);
   });
@@ -348,7 +376,7 @@ describe('telemetry beforeSend gate', () => {
     const options = initOptions();
 
     await expect(sendError(options, { type: undefined, message: 'js error' })).resolves.toBeNull();
-    await expect(sendTransaction(options, { type: 'transaction', transaction: 'query' })).resolves.toBeNull();
+    expect(throughTransactionGate(telemetry, { type: 'transaction', transaction: 'query' })).toBeNull();
     const crash = await sendError(options, { type: undefined, platform: 'native', message: 'minidump' });
     expect(crash?.platform).toBe('native');
   });
@@ -369,9 +397,58 @@ describe('telemetry beforeSend gate', () => {
     const telemetry = await loadController();
     telemetry.start({ ...OFF, performance: true });
 
-    const sent = await sendTransaction(initOptions(), { type: 'transaction', transaction: 'GET /Users/jane/report' });
+    const sent = throughTransactionGate(telemetry, { type: 'transaction', transaction: 'GET /Users/jane/report' });
 
     expect(sent?.transaction).toBe('GET /Users/[user]/report');
+    await expect(telemetry.getOutbox()).resolves.toEqual([]);
+  });
+
+  it('scrubs a transaction and mirrors it to the audit outbox', async () => {
+    const telemetry = await loadController();
+    telemetry.initialize(outboxDir);
+    telemetry.start({ ...OFF, performance: true });
+
+    const sent = throughTransactionGate(telemetry, {
+      type: 'transaction',
+      transaction: 'sync.s3',
+      user: { email: 'jane@acme.test' },
+      contexts: { device: { name: 'janes-macbook' }, trace: { trace_id: 'abc', span_id: 'def' } },
+      spans: [{ span_id: '1', trace_id: 'abc', start_timestamp: 0, status: 'ok', description: 'read /Users/jane/data.parquet', data: { 'sync.provider': 'acme-prod' } }],
+    });
+
+    expect(sent?.user).toBeUndefined();
+    expect(Object.keys(sent?.contexts ?? {})).toEqual(['trace']);
+    expect(sent?.spans?.[0]?.description).toBe('read /Users/[user]/data.parquet');
+    await vi.waitFor(async () => {
+      expect(await telemetry.getOutbox()).toEqual([expect.objectContaining({ kind: 'transaction', title: 'sync.s3' })]);
+    });
+  });
+
+  it('drops transactions once performance is turned off mid-session, while errors still report', async () => {
+    const telemetry = await loadController();
+    telemetry.start(EVERYTHING);
+    const options = initOptions();
+    expect(throughTransactionGate(telemetry, { type: 'transaction', transaction: 'query' })?.transaction).toBe('query');
+
+    await telemetry.applyPreferences({ ...EVERYTHING, performance: false });
+
+    expect(throughTransactionGate(telemetry, { type: 'transaction', transaction: 'query' })).toBeNull();
+    const error = await sendError(options, { type: undefined, message: 'still reported' });
+    expect(error?.message).toBe('still reported');
+  });
+
+  it('leaves every event but a transaction to the other hooks, untouched and unrecorded', async () => {
+    const telemetry = await loadController();
+    telemetry.initialize(outboxDir);
+    telemetry.start(EVERYTHING);
+
+    // beforeSend gates, scrubs and records errors: the gate passes them on as
+    // they are, even with their channel off.
+    await telemetry.applyPreferences({ ...EVERYTHING, errorReports: false });
+    const error: Event = { type: undefined, message: 'failed for jane@acme.test', user: { email: 'jane@acme.test' } };
+    expect(throughTransactionGate(telemetry, error)).toBe(error);
+    expect(error).toEqual({ type: undefined, message: 'failed for jane@acme.test', user: { email: 'jane@acme.test' } });
+    await new Promise<void>((resolve) => { setImmediate(resolve); });
     await expect(telemetry.getOutbox()).resolves.toEqual([]);
   });
 });
