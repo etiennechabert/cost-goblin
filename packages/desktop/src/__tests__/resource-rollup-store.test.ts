@@ -114,6 +114,14 @@ describe('ResourceRollupStore', () => {
     conn = await db.connect();
     root = await mkdtemp(join(tmpdir(), 'cg-resource-store-'));
     runQuery = (statement: string): Promise<RawRow[]> => fetchRows(conn, statement);
+    // The stores here stand for runs of the app, but share one DuckDB, as no
+    // two runs do: a store that starts over writes heavy-1.parquet again, in
+    // the same second, where an earlier store wrote it. On Linux the new file
+    // often gets the deleted one's inode, and DuckDB 1.5 knew a cached local
+    // file by device, inode, size and mtime second, so it read the new file
+    // through the old one's cached bytes ("Snappy decompression failure").
+    // DuckDB 2.0 caches no local file by default; keep it so here.
+    await conn.run('SET enable_external_file_cache = false');
 
     // The fixture months, plus the shifting pair: one $5,000 line in January,
     // two one-cent lines in February.
@@ -142,6 +150,13 @@ describe('ResourceRollupStore', () => {
   });
   // restoreAllMocks leaves a vi.mock factory's vi.fn alone: reset the rename wrapper by hand.
   afterEach(() => { vi.restoreAllMocks(); vi.mocked(rename).mockReset(); });
+
+  // A month a build leaves out says why only in the store's warning, and a
+  // test that expects one mocks logger.warn: any other warning is a build
+  // step that failed, named here rather than as a source that is undefined.
+  const warnings: string[] = [];
+  logger.addHandler((entry) => { if (entry.level === 'warn') warnings.push(entry.message); });
+  afterEach(() => { expect(warnings.splice(0)).toEqual([]); });
 
   it('builds every month as one generation and serves the range from it', async () => {
     const dataDir = await newDataDir();
