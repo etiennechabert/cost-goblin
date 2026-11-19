@@ -166,6 +166,7 @@ describe('DateRangePicker', () => {
 });
 
 describe('DateRangePicker calendar periods and the freshness lag', () => {
+  // Moves the clock the file's pinDate faked; pinDate restores the real one.
   function renderOn(isoNow: string, lagDays: number) {
     vi.setSystemTime(new Date(isoNow));
     const onChange = vi.fn();
