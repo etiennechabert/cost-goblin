@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { telemetry } from '../main/telemetry/controller.js';
 import { traceRootSpan, traceSpan } from '../main/telemetry/tracing.js';
 import { AMBIENT_SPAN, startedSpans } from './helpers/electron-fake.js';
+import { armTracing } from './helpers/tracing.js';
 
 /** The span helpers the main process wraps its work in: a pure pass-through
  *  until performance tracing is armed, then a span that nests under the active
@@ -11,10 +11,6 @@ import { AMBIENT_SPAN, startedSpans } from './helpers/electron-fake.js';
 
 vi.mock('electron', async () => (await import('./helpers/electron-fake.js')).fakeElectronModule);
 vi.mock('@sentry/electron/main', async () => (await import('./helpers/electron-fake.js')).fakeSentryModule);
-
-function armTracing(): void {
-  vi.spyOn(telemetry, 'isTracingActive').mockReturnValue(true);
-}
 
 function tick(): Promise<void> {
   return new Promise<void>((resolve) => { setImmediate(resolve); });

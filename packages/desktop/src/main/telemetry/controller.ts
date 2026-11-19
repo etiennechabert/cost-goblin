@@ -58,11 +58,15 @@ class TelemetryController {
 
   /**
    * The channel gate, scrub and audit-outbox copy for transactions, run by
-   * the SDK as an event processor. It is installed after every other
-   * integration, so it sees each transaction last, once every other processor
-   * has added what it adds, as `beforeSendTransaction` did: Sentry 11.10
-   * deprecates that hook, which span streaming ignores (sentry-privacy.ts).
-   * Every other event passes through it untouched: `beforeSend` handles errors.
+   * the SDK as an event processor, in place of `beforeSendTransaction`: Sentry
+   * 11.10 deprecates that hook, which span streaming ignores (sentry-privacy.ts).
+   * It is listed after every other integration, so it runs after their
+   * processors and scrubs what they added. That hook ran after every processor,
+   * though: a scope event processor (`Sentry.addEventProcessor`, or an
+   * integration such as captureConsole or pino that registers one) runs after
+   * this one, and what it adds would leave unscrubbed. The app registers none;
+   * keep it that way. Every other event passes through untouched: `beforeSend`
+   * handles errors.
    */
   readonly transactionGate: EventGateIntegration = {
     name: 'CostGoblinTransactionGate',
@@ -247,7 +251,8 @@ class TelemetryController {
       // the transport regardless. Native crashes are replayed on the NEXT launch
       // (process alive), so they always record; only an immediate fatal JS crash
       // could exit before this flushes — an acceptable gap for the scrubbed
-      // channel, and not worth blocking beforeSend on synchronous disk I/O.
+      // channel, and not worth blocking beforeSend or the transaction gate on
+      // synchronous disk I/O.
       void this.outbox.record(summarizeEventForOutbox(event, new Date().toISOString()));
     }
     return event;

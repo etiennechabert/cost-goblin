@@ -14,7 +14,6 @@ import type { DataInventory, ManifestFileEntry, ProviderName, SyncProgress } fro
 import { triggerAutoSyncNow } from '../main/auto-sync.js';
 import { changedRollupMonths, deleteLocalPeriodFiles, resolveDataType, registerSyncHandlers } from '../main/handlers/sync.js';
 import { SYNC_ALREADY_RUNNING } from '../main/sync-client.js';
-import { telemetry } from '../main/telemetry/controller.js';
 import { resetElectronFakes, shell, startedSpans } from './helpers/electron-fake.js';
 import {
   FIXTURE_AWS_PROVIDER,
@@ -24,6 +23,7 @@ import {
   type FixtureConfigSet,
   type Harness,
 } from './helpers/ipc-harness.js';
+import { armTracing } from './helpers/tracing.js';
 
 /** The sync / data-management IPC channels: status backfill, inventory and
  *  its local-only fallback, delete + prune cascades into the rollup, the
@@ -404,8 +404,7 @@ describe('data:sync-periods', () => {
   it('traces a sync as a transaction of its own, with what it downloaded', async () => {
     const h = await syncApp();
     stubMaintenance(h);
-    vi.spyOn(telemetry, 'isTracingActive').mockReturnValue(true);
-    startedSpans.splice(0);
+    armTracing();
     h.sync.syncPeriods.mockResolvedValueOnce({ filesDownloaded: 2, rowsProcessed: 42 });
 
     await h.ipc.invoke('data:sync-periods', DAILY_FILES);

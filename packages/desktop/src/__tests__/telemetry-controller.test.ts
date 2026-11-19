@@ -87,10 +87,9 @@ function integrationNames(options: ElectronMainOptions, defaults: Integration[])
   return integrationList(options, defaults).map(i => i.name);
 }
 
-/** Sends an event through the transaction gate, the event processor the
- *  controller installs after every other integration's (pinned below), so
- *  the SDK runs it last on each event it builds. */
-function sendTransaction(telemetry: Controller, event: Event): Event | null {
+/** Passes an event through the transaction gate, the event processor the
+ *  controller installs after every other integration's (pinned below). */
+function throughTransactionGate(telemetry: Controller, event: Event): Event | null {
   return telemetry.transactionGate.processEvent(event);
 }
 
@@ -333,7 +332,7 @@ describe('telemetry preference changes', () => {
   });
 });
 
-describe('telemetry beforeSend gate', () => {
+describe('telemetry channel gates', () => {
   beforeEach(() => {
     vi.stubEnv('COSTGOBLIN_SENTRY_DSN', DSN);
   });
@@ -360,7 +359,7 @@ describe('telemetry beforeSend gate', () => {
     const options = initOptions();
 
     await expect(sendError(options, { type: undefined, message: 'js error' })).resolves.toBeNull();
-    expect(sendTransaction(telemetry, { type: 'transaction', transaction: 'query' })).toBeNull();
+    expect(throughTransactionGate(telemetry, { type: 'transaction', transaction: 'query' })).toBeNull();
     const crash = await sendError(options, { type: undefined, platform: 'native', message: 'minidump' });
     expect(crash?.platform).toBe('native');
   });
@@ -381,7 +380,7 @@ describe('telemetry beforeSend gate', () => {
     const telemetry = await loadController();
     telemetry.start({ ...OFF, performance: true });
 
-    const sent = sendTransaction(telemetry, { type: 'transaction', transaction: 'GET /Users/jane/report' });
+    const sent = throughTransactionGate(telemetry, { type: 'transaction', transaction: 'GET /Users/jane/report' });
 
     expect(sent?.transaction).toBe('GET /Users/[user]/report');
     await expect(telemetry.getOutbox()).resolves.toEqual([]);
@@ -392,7 +391,7 @@ describe('telemetry beforeSend gate', () => {
     telemetry.initialize(outboxDir);
     telemetry.start({ ...OFF, performance: true });
 
-    const sent = sendTransaction(telemetry, {
+    const sent = throughTransactionGate(telemetry, {
       type: 'transaction',
       transaction: 'sync.s3',
       user: { email: 'jane@acme.test' },
@@ -412,11 +411,11 @@ describe('telemetry beforeSend gate', () => {
     const telemetry = await loadController();
     telemetry.start(EVERYTHING);
     const options = initOptions();
-    expect(sendTransaction(telemetry, { type: 'transaction', transaction: 'query' })?.transaction).toBe('query');
+    expect(throughTransactionGate(telemetry, { type: 'transaction', transaction: 'query' })?.transaction).toBe('query');
 
     await telemetry.applyPreferences({ ...EVERYTHING, performance: false });
 
-    expect(sendTransaction(telemetry, { type: 'transaction', transaction: 'query' })).toBeNull();
+    expect(throughTransactionGate(telemetry, { type: 'transaction', transaction: 'query' })).toBeNull();
     const error = await sendError(options, { type: undefined, message: 'still reported' });
     expect(error?.message).toBe('still reported');
   });
@@ -430,7 +429,7 @@ describe('telemetry beforeSend gate', () => {
     // they are, even with their channel off.
     await telemetry.applyPreferences({ ...EVERYTHING, errorReports: false });
     const error: Event = { type: undefined, message: 'failed for jane@acme.test', user: { email: 'jane@acme.test' } };
-    expect(sendTransaction(telemetry, error)).toBe(error);
+    expect(throughTransactionGate(telemetry, error)).toBe(error);
     expect(error).toEqual({ type: undefined, message: 'failed for jane@acme.test', user: { email: 'jane@acme.test' } });
     await new Promise<void>((resolve) => { setImmediate(resolve); });
     await expect(telemetry.getOutbox()).resolves.toEqual([]);

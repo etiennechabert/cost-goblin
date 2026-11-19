@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { listLocalMonths, loadConfig, logger, providerEtagPath } from '@costgoblin/core';
 import type { ProviderAuth, ProviderName } from '@costgoblin/core';
 import { isAnyCredentialError, loadOrgAccountsMap, prefsPath, toUserFriendlyError } from '../main/handlers/context.js';
-import { telemetry } from '../main/telemetry/controller.js';
 import { startedSpans } from './helpers/electron-fake.js';
 import {
   FIXTURE_AWS_PROVIDER,
@@ -15,6 +14,7 @@ import {
   type Harness,
   type HarnessOptions,
 } from './helpers/ipc-harness.js';
+import { armTracing } from './helpers/tracing.js';
 
 /** createAppContext: the config/dimension/org caches and what invalidates
  *  them, account + region name loading, the query result cache, the rollup
@@ -484,8 +484,7 @@ describe('createAppContext: rollup lifecycle', () => {
   });
 
   it('traces a warm-up and a re-roll each as a transaction of its own, with its partition builds under it', async () => {
-    vi.spyOn(telemetry, 'isTracingActive').mockReturnValue(true);
-    startedSpans.splice(0);
+    armTracing();
     const h = await built();
 
     // Root spans whatever span the SDK has active: the warm-up outlives the
