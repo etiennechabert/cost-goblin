@@ -13,7 +13,7 @@ The other files in this directory hold the checks for each area.
 
 - Anything `npm run check` already fails on, such as type errors and lint rules. Formatting and import order aren't enforced, so leave them alone too.
 - Style, naming or comment length: the long comments record why a guard exists.
-- A PR's own edits to the files your commits must leave unchanged.
+- That a PR edits files your commits leave unchanged. Still review what it changes.
 - Fixes that would need a construct CLAUDE.md bans (`any`, `as`, `!`, `@ts-ignore`, `eslint-disable`, `localStorage`) or a library its "Frontend Stack" rules out.
 - Coverage percentages, which SonarCloud gates. Do flag a test that doesn't exercise the behavior the PR changes.
 - Cognitive complexity up to 25, the project's threshold (Sonar's profile still says 15).
