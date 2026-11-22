@@ -1,6 +1,8 @@
 import { logger } from '@costgoblin/core';
 import type { ManifestFileEntry, ProviderAuth, SyncProgress, SyncLogLevel } from '@costgoblin/core';
 import { initWorkerLifecycle } from './worker-lifecycle.js';
+import { liveDrainables, waitCounterSync } from './worker-drain.js';
+import type { Drainable } from './worker-drain.js';
 
 /** A log line forwarded from the sync worker thread. */
 export type SyncLogSink = (level: SyncLogLevel, message: string, ts: number) => void;
@@ -46,8 +48,11 @@ export interface SyncClient {
   terminate(): Promise<void>;
 }
 
+/** What a sync started after the exit drain began is rejected with. */
+export const SYNC_CLIENT_TERMINATED_MESSAGE = 'Sync client terminated';
+
 type WorkerResponse =
-  | { kind: 'ready' }
+  | { kind: 'ready'; settled?: unknown }
   | { kind: 'progress'; id: number; phase: 'downloading' | 'repartitioning' | 'done'; filesDone: number; filesTotal: number; bytesDone?: number; bytesTotal?: number; message?: string }
   | { kind: 'complete'; id: number; filesDownloaded: number; rowsProcessed: number }
   | { kind: 'error'; id: number; message: string }
@@ -86,9 +91,16 @@ interface PendingSync {
 }
 
 export async function createSyncClient(workerPath: string, onLog?: SyncLogSink): Promise<SyncClient> {
+  // The worker's count of settled sync requests, from its ready message. A
+  // worker that sends none can't be waited on.
+  let settledCount: Int32Array | undefined;
   const lifecycle = await initWorkerLifecycle<PendingSync>(
     workerPath,
-    (msg) => isWorkerResponse(msg) && msg.kind === 'ready',
+    (msg) => {
+      if (!isWorkerResponse(msg) || msg.kind !== 'ready') return false;
+      if (msg.settled instanceof SharedArrayBuffer) settledCount = new Int32Array(msg.settled);
+      return true;
+    },
     (msg) => {
       if (!isWorkerResponse(msg)) return null;
       if (msg.kind === 'error' && msg.id === -1) return msg.message;
@@ -100,6 +112,33 @@ export async function createSyncClient(workerPath: string, onLog?: SyncLogSink):
    *  second start for a live key is rejected below, so this doubles as the
    *  per-(provider,tier) mutex and the cancellation target. */
   const activeByKey = new Map<string, number>();
+
+  // The exit drain (worker-drain.ts): the sync worker runs DuckDB for GCP
+  // canonicalization, and tearing its thread down under a running query
+  // aborts the process.
+  /** Sync requests posted to the worker: its settled count catches up with
+   *  this once nothing is in flight. */
+  let posted = 0;
+  let exited = false;
+  let drainRequested = false;
+  const drainable: Drainable = {
+    beginDrain(): void {
+      lifecycle.fatalError ??= new Error(SYNC_CLIENT_TERMINATED_MESSAGE);
+      if (drainRequested || exited || settledCount === undefined) return;
+      drainRequested = true;
+      worker.postMessage({ kind: 'drain' });
+    },
+    waitSettledSync(deadline: number): boolean {
+      const counter = settledCount;
+      if (counter === undefined) return true;
+      return waitCounterSync(counter, () => posted, deadline, () => exited);
+    },
+  };
+  liveDrainables.add(drainable);
+  worker.on('exit', () => {
+    exited = true;
+    liveDrainables.delete(drainable);
+  });
 
   worker.on('message', (msg: unknown) => {
     if (!isWorkerResponse(msg)) return;
@@ -182,6 +221,7 @@ export async function createSyncClient(workerPath: string, onLog?: SyncLogSink):
           tier: options.tier ?? 'daily',
           files: options.files,
         });
+        posted += 1;
       });
     },
     cancelSync(syncKey: string): void {

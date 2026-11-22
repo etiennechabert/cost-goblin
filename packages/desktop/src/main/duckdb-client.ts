@@ -1,6 +1,8 @@
 import { logger } from '@costgoblin/core';
 import type { DuckDbSandboxOptions } from '@costgoblin/core';
 import { initWorkerLifecycle } from './worker-lifecycle.js';
+import { drainWorkersSync, liveDrainables, QUIT_DRAIN_MS } from './worker-drain.js';
+import type { Drainable } from './worker-drain.js';
 
 export type RawRow = Readonly<Record<string, unknown>>;
 
@@ -76,41 +78,17 @@ export interface DuckDBWorkerData {
 }
 
 // ---------------------------------------------------------------------------
-// Quit — the process exiting with queries in flight
+// Quit: the process exiting with queries in flight (see worker-drain.ts)
 // ---------------------------------------------------------------------------
-// The process exiting tears every worker thread down, under a running query
-// as under none, and that aborts it just as an early terminate() would. The
-// process's exit handler therefore drains the workers first. It cannot do what
-// terminate() does: at exit the event loop no longer turns, so the workers'
-// answers are never received. What an exiting process can still do is read
-// shared memory, so each worker counts the requests it has settled there.
 
-/** One client's part in the drain at exit. */
-interface Drainable {
-  /** Tells the worker to cancel everything. The client runs nothing afterwards. */
-  beginDrain(): void;
-  /** Blocks until the worker has settled every request posted to it, or
-   *  `deadline` (epoch ms) passed. False when requests were still in flight. */
-  waitSettledSync(deadline: number): boolean;
-}
-
-/** The clients whose worker thread is alive. */
-const liveClients = new Set<Drainable>();
-
-/** The longest the exit waits for the queries in flight to settle. They are
- *  all cancelled first and settle in milliseconds; this bounds the worst case,
- *  a query DuckDB is slow to interrupt. */
-export const QUIT_DRAIN_MS = 3_000;
+export { QUIT_DRAIN_MS };
 
 /** For the process's exit handler: cancels every query of every DuckDB worker,
  *  builds included, and blocks until they have all settled or `timeoutMs`
- *  passed. False when some were still in flight at the deadline. */
+ *  passed. False when some were still in flight at the deadline. Drains the
+ *  sync worker too: it shares the registry, see worker-drain.ts. */
 export function drainDuckDBClientsSync(timeoutMs: number = QUIT_DRAIN_MS): boolean {
-  const deadline = Date.now() + timeoutMs;
-  for (const client of liveClients) client.beginDrain();
-  let settled = true;
-  for (const client of liveClients) settled = client.waitSettledSync(deadline) && settled;
-  return settled;
+  return drainWorkersSync(timeoutMs);
 }
 
 /** Spawn a DuckDB worker. Without `workerData` it is the app's shared,
@@ -168,7 +146,7 @@ export async function createDuckDBClient(workerPath: string, workerData?: DuckDB
   worker.on('error', notifyIfDrained);
   worker.on('exit', () => {
     exited = true;
-    liveClients.delete(drainable);
+    liveDrainables.delete(drainable);
     notifyIfDrained();
   });
 
@@ -196,7 +174,7 @@ export async function createDuckDBClient(workerPath: string, workerData?: DuckDB
       }
     },
   };
-  liveClients.add(drainable);
+  liveDrainables.add(drainable);
 
   async function shutDown(): Promise<void> {
     // Nothing may start in a worker that is on its way out.

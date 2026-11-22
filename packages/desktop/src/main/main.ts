@@ -17,7 +17,7 @@ const __dirname = dirname(__filename);
 // of its own (a utility process), the second in a worker thread of this one.
 const DUCKDB_WORKER_PATH = join(__dirname, '..', 'worker', 'duckdb-worker.cjs');
 import type { LogEntry } from '@costgoblin/core';
-import { drainDuckDBClientsSync } from './duckdb-client.js';
+import { drainWorkersSync } from './worker-drain.js';
 import { createSupervisedDuckDBClient } from './duckdb-supervisor.js';
 import type { SupervisedDuckDBClient } from './duckdb-supervisor.js';
 import { utilityProcessSpawner } from './duckdb-utility-process.js';
@@ -453,14 +453,15 @@ app.on('will-quit', () => {
 app.on('quit', shutDownDuckDB);
 
 // Quitting with a query in flight in a DuckDB worker thread of this process
-// (the MCP server's instance) aborted the process as its worker threads were
-// torn down, and sent a crash report for what the user saw as a normal quit.
+// (the MCP server's instance, or the sync worker's GCP canonicalization)
+// aborted the process as its worker threads were torn down, and sent a crash
+// report for what the user saw as a normal quit.
 // 'exit' is the last point where the workers still run: Electron emits it
 // from app 'quit', and Node from process.exit(). The query engine's own
 // process is not drained: it is killed (shutDownDuckDB), which goes through
 // no such teardown.
 process.on('exit', () => {
-  drainDuckDBClientsSync();
+  drainWorkersSync();
 });
 
 // Electron's ESM main entry does not support top-level await at launch, so the

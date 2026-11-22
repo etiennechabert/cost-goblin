@@ -89,7 +89,7 @@ describe('Sync Worker', () => {
       const timeout = setTimeout(() => { reject(new Error('Worker ready timeout')); }, 5000);
       worker.once('message', (msg) => {
         clearTimeout(timeout);
-        expect(msg).toEqual({ kind: 'ready' });
+        expect(msg).toEqual({ kind: 'ready', settled: expect.any(SharedArrayBuffer) });
         resolve();
       });
       worker.once('error', (e: unknown) => {

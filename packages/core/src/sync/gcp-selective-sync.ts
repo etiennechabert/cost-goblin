@@ -533,6 +533,7 @@ export async function syncGcpSelectedFiles(
         providerName,
         period,
         tier,
+        signal: options.signal,
       });
 
       await saveEtags(dataDir, providerName, tier, period, syncedFiles);
@@ -569,6 +570,9 @@ interface InstallOptions {
   readonly providerName: ProviderName;
   readonly period: string;
   readonly tier: string;
+  /** The sync's abort signal, so a cancel or the app's exit interrupts the
+   *  canonicalization's DuckDB queries instead of waiting them out. */
+  readonly signal?: AbortSignal | undefined;
 }
 
 /** Canonicalize into a temp dir, then replace the period directory with it.
@@ -595,6 +599,7 @@ async function installCanonicalPeriod(options: InstallOptions): Promise<number> 
     const result = await canonicalizeGcpPeriod({
       stagingDir: options.stagingDir,
       outputPath: join(tmpDir, 'part-0.parquet'),
+      signal: options.signal,
     });
 
     await rm(destDir, { recursive: true, force: true });
