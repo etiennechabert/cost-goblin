@@ -42,6 +42,9 @@ interface CancelRequest {
 
 interface ReadyResponse {
   readonly kind: 'ready';
+  /** The count of settled sync requests, shared with the owner (see
+   *  worker-drain.ts). */
+  readonly settled: SharedArrayBuffer;
 }
 
 interface ProgressResponse {
@@ -123,6 +126,39 @@ const activeControllers = new Map<number, AbortController>();
 const cancelledIds = new Set<number>();
 
 // ---------------------------------------------------------------------------
+// Drain: letting the thread be torn down safely
+// ---------------------------------------------------------------------------
+// GCP canonicalization runs a DuckDB instance in this thread. A DuckDB call
+// still in flight when the thread is torn down aborts the whole process. So
+// the owner of an exiting process asks for a drain first, which aborts every
+// sync (interrupting its DuckDB queries), and waits until every request it
+// posted has settled. It waits on shared memory, because its event loop has
+// stopped by then (see worker-drain.ts).
+
+const settledBuffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
+const settledCount = new Int32Array(settledBuffer);
+
+function requestSettled(): void {
+  Atomics.add(settledCount, 0, 1);
+  Atomics.notify(settledCount, 0);
+}
+
+/** Set by a drain: nothing may start in a thread that is on its way out. */
+let draining = false;
+
+function isDrainRequest(msg: unknown): msg is { kind: 'drain' } {
+  return hasProps(msg) && msg['kind'] === 'drain';
+}
+
+function handleDrain(): void {
+  draining = true;
+  for (const [id, controller] of activeControllers) {
+    cancelledIds.add(id);
+    controller.abort();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Message sending
 // ---------------------------------------------------------------------------
 
@@ -143,7 +179,7 @@ logger.addHandler((entry) => {
 
 async function handleSyncRequest(req: SyncRequest): Promise<void> {
   // Check if already cancelled before starting
-  if (cancelledIds.has(req.id)) {
+  if (draining || cancelledIds.has(req.id)) {
     cancelledIds.delete(req.id);
     send({ kind: 'error', id: req.id, message: 'Download cancelled' });
     return;
@@ -248,13 +284,18 @@ function handleCancelRequest(req: CancelRequest): void {
 // ---------------------------------------------------------------------------
 
 // Send ready signal immediately (no async initialization needed)
-send({ kind: 'ready' });
+send({ kind: 'ready', settled: settledBuffer });
 
-// Handle incoming messages
+// Handle incoming messages. Every 'sync' message counts as one request for the
+// drain, so each one settles the counter, the malformed ones included.
 port.on('message', (msg: unknown) => {
   if (isSyncRequest(msg)) {
-    void handleSyncRequest(msg);
+    void handleSyncRequest(msg).finally(requestSettled);
+  } else if (hasProps(msg) && msg['kind'] === 'sync') {
+    requestSettled();
   } else if (isCancelRequest(msg)) {
     handleCancelRequest(msg);
+  } else if (isDrainRequest(msg)) {
+    handleDrain();
   }
 });

@@ -118,6 +118,19 @@ export interface CanonicalizeOptions {
    *  worker's, and DuckDB's default sizes for being the only one on the box. */
   readonly memoryGB?: number | undefined;
   readonly threads?: number | undefined;
+  /** Aborts the canonicalization: no further statement starts, and a statement
+   *  running on an instance this module owns is interrupted. The sync worker
+   *  aborts it on cancel and at app exit, when a DuckDB call left in flight in
+   *  a torn-down worker thread aborts the whole process. */
+  readonly signal?: AbortSignal | undefined;
+}
+
+/** How often an abort repeats its interrupt while a statement may still run:
+ *  an interrupt that reaches DuckDB before the statement executes is lost. */
+const INTERRUPT_RESEND_MS = 50;
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted === true) throw new Error('GCP canonicalization aborted');
 }
 
 export interface CanonicalizeResult {
@@ -330,6 +343,7 @@ export async function canonicalizeGcpPeriod(options: CanonicalizeOptions): Promi
   if (options.connection !== undefined) {
     return canonicalizeWithConnection(options.connection, options);
   }
+  throwIfAborted(options.signal);
   const owned = await createOwnConnection(options);
   try {
     return await canonicalizeWithConnection(owned.connection, options);
@@ -359,6 +373,7 @@ async function canonicalizeWithConnection(
   }
   const sourceExpr = `read_parquet([${shards.map(quoteLiteral).join(', ')}], union_by_name=true)`;
 
+  throwIfAborted(options.signal);
   let source: ReadonlyMap<string, string>;
   try {
     source = await describeSource(conn, sourceExpr);
@@ -380,6 +395,7 @@ async function canonicalizeWithConnection(
 
   await mkdir(dirname(options.outputPath), { recursive: true });
 
+  throwIfAborted(options.signal);
   await conn.run(`
 COPY (
   WITH __src AS (
@@ -394,11 +410,13 @@ COPY (
   // Single-element list for the same reason the source uses one: a literal
   // path inside a list is not glob-expanded.
   const outputExpr = `read_parquet([${quoteLiteral(options.outputPath)}])`;
+  throwIfAborted(options.signal);
   const rows = await readSingleNumber(conn, `SELECT COUNT(*) FROM ${outputExpr}`);
 
   // A missing column here would mean the projection above and the contract
   // drifted apart — cheap to check, and it fails at sync time rather than at
   // the first query over the period.
+  throwIfAborted(options.signal);
   const output = await describeSource(conn, outputExpr);
   const notEmitted = REQUIRED_FOCUS_COLUMNS.filter(col => !output.has(col));
   if (notEmitted.length > 0) {
@@ -445,9 +463,27 @@ async function createOwnConnection(options: CanonicalizeOptions): Promise<OwnedC
     try { instance.closeSync(); } catch { /* nothing to close */ }
     throw err;
   }
+  // An abort interrupts whatever statement runs, repeatedly until the
+  // connection is closed, as the statement may not have started executing yet.
+  const connection = conn;
+  let interruptTimer: NodeJS.Timeout | undefined;
+  const onAbort = (): void => {
+    const interrupt = (): void => {
+      try { connection.interrupt(); } catch { /* closed or idle */ }
+    };
+    interrupt();
+    interruptTimer ??= setInterval(interrupt, INTERRUPT_RESEND_MS);
+  };
+  const signal = options.signal;
+  if (signal !== undefined) {
+    if (signal.aborted) onAbort();
+    else signal.addEventListener('abort', onAbort, { once: true });
+  }
   return {
     connection: conn,
     close: () => {
+      signal?.removeEventListener('abort', onAbort);
+      if (interruptTimer !== undefined) clearInterval(interruptTimer);
       // Best effort: a teardown failure must not mask the canonicalization
       // error that sent us through the `finally`.
       try { conn.disconnectSync(); } catch { /* already gone */ }
