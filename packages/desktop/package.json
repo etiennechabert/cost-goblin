@@ -12,10 +12,10 @@
     "dev": "node -e \"require('electron')\" && npm run build:worker && npm run build:preload && electron-vite dev"
   },
   "dependencies": {
-    "@aws-sdk/client-organizations": "^3.1167.0",
-    "@aws-sdk/client-s3": "^3.1167.0",
-    "@aws-sdk/client-ssm": "^3.1167.0",
-    "@aws-sdk/client-support": "^3.1167.0",
+    "@aws-sdk/client-organizations": "^3.1169.0",
+    "@aws-sdk/client-s3": "^3.1169.0",
+    "@aws-sdk/client-ssm": "^3.1169.0",
+    "@aws-sdk/client-support": "^3.1169.0",
     "@duckdb/node-api": "^2.0.0-r.1",
     "@google-cloud/storage": "^8.4.0",
     "@sentry/electron": "^8.4.0",
