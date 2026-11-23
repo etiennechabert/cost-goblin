@@ -17,7 +17,7 @@
     "@aws-sdk/client-ssm": "^3.1167.0",
     "@aws-sdk/client-support": "^3.1167.0",
     "@duckdb/node-api": "^2.0.0-r.1",
-    "@google-cloud/storage": "^8.4.0",
+    "@google-cloud/storage": "^9.0.0",
     "@sentry/electron": "^8.4.0",
     "@smithy/shared-ini-file-loader": "^4.7.2",
     "electron-updater": "^6.8.11",
