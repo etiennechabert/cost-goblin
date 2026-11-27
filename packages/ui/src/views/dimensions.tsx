@@ -1606,6 +1606,11 @@ function ToggleButton({ itemKey, hidden, onToggle }: Readonly<{ itemKey: string;
 
 type DiscoveredTag = { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number };
 
+/** Rows the Resource Tags table draws: a column's first values, most common
+ *  first. A tag set to each resource's own name has hundreds of values, and a
+ *  row holds a cell for every shown tag. */
+const RESOURCE_TAG_TABLE_ROWS = 100;
+
 function ResourceTagsContent({ tagsQuery, discoveredTags, hiddenResourceCols, setHiddenResourceCols }: Readonly<{
   tagsQuery: { status: string; data?: unknown; error?: Error };
   discoveredTags: readonly DiscoveredTag[];
@@ -1630,6 +1635,8 @@ function ResourceTagsContent({ tagsQuery, discoveredTags, hiddenResourceCols, se
   if (tagsQuery.status !== 'success' || discoveredTags.length === 0) return null;
 
   const visibleTags = discoveredTags.filter(t => !hiddenResourceCols.has(t.key));
+  const longestColumn = Math.max(...visibleTags.map(t => t.sampleValues.length), 0);
+  const rowCount = Math.min(longestColumn, RESOURCE_TAG_TABLE_ROWS);
   const toggleCol = (key: string) => {
     setHiddenResourceCols(prev => {
       const next = new Set(prev);
@@ -1666,7 +1673,7 @@ function ResourceTagsContent({ tagsQuery, discoveredTags, hiddenResourceCols, se
               </tr>
             </thead>
             <tbody>
-              {Array.from({ length: Math.max(...visibleTags.map(t => t.sampleValues.length), 0) }, (_, rowIdx) => (
+              {Array.from({ length: rowCount }, (_, rowIdx) => (
                 <tr key={rowIdx} className="border-b border-border-subtle">
                   {visibleTags.map(t => (
                     <td key={t.key} className="px-3 py-1.5 text-text-secondary whitespace-nowrap">
@@ -1678,6 +1685,9 @@ function ResourceTagsContent({ tagsQuery, discoveredTags, hiddenResourceCols, se
             </tbody>
           </table>
         </div>
+      )}
+      {longestColumn > rowCount && (
+        <p className="text-xs text-text-muted">Showing the {String(rowCount)} most common values of each tag.</p>
       )}
     </div>
   );

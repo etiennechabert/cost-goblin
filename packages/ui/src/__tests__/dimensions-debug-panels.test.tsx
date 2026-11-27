@@ -169,8 +169,29 @@ describe('Resource Tags panel', () => {
     expect(within(body).queryAllByRole('button')).toHaveLength(1);
   });
 
+  it('lists the first 100 values of a tag with more, and says so', async () => {
+    const many = Array.from({ length: 150 }, (_, i) => `resource-${String(i)}`);
+    const name = { key: 'Name', sampleValues: many, rowCount: 900, distinctCount: 200_000, coveragePct: 50 };
+    const { user } = renderView({ scan: () => Promise.resolve({ ...SCAN, tags: [...SCAN.tags, name] }) });
+    const { toggle, body } = await panel('Resource Tags');
+    await user.click(toggle);
+    await waitFor(() => { expect(headers(body)).toEqual(['team', 'env', 'Name']); });
+
+    const rows = cells(body);
+    expect(rows).toHaveLength(100);
+    expect(rows[99]).toEqual(['', '', 'resource-99']);
+    expect(within(body).getByText('Showing the 100 most common values of each tag.')).toBeDefined();
+    // The header still counts every value.
+    expect(within(body).getByText('50% · 200000 values')).toBeDefined();
+
+    // With that column hidden, every value fits.
+    await user.click(within(body).getByRole('button', { name: 'Name' }));
+    expect(cells(body)).toHaveLength(3);
+    expect(within(body).queryByText(/most common values/)).toBeNull();
+  });
+
   it('hides a column, listing its key last, and shows it again', async () => {
-    const owner = { key: 'owner', sampleValues: ['alice'], rowCount: 50, distinctCount: 1, coveragePct: 5 };
+    const owner ={ key: 'owner', sampleValues: ['alice'], rowCount: 50, distinctCount: 1, coveragePct: 5 };
     const { user } = renderView({ scan: () => Promise.resolve({ ...SCAN, tags: [...SCAN.tags, owner] }) });
     const { toggle, body } = await panel('Resource Tags');
     await user.click(toggle);

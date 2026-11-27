@@ -2,7 +2,7 @@ import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parse } from 'yaml';
-import { registerDimensionsHandlers } from '../main/handlers/dimensions.js';
+import { TAG_SAMPLE_VALUE_LIMIT, registerDimensionsHandlers } from '../main/handlers/dimensions.js';
 import { DEFAULT_BUILT_INS } from '../main/handlers/dimensions-merge.js';
 import {
   FIXTURE_AWS_PROVIDER,
@@ -112,6 +112,27 @@ describe('dimensions:discover-tags', () => {
     // The key-less entry is dropped.
     expect(at(result, 'tags')).toEqual([{ key: 'team', sampleValues: ['x'], rowCount: 1, distinctCount: 1, coveragePct: 100 }]);
     expect(h.db.statements.some(s => s.includes('daily-*/*.parquet'))).toBe(true);
+  });
+
+  it('sends only the most common values of a tag with many, still counting them all', async () => {
+    const h = await dimsApp({ data: 'none' });
+    const month = join(h.ws.dataDir, AWS, 'raw', 'daily-2026-02');
+    await mkdir(month, { recursive: true });
+    // One value per resource name, as a Name tag has on a large workspace,
+    // plus one value five rows share.
+    const distinct = TAG_SAMPLE_VALUE_LIMIT + 100;
+    await h.db.runQuery(`COPY (
+      SELECT TIMESTAMP '2026-02-20' AS ChargePeriodStart, MAP {'Name': v} AS Tags
+      FROM (SELECT 'resource-' || i AS v FROM range(${String(distinct)}) t(i) UNION ALL SELECT 'shared' FROM range(5))
+    ) TO '${join(month, 'data.parquet')}' (FORMAT PARQUET)`);
+
+    const tags = list(at(await h.ipc.invoke('dimensions:discover-tags'), 'tags'));
+    const name = tags.find(t => at(t, 'key') === 'Name');
+    const sample = list(at(name, 'sampleValues'));
+    expect(sample).toHaveLength(TAG_SAMPLE_VALUE_LIMIT);
+    expect(sample[0]).toBe('shared');
+    expect(at(name, 'distinctCount')).toBe(distinct + 1);
+    expect(at(name, 'rowCount')).toBe(distinct + 5);
   });
 });
 

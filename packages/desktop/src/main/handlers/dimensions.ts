@@ -56,6 +56,12 @@ const PREVIEW_COLUMNS: ReadonlySet<string> = new Set(
   DEFAULT_BUILT_INS.flatMap(d => (d.displayField === undefined ? [d.field] : [d.field, d.displayField])),
 );
 
+/** Most values of one tag key the tag discovery sends, most common first. A
+ *  tag set to each resource's own name has one value per resource, hundreds
+ *  of thousands on a large workspace: sending them all froze the Dimensions
+ *  view while it drew them. `distinctCount` still counts every value. */
+export const TAG_SAMPLE_VALUE_LIMIT = 500;
+
 export function registerDimensionsHandlers(app: AppContext): void {
   const { ctx, getConfig, getDimensions, getQueryDimensions, getQueryCostScope, getFirstProviderName, getQueryProviders, getOrgAccountsPath, getAccountReverseMap, getRegionMap, signatureForDimensions, invalidateDimensions, rollupStore, runQuery } = app;
 
@@ -100,11 +106,12 @@ export function registerDimensionsHandlers(app: AppContext): void {
         SELECT *,
                SUM(val_cnt) OVER (PARTITION BY tag_key) AS key_cnt,
                COUNT(*) OVER (PARTITION BY tag_key) AS distinct_cnt,
-               ROW_NUMBER() OVER (PARTITION BY tag_key ORDER BY val_cnt DESC) AS rn
+               ROW_NUMBER() OVER (PARTITION BY tag_key ORDER BY val_cnt DESC, tag_val) AS rn
         FROM grouped
       )
       SELECT tag_key, key_cnt, distinct_cnt, tag_val, val_cnt
       FROM with_stats
+      WHERE rn <= ${String(TAG_SAMPLE_VALUE_LIMIT)}
       ORDER BY key_cnt DESC, tag_key, rn
     `;
     const rows = await runQuery(sql);
