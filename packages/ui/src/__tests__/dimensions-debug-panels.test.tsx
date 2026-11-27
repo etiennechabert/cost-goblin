@@ -137,7 +137,7 @@ describe('Resource Tags panel', () => {
     let finish: (scan: TagScan) => void = () => undefined;
     const { discover, user } = renderView({ scan: () => new Promise<TagScan>((resolve) => { finish = resolve; }) });
     const { toggle, body } = await panel('Resource Tags');
-    expect(toggle.textContent).toContain('Tag keys discovered by scanning the latest billing period');
+    expect(toggle.textContent).toContain('Tag keys found in the last 30 days of billing data');
     expect(discover).not.toHaveBeenCalled();
 
     await user.click(toggle);
@@ -167,6 +167,27 @@ describe('Resource Tags panel', () => {
     await user.click(toggle);
     await waitFor(() => { expect(toggle.textContent).toContain('0 keys · sampled from 2026-04'); });
     expect(within(body).queryAllByRole('button')).toHaveLength(1);
+  });
+
+  it('lists the first 100 values of a tag with more, and says so', async () => {
+    const many = Array.from({ length: 150 }, (_, i) => `resource-${String(i)}`);
+    const name = { key: 'Name', sampleValues: many, rowCount: 900, distinctCount: 200_000, coveragePct: 50 };
+    const { user } = renderView({ scan: () => Promise.resolve({ ...SCAN, tags: [...SCAN.tags, name] }) });
+    const { toggle, body } = await panel('Resource Tags');
+    await user.click(toggle);
+    await waitFor(() => { expect(headers(body)).toEqual(['team', 'env', 'Name']); });
+
+    const rows = cells(body);
+    expect(rows).toHaveLength(100);
+    expect(rows[99]).toEqual(['', '', 'resource-99']);
+    expect(within(body).getByText('Showing the 100 most common values of each tag.')).toBeDefined();
+    // The header still counts every value.
+    expect(within(body).getByText('50% · 200000 values')).toBeDefined();
+
+    // With that column hidden, every value fits.
+    await user.click(within(body).getByRole('button', { name: 'Name' }));
+    expect(cells(body)).toHaveLength(3);
+    expect(within(body).queryByText(/most common values/)).toBeNull();
   });
 
   it('hides a column, listing its key last, and shows it again', async () => {

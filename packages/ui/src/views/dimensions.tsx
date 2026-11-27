@@ -1188,7 +1188,7 @@ function deduplicateResolved(
 }
 
 function TagValuePreview({ tagMatch, fallbackValues, missingValueTemplate, normalizeRule, aliasText, onBadgeClick }: Readonly<{
-  tagMatch: { sampleValues: string[] } | undefined;
+  tagMatch: { sampleValues: string[]; distinctCount: number } | undefined;
   fallbackValues: [string, number][];
   missingValueTemplate: string;
   normalizeRule: string;
@@ -1221,6 +1221,9 @@ function TagValuePreview({ tagMatch, fallbackValues, missingValueTemplate, norma
 
   const aliasPreviewCount = transformed.filter(t => t.aliased).length;
   const unique = deduplicateResolved(transformed);
+  // The tag scan sends a tag's most common values only (one per resource on
+  // a tag set to the resource's name): say so rather than pass them off as all.
+  const sampledOnly = tagMatch !== undefined && tagMatch.distinctCount > resourceVals.length;
 
   return (
     <div className="flex flex-col gap-1">
@@ -1228,6 +1231,7 @@ function TagValuePreview({ tagMatch, fallbackValues, missingValueTemplate, norma
         Preview — {String(allRaw.length)} raw → {String(unique.length)} resolved
         {normalizeRule.length > 0 ? ` (${normalizeRule})` : ''}
         {aliasPreviewCount > 0 ? ` · ${String(aliasPreviewCount)} aliased` : ''}
+        {sampledOnly ? ` · tag values: the ${String(resourceVals.length)} most common of ${String(tagMatch.distinctCount)}` : ''}
       </span>
       <div className="flex items-center gap-3 text-[9px] text-text-muted mb-1">
         <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-cyan-500/30 border border-cyan-500/50" /> resource</span>
@@ -1606,6 +1610,11 @@ function ToggleButton({ itemKey, hidden, onToggle }: Readonly<{ itemKey: string;
 
 type DiscoveredTag = { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number };
 
+/** Rows the Resource Tags table draws: a column's first values, most common
+ *  first. A tag set to each resource's own name has hundreds of values, and a
+ *  row holds a cell for every shown tag. */
+const RESOURCE_TAG_TABLE_ROWS = 100;
+
 function ResourceTagsContent({ tagsQuery, discoveredTags, hiddenResourceCols, setHiddenResourceCols }: Readonly<{
   tagsQuery: { status: string; data?: unknown; error?: Error };
   discoveredTags: readonly DiscoveredTag[];
@@ -1630,6 +1639,8 @@ function ResourceTagsContent({ tagsQuery, discoveredTags, hiddenResourceCols, se
   if (tagsQuery.status !== 'success' || discoveredTags.length === 0) return null;
 
   const visibleTags = discoveredTags.filter(t => !hiddenResourceCols.has(t.key));
+  const longestColumn = Math.max(...visibleTags.map(t => t.sampleValues.length), 0);
+  const rowCount = Math.min(longestColumn, RESOURCE_TAG_TABLE_ROWS);
   const toggleCol = (key: string) => {
     setHiddenResourceCols(prev => {
       const next = new Set(prev);
@@ -1666,7 +1677,7 @@ function ResourceTagsContent({ tagsQuery, discoveredTags, hiddenResourceCols, se
               </tr>
             </thead>
             <tbody>
-              {Array.from({ length: Math.max(...visibleTags.map(t => t.sampleValues.length), 0) }, (_, rowIdx) => (
+              {Array.from({ length: rowCount }, (_, rowIdx) => (
                 <tr key={rowIdx} className="border-b border-border-subtle">
                   {visibleTags.map(t => (
                     <td key={t.key} className="px-3 py-1.5 text-text-secondary whitespace-nowrap">
@@ -1678,6 +1689,9 @@ function ResourceTagsContent({ tagsQuery, discoveredTags, hiddenResourceCols, se
             </tbody>
           </table>
         </div>
+      )}
+      {longestColumn > rowCount && (
+        <p className="text-xs text-text-muted">Showing the {String(rowCount)} most common values of each tag.</p>
       )}
     </div>
   );
@@ -2955,7 +2969,7 @@ export function DimensionsView(): React.JSX.Element {
           <DebugPanel
             title="Resource Tags"
             subtitle={(() => {
-              if (tagsQuery.status !== 'success' || tagsQuery.data === null) return 'Tag keys discovered by scanning the latest billing period';
+              if (tagsQuery.status !== 'success' || tagsQuery.data === null) return 'Tag keys found in the last 30 days of billing data';
               const suffix = tagsQuery.data.samplePeriod.length > 0 ? ` · sampled from ${tagsQuery.data.samplePeriod}` : '';
               return `${String(tagsQuery.data.tags.length)} keys${suffix}`;
             })()}
