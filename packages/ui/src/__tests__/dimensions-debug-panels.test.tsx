@@ -137,7 +137,7 @@ describe('Resource Tags panel', () => {
     let finish: (scan: TagScan) => void = () => undefined;
     const { discover, user } = renderView({ scan: () => new Promise<TagScan>((resolve) => { finish = resolve; }) });
     const { toggle, body } = await panel('Resource Tags');
-    expect(toggle.textContent).toContain('Tag keys discovered by scanning the latest billing period');
+    expect(toggle.textContent).toContain('Tag keys found in the last 30 days of billing data');
     expect(discover).not.toHaveBeenCalled();
 
     await user.click(toggle);
@@ -191,7 +191,7 @@ describe('Resource Tags panel', () => {
   });
 
   it('hides a column, listing its key last, and shows it again', async () => {
-    const owner ={ key: 'owner', sampleValues: ['alice'], rowCount: 50, distinctCount: 1, coveragePct: 5 };
+    const owner = { key: 'owner', sampleValues: ['alice'], rowCount: 50, distinctCount: 1, coveragePct: 5 };
     const { user } = renderView({ scan: () => Promise.resolve({ ...SCAN, tags: [...SCAN.tags, owner] }) });
     const { toggle, body } = await panel('Resource Tags');
     await user.click(toggle);

@@ -28,13 +28,13 @@ const ORG: OrgSyncResult = {
 
 const TEAM: TagDimension = { tagName: 'team', label: 'Team', accountTagFallback: 'Team' };
 
-function renderView(tag: TagDimension, suggestions: AliasSuggestion[] = []) {
+function renderView(tag: TagDimension, suggestions: AliasSuggestion[] = [], distinctCount = RESOURCE_VALUES.length) {
   const api: CostApi = new MockCostApi();
   const config: DimensionsConfig = { builtIn: [{ name: asDimensionId('service'), label: 'Service', field: 'service' }], tags: [tag] };
   vi.spyOn(api, 'getDimensionsConfig').mockResolvedValue(config);
   vi.spyOn(api, 'getOrgSyncResult').mockResolvedValue(ORG);
   vi.spyOn(api, 'discoverTagKeys').mockResolvedValue({
-    tags: [{ key: 'team', sampleValues: RESOURCE_VALUES, rowCount: 600, distinctCount: 6, coveragePct: 60 }],
+    tags: [{ key: 'team', sampleValues: RESOURCE_VALUES, rowCount: 600, distinctCount, coveragePct: 60 }],
     samplePeriod: '2026-04',
   });
   vi.spyOn(api, 'getAliasSuggestions').mockImplementation((id) => Promise.resolve(id === 'team' ? suggestions : []));
@@ -52,7 +52,7 @@ type User = ReturnType<typeof userEvent.setup>;
 
 /** Opens the tag's editor once the org sync (account values) has loaded, and
  *  waits for the resource-tag samples its opening fetches. */
-async function openEditor(user: User): Promise<void> {
+async function openEditor(user: User, distinctCount = RESOURCE_VALUES.length): Promise<void> {
   await screen.findByText(/across 4 accounts/);
   const row = await waitFor(() => {
     const found = screen.getAllByRole('button').find(b => b.textContent.includes('tag:team'));
@@ -60,7 +60,7 @@ async function openEditor(user: User): Promise<void> {
     return found;
   });
   await user.click(row);
-  await screen.findByText('60% coverage · 6 distinct values');
+  await screen.findByText(`60% coverage · ${String(distinctCount)} distinct values`);
 }
 
 function previewHeading(): string {
@@ -152,6 +152,12 @@ describe('TagValuePreview — normalization', () => {
     expect(sourceOf('search')).toBe('resource');
     expect(sourceOf('payments')).toBe('account');
     expect(legend()).toEqual(['resource', 'account', 'both']);
+  });
+
+  it('says when the tag values are its most common ones only', async () => {
+    const { user } = renderView(TEAM, [], 200_000);
+    await openEditor(user, 200_000);
+    expect(previewHeading()).toBe('Preview — 8 raw → 8 resolved · tag values: the 6 most common of 200000');
   });
 
   it.each([
